@@ -10,10 +10,10 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 
 | Metric | Type | Unit | Tags | Description |
 |--------|------|------|------|-------------|
-| `pipeline.jobs.dispatched` | Counter | — | `run_type` | Incremented when a pipeline job starts |
-| `pipeline.jobs.completed` | Counter | — | `run_type` | Incremented when a job completes successfully |
-| `pipeline.jobs.failed` | Counter | — | `run_type` | Incremented when a job fails |
-| `pipeline.jobs.duration` | Histogram | seconds | `run_type` | Duration of the entire pipeline job |
+| `pipeline.jobs.dispatched` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Incremented when a pipeline job starts |
+| `pipeline.jobs.completed` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Incremented when a job completes successfully |
+| `pipeline.jobs.failed` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Incremented when a job fails |
+| `pipeline.jobs.duration` | Histogram | seconds | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Duration of the entire pipeline job |
 | `pipeline.loop.polls` | Counter | — | `result` | Incremented on each poll cycle (`success` or `failure`) |
 | `pipeline.loop.issues_found` | Counter | — | — | Incremented by the number of issues/PRs/epics discovered per poll cycle |
 | `pipeline.loop.dispatch_decisions` | Counter | — | `decision` | Incremented for each dispatch decision made by the loop |
@@ -25,12 +25,12 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 | `agent.jobs.rejected` | Counter | — | `reason` | Jobs rejected by agent workers |
 | `agent.heartbeat.failures` | Counter | — | — | Agent heartbeat send failures |
 | `agent.reconnections` | Counter | — | — | Agent reconnection events |
-| `pipeline.step.duration` | Histogram | seconds | `step_name`, `run_type` | Duration of individual pipeline steps |
-| `pipeline.step.count` | Counter | — | `step_name`, `run_type` | Pipeline step execution count |
+| `pipeline.step.duration` | Histogram | seconds | `step_name`, `run_type`, `pipeline.project_id`, `pipeline.project_name` | Duration of individual pipeline steps |
+| `pipeline.step.count` | Counter | — | `step_name`, `run_type`, `pipeline.project_id`, `pipeline.project_name` | Pipeline step execution count |
 | `agent.tokens.used` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Agent tokens consumed |
 | `agent.cost.usd` | Counter | USD | `run_type`, `pipeline.project_id`, `pipeline.project_name` | LLM cost in USD |
-| `quality_gate.retries` | Counter | — | `run_type` | Quality gate retry attempts |
-| `quality_gate.duration` | Histogram | seconds | `run_type` | Total time in quality gate phase |
+| `quality_gate.retries` | Counter | — | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Quality gate retry attempts |
+| `quality_gate.duration` | Histogram | seconds | `run_type`, `pipeline.project_id`, `pipeline.project_name` | Total time in quality gate phase |
 | `quality_gate.evaluations` | Counter | — | `gate_name`, `result` | Individual gate evaluation events |
 | `quality_gate.external_ci.duration` | Histogram | seconds | — | Time waiting for external CI |
 | `dispatch.queue.wait_time` | Histogram | seconds | — | Time a job spent waiting in the dispatch queue |
@@ -80,10 +80,13 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `QualityGate.Tests` | `gate_name` | Test command execution (child of RunQualityGates) |
 | `QualityGate.Coverage` | `gate_name` | Coverage report parsing (child of RunQualityGates) |
 | `ReviewCode` | `pipeline.run_id`, `pipeline.issue` | Multi-agent code review |
+| `CodeReview.Iteration` | `pipeline.run_id`, `pipeline.issue`, `code_review.iteration`, `code_review.max_iterations`, `code_review.parallel` | Single code review iteration (child of ReviewCode) |
+| `CodeReview.Agent` | `pipeline.run_id`, `pipeline.issue`, `pipeline.review_agent`, `pipeline.isolated` | Individual review agent execution (child of CodeReview.Iteration) |
 | `CreatePullRequest` † | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR creation step |
 | `GeneratePrDescription` | `pipeline.run_id`, `pipeline.issue` | Agent-generated PR description |
 | `FinalizePullRequest` | `pipeline.run_id`, `pipeline.issue`, `pipeline.pr.is_draft` | PR finalization (when existing draft PR is promoted) |
 | `PostReviewFindings` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Posting review findings to PR |
+| `WritePrConversationContext` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Writing PR conversation context to workspace |
 | `ExtractLinkedIssues` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Extracting linked issues from PR |
 | `Decomposition` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Sub-issue generation (Phase 2) |
 | `DecompositionAnalysis` | `pipeline.run_id`, `pipeline.issue`, `pipeline.run_type` | Epic analysis (Phase 1) |
@@ -98,6 +101,7 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `TokenVending.GenerateToken` | — | Token generation HTTP call |
 | `Agent.ReceiveJob` | `job_id`, `run_type` | Agent job receipt and acceptance/rejection decision |
 | `Agent.ReportCompletion` | `job_id`, `success` | Reporting job completion to orchestrator |
+| `ExecuteConsolidation` | `pipeline.run_id`, `pipeline.consolidation_type` | Top-level span wrapping a consolidation run (brain, refactoring, or harness) |
 | `BrainConsolidation.Clone` | `pipeline.run_id` | Brain repo clone during consolidation |
 | `BrainConsolidation.AgentExecution` | `pipeline.run_id` | Main agent LLM call for brain consolidation |
 | `BrainConsolidation.DiffGeneration` | `pipeline.run_id` | Diff summary agent call (LLM execution) |
@@ -130,6 +134,14 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `pipeline.analysis.continue` | `true`/`false` | Whether analysis passed the confidence gate |
 | `pipeline.is_rework` | `true`/`false` | Whether this is a rework run (linked PR exists) |
 | `pipeline.pr.is_draft` | `true`/`false` | Whether the PR was created as a draft |
+| `pipeline.project_id` | UUID | Project identifier (set on job/step metrics and agent-side spans) |
+| `pipeline.project_name` | string | Project display name |
+| `pipeline.consolidation_type` | `BrainConsolidation`, `RefactoringDetection`, `HarnessSuggestions` | Consolidation run type (on `ExecuteConsolidation` span) |
+| `code_review.iteration` | integer | Code review iteration index (1-based) |
+| `code_review.max_iterations` | integer | Total configured review iterations |
+| `code_review.parallel` | `true`/`false` | Whether review agents ran in parallel |
+| `pipeline.review_agent` | string | Review agent name (on `CodeReview.Agent` span) |
+| `pipeline.isolated` | `true`/`false` | Whether review agent ran in isolated session |
 
 > **Note on tag value casing**: Metric `run_type` values are lowercased (`implementation`), while span `pipeline.run_type` values are PascalCase (`Implementation`). Use the appropriate casing when querying your observability backend.
 
@@ -207,11 +219,15 @@ Expected span hierarchy for an implementation run:
 ExecutePipeline
 ├── AnalyzeIssue
 ├── GenerateCode
+├── ReviewCode
+│   ├── CodeReview.Iteration
+│   │   ├── CodeReview.Agent (per agent)
+│   │   └── ...
+│   └── ...
 ├── RunQualityGates
 │   ├── QualityGate.Compilation
 │   ├── QualityGate.Tests
-│   ├── QualityGate.Coverage
-│   └── ReviewCode
+│   └── QualityGate.Coverage
 ├── CreatePullRequest
 ├── GeneratePrDescription
 └── FinalizePullRequest

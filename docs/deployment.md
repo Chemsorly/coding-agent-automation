@@ -58,7 +58,7 @@ To add more agents, copy a service definition with a new name and volume — don
 
 ### Agent Containers (OpenCode)
 
-OpenCode agents have no volume mounts — they receive configuration via the `OPENCODE_CONFIG_CONTENT` environment variable injected at startup.
+OpenCode agents have no volume mounts in Docker Compose — they receive configuration via the `OPENCODE_CONFIG_CONTENT` environment variable injected at startup. In Kubernetes (Helm), a read-only Secret-backed volume is mounted at `/app/config/opencode` containing the OpenCode configuration file.
 
 Each agent container needs its own CLI data volume to avoid SQLite corruption from concurrent access. Workspaces are created inside the container at `/app/workspaces/` — no volume mount needed.
 
@@ -174,5 +174,5 @@ agents:
 
 The chart supports zero-downtime rolling updates:
 - Orchestrator uses `readinessDrainDelaySeconds` (default: 15s) to stop accepting traffic before terminating
-- `pipelineLoopStartupDelaySeconds` (default: 30s) prevents dispatching to agents that are mid-termination
-- Agent `terminationGracePeriodSeconds` defaults to 15s (must be shorter than orchestrator drain delay)
+- `pipelineLoopStartupDelaySeconds` (Helm default: 30s, application default: 90s) prevents dispatching to agents that are mid-termination — must be greater than agent `terminationGracePeriodSeconds`. The Helm value overrides the application's built-in default via the `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` env var.
+- Agent `terminationGracePeriodSeconds` defaults to 15s

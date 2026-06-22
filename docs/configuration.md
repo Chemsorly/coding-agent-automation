@@ -14,11 +14,13 @@ Projects can override most general settings on a per-project basis using a nulla
 |---------|---------|-------------|
 | `maxRetries` | 3 | Max retry attempts when quality gates fail |
 | `maxAnalysisRetries` | 2 | Max retry attempts for the analysis phase (assessment file missing, malformed JSON, or analysis too short) |
+| `issuePageSize` | 25 | Number of issues fetched per page when polling the issue provider |
 | `agentTimeout` | 00:30:00 | Maximum time for a single agent invocation |
 | `codeReview.enabled` | true | Enable multi-agent code review |
 | `codeReview.maxIterations` | 2 | Max review → fix cycles |
 | `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion (CI runs automatically when a Pipeline Provider is configured on the job template) |
 | `externalCiPollInterval` | 00:00:30 | How often to poll external CI for status updates |
+| `acceptanceCriteriaEnabled` | true | Enable acceptance criteria compliance check (runs in parallel with code reviewers, produces structured JSON report) |
 | `blacklistedPaths` | .agent, .brain | Paths excluded from agent commits |
 
 | `failedWorkspaceRetentionDays` | 7 | Days to keep failed workspaces before cleanup |
@@ -93,17 +95,24 @@ These environment variables are used by the Docker containers:
 | Variable | Description |
 |----------|-------------|
 | `AGENT_API_KEY` | Shared secret for authenticating agent connections. Each agent derives its actual auth key via HMAC(master_key, agent_id). Legacy agents without an ID fall back to raw key comparison. |
+| `LOG_LEVEL` | Serilog log level (default: `Information`) — also applies to the orchestrator |
+| `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 90, range: 0–600). Prevents dispatching to agents mid-termination during rolling updates. |
+| `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15). Used for zero-downtime rolling updates. |
 
 ### Agent Containers
 
 | Variable | Description |
 |----------|-------------|
 | `ORCHESTRATOR_URL` | URL of the orchestrator's SignalR hub (e.g., `http://orchestrator:8080`) |
-| `AGENT_ID` | Unique identifier for this agent instance |
+| `AGENT_ID` | Unique identifier for this agent instance (falls back to machine hostname if unset) |
 | `AGENT_LABELS` | Comma-separated labels for routing (e.g., `kiro,dotnet,dotnet10`) |
 | `AGENT_API_KEY` | Must match the orchestrator's key |
 | `AGENT_PROVIDER_TYPE` | Agent backend type: `KiroCli` (default) or `OpenCode` |
 | `OPENCODE_CONFIG_CONTENT` | JSON configuration for OpenCode agents (injected as environment variable, not needed for Kiro agents) |
+| `OPENCODE_SERVER_PASSWORD` | Password for OpenCode server authentication (required for OpenCode agents) |
+| `ANTHROPIC_API_KEY` | Anthropic API key for LLM access (required for OpenCode agents using Claude) |
+| `OPENAI_API_KEY` | OpenAI API key for LLM access (optional, for OpenAI-backed agents) |
+| `OPENROUTER_API_KEY` | OpenRouter API key for LLM access (optional, for OpenRouter-backed agents) |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
 
 ## Environment Setup Steps
@@ -153,8 +162,10 @@ Setup steps are configured on the **Repository Provider** in Settings → Provid
 Repository providers can include custom markdown steering content that is written to the agent workspace before each run. This provides project-specific conventions, coding guidelines, or architectural context to the agent.
 
 Configure via Settings → Providers → Repository → Steering Content field. The content is written to:
-- `.kiro/steering/pipeline-context.md` for Kiro agents
+- `.kiro/steering/pipeline-repo.md` for Kiro agents (repository-level steering)
 - `AGENTS.md` for OpenCode agents
+
+Project-level steering (configured on the Project, not the provider) is written to `.kiro/steering/pipeline-project.md` for Kiro agents.
 
 ## MCP Server Support
 

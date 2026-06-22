@@ -69,3 +69,120 @@ Each pipeline job template has independent toggles:
 | `DecompositionEnabled` | `false` | Template processes epics for decomposition |
 
 Set `ReviewEnabled: false` to disable PR review for a template, or `ImplementationEnabled: false` to create a review-only template. See [Pipeline Orchestration](pipeline-orchestration.md) for the full technical reference.
+
+## Acceptance Criteria Compliance
+
+The pipeline runs an acceptance criteria compliance check in parallel with code reviewers during the implementation pipeline's code review phase. A dedicated agent evaluates whether the implementation satisfies the acceptance criteria from the original issue.
+
+### How It Works
+
+1. The AC agent reads issue context (`.agent/issue-context.md` or linked issue files) and the code changes
+2. It produces a structured JSON report at `.agent/acceptance-criteria.json`
+3. Non-compliant criteria are injected as `[CRITICAL]` findings into the fix prompt
+4. The report is rendered in the PR body as a compliance table
+
+### Configuration
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `acceptanceCriteriaEnabled` | bool | `true` | Enable/disable the compliance check |
+
+The AC step runs only on the first review iteration. Results are not re-evaluated after fixes — the quality gates (build + tests) validate correctness on subsequent iterations.
+
+### Output Format
+
+The agent writes `.agent/acceptance-criteria.json`:
+
+```json
+{
+  "criteria": [
+    {
+      "criterion": "Description of the requirement",
+      "status": "compliant|non_compliant|not_applicable",
+      "evidence": "What satisfies this criterion",
+      "reasoning": "What is missing (for non_compliant)"
+    }
+  ],
+  "summary": "X of Y criteria addressed."
+}
+```
+
+Status values: `compliant`, `non_compliant`, `not_applicable`.
+
+### PR Body Rendering
+
+The compliance report appears in the PR body as:
+
+```
+## Acceptance Criteria Compliance
+| Status | Criterion | Notes |
+|--------|-----------|-------|
+| ✅ | Criterion text | Evidence |
+| ❌ | Criterion text | Reasoning why it's not met |
+| ⚠️ | Criterion text | Not applicable reasoning |
+```
+
+## Parallel Review Execution
+
+Review agents execute in parallel when conditions are met, reducing review latency for multi-agent configurations.
+
+### Conditions for Parallel Execution
+
+All three must be true:
+1. `ReviewIsolation` is `Isolated` (default)
+2. More than 1 review agent is configured
+3. The agent provider supports parallel execution (`SupportsParallelExecution = true`)
+
+Both Kiro CLI and OpenCode providers support parallel execution. When conditions aren't met, agents run sequentially.
+
+### Isolation Model
+
+| Mode | Behavior | Use Case |
+|------|----------|----------|
+| `Isolated` (default) | Each review agent runs in a fresh session with no shared context (`UseResume = false`) | Prevents self-attribution bias |
+| `Shared` | Review agents share the code generation session (`UseResume = true`) | Legacy behavior |
+
+### Output Isolation
+
+Each agent writes findings to a separate file: `.agent/review-findings-{agentName}.txt`. Pre-computed diff artifacts (`.agent/diff-stat.txt`, `.agent/full-diff.patch`) are shared read-only across all agents.
+
+### Failure Isolation
+
+Individual agent failures are contained — if one agent crashes or times out, the remaining agents continue executing. Failed agents are logged and their findings are omitted from the review.
+
+## Reviewer Configurations
+
+Reviewer Configurations define per-stack review agents. They map label sets to groups of specialized reviewers, enabling different code review strategies per technology stack.
+
+### Configuration Model
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Id` | string | auto-generated GUID | Unique identifier |
+| `DisplayName` | string | (required) | Human-readable name |
+| `MatchLabels` | string[] | `[]` | Labels for matching. Empty = matches all jobs unconditionally |
+| `Agents` | ReviewAgent[] | (required) | Ordered list of review agents |
+| `Enabled` | bool | `true` | Whether this config participates in resolution |
+| `ExecutionOrder` | int | `0` | Ordering priority (lower = first) |
+
+Each `ReviewAgent` has:
+- `Name` — Agent display name (e.g., "Correctness", "SecurityReviewer")
+- `Prompt` — The review prompt sent to the agent
+
+### Resolution Logic
+
+1. All enabled configs whose `MatchLabels` intersect with the job's labels are selected (ANY match)
+2. Configs with empty `MatchLabels` always match (global fallback)
+3. Results sorted by `ExecutionOrder` ascending, then `DisplayName` alphabetically
+4. Agents from all matching configs are flattened into a single ordered list
+
+### Default Configuration
+
+When no custom reviewers are configured, the system uses four built-in agents:
+- **Correctness** — Logical correctness, edge cases, error handling
+- **DotNetSpecialist** — .NET-specific patterns, performance, API usage
+- **SecurityReviewer** — Security vulnerabilities, injection risks, auth issues
+- **TestQualityReviewer** — Test coverage, test quality, assertion completeness
+
+Reset to defaults via Settings → Label Routing → Reviewer Configs → "Reset to Defaults".
+
