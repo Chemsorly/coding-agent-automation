@@ -160,10 +160,10 @@
                                     }
                                 </div>
                                 <div class="history-meta">
-                                    <span>@h.StartedAt.ToLocalTime().ToString("g")</span>
-                                    @if (h.CompletedAt.HasValue)
+                                    <span>@h.StartedAtOffset.ToLocalTime().ToString("g")</span>
+                                    @if (h.CompletedAtOffset.HasValue)
                                     {
-                                        <span>@((h.CompletedAt.Value - h.StartedAt).ToString(@"hh\:mm\:ss"))</span>
+                                        <span>@((h.CompletedAtOffset.Value - h.StartedAtOffset).ToString(@"hh\:mm\:ss"))</span>
                                     }
                                     @if (!string.IsNullOrEmpty(h.PullRequestUrl))
                                     {

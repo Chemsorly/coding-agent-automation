@@ -151,7 +151,7 @@
 
     private string FormatDuration()
     {
-        var elapsed = (Run.CompletedAt ?? DateTime.UtcNow) - Run.StartedAt;
+        var elapsed = (Run.CompletedAtOffset ?? DateTimeOffset.UtcNow) - Run.StartedAtOffset;
         if (elapsed < TimeSpan.Zero) return "—";
         if (elapsed.TotalHours >= 1)
             return $"{(int)elapsed.TotalHours}h {elapsed.Minutes:D2}m {elapsed.Seconds:D2}s";

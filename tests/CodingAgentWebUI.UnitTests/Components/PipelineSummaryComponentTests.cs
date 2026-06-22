@@ -30,7 +30,9 @@ public class PipelineSummaryComponentTests : BunitContext
         IssueProviderConfigId = "ip-1",
         RepoProviderConfigId = "rp-1",
         StartedAt = DateTime.UtcNow.AddMinutes(-12).AddSeconds(-34),
+        StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-12).AddSeconds(-34),
         CompletedAt = DateTime.UtcNow,
+        CompletedAtOffset = DateTimeOffset.UtcNow,
         CurrentStep = step,
         FailureReason = failureReason,
         PullRequestUrl = prUrl,
@@ -337,7 +339,9 @@ public class PipelineSummaryComponentTests : BunitContext
             IssueProviderConfigId = "ip-1",
             RepoProviderConfigId = "rp-1",
             StartedAt = DateTime.UtcNow.AddHours(-1).AddMinutes(-2).AddSeconds(-15),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-1).AddMinutes(-2).AddSeconds(-15),
             CompletedAt = DateTime.UtcNow,
+            CompletedAtOffset = DateTimeOffset.UtcNow,
             CurrentStep = PipelineStep.Completed,
             LatestQualityReport = CreateQualityReport()
         };

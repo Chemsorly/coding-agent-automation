@@ -242,7 +242,8 @@ internal partial class QualityGateExecutor
         try
         {
             var recentSummaries = _historyService.GetRunHistory()
-                .OrderByDescending(s => s.StartedAt)
+                // TODO: Add fallback for legacy summaries where StartedAtOffset == default (consistent with PipelineRunHistoryService)
+                .OrderByDescending(s => s.StartedAtOffset)
                 .Take(FeedbackConstraints.MaxRecentRunsForCategories)
                 .ToList();
 

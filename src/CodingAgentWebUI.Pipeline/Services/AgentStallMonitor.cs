@@ -101,7 +101,7 @@ internal static class AgentStallMonitor
                     if (health.IsProcessAlive == false)
                     {
                         var errorMsg = $"{phaseDescription} — agent process is no longer alive (PID {health.ProcessId}). " +
-                                       $"Total elapsed: {(DateTime.UtcNow - run.StartedAt):hh\\:mm\\:ss}.";
+                                       $"Total elapsed: {(DateTimeOffset.UtcNow - run.StartedAtOffset):hh\\:mm\\:ss}.";
                         logger.Error("Pipeline {RunId} {StallMessage}", run.RunId, errorMsg);
                         run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = errorMsg });
                         onChange?.Invoke();
@@ -110,7 +110,7 @@ internal static class AgentStallMonitor
 
                     // Determine silence duration: use LastOutputTime if available,
                     // otherwise fall back to run start time (no output received yet at all).
-                    var referenceTime = health.LastOutputTime ?? run.StartedAt;
+                    var referenceTime = health.LastOutputTime ?? run.StartedAtOffset.UtcDateTime;
                     var silence = DateTime.UtcNow - referenceTime;
 
                     // Hard kill: silence exceeds kill timeout
@@ -131,7 +131,7 @@ internal static class AgentStallMonitor
                     var timeSinceLastWarn = DateTime.UtcNow - lastWarnTime;
                     if (silence >= config.StallWarningInterval && timeSinceLastWarn >= config.StallWarningInterval)
                     {
-                        var elapsed = DateTime.UtcNow - run.StartedAt;
+                        var elapsed = DateTimeOffset.UtcNow - run.StartedAtOffset;
                         var statusDetail = health.SessionStatus is not null
                             ? $" Session status: {health.SessionStatus}."
                             : "";

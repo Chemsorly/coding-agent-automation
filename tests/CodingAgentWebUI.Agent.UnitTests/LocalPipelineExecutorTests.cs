@@ -358,6 +358,7 @@ public class LocalPipelineExecutorTests : IDisposable
             StartedAt = DateTime.UtcNow,
             CurrentStep = PipelineStep.Completed,
             CompletedAt = new DateTime(2026, 5, 15, 12, 0, 0, DateTimeKind.Utc),
+            CompletedAtOffset = new DateTimeOffset(2026, 5, 15, 12, 0, 0, TimeSpan.Zero),
             PullRequestUrl = "https://github.com/owner/repo/pull/42",
             PullRequestNumber = "42",
             IsDraftPr = false,

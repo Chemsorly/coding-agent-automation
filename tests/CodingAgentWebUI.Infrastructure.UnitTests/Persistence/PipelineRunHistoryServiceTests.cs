@@ -301,6 +301,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
         Directory.CreateDirectory(_tempDir);
 
         // Write runs with different timestamps
+        // TODO: Add a test case with StartedAtOffset = default to exercise the backward-compat fallback in LoadHistoryAsync
         var oldRun = new PipelineRunSummary
         {
             RunId = "old-run",
@@ -308,6 +309,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
             IssueTitle = "Old",
             FinalStep = PipelineStep.Completed,
             StartedAt = new DateTime(2024, 1, 1, 10, 0, 0, DateTimeKind.Utc),
+            StartedAtOffset = new DateTimeOffset(2024, 1, 1, 10, 0, 0, TimeSpan.Zero),
             CompletedAt = new DateTime(2024, 1, 1, 10, 30, 0, DateTimeKind.Utc)
         };
         var middleRun = new PipelineRunSummary
@@ -317,6 +319,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
             IssueTitle = "Middle",
             FinalStep = PipelineStep.Failed,
             StartedAt = new DateTime(2024, 6, 15, 12, 0, 0, DateTimeKind.Utc),
+            StartedAtOffset = new DateTimeOffset(2024, 6, 15, 12, 0, 0, TimeSpan.Zero),
             CompletedAt = new DateTime(2024, 6, 15, 12, 45, 0, DateTimeKind.Utc)
         };
         var newestRun = new PipelineRunSummary
@@ -326,6 +329,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
             IssueTitle = "Newest",
             FinalStep = PipelineStep.Completed,
             StartedAt = new DateTime(2025, 3, 20, 8, 0, 0, DateTimeKind.Utc),
+            StartedAtOffset = new DateTimeOffset(2025, 3, 20, 8, 0, 0, TimeSpan.Zero),
             CompletedAt = new DateTime(2025, 3, 20, 9, 0, 0, DateTimeKind.Utc)
         };
 

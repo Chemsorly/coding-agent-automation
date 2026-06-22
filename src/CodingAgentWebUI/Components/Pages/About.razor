@@ -138,8 +138,8 @@
         _cancelledCount = history.Count(r => r.FinalStep == PipelineStep.Cancelled);
 
         var durations = history
-            .Where(r => r.CompletedAt.HasValue)
-            .Select(r => r.CompletedAt!.Value - r.StartedAt)
+            .Where(r => r.CompletedAtOffset.HasValue)
+            .Select(r => r.CompletedAtOffset!.Value - r.StartedAtOffset)
             .ToList();
         var avg = durations.Count > 0
             ? TimeSpan.FromSeconds(durations.Average(d => d.TotalSeconds))
@@ -150,8 +150,9 @@
                 : avg.Value.ToString(@"hh\:mm\:ss"))
             : "—";
 
+        // TODO: Add fallback for legacy records where StartedAtOffset may be default(DateTimeOffset)
         _lastRun = history.Count > 0
-            ? history[0].StartedAt.ToLocalTime().ToString("g")
+            ? history[0].StartedAtOffset.ToLocalTime().ToString("g")
             : "—";
     }
 }
