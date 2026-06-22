@@ -196,7 +196,7 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         mockHistoryService.Setup(h => h.AddRunToHistory(It.IsAny<PipelineRun>()));
         mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>()));
 
-        var service = new PipelineOrchestrationService(
+        var pipelineRunner = new TestPipelineRunner(
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
@@ -204,18 +204,17 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
             new QualityGateExecutor(mockQgValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
-            historyService: mockHistoryService.Object,
-            runService: _mockRunService.Object);
+            historyService: mockHistoryService.Object);
 
         // Run pipeline to completion — this sets up ActiveIssueProvider
-        var run = await service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await pipelineRunner.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
         run.CurrentStep.Should().Be(PipelineStep.Completed);
 
         // Reset mock to track only the direct call
         _mockIssueProvider.Invocations.Clear();
 
         // Act: call RemoveAllAgentLabelsAsync directly
-        await service.RemoveAllAgentLabelsAsync(run, "42", CancellationToken.None);
+        await _service.RemoveAllAgentLabelsAsync(run, "42", CancellationToken.None);
 
         // Assert: RemoveLabelAsync was called for each label in AgentLabels.All
         foreach (var label in AgentLabels.All)
@@ -286,7 +285,7 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         mockHistoryService.Setup(h => h.AddRunToHistory(It.IsAny<PipelineRun>()));
         mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>()));
 
-        var service = new PipelineOrchestrationService(
+        var pipelineRunner = new TestPipelineRunner(
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
@@ -294,14 +293,13 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
             new QualityGateExecutor(mockQgValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
             _mockLogger.Object,
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
-            historyService: mockHistoryService.Object,
-            runService: _mockRunService.Object);
+            historyService: mockHistoryService.Object);
 
         // Run pipeline — it will fail during label swap but that's handled gracefully
-        var run = await service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await pipelineRunner.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Act: call RemoveAllAgentLabelsAsync directly — should not throw
-        var act = () => service.RemoveAllAgentLabelsAsync(run, "99", CancellationToken.None);
+        var act = () => _service.RemoveAllAgentLabelsAsync(run, "99", CancellationToken.None);
         await act.Should().NotThrowAsync();
     }
 

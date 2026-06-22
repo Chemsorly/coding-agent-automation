@@ -30,7 +30,7 @@ public class PreparingForPullRequestPropertyTests
                 transitionLog.Add(service.ActiveRun.CurrentStep);
         };
 
-        var run = await service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         transitionLog.Should().Contain(PipelineStep.PreparingForPullRequest);
         transitionLog.Should().ContainInOrder(
@@ -56,7 +56,7 @@ public class PreparingForPullRequestPropertyTests
                 transitionLog.Add(service.ActiveRun.CurrentStep);
         };
 
-        var run = await service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         transitionLog.Should().Contain(PipelineStep.PreparingForPullRequest);
@@ -82,7 +82,7 @@ public class PreparingForPullRequestPropertyTests
                 transitionLog.Add(service.ActiveRun.CurrentStep);
         };
 
-        var run = await service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.RetryCount.Should().Be(1);
@@ -105,7 +105,7 @@ public class PreparingForPullRequestPropertyTests
             gateResults: [false, true, false, true],
             maxRetries: 2);
 
-        var run = await service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.RetryCount.Should().Be(2);
@@ -123,7 +123,7 @@ public class PreparingForPullRequestPropertyTests
             gateResults: [true, false, false],
             maxRetries: 1);
 
-        var run = await service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.RetryCount.Should().Be(1);
@@ -141,7 +141,7 @@ public class PreparingForPullRequestPropertyTests
             gateResults: [false, false, true, false],
             maxRetries: 2);
 
-        var run = await service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.RetryCount.Should().Be(2);
@@ -171,7 +171,7 @@ public class PreparingForPullRequestPropertyTests
 
         var service = CreateServiceWithGateSequence(gateResults.ToArray(), maxRetries);
 
-        var run = service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
+        var run = service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
             .GetAwaiter().GetResult();
 
         // Core property: total retries never exceed MaxRetries
@@ -187,7 +187,7 @@ public class PreparingForPullRequestPropertyTests
     // --- Factory methods ---
 
     // TODO: Rename 'externalCiEnabled' parameter — it now controls pipeline provider mock registration, not a config toggle (issue #326 refactor)
-    private static PipelineOrchestrationService CreateService(
+    private static TestPipelineRunner CreateService(
         bool allGatesPass, bool externalCiEnabled = false, bool cleanupProducesChanges = true)
     {
         var (configStore, factory, _, repoProvider, _, logger) = CreateBaseMocks();
@@ -269,7 +269,7 @@ public class PreparingForPullRequestPropertyTests
                 });
         }
 
-        return new PipelineOrchestrationService(
+        return new TestPipelineRunner(
             configStore.Object,
             factory.Object,
             new IssueDescriptionParser(),
@@ -280,7 +280,7 @@ public class PreparingForPullRequestPropertyTests
             historyService: new Mock<IPipelineRunHistoryService>().Object);
     }
 
-    private static PipelineOrchestrationService CreateServiceWithGateSequence(bool[] gateResults, int maxRetries)
+    private static TestPipelineRunner CreateServiceWithGateSequence(bool[] gateResults, int maxRetries)
     {
         var (configStore, factory, _, _, _, logger) = CreateBaseMocks();
 
@@ -305,7 +305,7 @@ public class PreparingForPullRequestPropertyTests
                 };
             });
 
-        return new PipelineOrchestrationService(
+        return new TestPipelineRunner(
             configStore.Object,
             factory.Object,
             new IssueDescriptionParser(),

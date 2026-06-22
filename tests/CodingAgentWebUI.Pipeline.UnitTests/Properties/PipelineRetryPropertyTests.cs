@@ -5,6 +5,7 @@ using Moq;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.TestUtilities;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
@@ -35,7 +36,7 @@ public class PipelineRetryPropertyTests
         var service = CreateServiceWithFailingQualityGates(maxRetries, errorMessages);
 
         // Start the pipeline — runs end-to-end including auto-retry loop
-        var run = service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
+        var run = service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None)
             .GetAwaiter().GetResult();
 
         // After max retries exhausted: draft PR created, run marked Failed
@@ -55,7 +56,7 @@ public class PipelineRetryPropertyTests
         service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Failed);
     }
 
-    private static PipelineOrchestrationService CreateServiceWithFailingQualityGates(
+    private static TestPipelineRunner CreateServiceWithFailingQualityGates(
         int maxRetries, List<string> errorMessages)
     {
         var mockConfigStore = new Mock<IConfigurationStore>();
@@ -172,7 +173,7 @@ public class PipelineRetryPropertyTests
         mockHistoryService.Setup(h => h.AddRunToHistory(It.IsAny<PipelineRun>()))
             .Callback<PipelineRun>(run => runHistory.Add(run.ToSummary()));
 
-        return new PipelineOrchestrationService(
+        return new TestPipelineRunner(
             mockConfigStore.Object,
             mockFactory.Object,
             new IssueDescriptionParser(),

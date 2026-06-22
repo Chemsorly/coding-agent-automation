@@ -7,6 +7,7 @@ using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.TestUtilities;
 
 namespace CodingAgentWebUI.IntegrationTests.Helpers;
 
@@ -107,9 +108,9 @@ public class IntegrationTestBase : IDisposable
 
     /// <summary>
     /// Saves default pipeline config and provider configs to the real JsonConfigurationStore,
-    /// then creates a PipelineOrchestrationService wired to the real store.
+    /// then creates a TestPipelineRunner wired to the real store.
     /// </summary>
-    protected async Task<PipelineOrchestrationService> CreateServiceWithPersistedConfigAsync(
+    protected async Task<TestPipelineRunner> CreateServiceWithPersistedConfigAsync(
         PipelineConfiguration? config = null)
     {
         var pipelineConfig = config ?? new PipelineConfiguration { WorkspaceBaseDirectory = WorkspaceBase };
@@ -117,7 +118,7 @@ public class IntegrationTestBase : IDisposable
 
         await SaveProviderConfigsAsync();
 
-        return new PipelineOrchestrationService(
+        return new TestPipelineRunner(
             ConfigStore,
             MockFactory.Object,
             new IssueDescriptionParser(),

@@ -18,7 +18,7 @@ public class PipelineRunHighWaterMarkTests
     private readonly Mock<IRepositoryProvider> _mockRepoProvider;
     private readonly Mock<IAgentProvider> _mockAgentProvider;
     private readonly Mock<IQualityGateValidator> _mockValidator;
-    private readonly PipelineOrchestrationService _service;
+    private readonly TestPipelineRunner _service;
 
     public PipelineRunHighWaterMarkTests()
     {
@@ -32,7 +32,7 @@ public class PipelineRunHighWaterMarkTests
 
         SetupDefaultMocks();
 
-        _service = new PipelineOrchestrationService(
+        _service = new TestPipelineRunner(
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
@@ -68,7 +68,7 @@ public class PipelineRunHighWaterMarkTests
                 highWaterMarks.Add(_service.ActiveRun.HighWaterMark);
         };
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // HighWaterMark should have advanced monotonically
         for (var i = 1; i < highWaterMarks.Count; i++)
@@ -99,7 +99,7 @@ public class PipelineRunHighWaterMarkTests
                 hwmLog.Add((_service.ActiveRun.CurrentStep, _service.ActiveRun.HighWaterMark));
         };
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // After reaching RunningQualityGates, the HWM should never drop below it
         var reachedQg = false;
@@ -120,7 +120,7 @@ public class PipelineRunHighWaterMarkTests
         _mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Clone failed"));
 
-        var run = await _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.HighWaterMark.Should().NotBe(PipelineStep.Failed);
@@ -139,7 +139,7 @@ public class PipelineRunHighWaterMarkTests
                 return agentTcs.Task;
             });
 
-        var runTask = _service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
+        var runTask = _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         // Wait for the pipeline to reach the agent step
         var deadline = DateTime.UtcNow.AddSeconds(5);
