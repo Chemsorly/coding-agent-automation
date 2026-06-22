@@ -113,5 +113,3 @@ public sealed record CommitConfiguration
 {
     public IReadOnlyList<string> BlacklistedPaths { get; init; } = new[] { ".agent", ".brain" };
 }
-
-
