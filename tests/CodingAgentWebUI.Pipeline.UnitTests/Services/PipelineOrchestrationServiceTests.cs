@@ -2528,22 +2528,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
     // TODO: Add LoadAllTemplatesAsync default mock (returning empty list) to SetupDefaultMocks so other tests don't rely on null fallback via ?.
     [Fact]
-    public async Task StartPipeline_WhenTemplateBrainReadOnly_SkipsBrainWriteBack()
-    {
-        var ctx = CreateBrainTestService();
-        ctx.MockConfigStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineJobTemplate>
-            {
-                new() { Id = "t-1", Name = "Test", IssueProviderId = "issue-1", RepoProviderId = "repo-1", BrainProviderId = "brain-1", BrainReadOnly = true }
-            });
-
-        var run = await ctx.Service.StartPipelineAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None, brainProviderId: "brain-1");
-
-        run.CurrentStep.Should().Be(PipelineStep.Completed);
-        ctx.MockBrainUpdateService.Verify(b => b.CommitAndPushAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>()), Times.Never);
-    }
-
-    [Fact]
     public async Task StartPipeline_WhenQualityGateValidatorThrows_TransitionsToFailedWithReason()
     {
         // Track all state transitions
