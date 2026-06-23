@@ -25,6 +25,7 @@ public partial class AgentCoding : IDisposable
     [Inject] private IJobDispatcher JobDispatcher { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
     [Inject] private IJSRuntime JS { get; set; } = default!;
+    [Inject] private NotificationService NotificationService { get; set; } = default!;
     [CascadingParameter] private MainLayout? Layout { get; set; }
 
     private readonly object _outputLock = new();
@@ -129,31 +130,33 @@ public partial class AgentCoding : IDisposable
     private void CancelDelete() => _showDeleteConfirm = false;
     private void ConfirmRemoveTemplate(PipelineJobTemplate template) { _deletingTemplate = template; _showDeleteConfirm = true; }
 
+    // TODO: Original code only added to _recentlyToggled when LoopService.IsLoopActive — behavior change may have unintended side effects
+    // TODO: error! uses null-forgiving operator — may pass null to NotificationService.Add if service returns success=false without error message
     private async Task ToggleTemplateEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleTemplateEnabledAsync(args.template, args.enabled);
-        if (!success) { _errorMessage = error; return; }
-        if (LoopService.IsLoopActive) { _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id); }
+        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
     private async Task ToggleImplementationEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleImplementationEnabledAsync(args.template, args.enabled);
-        if (!success) { _errorMessage = error; return; }
+        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
     private async Task ToggleReviewEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleReviewEnabledAsync(args.template, args.enabled);
-        if (!success) { _errorMessage = error; return; }
+        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
     private async Task ToggleDecompositionEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleDecompositionEnabledAsync(args.template, args.enabled);
-        if (!success) { _errorMessage = error; return; }
+        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
     }
 
@@ -164,19 +167,23 @@ public partial class AgentCoding : IDisposable
         if (!valid) { _formError = formError; return; }
 
         var (success, error, successMessage) = await PageService.AddTemplateAsync(_addForm);
-        if (!success) { _errorMessage = error; return; }
+        // TODO: error!/successMessage! use null-forgiving operator — may pass null to NotificationService.Add
+        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
         _showAddForm = false;
         _successMessage = successMessage;
+        NotificationService.Add(successMessage!, NotificationSeverity.Success);
         _ = ClearSuccessAfterDelay();
     }
 
+    // TODO: error!/successMessage! use null-forgiving operator — may pass null to NotificationService.Add
     private async Task RemoveTemplate()
     {
         if (_deletingTemplate == null) return;
         var (success, error, successMessage) = await PageService.RemoveTemplateAsync(_deletingTemplate);
-        if (!success) { _errorMessage = error; return; }
+        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
         _showDeleteConfirm = false;
         _successMessage = successMessage;
+        NotificationService.Add(successMessage!, NotificationSeverity.Success);
         _deletingTemplate = null;
         _ = ClearSuccessAfterDelay();
     }

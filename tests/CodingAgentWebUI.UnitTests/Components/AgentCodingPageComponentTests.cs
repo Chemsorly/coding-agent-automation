@@ -78,6 +78,7 @@ public class AgentCodingPageComponentTests : BunitContext
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
 
         Services.AddScoped<AgentCodingPageService>();
+        Services.AddScoped<NotificationService>();
     }
 
     private void SetupDefaults()

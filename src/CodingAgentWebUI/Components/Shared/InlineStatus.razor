@@ -1,0 +1,56 @@
+@implements IDisposable
+
+@if (!string.IsNullOrEmpty(Message))
+{
+    <div class="inline-status @(IsError ? "inline-status-error" : "inline-status-success")">
+        <span>@Message</span>
+        @if (IsError)
+        {
+            <button class="inline-status-dismiss" @onclick="Dismiss" title="Dismiss">✕</button>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public bool IsError { get; set; }
+    [Parameter] public EventCallback OnDismissed { get; set; }
+
+    private CancellationTokenSource? _autoClearCts;
+    private string? _lastMessage;
+
+    protected override void OnParametersSet()
+    {
+        if (Message != _lastMessage)
+        {
+            _lastMessage = Message;
+            _autoClearCts?.Cancel();
+            _autoClearCts?.Dispose();
+            _autoClearCts = null;
+
+            if (!string.IsNullOrEmpty(Message) && !IsError)
+            {
+                _autoClearCts = new CancellationTokenSource();
+                _ = AutoClearAsync(_autoClearCts.Token);
+            }
+        }
+    }
+
+    private async Task AutoClearAsync(CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(4000, token);
+            await OnDismissed.InvokeAsync();
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task Dismiss() => await OnDismissed.InvokeAsync();
+
+    public void Dispose()
+    {
+        _autoClearCts?.Cancel();
+        _autoClearCts?.Dispose();
+    }
+}

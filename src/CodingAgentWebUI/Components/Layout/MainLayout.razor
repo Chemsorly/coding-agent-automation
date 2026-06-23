@@ -6,6 +6,7 @@
 @using Microsoft.JSInterop
 @inject PipelineLoopService LoopService
 @inject ConsolidationBadgeService BadgeService
+@inject NotificationService NotificationService
 @inject IJSRuntime JS
 
 <div class="app-layout">
@@ -43,12 +44,21 @@
             <span class="sidebar-icon">ℹ️</span>
             <span>About</span>
         </NavLink>
+        <button class="sidebar-link sidebar-notification-btn" @onclick="ToggleNotificationPanel">
+            <span class="sidebar-icon">🔔</span>
+            <span>Notifications</span>
+            @if (NotificationService.UnreadCount > 0)
+            {
+                <span class="sidebar-badge">@NotificationService.UnreadCount</span>
+            }
+        </button>
     </nav>
     <main class="main-content">
         <CascadingValue Value="this" IsFixed="true">
             @Body
         </CascadingValue>
     </main>
+    <NotificationPanel IsOpen="_notificationPanelOpen" OnClose="CloseNotificationPanel" />
 </div>
 
 <ShortcutHelpOverlay IsVisible="_showShortcutHelp" OnClose="() => { _showShortcutHelp = false; StateHasChanged(); }" />
@@ -56,6 +66,7 @@
 @code {
     private DotNetObjectReference<MainLayout>? _dotNetRef;
     private bool _showShortcutHelp;
+    private bool _notificationPanelOpen;
 
     /// <summary>Event fired when Escape is pressed globally via the keyboard shortcut handler.</summary>
     public event Action? OnEscapePressed;
@@ -64,6 +75,7 @@
     {
         LoopService.OnChange += HandleLoopChanged;
         BadgeService.OnBadgeChanged += HandleBadgeChanged;
+        NotificationService.OnChange += HandleNotificationChanged;
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -106,10 +118,29 @@
         catch (ObjectDisposedException) { }
     }
 
+    private async void HandleNotificationChanged()
+    {
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void ToggleNotificationPanel()
+    {
+        _notificationPanelOpen = !_notificationPanelOpen;
+        if (_notificationPanelOpen)
+            NotificationService.MarkAllRead();
+    }
+
+    private void CloseNotificationPanel()
+    {
+        _notificationPanelOpen = false;
+    }
+
     public async ValueTask DisposeAsync()
     {
         LoopService.OnChange -= HandleLoopChanged;
         BadgeService.OnBadgeChanged -= HandleBadgeChanged;
+        NotificationService.OnChange -= HandleNotificationChanged;
         try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }
         catch (JSDisconnectedException) { }
         catch (InvalidOperationException) { }

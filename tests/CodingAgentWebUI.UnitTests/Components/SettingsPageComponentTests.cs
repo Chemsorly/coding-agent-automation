@@ -36,6 +36,7 @@ public class SettingsPageComponentTests : BunitContext
             new AgentRegistryService(Serilog.Log.Logger),
             new Mock<IAgentCommunication>().Object,
             Serilog.Log.Logger));
+        Services.AddScoped<NotificationService>();
     }
 
     private void SetupDefaults()
