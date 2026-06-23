@@ -1,109 +1,111 @@
 @inherits LayoutComponentBase
-@implements IAsyncDisposable
+@implements IDisposable
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Services
-@using CodingAgentWebUI.Components.Shared
-@using Microsoft.JSInterop
 @inject PipelineLoopService LoopService
 @inject ConsolidationBadgeService BadgeService
-@inject NotificationService NotificationService
 @inject IJSRuntime JS
 
 <div class="app-layout">
-    <nav class="sidebar" role="navigation" aria-label="Main navigation">
-        <div class="sidebar-brand">Coding Agent</div>
+    @if (_overlayOpen)
+    {
+        <div class="sidebar-overlay-backdrop" @onclick="CloseOverlay"></div>
+    }
+    <button class="hamburger-toggle" @onclick="ToggleOverlay" aria-label="Toggle navigation">☰</button>
+    <nav class="sidebar @SidebarCssClass" role="navigation" aria-label="Main navigation">
+        <div class="sidebar-brand">
+            <span class="sidebar-icon">🤖</span>
+            <span class="sidebar-label">Coding Agent</span>
+        </div>
         <NavLink href="/agent-chat" class="sidebar-link">
-            <span class="sidebar-icon"><Icon Name="message-circle" /></span>
-            <span>Agent Chat</span>
+            <span class="sidebar-icon">💬</span>
+            <span class="sidebar-label">Agent Chat</span>
         </NavLink>
         <NavLink href="/agent-coding" class="sidebar-link">
-            <span class="sidebar-icon"><Icon Name="bot" /></span>
-            <span>Agent Coding</span>
+            <span class="sidebar-icon">🤖</span>
+            <span class="sidebar-label">Agent Coding</span>
             @if (LoopService.IsLoopActive)
             {
                 <span class="sidebar-loop-indicator" title="Pipeline loop is active">🔄</span>
             }
         </NavLink>
         <NavLink href="/agent-monitoring" class="sidebar-link">
-            <span class="sidebar-icon"><Icon Name="bar-chart-2" /></span>
-            <span>Agent Monitoring</span>
+            <span class="sidebar-icon">📊</span>
+            <span class="sidebar-label">Agent Monitoring</span>
         </NavLink>
         <NavLink href="/consolidation" class="sidebar-link">
-            <span class="sidebar-icon"><Icon Name="refresh-cw" /></span>
-            <span>Consolidation</span>
+            <span class="sidebar-icon">🔄</span>
+            <span class="sidebar-label">Consolidation</span>
             @if (BadgeService.BadgeCount > 0)
             {
                 <span class="sidebar-badge">@BadgeService.BadgeCount</span>
             }
         </NavLink>
         <NavLink href="/settings" class="sidebar-link">
-            <span class="sidebar-icon"><Icon Name="settings" /></span>
-            <span>Settings</span>
+            <span class="sidebar-icon">⚙️</span>
+            <span class="sidebar-label">Settings</span>
         </NavLink>
         <NavLink href="/about" class="sidebar-link">
-            <span class="sidebar-icon"><Icon Name="info" /></span>
-            <span>About</span>
+            <span class="sidebar-icon">ℹ️</span>
+            <span class="sidebar-label">About</span>
         </NavLink>
-        <button class="sidebar-link sidebar-notification-btn" @onclick="ToggleNotificationPanel">
-            <span class="sidebar-icon">🔔</span>
-            <span>Notifications</span>
-            @if (NotificationService.UnreadCount > 0)
-            {
-                <span class="sidebar-badge">@NotificationService.UnreadCount</span>
-            }
+        <button class="sidebar-toggle" @onclick="ToggleCollapse"
+                aria-expanded="@(_collapsed ? "false" : "true")" aria-label="@(_collapsed ? "Expand sidebar" : "Collapse sidebar")">
+            @(_collapsed ? "»" : "«")
         </button>
     </nav>
     <main class="main-content">
-        <CascadingValue Value="this" IsFixed="true">
-            @Body
-        </CascadingValue>
+        @Body
     </main>
-    <NotificationPanel IsOpen="_notificationPanelOpen" OnClose="CloseNotificationPanel" />
 </div>
 
-<ShortcutHelpOverlay IsVisible="_showShortcutHelp" OnClose="() => { _showShortcutHelp = false; StateHasChanged(); }" />
-
 @code {
-    private DotNetObjectReference<MainLayout>? _dotNetRef;
-    private bool _showShortcutHelp;
-    private bool _notificationPanelOpen;
+    private bool _collapsed;
+    private bool _overlayOpen;
+    private bool _jsReady;
 
-    /// <summary>Event fired when Escape is pressed globally via the keyboard shortcut handler.</summary>
-    public event Action? OnEscapePressed;
+    private string SidebarCssClass =>
+        (_collapsed ? "collapsed " : "") + (_overlayOpen ? "overlay-open" : "");
 
     protected override void OnInitialized()
     {
         LoopService.OnChange += HandleLoopChanged;
         BadgeService.OnBadgeChanged += HandleBadgeChanged;
-        NotificationService.OnChange += HandleNotificationChanged;
     }
 
+    // TODO: Wrap JS interop calls in try-catch for JSDisconnectedException/ObjectDisposedException
+    // to handle circuit disconnection during first render or mid-toggle (see HandleLoopChanged pattern)
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
-            _dotNetRef = DotNetObjectReference.Create(this);
-            await JS.InvokeVoidAsync("registerGlobalKeyboardHandler", _dotNetRef);
+            _jsReady = true;
+            var stored = await JS.InvokeAsync<string?>("getSidebarCollapsed");
+            if (stored == "true")
+            {
+                _collapsed = true;
+                StateHasChanged();
+            }
         }
     }
 
-    [JSInvokable]
-    public async Task HandleGlobalKey(string key)
+    private async Task ToggleCollapse()
     {
-        switch (key)
+        _collapsed = !_collapsed;
+        if (_jsReady)
         {
-            case "Escape":
-                if (_showShortcutHelp)
-                    _showShortcutHelp = false;
-                else
-                    OnEscapePressed?.Invoke();
-                break;
-            case "?":
-                _showShortcutHelp = !_showShortcutHelp;
-                break;
+            await JS.InvokeVoidAsync("setSidebarCollapsed", _collapsed ? "true" : "false");
         }
-        try { await InvokeAsync(StateHasChanged); }
-        catch (ObjectDisposedException) { }
+    }
+
+    private void ToggleOverlay()
+    {
+        _overlayOpen = !_overlayOpen;
+    }
+
+    private void CloseOverlay()
+    {
+        _overlayOpen = false;
     }
 
     private async void HandleLoopChanged()
@@ -118,32 +120,9 @@
         catch (ObjectDisposedException) { }
     }
 
-    private async void HandleNotificationChanged()
-    {
-        try { await InvokeAsync(StateHasChanged); }
-        catch (ObjectDisposedException) { }
-    }
-
-    private void ToggleNotificationPanel()
-    {
-        _notificationPanelOpen = !_notificationPanelOpen;
-        if (_notificationPanelOpen)
-            NotificationService.MarkAllRead();
-    }
-
-    private void CloseNotificationPanel()
-    {
-        _notificationPanelOpen = false;
-    }
-
-    public async ValueTask DisposeAsync()
+    public void Dispose()
     {
         LoopService.OnChange -= HandleLoopChanged;
         BadgeService.OnBadgeChanged -= HandleBadgeChanged;
-        NotificationService.OnChange -= HandleNotificationChanged;
-        try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }
-        catch (JSDisconnectedException) { }
-        catch (InvalidOperationException) { }
-        _dotNetRef?.Dispose();
     }
 }

@@ -27,24 +27,11 @@
                 active.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
         };
-        window.registerGlobalKeyboardHandler = function (dotNetRef) {
-            window.__globalKeyHandler = function (e) {
-                var tag = document.activeElement ? document.activeElement.tagName : '';
-                var isInput = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
-                if (e.key === 'Escape') {
-                    dotNetRef.invokeMethodAsync('HandleGlobalKey', 'Escape');
-                } else if (e.key === '?' && !isInput && !e.ctrlKey && !e.metaKey) {
-                    e.preventDefault();
-                    dotNetRef.invokeMethodAsync('HandleGlobalKey', '?');
-                }
-            };
-            document.addEventListener('keydown', window.__globalKeyHandler);
+        window.getSidebarCollapsed = function () {
+            return localStorage.getItem('sidebar-collapsed');
         };
-        window.unregisterGlobalKeyboardHandler = function () {
-            if (window.__globalKeyHandler) {
-                document.removeEventListener('keydown', window.__globalKeyHandler);
-                window.__globalKeyHandler = null;
-            }
+        window.setSidebarCollapsed = function (value) {
+            localStorage.setItem('sidebar-collapsed', value);
         };
         window.localStorageGet = function (key) {
             return localStorage.getItem(key);
