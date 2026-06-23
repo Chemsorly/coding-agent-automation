@@ -1,7 +1,9 @@
 @inherits LayoutComponentBase
-@implements IDisposable
+@implements IAsyncDisposable
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Services
+@using CodingAgentWebUI.Components.Shared
+@using Microsoft.JSInterop
 @inject PipelineLoopService LoopService
 @inject ConsolidationBadgeService BadgeService
 @inject IJSRuntime JS
@@ -55,14 +57,22 @@
         </button>
     </nav>
     <main class="main-content">
-        @Body
+        <CascadingValue Value="this" IsFixed="true">
+            @Body
+        </CascadingValue>
     </main>
 </div>
 
+<ShortcutHelpOverlay IsVisible="_showShortcutHelp" OnClose="() => { _showShortcutHelp = false; StateHasChanged(); }" />
+
 @code {
+    private DotNetObjectReference<MainLayout>? _dotNetRef;
+    private bool _showShortcutHelp;
     private bool _collapsed;
     private bool _overlayOpen;
     private bool _jsReady;
+
+    public event Action? OnEscapePressed;
 
     private string SidebarCssClass =>
         (_collapsed ? "collapsed " : "") + (_overlayOpen ? "overlay-open" : "");
@@ -73,20 +83,44 @@
         BadgeService.OnBadgeChanged += HandleBadgeChanged;
     }
 
-    // TODO: Wrap JS interop calls in try-catch for JSDisconnectedException/ObjectDisposedException
-    // to handle circuit disconnection during first render or mid-toggle (see HandleLoopChanged pattern)
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (firstRender)
         {
             _jsReady = true;
-            var stored = await JS.InvokeAsync<string?>("getSidebarCollapsed");
-            if (stored == "true")
+            try
             {
-                _collapsed = true;
-                StateHasChanged();
+                _dotNetRef = DotNetObjectReference.Create(this);
+                await JS.InvokeVoidAsync("registerGlobalKeyboardHandler", _dotNetRef);
+                var stored = await JS.InvokeAsync<string?>("getSidebarCollapsed");
+                if (stored == "true")
+                {
+                    _collapsed = true;
+                    StateHasChanged();
+                }
             }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) { }
         }
+    }
+
+    [JSInvokable]
+    public async Task HandleGlobalKey(string key)
+    {
+        switch (key)
+        {
+            case "Escape":
+                if (_showShortcutHelp)
+                    _showShortcutHelp = false;
+                else
+                    OnEscapePressed?.Invoke();
+                break;
+            case "?":
+                _showShortcutHelp = !_showShortcutHelp;
+                break;
+        }
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { }
     }
 
     private async Task ToggleCollapse()
@@ -94,7 +128,9 @@
         _collapsed = !_collapsed;
         if (_jsReady)
         {
-            await JS.InvokeVoidAsync("setSidebarCollapsed", _collapsed ? "true" : "false");
+            try { await JS.InvokeVoidAsync("setSidebarCollapsed", _collapsed ? "true" : "false"); }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) { }
         }
     }
 
@@ -120,9 +156,13 @@
         catch (ObjectDisposedException) { }
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         LoopService.OnChange -= HandleLoopChanged;
         BadgeService.OnBadgeChanged -= HandleBadgeChanged;
+        try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }
+        catch (JSDisconnectedException) { }
+        catch (InvalidOperationException) { }
+        _dotNetRef?.Dispose();
     }
 }

@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
+using Microsoft.JSInterop.Infrastructure;
 using Moq;
 using Serilog;
 
@@ -13,6 +14,8 @@ namespace CodingAgentWebUI.UnitTests.Components;
 
 public class MainLayoutComponentTests : BunitContext
 {
+    private readonly Mock<IJSRuntime> _jsMock = new();
+
     public MainLayoutComponentTests()
     {
         var mockLogger = new Mock<ILogger>();
@@ -35,12 +38,9 @@ public class MainLayoutComponentTests : BunitContext
 
         Services.AddSingleton(new PipelineLoopService(pipelineService, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object));
         Services.AddSingleton(new ConsolidationBadgeService());
-        Services.AddSingleton(new Mock<IJSRuntime>().Object);
+        Services.AddSingleton(_jsMock.Object);
     }
 
-    // TODO: Add test that configures IJSRuntime mock to return "true" from getSidebarCollapsed
-    // and verifies sidebar renders with "collapsed" class on init (persistence across refreshes)
-    // TODO: Add test that verifies setSidebarCollapsed is called on the IJSRuntime mock when toggling
     [Fact]
     public void Sidebar_RendersToggleButton()
     {
@@ -109,6 +109,31 @@ public class MainLayoutComponentTests : BunitContext
     {
         var cut = Render<MainLayout>();
         var labels = cut.FindAll(".sidebar-label");
-        Assert.True(labels.Count >= 7); // brand + 6 nav links
+        Assert.Equal(7, labels.Count); // brand + 6 nav links
+    }
+
+    [Fact]
+    public void Sidebar_LoadsCollapsedStateFromLocalStorage()
+    {
+        _jsMock.Setup(js => js.InvokeAsync<string?>("getSidebarCollapsed", It.IsAny<object[]>()))
+            .ReturnsAsync("true");
+
+        var cut = Render<MainLayout>();
+
+        var nav = cut.Find("nav.sidebar");
+        Assert.Contains("collapsed", nav.ClassList);
+    }
+
+    [Fact]
+    public void Sidebar_ToggleCollapse_PersistsToLocalStorage()
+    {
+        _jsMock.Setup(js => js.InvokeAsync<string?>("getSidebarCollapsed", It.IsAny<object[]>()))
+            .ReturnsAsync((string?)null);
+
+        var cut = Render<MainLayout>();
+        cut.Find(".sidebar-toggle").Click();
+
+        _jsMock.Verify(js => js.InvokeAsync<IJSVoidResult>("setSidebarCollapsed",
+            It.Is<object[]>(args => args.Length > 0 && (string)args[0] == "true")), Times.Once);
     }
 }
