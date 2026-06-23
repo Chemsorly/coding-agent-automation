@@ -1,9 +1,12 @@
 @inherits LayoutComponentBase
-@implements IDisposable
+@implements IAsyncDisposable
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Services
+@using CodingAgentWebUI.Components.Shared
+@using Microsoft.JSInterop
 @inject PipelineLoopService LoopService
 @inject ConsolidationBadgeService BadgeService
+@inject IJSRuntime JS
 
 <div class="app-layout">
     <nav class="sidebar" role="navigation" aria-label="Main navigation">
@@ -42,15 +45,53 @@
         </NavLink>
     </nav>
     <main class="main-content">
-        @Body
+        <CascadingValue Value="this" IsFixed="true">
+            @Body
+        </CascadingValue>
     </main>
 </div>
 
+<ShortcutHelpOverlay IsVisible="_showShortcutHelp" OnClose="() => { _showShortcutHelp = false; StateHasChanged(); }" />
+
 @code {
+    private DotNetObjectReference<MainLayout>? _dotNetRef;
+    private bool _showShortcutHelp;
+
+    /// <summary>Event fired when Escape is pressed globally via the keyboard shortcut handler.</summary>
+    public event Action? OnEscapePressed;
+
     protected override void OnInitialized()
     {
         LoopService.OnChange += HandleLoopChanged;
         BadgeService.OnBadgeChanged += HandleBadgeChanged;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("registerGlobalKeyboardHandler", _dotNetRef);
+        }
+    }
+
+    [JSInvokable]
+    public async Task HandleGlobalKey(string key)
+    {
+        switch (key)
+        {
+            case "Escape":
+                if (_showShortcutHelp)
+                    _showShortcutHelp = false;
+                else
+                    OnEscapePressed?.Invoke();
+                break;
+            case "?":
+                _showShortcutHelp = !_showShortcutHelp;
+                break;
+        }
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { }
     }
 
     private async void HandleLoopChanged()
@@ -65,9 +106,13 @@
         catch (ObjectDisposedException) { }
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
         LoopService.OnChange -= HandleLoopChanged;
         BadgeService.OnBadgeChanged -= HandleBadgeChanged;
+        try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }
+        catch (JSDisconnectedException) { }
+        catch (InvalidOperationException) { }
+        _dotNetRef?.Dispose();
     }
 }
