@@ -26,6 +26,19 @@
 <div class="agent-monitoring-page">
     <header class="agent-header">
         <h1>Agent Monitoring</h1>
+        @{
+            var isStale = _lastRefreshFailed || (DateTimeOffset.UtcNow - _lastSuccessfulRefresh).TotalSeconds > 30;
+        }
+        <span class="freshness-indicator @(isStale ? "freshness-warning" : "")">
+            @if (isStale)
+            {
+                <text>⚠ Last updated: @FormatTimeAgo(_lastSuccessfulRefresh)@(_lastRefreshFailed ? " (refresh failed)" : " (stale)")</text>
+            }
+            else
+            {
+                <text>Last updated: @FormatTimeAgo(_lastSuccessfulRefresh) · Refreshing every 2s</text>
+            }
+        </span>
     </header>
 
     <!-- Active Runs -->
@@ -722,6 +735,8 @@
     private Timer? _refreshTimer;
     private int _maxRetries = 3;
     private bool _showDisconnectConfirm;
+    private DateTimeOffset _lastSuccessfulRefresh = DateTimeOffset.UtcNow;
+    private bool _lastRefreshFailed;
 
     protected override async Task OnInitializedAsync()
     {
@@ -838,10 +853,18 @@
             {
                 if (_disposed) return;
                 await RefreshDataAsync();
+                _lastSuccessfulRefresh = DateTimeOffset.UtcNow;
+                _lastRefreshFailed = false;
                 StateHasChanged();
             });
         }
         catch (ObjectDisposedException) { }
+        catch
+        {
+            // TODO: This runs outside InvokeAsync (on timer thread), bypassing Blazor's sync context.
+            // TODO: No StateHasChanged() call means UI won't show warning until next successful tick.
+            _lastRefreshFailed = true;
+        }
     }
 
     private async void HandleStateChanged()
@@ -853,10 +876,18 @@
             {
                 if (_disposed) return;
                 await RefreshDataAsync(includeConsolidation: true);
+                _lastSuccessfulRefresh = DateTimeOffset.UtcNow;
+                _lastRefreshFailed = false;
                 StateHasChanged();
             });
         }
         catch (ObjectDisposedException) { }
+        catch
+        {
+            // TODO: This runs outside InvokeAsync (on timer thread), bypassing Blazor's sync context.
+            // TODO: No StateHasChanged() call means UI won't show warning until next successful tick.
+            _lastRefreshFailed = true;
+        }
     }
 
     private void OpenRunDetail(string runId)

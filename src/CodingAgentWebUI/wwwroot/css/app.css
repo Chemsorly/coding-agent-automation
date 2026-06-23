@@ -355,6 +355,8 @@ select option { background: var(--surface); color: var(--text); }
 /* ===== Agent Coding Page ===== */
 .agent-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .agent-header h1 { font-size: 1.25rem; font-weight: 600; }
+.freshness-indicator { font-size: 0.8rem; color: var(--text-muted); }
+.freshness-indicator.freshness-warning { color: var(--warning); font-weight: 500; }
 .agent-content-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 .agent-content-layout.with-sidebar .agent-main { flex: 1; min-width: 0; }
 .agent-main { flex: 1; padding: 20px; overflow-y: auto; }
