@@ -82,6 +82,36 @@
     margin-top: 4px;
 }
 
+.drawer-issue-preview {
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.drawer-issue-blocked {
+    border-color: var(--danger, #ef4444);
+    opacity: 0.7;
+}
+
+.drawer-badge-blocked {
+    background: var(--danger, #ef4444);
+    color: white;
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
+.drawer-badge-ready {
+    background: var(--success, #22c55e);
+    color: white;
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 3px;
+}
+
 /* ═══ Toggle Switch ═══ */
 .toggle-switch {
     position: relative;

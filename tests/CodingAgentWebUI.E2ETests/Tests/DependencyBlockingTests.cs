@@ -54,18 +54,21 @@ public sealed class DependencyBlockingTests : E2ETestBase, IClassFixture<E2EFixt
         await codingPage.NavigateAsync();
         await codingPage.SelectTemplateAsync("Test Template");
         await codingPage.ClickBrowseIssuesAsync();
+
+        // Wait for the readiness check to complete and show the blocked badge
+        var issueRow = Page.Locator("[data-testid='issue-row-60']");
+        await issueRow.Locator(".drawer-badge-blocked").WaitForAsync(new() { Timeout = 10_000 });
+
+        // Assert: blocked badge mentions #100
+        var badgeText = await issueRow.Locator(".drawer-badge-blocked").TextContentAsync();
+        Assert.NotNull(badgeText);
+        Assert.Contains("#100", badgeText);
+
+        // Select the issue and verify dispatch button is disabled
         await codingPage.SelectIssueAsync("60");
-        await codingPage.ClickStartPipelineAsync();
-
-        // Assert: error message mentions #100
-        await Page.WaitForSelectorAsync(".settings-status.status-error", new() { Timeout = 10_000 });
-        var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();
-        Assert.True(errorVisible > 0, "Expected an error message when issue is blocked by open dependency");
-
-        var errorText = await Page.TextContentAsync(".settings-status.status-error");
-        Assert.NotNull(errorText);
-        Assert.Contains("#100", errorText);
-        Assert.Contains("blocked", errorText, StringComparison.OrdinalIgnoreCase);
+        var dispatchBtn = Page.Locator("[data-testid='dispatch-issue-btn']");
+        var isDisabled = await dispatchBtn.IsDisabledAsync();
+        Assert.True(isDisabled, "Dispatch button should be disabled for blocked issues");
     }
 
     [Fact]
@@ -160,17 +163,21 @@ public sealed class DependencyBlockingTests : E2ETestBase, IClassFixture<E2EFixt
         await codingPage.NavigateAsync();
         await codingPage.SelectTemplateAsync("Test Template");
         await codingPage.ClickBrowseIssuesAsync();
+
+        // Wait for the readiness check to complete and show the blocked badge
+        var issueRow = Page.Locator("[data-testid='issue-row-62']");
+        await issueRow.Locator(".drawer-badge-blocked").WaitForAsync(new() { Timeout = 10_000 });
+
+        // Assert: blocked badge mentions #200 but not #100 (which is closed)
+        var badgeText = await issueRow.Locator(".drawer-badge-blocked").TextContentAsync();
+        Assert.NotNull(badgeText);
+        Assert.Contains("#200", badgeText);
+        Assert.DoesNotContain("#100", badgeText);
+
+        // Select the issue and verify dispatch button is disabled
         await codingPage.SelectIssueAsync("62");
-        await codingPage.ClickStartPipelineAsync();
-
-        // Assert: error mentions #200 but not #100
-        await Page.WaitForSelectorAsync(".settings-status.status-error", new() { Timeout = 10_000 });
-        var errorVisible = await Page.Locator(".settings-status.status-error").CountAsync();
-        Assert.True(errorVisible > 0, "Expected an error message when issue is partially blocked");
-
-        var errorText = await Page.TextContentAsync(".settings-status.status-error");
-        Assert.NotNull(errorText);
-        Assert.Contains("#200", errorText);
-        Assert.DoesNotContain("#100", errorText);
+        var dispatchBtn = Page.Locator("[data-testid='dispatch-issue-btn']");
+        var isDisabled = await dispatchBtn.IsDisabledAsync();
+        Assert.True(isDisabled, "Dispatch button should be disabled for partially blocked issues");
     }
 }

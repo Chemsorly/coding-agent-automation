@@ -253,4 +253,117 @@ public class AgentCodingPageServiceTests
 
         _mockConfigStore.Verify(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    [Fact]
+    public async Task CheckDrawerDependenciesAsync_PopulatesReadiness_ForLoadedIssues()
+    {
+        var template = MakeTemplate();
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 25, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "10", Title = "Issue 10", Labels = [], Description = "Blocked by #5" },
+                    new() { Identifier = "11", Title = "Issue 11", Labels = [], Description = "No deps here" }
+                },
+                HasMore = false, Page = 1, PageSize = 25
+            });
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var blockedResult = new DependencyCheckResult { IsReady = false, BlockedBy = [5], TotalDependencies = 1 };
+        var readyResult = DependencyCheckResult.NoDependencies;
+
+        _mockDependencyChecker.Setup(d => d.CheckAsync("10", "Blocked by #5", It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(blockedResult);
+        _mockDependencyChecker.Setup(d => d.CheckAsync("11", "No deps here", It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(readyResult);
+
+        await _service.LoadDrawerIssuesAsync(template, 1);
+        await _service.CheckDrawerDependenciesAsync(template);
+
+        Assert.Equal(2, _service.DrawerReadiness.Count);
+        Assert.False(_service.DrawerReadiness["10"].IsReady);
+        Assert.Equal(new[] { 5 }, _service.DrawerReadiness["10"].BlockedBy);
+        Assert.True(_service.DrawerReadiness["11"].IsReady);
+    }
+
+    [Fact]
+    public async Task CheckDrawerDependenciesAsync_ReturnsGracefully_WhenProviderNotFound()
+    {
+        var template = MakeTemplate() with { IssueProviderId = "missing" };
+
+        await _service.CheckDrawerDependenciesAsync(template);
+
+        Assert.Empty(_service.DrawerReadiness);
+    }
+
+    [Fact]
+    public async Task CheckDrawerDependenciesAsync_InvokesOnProgress_PerIssue()
+    {
+        var template = MakeTemplate();
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 25, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "1", Title = "A", Labels = [] },
+                    new() { Identifier = "2", Title = "B", Labels = [] }
+                },
+                HasMore = false, Page = 1, PageSize = 25
+            });
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        await _service.LoadDrawerIssuesAsync(template, 1);
+
+        int progressCount = 0;
+        await _service.CheckDrawerDependenciesAsync(template, () => progressCount++);
+
+        Assert.Equal(2, progressCount);
+    }
+
+    [Fact]
+    public async Task CheckDrawerDependenciesAsync_PartialResults_OnProviderException()
+    {
+        var template = MakeTemplate();
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 25, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "1", Title = "A", Labels = [] },
+                    new() { Identifier = "2", Title = "B", Labels = [] }
+                },
+                HasMore = false, Page = 1, PageSize = 25
+            });
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var callCount = 0;
+        _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .Returns<string, string?, IIssueProvider, Dictionary<int, bool>, CancellationToken>((id, _, _, _, _) =>
+            {
+                if (++callCount == 2) throw new InvalidOperationException("provider error");
+                return Task.FromResult(DependencyCheckResult.NoDependencies);
+            });
+
+        await _service.LoadDrawerIssuesAsync(template, 1);
+        await _service.CheckDrawerDependenciesAsync(template);
+
+        // First issue result stored, second one failed — partial results preserved
+        Assert.Single(_service.DrawerReadiness);
+        Assert.True(_service.DrawerReadiness["1"].IsReady);
+    }
 }
