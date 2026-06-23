@@ -6,6 +6,60 @@ namespace CodingAgentWebUI.Pipeline.Models;
 
 public sealed class PipelineRun
 {
+    /// <summary>
+    /// Creates a new <see cref="PipelineRun"/> with invariant defaults and all init-only properties.
+    /// Mutable properties (RepositoryName, ModelName, ProjectId, etc.) should be set after construction.
+    /// </summary>
+    public static PipelineRun Create(
+        string runId,
+        string issueIdentifier,
+        string issueTitle,
+        string issueProviderConfigId,
+        string repoProviderConfigId,
+        PipelineRunType runType = PipelineRunType.Implementation,
+        DateTimeOffset? startedAt = null,
+        string initiatedBy = "manual",
+        string? agentId = null,
+        string? agentProviderConfigId = null,
+        string? brainProviderConfigId = null,
+        string? reviewPrBranchName = null,
+        string? reviewPrTargetBranch = null,
+        string? reviewPrUrl = null,
+        string? reviewPrDescription = null,
+        string? reviewPrAuthor = null,
+        IReadOnlyList<LinkedIssueContext>? linkedIssueContexts = null,
+        string? decompositionSource = null)
+    {
+        var now = startedAt ?? DateTimeOffset.UtcNow;
+#pragma warning disable CS0618
+        return new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = issueIdentifier,
+            IssueTitle = issueTitle,
+            IssueProviderConfigId = issueProviderConfigId,
+            RepoProviderConfigId = repoProviderConfigId,
+            StartedAt = now.UtcDateTime,
+            StartedAtOffset = now,
+            // TODO: LastStepChangeAt is intentionally set independently from `now` — when startedAt is provided, these will differ (matches original AgentJobDispatcher behavior).
+            LastStepChangeAt = DateTimeOffset.UtcNow,
+            CurrentStep = PipelineStep.Created,
+            InitiatedBy = initiatedBy,
+            RunType = runType,
+            AgentId = agentId,
+            AgentProviderConfigId = agentProviderConfigId,
+            BrainProviderConfigId = brainProviderConfigId,
+            ReviewPrBranchName = reviewPrBranchName,
+            ReviewPrTargetBranch = reviewPrTargetBranch,
+            ReviewPrUrl = reviewPrUrl,
+            ReviewPrDescription = reviewPrDescription,
+            ReviewPrAuthor = reviewPrAuthor,
+            LinkedIssueContexts = linkedIssueContexts,
+            DecompositionSource = decompositionSource
+        };
+#pragma warning restore CS0618
+    }
+
     public required string RunId { get; init; }
     public required string IssueIdentifier { get; init; }
     // NOTE: Semantically set-once (populated after construction from fetched issue title). Cannot be init-only without restructuring call sites.

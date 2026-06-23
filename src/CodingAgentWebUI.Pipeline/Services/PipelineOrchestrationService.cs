@@ -184,25 +184,19 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, ct);
         var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
 
-        var run = new PipelineRun
-        {
-            RunId = Guid.NewGuid().ToString(),
-            IssueIdentifier = issueIdentifier,
-            IssueTitle = string.Empty,
-            IssueProviderConfigId = issueProviderId,
-            RepoProviderConfigId = repoProviderId,
-            StartedAt = DateTime.UtcNow,
-            StartedAtOffset = DateTimeOffset.UtcNow,
-            LastStepChangeAt = DateTimeOffset.UtcNow,
-            CurrentStep = PipelineStep.Created,
-            RepositoryName = tempRepoProvider.RepositoryFullName,
-            ModelName = configuredModel,
-            BrainProviderConfigId = brainProviderId,
-            PipelineProviderConfigId = pipelineProviderId,
-            InitiatedBy = initiatedBy,
-            AgentId = agentId,
-            AgentProviderConfigId = agentProviderId
-        };
+        var run = PipelineRun.Create(
+            runId: Guid.NewGuid().ToString(),
+            issueIdentifier: issueIdentifier,
+            issueTitle: string.Empty,
+            issueProviderConfigId: issueProviderId,
+            repoProviderConfigId: repoProviderId,
+            initiatedBy: initiatedBy,
+            agentId: agentId,
+            agentProviderConfigId: agentProviderId,
+            brainProviderConfigId: brainProviderId);
+        run.RepositoryName = tempRepoProvider.RepositoryFullName;
+        run.ModelName = configuredModel;
+        run.PipelineProviderConfigId = pipelineProviderId;
 
         // Delegate registration to lifecycle service
         if (!_lifecycle.RegisterDispatchedRun(run))

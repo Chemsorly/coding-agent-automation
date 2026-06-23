@@ -123,23 +123,17 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(
             ProviderSettingKeys.Model, "auto");
 
-        var run = new PipelineRun
-        {
-            RunId = Guid.NewGuid().ToString(),
-            IssueIdentifier = issueIdentifier,
-            IssueTitle = string.Empty,
-            IssueProviderConfigId = issueProviderId,
-            RepoProviderConfigId = repoProviderId,
-            StartedAt = DateTime.UtcNow,
-            StartedAtOffset = DateTimeOffset.UtcNow,
-            LastStepChangeAt = DateTimeOffset.UtcNow,
-            CurrentStep = PipelineStep.Created,
-            RepositoryName = providerManager.ActiveRepoProvider!.RepositoryFullName,
-            ModelName = configuredModel,
-            BrainProviderConfigId = providerManager.ActiveBrainProvider != null ? brainProviderId : null,
-            InitiatedBy = "test",
-            AgentProviderConfigId = agentProviderId
-        };
+        var run = PipelineRun.Create(
+            runId: Guid.NewGuid().ToString(),
+            issueIdentifier: issueIdentifier,
+            issueTitle: string.Empty,
+            issueProviderConfigId: issueProviderId,
+            repoProviderConfigId: repoProviderId,
+            initiatedBy: "test",
+            agentProviderConfigId: agentProviderId,
+            brainProviderConfigId: providerManager.ActiveBrainProvider != null ? brainProviderId : null);
+        run.RepositoryName = providerManager.ActiveRepoProvider!.RepositoryFullName;
+        run.ModelName = configuredModel;
         _lifecycle.ActiveRun = run;
 
         var pipelineConfigId = await providerManager.CreatePipelineProviderAsync(pipelineProviderId, linkedCt);
