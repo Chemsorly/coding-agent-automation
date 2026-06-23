@@ -17,8 +17,7 @@ public sealed class GateResult
     [Key(3)]
     public required bool Passed { get; init; }
 
-    [Key(4)]
-    public IReadOnlyList<string>? QuarantinedTestNames { get; init; }
+    // Key(4) is retired (was QuarantinedTestNames). Do not reuse to avoid deserialization issues with existing data.
 
     [Key(5)]
     public int? TestsFailed { get; init; }
@@ -26,8 +25,7 @@ public sealed class GateResult
     [Key(6)]
     public int? TestsPassed { get; init; }
 
-    [Key(7)]
-    public int? TestsQuarantined { get; init; }
+    // Key(7) is retired (was TestsQuarantined). Do not reuse to avoid deserialization issues with existing data.
 
     [Key(8)]
     public int? TestsSkipped { get; init; }
