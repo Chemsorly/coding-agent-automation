@@ -153,7 +153,7 @@ public sealed partial class PipelineLoopService : BackgroundService
     }
 
     /// <summary>
-    /// Activates the multi-template round-robin loop using PipelineJobTemplates from config.
+    /// Activates the multi-template round-robin loop using templates from IProjectStore.
     /// Returns false if no enabled templates exist or validation fails.
     /// </summary>
     public async Task<bool> StartLoopAsync()

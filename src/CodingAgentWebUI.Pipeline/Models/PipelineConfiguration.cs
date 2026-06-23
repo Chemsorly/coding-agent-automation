@@ -594,14 +594,7 @@ public sealed record PipelineConfiguration
 
     // ── Multi-repo pipeline loop ────────────────────────────────────────
 
-    /// <summary>
-    /// List of pipeline job templates for multi-repo round-robin polling.
-    /// Each template pairs an issue provider with a repository provider.
-    /// When non-empty, the pipeline loop iterates through enabled templates each cycle.
-    /// </summary>
-    [Obsolete("Use IProjectStore template methods (LoadTemplatesForProjectAsync, SaveTemplateAsync) instead. This property is retained for migration and rollback compatibility.")]
-    [Key(45)]
-    public IReadOnlyList<PipelineJobTemplate> PipelineJobTemplates { get; init; } = Array.Empty<PipelineJobTemplate>();
+    // Key(45): retired (was PipelineJobTemplates) — do NOT reuse this Key index
 
     /// <summary>
     /// Maximum number of refactoring proposals the agent is instructed to produce

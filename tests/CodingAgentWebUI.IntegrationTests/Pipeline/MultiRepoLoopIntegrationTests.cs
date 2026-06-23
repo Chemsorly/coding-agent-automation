@@ -35,7 +35,6 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         var config = new PipelineConfiguration
         {
             WorkspaceBaseDirectory = WorkspaceBase,
-            PipelineJobTemplates = templates,
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
             ClosedLoopMaxConsecutivePollFailures = 5
         };
@@ -154,63 +153,6 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
     }
 
     /// <summary>
-    /// 13.2: Template CRUD and persistence.
-    /// Add template, verify persisted; remove template, verify removed; enable/disable, verify field updated.
-    /// </summary>
-    [Fact]
-    public async Task TemplateCrud_AddRemoveEnableDisable_PersistsCorrectly()
-    {
-        // Arrange: Start with empty templates
-        var config = new PipelineConfiguration
-        {
-            WorkspaceBaseDirectory = WorkspaceBase,
-            PipelineJobTemplates = new List<PipelineJobTemplate>()
-        };
-        await ConfigStore.SavePipelineConfigAsync(config, CancellationToken.None);
-
-        // Act 1: Add a template
-        var newTemplate = new PipelineJobTemplate
-        {
-            Id = Guid.NewGuid().ToString(),
-            Name = "Test Template",
-            IssueProviderId = "ip-1",
-            RepoProviderId = "rp-1",
-            Enabled = true
-        };
-
-        var loaded = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-        var updatedTemplates = loaded.PipelineJobTemplates.ToList();
-        updatedTemplates.Add(newTemplate);
-        var updated = loaded with { PipelineJobTemplates = updatedTemplates };
-        await ConfigStore.SavePipelineConfigAsync(updated, CancellationToken.None);
-
-        // Assert 1: Template is persisted
-        var freshStore = new JsonConfigurationStore(ConfigDir);
-        var reloaded = await freshStore.LoadPipelineConfigAsync(CancellationToken.None);
-        reloaded.PipelineJobTemplates.Should().HaveCount(1);
-        reloaded.PipelineJobTemplates[0].Name.Should().Be("Test Template");
-        reloaded.PipelineJobTemplates[0].IssueProviderId.Should().Be("ip-1");
-        reloaded.PipelineJobTemplates[0].RepoProviderId.Should().Be("rp-1");
-        reloaded.PipelineJobTemplates[0].Enabled.Should().BeTrue();
-
-        // Act 2: Disable the template
-        var templates2 = reloaded.PipelineJobTemplates.ToList();
-        templates2[0] = templates2[0] with { Enabled = false };
-        await freshStore.SavePipelineConfigAsync(reloaded with { PipelineJobTemplates = templates2 }, CancellationToken.None);
-
-        // Assert 2: Disabled state persisted
-        var reloaded2 = await new JsonConfigurationStore(ConfigDir).LoadPipelineConfigAsync(CancellationToken.None);
-        reloaded2.PipelineJobTemplates[0].Enabled.Should().BeFalse();
-
-        // Act 3: Remove the template
-        await freshStore.SavePipelineConfigAsync(reloaded2 with { PipelineJobTemplates = new List<PipelineJobTemplate>() }, CancellationToken.None);
-
-        // Assert 3: Template removed
-        var reloaded3 = await new JsonConfigurationStore(ConfigDir).LoadPipelineConfigAsync(CancellationToken.None);
-        reloaded3.PipelineJobTemplates.Should().BeEmpty();
-    }
-
-    /// <summary>
     /// 13.3: Pre-start validation rejects invalid templates.
     /// Create templates referencing non-existent provider IDs, call StartLoop(), verify returns false
     /// with correct error messages.
@@ -228,8 +170,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
 
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = WorkspaceBase,
-            PipelineJobTemplates = templates
+            WorkspaceBaseDirectory = WorkspaceBase
         };
         await ConfigStore.SavePipelineConfigAsync(config, CancellationToken.None);
 

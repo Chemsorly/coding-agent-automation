@@ -172,7 +172,6 @@ public class PipelineLoopFairDispatchPropertyTests
 
         var config = new PipelineConfiguration
         {
-            PipelineJobTemplates = templates,
             ClosedLoopPollInterval = TimeSpan.FromSeconds(60),
             ClosedLoopMaxRunsPerCycle = input.Budget,
             WorkspaceBaseDirectory = Path.GetTempPath()

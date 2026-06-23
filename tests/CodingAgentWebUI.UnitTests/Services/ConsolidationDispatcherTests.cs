@@ -232,7 +232,6 @@ public sealed class ConsolidationDispatcherTests : IDisposable
         var config = new PipelineConfiguration
         {
             WorkspaceBaseDirectory = "/tmp",
-            PipelineJobTemplates = new[] { template }
         };
 
         // Set up project containing the template
@@ -291,7 +290,6 @@ public sealed class ConsolidationDispatcherTests : IDisposable
         var config = new PipelineConfiguration
         {
             WorkspaceBaseDirectory = "/tmp",
-            PipelineJobTemplates = new[] { template }
         };
 
         // Set up project containing the template

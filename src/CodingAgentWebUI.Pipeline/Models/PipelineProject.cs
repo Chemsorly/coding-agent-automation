@@ -1,7 +1,7 @@
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
-/// A named grouping entity that owns PipelineJobTemplates and carries
+/// A named grouping entity that owns pipeline job templates and carries
 /// per-project behavioral settings that override global defaults.
 /// Persisted as individual JSON files at {ConfigDir}/pipeline/projects/{Id}.json.
 /// </summary>

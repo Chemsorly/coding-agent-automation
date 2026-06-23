@@ -89,15 +89,12 @@ public class FlattenTemplatesTests : IAsyncDisposable
         // Put Beta first in the list to verify ordering is applied
         var projects = new List<PipelineProject> { projectBeta, projectAlpha };
 
-        var config = TestPipelineConfig.Default() with
-        {
-            PipelineJobTemplates = new List<PipelineJobTemplate> { templateA, templateB }
-        };
+        var templates = new List<PipelineJobTemplate> { templateA, templateB };
 
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
+        var result = svc.FlattenTemplates(projects, templates);
 
         // Assert — Alpha's template should come before Beta's
         Assert.Equal(2, result.Count);
@@ -132,15 +129,12 @@ public class FlattenTemplatesTests : IAsyncDisposable
 
         var projects = new List<PipelineProject> { projectBanana, projectApple };
 
-        var config = TestPipelineConfig.Default() with
-        {
-            PipelineJobTemplates = new List<PipelineJobTemplate> { templateA, templateB }
-        };
+        var templates = new List<PipelineJobTemplate> { templateA, templateB };
 
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
+        var result = svc.FlattenTemplates(projects, templates);
 
         // Assert — "Apple" (uppercase A=65) sorts before "banana" (lowercase b=98)
         Assert.Equal(2, result.Count);
@@ -178,15 +172,12 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var project = TestPipelineConfig.WithProject("MyProject", "tmpl-3", "tmpl-1", "tmpl-2");
 
         var projects = new List<PipelineProject> { project };
-        var config = TestPipelineConfig.Default() with
-        {
-            PipelineJobTemplates = new List<PipelineJobTemplate> { template1, template2, template3 }
-        };
+        var templates = new List<PipelineJobTemplate> { template1, template2, template3 };
 
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
+        var result = svc.FlattenTemplates(projects, templates);
 
         // Assert — templates come out in TemplateIds position order: 3, 1, 2
         Assert.Equal(3, result.Count);
@@ -224,15 +215,12 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var projectBeta = TestPipelineConfig.WithProject("Beta", "tmpl-b1");
 
         var projects = new List<PipelineProject> { projectBeta, projectAlpha };
-        var config = TestPipelineConfig.Default() with
-        {
-            PipelineJobTemplates = new List<PipelineJobTemplate> { templateA1, templateA2, templateB1 }
-        };
+        var templates = new List<PipelineJobTemplate> { templateA1, templateA2, templateB1 };
 
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
+        var result = svc.FlattenTemplates(projects, templates);
 
         // Assert — Alpha first (alphabetical), then Beta. Within Alpha: a2, a1 (position order)
         Assert.Equal(3, result.Count);
@@ -266,15 +254,12 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var disabledProject = TestPipelineConfig.WithProject("Beta", "tmpl-2") with { Enabled = false };
 
         var projects = new List<PipelineProject> { enabledProject, disabledProject };
-        var config = TestPipelineConfig.Default() with
-        {
-            PipelineJobTemplates = new List<PipelineJobTemplate> { template1, template2 }
-        };
+        var templates = new List<PipelineJobTemplate> { template1, template2 };
 
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
+        var result = svc.FlattenTemplates(projects, templates);
 
         // Assert — only Alpha's template appears (Beta is disabled)
         Assert.Single(result);
@@ -305,15 +290,12 @@ public class FlattenTemplatesTests : IAsyncDisposable
             with { Enabled = false };
 
         var projects = new List<PipelineProject> { disabledProject };
-        var config = TestPipelineConfig.Default() with
-        {
-            PipelineJobTemplates = new List<PipelineJobTemplate> { template1, template2 }
-        };
+        var templates = new List<PipelineJobTemplate> { template1, template2 };
 
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
+        var result = svc.FlattenTemplates(projects, templates);
 
         // Assert — no templates in result
         Assert.Empty(result);
@@ -341,15 +323,12 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var project = TestPipelineConfig.WithProject("MyProject", "tmpl-1", "tmpl-2");
 
         var projects = new List<PipelineProject> { project };
-        var config = TestPipelineConfig.Default() with
-        {
-            PipelineJobTemplates = new List<PipelineJobTemplate> { enabledTemplate, disabledTemplate }
-        };
+        var templates = new List<PipelineJobTemplate> { enabledTemplate, disabledTemplate };
 
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
+        var result = svc.FlattenTemplates(projects, templates);
 
         // Assert — only the enabled template appears
         Assert.Single(result);
@@ -376,15 +355,12 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var project = TestPipelineConfig.WithProject("MyProject", "tmpl-exists", "tmpl-missing");
 
         var projects = new List<PipelineProject> { project };
-        var config = TestPipelineConfig.Default() with
-        {
-            PipelineJobTemplates = new List<PipelineJobTemplate> { existingTemplate }
-        };
+        var templates = new List<PipelineJobTemplate> { existingTemplate };
 
         var svc = CreateService();
 
         // Act — should not throw
-        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
+        var result = svc.FlattenTemplates(projects, templates);
 
         // Assert — only the existing template appears
         Assert.Single(result);
@@ -402,15 +378,12 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var project = TestPipelineConfig.WithProject("GhostProject", "tmpl-ghost1", "tmpl-ghost2");
 
         var projects = new List<PipelineProject> { project };
-        var config = TestPipelineConfig.Default() with
-        {
-            PipelineJobTemplates = new List<PipelineJobTemplate>()
-        };
+        var templates = new List<PipelineJobTemplate>();
 
         var svc = CreateService();
 
         // Act
-        var result = svc.FlattenTemplates(projects, config.PipelineJobTemplates);
+        var result = svc.FlattenTemplates(projects, templates);
 
         // Assert
         Assert.Empty(result);
@@ -425,15 +398,12 @@ public class FlattenTemplatesTests : IAsyncDisposable
         // Arrange
         var project = TestPipelineConfig.WithProject("MyProject", "tmpl-missing");
         var projects = new List<PipelineProject> { project };
-        var config = TestPipelineConfig.Default() with
-        {
-            PipelineJobTemplates = new List<PipelineJobTemplate>()
-        };
+        var templates = new List<PipelineJobTemplate>();
 
         var svc = CreateService();
 
         // Act
-        svc.FlattenTemplates(projects, config.PipelineJobTemplates);
+        svc.FlattenTemplates(projects, templates);
 
         // Assert — logger.Warning was called with appropriate parameters
         _mockLogger.Verify(

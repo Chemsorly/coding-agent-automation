@@ -27,7 +27,6 @@ public class PipelineLoopDispatchPropertyTests
 
         var config = new PipelineConfiguration
         {
-            PipelineJobTemplates = templates,
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
             ClosedLoopMaxRunsPerCycle = 100,
             WorkspaceBaseDirectory = Path.GetTempPath()
@@ -116,7 +115,6 @@ public class PipelineLoopDispatchPropertyTests
 
         var config = new PipelineConfiguration
         {
-            PipelineJobTemplates = templates,
             ClosedLoopPollInterval = TimeSpan.FromSeconds(60), // Long interval so only one cycle runs
             ClosedLoopMaxRunsPerCycle = limit,
             WorkspaceBaseDirectory = Path.GetTempPath()
@@ -200,7 +198,6 @@ public class PipelineLoopDispatchPropertyTests
 
         var config = new PipelineConfiguration
         {
-            PipelineJobTemplates = templates,
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(30),
             ClosedLoopMaxConsecutivePollFailures = 2,
             WorkspaceBaseDirectory = Path.GetTempPath()
@@ -287,7 +284,6 @@ public class PipelineLoopDispatchPropertyTests
 
         var config = new PipelineConfiguration
         {
-            PipelineJobTemplates = templates,
             WorkspaceBaseDirectory = Path.GetTempPath()
         };
 
@@ -324,7 +320,6 @@ public class PipelineLoopDispatchPropertyTests
 
         var config = new PipelineConfiguration
         {
-            PipelineJobTemplates = templates,
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
             WorkspaceBaseDirectory = Path.GetTempPath()
         };
@@ -401,7 +396,6 @@ public class PipelineLoopDispatchPropertyTests
 
         var config = new PipelineConfiguration
         {
-            PipelineJobTemplates = templates,
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
             WorkspaceBaseDirectory = Path.GetTempPath()
         };
@@ -470,7 +464,6 @@ public class PipelineLoopDispatchPropertyTests
 
         var config = new PipelineConfiguration
         {
-            PipelineJobTemplates = templates,
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
             WorkspaceBaseDirectory = Path.GetTempPath()
         };
