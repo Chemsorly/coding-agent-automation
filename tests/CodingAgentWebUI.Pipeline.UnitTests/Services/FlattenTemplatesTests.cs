@@ -89,8 +89,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         // Put Beta first in the list to verify ordering is applied
         var projects = new List<PipelineProject> { projectBeta, projectAlpha };
 
-        var templates = new List<PipelineJobTemplate> { templateA, templateB }
-        ;
+        var templates = new List<PipelineJobTemplate> { templateA, templateB };
 
         var svc = CreateService();
 
@@ -130,8 +129,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
 
         var projects = new List<PipelineProject> { projectBanana, projectApple };
 
-        var templates = new List<PipelineJobTemplate> { templateA, templateB }
-        ;
+        var templates = new List<PipelineJobTemplate> { templateA, templateB };
 
         var svc = CreateService();
 
@@ -174,8 +172,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var project = TestPipelineConfig.WithProject("MyProject", "tmpl-3", "tmpl-1", "tmpl-2");
 
         var projects = new List<PipelineProject> { project };
-        var templates = new List<PipelineJobTemplate> { template1, template2, template3 }
-        ;
+        var templates = new List<PipelineJobTemplate> { template1, template2, template3 };
 
         var svc = CreateService();
 
@@ -218,8 +215,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var projectBeta = TestPipelineConfig.WithProject("Beta", "tmpl-b1");
 
         var projects = new List<PipelineProject> { projectBeta, projectAlpha };
-        var templates = new List<PipelineJobTemplate> { templateA1, templateA2, templateB1 }
-        ;
+        var templates = new List<PipelineJobTemplate> { templateA1, templateA2, templateB1 };
 
         var svc = CreateService();
 
@@ -258,8 +254,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var disabledProject = TestPipelineConfig.WithProject("Beta", "tmpl-2") with { Enabled = false };
 
         var projects = new List<PipelineProject> { enabledProject, disabledProject };
-        var templates = new List<PipelineJobTemplate> { template1, template2 }
-        ;
+        var templates = new List<PipelineJobTemplate> { template1, template2 };
 
         var svc = CreateService();
 
@@ -295,8 +290,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
             with { Enabled = false };
 
         var projects = new List<PipelineProject> { disabledProject };
-        var templates = new List<PipelineJobTemplate> { template1, template2 }
-        ;
+        var templates = new List<PipelineJobTemplate> { template1, template2 };
 
         var svc = CreateService();
 
@@ -329,8 +323,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var project = TestPipelineConfig.WithProject("MyProject", "tmpl-1", "tmpl-2");
 
         var projects = new List<PipelineProject> { project };
-        var templates = new List<PipelineJobTemplate> { enabledTemplate, disabledTemplate }
-        ;
+        var templates = new List<PipelineJobTemplate> { enabledTemplate, disabledTemplate };
 
         var svc = CreateService();
 
@@ -362,8 +355,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var project = TestPipelineConfig.WithProject("MyProject", "tmpl-exists", "tmpl-missing");
 
         var projects = new List<PipelineProject> { project };
-        var templates = new List<PipelineJobTemplate> { existingTemplate }
-        ;
+        var templates = new List<PipelineJobTemplate> { existingTemplate };
 
         var svc = CreateService();
 
@@ -386,8 +378,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         var project = TestPipelineConfig.WithProject("GhostProject", "tmpl-ghost1", "tmpl-ghost2");
 
         var projects = new List<PipelineProject> { project };
-        var templates = new List<PipelineJobTemplate>()
-        ;
+        var templates = new List<PipelineJobTemplate>();
 
         var svc = CreateService();
 
@@ -407,8 +398,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         // Arrange
         var project = TestPipelineConfig.WithProject("MyProject", "tmpl-missing");
         var projects = new List<PipelineProject> { project };
-        var templates = new List<PipelineJobTemplate>()
-        ;
+        var templates = new List<PipelineJobTemplate>();
 
         var svc = CreateService();
 

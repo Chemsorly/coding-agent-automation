@@ -23,9 +23,7 @@ public class ConsolidationPageComponentTests : BunitContext
         IReadOnlyList<ConsolidationRun>? runHistory = null,
         HarnessSuggestions? harnessSuggestions = null)
     {
-        var config = new PipelineConfiguration
-        {
-        };
+        var config = new PipelineConfiguration();
 
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(config);
