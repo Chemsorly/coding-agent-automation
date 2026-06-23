@@ -1,5 +1,6 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
+@using System.Text.RegularExpressions
 @inherits DispatchDrawerBase<IssueSummary>
 
 <div class="dispatch-drawer-overlay @(IsOpen ? "open" : "")" @onclick="Close"></div>
@@ -36,18 +37,36 @@
                     @foreach (var issue in FilteredItems)
                     {
                         var isProcessing = IsBeingProcessed(issue.Identifier);
+                        var readiness = GetReadiness(issue.Identifier, isProcessing);
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(SelectedItem?.Identifier == issue.Identifier ? "drawer-issue-selected" : "")"
                              @onclick="() => SelectItem(issue)"
                              data-testid="issue-row-@issue.Identifier"
                              style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
                             <div class="drawer-issue-header">
                                 <span class="drawer-issue-number">#@issue.Identifier</span>
-                                @if (isProcessing)
+                                @if (readiness == DispatchReadinessState.Queued)
                                 {
-                                    <span class="badge-default" style="background: var(--accent); color: white;">DISPATCHED</span>
+                                    <span class="badge-default" style="background: var(--accent); color: white;" data-testid="badge-queued-@issue.Identifier">⏳ Queued</span>
+                                }
+                                else if (readiness == DispatchReadinessState.Ready)
+                                {
+                                    <span class="badge-default" style="background: var(--success, #22c55e); color: white;" data-testid="badge-ready-@issue.Identifier">✅ Ready</span>
+                                }
+                                else if (readiness == DispatchReadinessState.Blocked)
+                                {
+                                    <span class="badge-default" style="background: var(--danger, #ef4444); color: white;" data-testid="badge-blocked-@issue.Identifier">🚫 Blocked by @GetBlockedByText(issue.Identifier)</span>
+                                }
+                                else if (readiness == DispatchReadinessState.Checking)
+                                {
+                                    <span class="badge-default" style="background: var(--border); color: var(--text-muted);">…</span>
                                 }
                             </div>
                             <div class="drawer-issue-title">@issue.Title</div>
+                            @{ var preview = GetBodyPreview(issue.Description); }
+                            @if (!string.IsNullOrEmpty(preview))
+                            {
+                                <div class="drawer-issue-preview" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">@preview</div>
+                            }
                             <div class="drawer-issue-labels">
                                 @foreach (var label in issue.Labels.Take(5))
                                 {
@@ -70,6 +89,8 @@
 
             @if (SelectedItem != null)
             {
+                var selectedReadiness = GetReadiness(SelectedItem.Identifier, IsBeingProcessed(SelectedItem.Identifier));
+                var isBlocked = selectedReadiness == DispatchReadinessState.Blocked;
                 <div class="agent-detail-section" style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
                     <h4>#@SelectedItem.Identifier — @SelectedItem.Title</h4>
                     <div class="drawer-issue-labels" style="margin-bottom: 8px;">
@@ -84,8 +105,15 @@
                             Created: @SelectedItem.CreatedAt.Value.ToLocalTime().ToString("g")
                         </p>
                     }
-                    <button class="btn-save" @onclick="DispatchSelected" disabled="@IsDispatching"
-                            data-testid="dispatch-issue-btn">
+                    @if (isBlocked)
+                    {
+                        <p style="font-size: 0.78rem; color: var(--danger, #ef4444); margin: 0 0 8px;">
+                            🚫 Cannot dispatch — blocked by @GetBlockedByText(SelectedItem.Identifier)
+                        </p>
+                    }
+                    <button class="btn-save" @onclick="DispatchSelected" disabled="@(IsDispatching || isBlocked)"
+                            data-testid="dispatch-issue-btn"
+                            title="@(isBlocked ? $"Blocked by {GetBlockedByText(SelectedItem.Identifier)}" : "")">
                         @(IsDispatching ? "Dispatching..." : $"Start Pipeline on #{SelectedItem.Identifier}")
                     </button>
                 </div>
@@ -100,6 +128,9 @@
     [Parameter, EditorRequired] public int Page { get; set; }
     [Parameter] public EventCallback OnNextPage { get; set; }
     [Parameter] public EventCallback OnPrevPage { get; set; }
+    [Parameter] public IReadOnlyDictionary<string, DependencyCheckResult>? ReadinessResults { get; set; }
+
+    private static readonly Regex MarkdownStripPattern = new(@"^#{1,6}\s+|!?\[([^\]]*)\]\([^)]*\)", RegexOptions.Compiled);
 
     protected override void OnParametersSet()
     {
@@ -115,4 +146,33 @@
 
     private async Task NextPage() => await OnNextPage.InvokeAsync();
     private async Task PrevPage() => await OnPrevPage.InvokeAsync();
+
+    // TODO: If the readiness check silently skips an issue (individual failure), it remains in Checking state indefinitely. Consider reporting a "failed" state so the user knows the check didn't succeed.
+    private DispatchReadinessState GetReadiness(string identifier, bool isProcessing)
+    {
+        if (isProcessing) return DispatchReadinessState.Queued;
+        if (ReadinessResults == null) return DispatchReadinessState.Checking;
+        if (!ReadinessResults.TryGetValue(identifier, out var result)) return DispatchReadinessState.Checking;
+        return result.IsReady ? DispatchReadinessState.Ready : DispatchReadinessState.Blocked;
+    }
+
+    private string GetBlockedByText(string identifier)
+    {
+        if (ReadinessResults != null && ReadinessResults.TryGetValue(identifier, out var result) && result.BlockedBy.Count > 0)
+            return string.Join(", ", result.BlockedBy.Select(n => $"#{n}"));
+        return "open dependencies";
+    }
+
+    private static string? GetBodyPreview(string? description)
+    {
+        if (string.IsNullOrWhiteSpace(description)) return null;
+        // Strip markdown headings and links/images, take first 100 chars
+        var plain = MarkdownStripPattern.Replace(description, "$1");
+        // Take up to first ## heading or first 100 chars
+        var headingIdx = plain.IndexOf("\n##", StringComparison.Ordinal);
+        if (headingIdx > 0 && headingIdx < 100) plain = plain[..headingIdx];
+        plain = plain.Replace('\n', ' ').Replace('\r', ' ').Trim();
+        if (plain.Length > 100) plain = plain[..100] + "…";
+        return string.IsNullOrWhiteSpace(plain) ? null : plain;
+    }
 }

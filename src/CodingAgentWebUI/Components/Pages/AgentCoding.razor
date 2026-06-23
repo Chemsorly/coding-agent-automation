@@ -191,6 +191,7 @@
 <IssueDispatchDrawer IsOpen="_drawerOpen" Template="_drawerTemplate"
     Issues="_drawerIssues" IsLoading="_drawerLoading" HasMore="_drawerHasMore" Page="_drawerPage"
     IsDispatching="_drawerDispatching" IsBeingProcessed="@(id => JobDispatcher.IsIssueBeingProcessedOrQueued(id, _drawerTemplate?.IssueProviderId ?? ""))"
+    ReadinessResults="_drawerReadiness"
     OnClose="CloseDrawer" OnNextPage="DrawerNextPage" OnPrevPage="DrawerPrevPage" OnDispatch="DispatchFromDrawer" />
 
 <PrDispatchDrawer IsOpen="_prDrawerOpen" Template="_prDrawerTemplate"

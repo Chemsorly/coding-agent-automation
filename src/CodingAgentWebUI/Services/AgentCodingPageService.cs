@@ -242,6 +242,35 @@ public class AgentCodingPageService
 
     public void ClearDrawerIssues() { DrawerIssues.Clear(); DrawerPage = 1; DrawerHasMore = false; }
 
+    /// <summary>
+    /// Batch-checks dependency readiness for a list of issues. Returns results progressively
+    /// via the onProgress callback. Provider lifecycle is managed internally.
+    /// </summary>
+    public async Task CheckDrawerReadinessAsync(
+        IReadOnlyList<IssueSummary> issues,
+        string issueProviderId,
+        Dictionary<int, bool> stateCache,
+        Action<string, DependencyCheckResult> onResult,
+        CancellationToken ct)
+    {
+        var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == issueProviderId);
+        if (providerConfig == null) return;
+
+        await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
+        foreach (var issue in issues)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var result = await _dependencyChecker.CheckAsync(
+                    issue.Identifier, issue.Description, provider, stateCache, ct);
+                onResult(issue.Identifier, result);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { /* treat individual failures as unknown — skip */ }
+        }
+    }
+
     public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchIssueAsync(
         IssueSummary issue, PipelineJobTemplate template)
     {

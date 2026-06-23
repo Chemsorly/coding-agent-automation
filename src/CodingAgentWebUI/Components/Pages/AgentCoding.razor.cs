@@ -53,6 +53,9 @@ public partial class AgentCoding : IDisposable
     private bool _drawerOpen;
     private PipelineJobTemplate? _drawerTemplate;
     private bool _drawerDispatching;
+    private Dictionary<string, DependencyCheckResult>? _drawerReadiness;
+    private CancellationTokenSource? _drawerReadinessCts;
+    private Dictionary<int, bool> _drawerStateCache = new();
 
     // PR Drawer UI State
     private bool _prDrawerOpen;
@@ -196,12 +199,47 @@ public partial class AgentCoding : IDisposable
         var template = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
         if (template == null) return;
         _drawerTemplate = template; _drawerOpen = true;
+        _drawerReadiness = new Dictionary<string, DependencyCheckResult>();
+        _drawerStateCache = new Dictionary<int, bool>();
         // TODO: Loading indicator won't render — PageService sets DrawerLoading=true internally but no StateHasChanged() is called before the await, so the UI never shows the spinner. Same issue in OpenPrDrawer and OpenEpicDrawer.
         var error = await PageService.LoadDrawerIssuesAsync(template, 1);
         if (error != null) _errorMessage = error;
+        else _ = FireDrawerReadinessCheck();
     }
 
-    private void CloseDrawer() { _drawerOpen = false; _drawerTemplate = null; PageService.ClearDrawerIssues(); }
+    private void CloseDrawer()
+    {
+        _drawerReadinessCts?.Cancel();
+        _drawerReadinessCts?.Dispose();
+        _drawerReadinessCts = null;
+        _drawerOpen = false; _drawerTemplate = null; _drawerReadiness = null;
+        PageService.ClearDrawerIssues();
+    }
+
+    // TODO: Fire-and-forget may silently swallow unexpected exceptions (e.g. NullReferenceException inside the callback). Consider adding logging in a catch-all handler.
+    private async Task FireDrawerReadinessCheck()
+    {
+        _drawerReadinessCts?.Cancel();
+        _drawerReadinessCts?.Dispose();
+        _drawerReadinessCts = new CancellationTokenSource();
+        var ct = _drawerReadinessCts.Token;
+        var issues = _drawerIssues.ToList();
+        var templateId = _drawerTemplate?.IssueProviderId;
+        if (templateId == null || issues.Count == 0) return;
+
+        try
+        {
+            await PageService.CheckDrawerReadinessAsync(issues, templateId, _drawerStateCache, (id, result) =>
+            {
+                // TODO: _drawerReadiness is mutated here while the render thread may be iterating it via ReadinessResults. Consider using ConcurrentDictionary or passing a snapshot to the child component.
+                _drawerReadiness ??= new();
+                _drawerReadiness[id] = result;
+                _ = InvokeAsync(StateHasChanged);
+            }, ct);
+        }
+        catch (OperationCanceledException) { /* drawer closed — expected */ }
+        catch (ObjectDisposedException) { }
+    }
 
     private async Task DrawerPrevPage()
     {
@@ -209,6 +247,7 @@ public partial class AgentCoding : IDisposable
         {
             var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, _drawerPage - 1);
             if (error != null) _errorMessage = error;
+            else _ = FireDrawerReadinessCheck();
         }
     }
 
@@ -218,6 +257,7 @@ public partial class AgentCoding : IDisposable
         {
             var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, _drawerPage + 1);
             if (error != null) _errorMessage = error;
+            else _ = FireDrawerReadinessCheck();
         }
     }
 
@@ -415,6 +455,8 @@ public partial class AgentCoding : IDisposable
     public void Dispose()
     {
         _disposed = true;
+        _drawerReadinessCts?.Cancel();
+        _drawerReadinessCts?.Dispose();
         _elapsedTimer?.Dispose();
         PipelineService.OnChange -= HandleStateChanged;
         PipelineService.OnOutputLine -= HandleOutputLine;
