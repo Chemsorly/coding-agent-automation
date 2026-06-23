@@ -869,6 +869,93 @@ select option { background: var(--surface); color: var(--text); }
     margin-top: 4px;
 }
 
+.drawer-item-highlighted {
+    background: var(--surface-alt);
+    border-color: var(--accent-light);
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+/* ═══ Shortcut Help Overlay ═══ */
+.shortcut-overlay-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.shortcut-overlay {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 28px;
+    min-width: 340px;
+    max-width: 440px;
+}
+
+.shortcut-overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+}
+
+.shortcut-overlay-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--text);
+}
+
+.shortcut-overlay-section {
+    margin-bottom: 14px;
+}
+
+.shortcut-overlay-section h4 {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 6px;
+}
+
+.shortcut-list {
+    margin: 0;
+    padding: 0;
+}
+
+.shortcut-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 0;
+}
+
+.shortcut-row dt {
+    flex-shrink: 0;
+}
+
+.shortcut-row dd {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
+.shortcut-row kbd {
+    display: inline-block;
+    padding: 2px 7px;
+    font-size: 0.75rem;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text);
+    min-width: 24px;
+    text-align: center;
+}
+
 /* ═══ Feedback Section (Run Detail Modal) ═══ */
 .feedback-section {
     margin-top: 12px;

@@ -32,11 +32,14 @@
             }
             else
             {
-                <div class="agent-history-list" style="max-height: calc(100vh - 320px); overflow-y: auto;">
+                <div class="agent-history-list" tabindex="0" @onkeydown="HandleKeyDown" @onkeydown:preventDefault="ShouldPreventDefault"
+                     style="max-height: calc(100vh - 320px); overflow-y: auto;">
+                    @{ var idx = 0; }
                     @foreach (var pr in FilteredItems)
                     {
                         var isProcessing = IsBeingProcessed(pr.Identifier);
-                        <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(SelectedItem?.Identifier == pr.Identifier ? "drawer-issue-selected" : "")"
+                        var currentIdx = idx;
+                        <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(SelectedItem?.Identifier == pr.Identifier ? "drawer-issue-selected" : "") @GetHighlightClass(currentIdx)"
                              @onclick="() => SelectItem(pr)"
                              data-testid="pr-row-@pr.Identifier"
                              style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
@@ -60,6 +63,7 @@
                                 }
                             </div>
                         </div>
+                        idx++;
                     }
                 </div>
 
@@ -115,6 +119,9 @@
     [Parameter, EditorRequired] public int Page { get; set; }
     [Parameter] public EventCallback OnNextPage { get; set; }
     [Parameter] public EventCallback OnPrevPage { get; set; }
+
+    // TODO: ShouldPreventDefault unconditionally blocks all keydown defaults (including Tab), creating a keyboard trap. Should be conditional based on the key pressed.
+    private bool ShouldPreventDefault => true;
 
     protected override void OnParametersSet()
     {

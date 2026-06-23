@@ -5,6 +5,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Components.Layout;
 using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using Serilog;
@@ -24,6 +25,7 @@ public partial class AgentCoding : IDisposable
     [Inject] private IJobDispatcher JobDispatcher { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
     [Inject] private IJSRuntime JS { get; set; } = default!;
+    [CascadingParameter] private MainLayout? Layout { get; set; }
 
     private readonly object _outputLock = new();
     private List<string> _outputLines = new();
@@ -97,9 +99,19 @@ public partial class AgentCoding : IDisposable
         PipelineService.OnOutputLine += HandleOutputLine;
         LoopService.OnChange += HandleStateChanged;
         _elapsedTimer = new Timer(ElapsedTimerTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+        if (Layout is not null)
+            Layout.OnEscapePressed += HandleGlobalEscape;
 
         _errorMessage = await PageService.InitializeAsync();
         _ = AutoDismissAgentSummary();
+    }
+
+    // TODO: InvokeAsync(StateHasChanged) is fire-and-forget here; exceptions (e.g. ObjectDisposedException) are silently lost.
+    private void HandleGlobalEscape()
+    {
+        if (_drawerOpen) { CloseDrawer(); InvokeAsync(StateHasChanged); }
+        else if (_prDrawerOpen) { ClosePrDrawer(); InvokeAsync(StateHasChanged); }
+        else if (_epicDrawerOpen) { CloseEpicDrawer(); InvokeAsync(StateHasChanged); }
     }
 
     // ── Template Table Callbacks ──
@@ -419,5 +431,7 @@ public partial class AgentCoding : IDisposable
         PipelineService.OnChange -= HandleStateChanged;
         PipelineService.OnOutputLine -= HandleOutputLine;
         LoopService.OnChange -= HandleStateChanged;
+        if (Layout is not null)
+            Layout.OnEscapePressed -= HandleGlobalEscape;
     }
 }

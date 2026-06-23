@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components.Web;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Components.Pages;
@@ -20,6 +21,7 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     protected string _filter = "";
     protected List<TItem> FilteredItems = new();
     protected TItem? SelectedItem;
+    protected int _highlightedIndex = -1;
     protected IReadOnlyList<TItem> Items { get; set; } = [];
 
     // TODO: OnParametersSet allocates a new filtered list on every parent re-render because the
@@ -27,7 +29,7 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     protected override void OnParametersSet()
     {
         ApplyFilter();
-        if (!IsOpen) { SelectedItem = default; _filter = ""; }
+        if (!IsOpen) { SelectedItem = default; _filter = ""; _highlightedIndex = -1; }
     }
 
     protected void ApplyFilter()
@@ -41,6 +43,8 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
             var f = _filter.Trim();
             FilteredItems = Items.Where(i => MatchesFilter(i, f)).ToList();
         }
+        // Reset highlight when filter changes
+        _highlightedIndex = -1;
     }
 
     protected abstract bool MatchesFilter(TItem item, string filter);
@@ -62,6 +66,36 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
 
     protected abstract string GetIdentifier(TItem item);
 
-    // TODO: Close() is not virtual — derived classes cannot override close behavior. Consider making virtual if customization is needed.
-    protected async Task Close() => await OnClose.InvokeAsync();
+    // Made virtual to allow override in tests and derived classes.
+    protected virtual async Task Close() => await OnClose.InvokeAsync();
+
+    protected async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        switch (e.Key)
+        {
+            case "ArrowDown":
+                if (FilteredItems.Count > 0)
+                    _highlightedIndex = (_highlightedIndex + 1) % FilteredItems.Count;
+                break;
+            case "ArrowUp":
+                if (FilteredItems.Count > 0)
+                    _highlightedIndex = _highlightedIndex <= 0 ? FilteredItems.Count - 1 : _highlightedIndex - 1;
+                break;
+            case "Enter":
+                if (_highlightedIndex >= 0 && _highlightedIndex < FilteredItems.Count)
+                {
+                    var item = FilteredItems[_highlightedIndex];
+                    SelectItem(item);
+                    await DispatchSelected();
+                    _highlightedIndex = -1;
+                }
+                break;
+            case "Escape":
+                await Close();
+                break;
+        }
+    }
+
+    protected string GetHighlightClass(int index) =>
+        index == _highlightedIndex ? "drawer-item-highlighted" : "";
 }
