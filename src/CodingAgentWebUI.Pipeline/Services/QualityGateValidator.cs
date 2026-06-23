@@ -562,9 +562,9 @@ public class QualityGateValidator : IQualityGateValidator
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
             try { process.Kill(entireProcessTree: true); } catch { }
-            // TODO: stdoutTask/stderrTask use original ct with no secondary timeout — could hang if Kill fails to release pipe handles
-            try { await stdoutTask; } catch { }
-            try { await stderrTask; } catch { }
+            using var drainCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try { await stdoutTask.WaitAsync(drainCts.Token); } catch { }
+            try { await stderrTask.WaitAsync(drainCts.Token); } catch { }
             throw new TimeoutException($"Process '{fileName} {arguments}' timed out after {timeout.TotalSeconds}s");
         }
 

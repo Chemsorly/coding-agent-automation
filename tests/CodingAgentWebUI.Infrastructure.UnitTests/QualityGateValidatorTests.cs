@@ -781,6 +781,7 @@ public class QualityGateValidatorTests
         report.Compilation.Details.Should().NotContain("timed out");
     }
 
+    // TODO: Add a test that exercises the real catch(OperationCanceledException) block with a process that holds pipes open after kill, verifying the drain completes within the expected timeout boundary.
     private sealed class TimeoutSimulatingValidator : QualityGateValidator
     {
         private readonly bool _simulateTimeout;
