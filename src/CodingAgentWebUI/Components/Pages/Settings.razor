@@ -164,6 +164,10 @@
     private SettingsTreeNav? _treeNav;
     private string _selectedNode = SettingsNodes.ProvidersIssue;
 
+    [Parameter]
+    [SupplyParameterFromQuery(Name = "section")]
+    public string? SectionFromQuery { get; set; }
+
     private List<ProviderConfig> _issueProviders = new();
     private List<ProviderConfig> _repoProviders = new();
     private List<ProviderConfig> _agentProviders = new();
@@ -174,6 +178,9 @@
 
     protected override async Task OnInitializedAsync()
     {
+        // TODO: Validate SectionFromQuery against known SettingsNodes values; fall back to default if unrecognized
+        if (!string.IsNullOrEmpty(SectionFromQuery))
+            _selectedNode = SectionFromQuery;
         await LoadAllData();
     }
 

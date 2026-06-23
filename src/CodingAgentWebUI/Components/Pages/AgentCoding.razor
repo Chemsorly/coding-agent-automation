@@ -95,6 +95,15 @@
                 {
                     @if (!_showCompletionOnly)
                     {
+                        <OnboardingChecklist
+                            HasIssueProvider="@(_issueProviders.Count > 0)"
+                            HasRepoProvider="@(_repoProviders.Count > 0)"
+                            HasProject="@(_projects.Count > 0)"
+                            HasTemplate="@(_templates.Count > 0)"
+                            HasAgent="@(Registry.GetAllAgents().Count > 0)"
+                            IsLoopActive="LoopService.IsLoopActive"
+                            OnAddTemplate="ShowAddForm" />
+
                         <TemplateTableSection Templates="_templates" Projects="_projects"
                             IssueProviders="_issueProviders" RepoProviders="_repoProviders"
                             BrainProviders="_brainProviders" PipelineProviders="_pipelineProviders"
