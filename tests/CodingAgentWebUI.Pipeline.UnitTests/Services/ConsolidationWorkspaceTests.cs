@@ -19,6 +19,7 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
     private readonly Mock<IPipelineRunHistoryService> _mockRunHistory;
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly PipelineConfiguration _config;
+    private readonly List<PipelineJobTemplate> _templates;
 
     public ConsolidationWorkspaceTests()
     {
@@ -30,21 +31,22 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
         _mockRunHistory = new Mock<IPipelineRunHistoryService>();
         _mockRunHistory.Setup(x => x.GetRunHistory()).Returns(new List<PipelineRunSummary>());
 
+        _templates = new List<PipelineJobTemplate>
+        {
+            new()
+            {
+                Id = "tmpl-1",
+                Name = "Test Template",
+                IssueProviderId = "ip-1",
+                RepoProviderId = "rp-1",
+                BrainProviderId = "bp-1",
+                Enabled = true
+            }
+        };
+
         _config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = _tempDir,
-            PipelineJobTemplates = new List<PipelineJobTemplate>
-            {
-                new()
-                {
-                    Id = "tmpl-1",
-                    Name = "Test Template",
-                    IssueProviderId = "ip-1",
-                    RepoProviderId = "rp-1",
-                    BrainProviderId = "bp-1",
-                    Enabled = true
-                }
-            }
+            WorkspaceBaseDirectory = _tempDir
         };
 
         // Mock IProjectStore to return a default project owning all templates
@@ -60,7 +62,7 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
                 }
             });
         _mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(_config.PipelineJobTemplates);
+            .ReturnsAsync(_templates);
     }
 
     public void Dispose()

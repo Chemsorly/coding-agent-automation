@@ -25,7 +25,6 @@ public class ConsolidationPageComponentTests : BunitContext
     {
         var config = new PipelineConfiguration
         {
-            PipelineJobTemplates = templates ?? Array.Empty<PipelineJobTemplate>()
         };
 
         _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))

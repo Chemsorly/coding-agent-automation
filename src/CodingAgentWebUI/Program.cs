@@ -33,9 +33,6 @@ builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.
 var configStore = new JsonConfigurationStore(PipelineConstants.ConfigBaseDirectory);
 var pipelineConfig = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
 
-// Migrate templates from global list to per-project directories (idempotent)
-await TemplateMigrationService.MigrateAsync(configStore, pipelineConfig, CancellationToken.None);
-
 // Domain service registrations (extracted into focused extension methods)
 builder.Services.AddInfrastructureServices(configStore, pipelineConfig);
 builder.Services.AddPipelineServices(Serilog.Log.Logger);

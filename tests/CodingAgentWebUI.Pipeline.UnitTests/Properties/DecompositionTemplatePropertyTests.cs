@@ -43,7 +43,6 @@ public class DecompositionTemplatePropertyTests
 
         var config = new PipelineConfiguration
         {
-            PipelineJobTemplates = new List<PipelineJobTemplate> { template },
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
             ClosedLoopMaxRunsPerCycle = 10,
             WorkspaceBaseDirectory = Path.GetTempPath()
@@ -155,7 +154,6 @@ public class DecompositionTemplatePropertyTests
 
         var config = new PipelineConfiguration
         {
-            PipelineJobTemplates = new List<PipelineJobTemplate> { template },
             ClosedLoopPollInterval = TimeSpan.FromMilliseconds(50),
             ClosedLoopMaxRunsPerCycle = 10,
             WorkspaceBaseDirectory = Path.GetTempPath()

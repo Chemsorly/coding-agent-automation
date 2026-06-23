@@ -4,8 +4,7 @@
     <!-- Prevent orphaned MSBuild node processes after dotnet test/build -->
     <UseSharedCompilation>false</UseSharedCompilation>
     <!-- CS0618: Obsolete members used intentionally during migration periods:
-         - PipelineRun/PipelineRunSummary StartedAt/CompletedAt → StartedAtOffset/CompletedAtOffset
-         - PipelineConfiguration.PipelineJobTemplates → IProjectStore template methods -->
+         - PipelineRun/PipelineRunSummary StartedAt/CompletedAt → StartedAtOffset/CompletedAtOffset -->
     <NoWarn>$(NoWarn);CS0618</NoWarn>
   </PropertyGroup>
 </Project>

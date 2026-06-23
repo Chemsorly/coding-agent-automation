@@ -87,14 +87,14 @@ public class ConsolidationServicePropertyTests : IDisposable
     public void GetLastRunAsync_ReturnsOnlyMostRecentMatchingPair(PositiveInt runCount)
     {
         var runsDir = Path.Combine(_tempDir, $"runs-{Guid.NewGuid():N}");
+        var templates = new List<PipelineJobTemplate>
+        {
+            new() { Id = "tmpl-A", Name = "A", IssueProviderId = "ip", RepoProviderId = "rp" },
+            new() { Id = "tmpl-B", Name = "B", IssueProviderId = "ip", RepoProviderId = "rp" }
+        };
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = _tempDir,
-            PipelineJobTemplates = new List<PipelineJobTemplate>
-            {
-                new() { Id = "tmpl-A", Name = "A", IssueProviderId = "ip", RepoProviderId = "rp" },
-                new() { Id = "tmpl-B", Name = "B", IssueProviderId = "ip", RepoProviderId = "rp" }
-            }
+            WorkspaceBaseDirectory = _tempDir
         };
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(h => h.GetRunHistory()).Returns([]);
@@ -111,7 +111,7 @@ public class ConsolidationServicePropertyTests : IDisposable
                 }
             });
         mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(config.PipelineJobTemplates);
+            .ReturnsAsync(templates);
 
         var sut = new ConsolidationService(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
@@ -163,14 +163,14 @@ public class ConsolidationServicePropertyTests : IDisposable
     public void ConcurrencyGuard_RejectsDuplicateRunning_AllowsDifferentPair(bool useSameType)
     {
         var runsDir = Path.Combine(_tempDir, $"guard-{Guid.NewGuid():N}");
+        var templates = new List<PipelineJobTemplate>
+        {
+            new() { Id = "tmpl-1", Name = "T1", IssueProviderId = "ip", RepoProviderId = "rp", BrainProviderId = "bp" },
+            new() { Id = "tmpl-2", Name = "T2", IssueProviderId = "ip", RepoProviderId = "rp", BrainProviderId = "bp" }
+        };
         var config = new PipelineConfiguration
         {
-            WorkspaceBaseDirectory = _tempDir,
-            PipelineJobTemplates = new List<PipelineJobTemplate>
-            {
-                new() { Id = "tmpl-1", Name = "T1", IssueProviderId = "ip", RepoProviderId = "rp", BrainProviderId = "bp" },
-                new() { Id = "tmpl-2", Name = "T2", IssueProviderId = "ip", RepoProviderId = "rp", BrainProviderId = "bp" }
-            }
+            WorkspaceBaseDirectory = _tempDir
         };
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(h => h.GetRunHistory()).Returns([]);
@@ -187,7 +187,7 @@ public class ConsolidationServicePropertyTests : IDisposable
                 }
             });
         mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(config.PipelineJobTemplates);
+            .ReturnsAsync(templates);
 
         var sut = new ConsolidationService(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
