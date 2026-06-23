@@ -237,4 +237,29 @@ public class AgentMonitoringComponentTests : BunitContext
         var prop = typeof(PipelineOrchestrationService).GetProperty("ActiveRun")!;
         prop.SetValue(_pipelineService, run);
     }
+
+    [Fact]
+    public void Renders_FreshnessIndicator_InHeader()
+    {
+        var cut = Render<AgentMonitoring>();
+
+        var header = cut.Find(".agent-header");
+        var indicator = header.QuerySelector(".freshness-indicator");
+        Assert.NotNull(indicator);
+        Assert.Contains("Last updated:", indicator.TextContent);
+        Assert.Contains("Refreshing every 2s", indicator.TextContent);
+    }
+
+    [Fact]
+    public void FreshnessIndicator_NoWarning_WhenFresh()
+    {
+        var cut = Render<AgentMonitoring>();
+
+        var indicator = cut.Find(".freshness-indicator");
+        Assert.DoesNotContain("freshness-warning", indicator.ClassName);
+    }
+
+    // TODO: Add test for warning state when _lastRefreshFailed is true or _lastSuccessfulRefresh is >30s stale
+    // TODO: Add test verifying "(refresh failed)" text is displayed when refresh exception occurs
+    // TODO: Tests cannot currently exercise staleness logic because _lastSuccessfulRefresh is initialized to UtcNow at construction
 }
