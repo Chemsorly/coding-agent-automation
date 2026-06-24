@@ -27,6 +27,18 @@
                 active.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }
         };
+        window.getSidebarCollapsed = function () {
+            return localStorage.getItem('sidebar-collapsed');
+        };
+        window.setSidebarCollapsed = function (value) {
+            localStorage.setItem('sidebar-collapsed', value);
+        };
+        window.localStorageGet = function (key) {
+            return localStorage.getItem(key);
+        };
+        window.localStorageSet = function (key, value) {
+            localStorage.setItem(key, value);
+        };
         window.registerGlobalKeyboardHandler = function (dotNetRef) {
             window.__globalKeyHandler = function (e) {
                 var tag = document.activeElement ? document.activeElement.tagName : '';
@@ -45,12 +57,6 @@
                 document.removeEventListener('keydown', window.__globalKeyHandler);
                 window.__globalKeyHandler = null;
             }
-        };
-        window.localStorageGet = function (key) {
-            return localStorage.getItem(key);
-        };
-        window.localStorageSet = function (key, value) {
-            localStorage.setItem(key, value);
         };
     </script>
 </body>
