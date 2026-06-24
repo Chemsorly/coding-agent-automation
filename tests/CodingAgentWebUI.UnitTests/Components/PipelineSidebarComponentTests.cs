@@ -74,8 +74,8 @@ public class PipelineSidebarComponentTests : BunitContext
         var run = CreateRun(PipelineStep.GeneratingCode, PipelineStep.RunningQualityGates);
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
-        Assert.Contains("🔄", cut.Find("#step-ReviewingCode .step-card-icon").TextContent);
-        Assert.Contains("🔄", cut.Find("#step-RunningQualityGates .step-card-icon").TextContent);
+        Assert.NotNull(cut.Find("#step-ReviewingCode .step-card-icon [data-icon=\"refresh-cw\"]"));
+        Assert.NotNull(cut.Find("#step-RunningQualityGates .step-card-icon [data-icon=\"refresh-cw\"]"));
     }
 
     [Fact]
@@ -206,7 +206,8 @@ public class PipelineSidebarComponentTests : BunitContext
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
-        Assert.Contains("⚠️ Needs refinement", cut.Find("#step-AnalyzingCode").TextContent);
+        Assert.Contains("Needs refinement", cut.Find("#step-AnalyzingCode").TextContent);
+        Assert.NotNull(cut.Find("#step-AnalyzingCode [data-icon=\"alert-triangle\"]"));
     }
 
     [Fact]
@@ -217,7 +218,8 @@ public class PipelineSidebarComponentTests : BunitContext
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
-        Assert.Contains("🚫 Won't do", cut.Find("#step-AnalyzingCode").TextContent);
+        Assert.Contains("Won't do", cut.Find("#step-AnalyzingCode").TextContent);
+        Assert.NotNull(cut.Find("#step-AnalyzingCode [data-icon=\"ban\"]"));
     }
 
     [Fact]
@@ -228,9 +230,8 @@ public class PipelineSidebarComponentTests : BunitContext
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
-        var text = cut.Find("#step-AnalyzingCode").TextContent;
-        Assert.DoesNotContain("⚠️", text);
-        Assert.DoesNotContain("🚫", text);
+        Assert.Empty(cut.FindAll("#step-AnalyzingCode [data-icon=\"alert-triangle\"]"));
+        Assert.Empty(cut.FindAll("#step-AnalyzingCode [data-icon=\"ban\"]"));
     }
 
     [Fact]
@@ -241,9 +242,8 @@ public class PipelineSidebarComponentTests : BunitContext
 
         var cut = Render<PipelineSidebar>(p => p.Add(s => s.Run, run).Add(s => s.IsRunning, true));
 
-        var text = cut.Find("#step-AnalyzingCode").TextContent;
-        Assert.DoesNotContain("⚠️", text);
-        Assert.DoesNotContain("🚫", text);
+        Assert.Empty(cut.FindAll("#step-AnalyzingCode [data-icon=\"alert-triangle\"]"));
+        Assert.Empty(cut.FindAll("#step-AnalyzingCode [data-icon=\"ban\"]"));
     }
 
     // --- Brain sync step rendering ---
@@ -272,7 +272,7 @@ public class PipelineSidebarComponentTests : BunitContext
 
         var stepMarkup = cut.Find("#step-SyncingBrainRepoPostRun").TextContent;
         Assert.Contains("Syncing...", stepMarkup);
-        Assert.DoesNotContain("⚠️", stepMarkup);
+        Assert.Empty(cut.FindAll("#step-SyncingBrainRepoPostRun [data-icon=\"alert-triangle\"]"));
     }
 
     [Fact]
@@ -309,7 +309,7 @@ public class PipelineSidebarComponentTests : BunitContext
 
         var stepMarkup = cut.Find("#step-SyncingBrainRepoPreRun").TextContent;
         Assert.Contains("Syncing...", stepMarkup);
-        Assert.DoesNotContain("⚠️", stepMarkup);
+        Assert.Empty(cut.FindAll("#step-SyncingBrainRepoPreRun [data-icon=\"alert-triangle\"]"));
     }
 
     [Fact]
