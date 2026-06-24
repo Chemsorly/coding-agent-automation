@@ -109,7 +109,7 @@ public class MainLayoutComponentTests : BunitContext
     {
         var cut = Render<MainLayout>();
         var labels = cut.FindAll(".sidebar-label");
-        Assert.Equal(7, labels.Count); // brand + 6 nav links
+        Assert.Equal(7, labels.Count); // TODO: Magic number tied to current nav item count — fragile if links are added/removed. Consider asserting labels.Count > 0 or deriving expected count.
     }
 
     [Fact]
@@ -127,6 +127,7 @@ public class MainLayoutComponentTests : BunitContext
     [Fact]
     public void Sidebar_ToggleCollapse_PersistsToLocalStorage()
     {
+        // TODO: Only tests persisting "true" (collapsed). Add a test that verifies persisting "false" when expanding back.
         _jsMock.Setup(js => js.InvokeAsync<string?>("getSidebarCollapsed", It.IsAny<object[]>()))
             .ReturnsAsync((string?)null);
 

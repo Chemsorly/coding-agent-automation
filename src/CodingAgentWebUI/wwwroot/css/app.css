@@ -44,6 +44,8 @@ select option { background: var(--surface); color: var(--text); }
     transition: width 0.2s ease, min-width 0.2s ease;
     overflow: hidden;
 }
+/* TODO: .sidebar.collapsed has higher specificity (0-2-0) than the <600px media query rules (0-1-0), breaking hamburger overlay when user previously collapsed manually. Consider resetting collapsed state via JS on resize below 600px, or adding .sidebar.collapsed overrides within the <600px media query. */
+/* TODO: At 600-900px the media query forces collapsed appearance regardless of toggle state, making the manual toggle button misleading. Consider hiding the toggle in that range or syncing state via JS matchMedia listener. */
 .sidebar.collapsed { width: 48px; min-width: 48px; }
 .sidebar.collapsed .sidebar-label { display: none; }
 .sidebar.collapsed .sidebar-brand { padding: 16px 12px; font-size: 0; }
@@ -1446,3 +1448,21 @@ select option { background: var(--surface); color: var(--text); }
 .projects-confirm-dialog p { margin: 0 0 12px 0; font-size: 0.9rem; color: var(--text); }
 .projects-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .tree-group-header.active { color: var(--accent-light); font-weight: 600; }
+
+/* ═══ Undo Snackbar ═══ */
+.undo-snackbar { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 16px; display: flex; align-items: center; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 1100; font-size: 0.85rem; color: var(--text); }
+.undo-snackbar-message { white-space: nowrap; }
+.undo-snackbar-btn { background: var(--accent); color: white; border: none; border-radius: var(--radius); padding: 4px 10px; cursor: pointer; font-size: 0.8rem; font-weight: 600; }
+.undo-snackbar-btn:hover { opacity: 0.85; }
+
+/* ═══ Inline Status Component ═══ */
+.inline-status { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: var(--radius); font-size: 0.85rem; margin-bottom: 12px; animation: toast-in 0.3s ease-out; }
+.inline-status-success { background: var(--bg-success); color: var(--success); border: 1px solid var(--success); }
+.inline-status-error { background: var(--bg-error); color: var(--error); border: 1px solid var(--error); }
+.inline-status-dismiss { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.9rem; padding: 2px 6px; border-radius: 4px; opacity: 0.7; transition: opacity 0.15s; margin-left: auto; }
+.inline-status-dismiss:hover { opacity: 1; background: rgba(255,255,255,0.08); }
+.inline-status-saved { color: var(--success); font-weight: 600; }
+
+/* ═══ Freshness Indicator ═══ */
+.freshness-indicator { font-size: 0.8rem; color: var(--text-muted); }
+.freshness-indicator.freshness-warning { color: var(--warning); font-weight: 500; }

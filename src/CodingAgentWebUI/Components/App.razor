@@ -33,6 +33,12 @@
         window.setSidebarCollapsed = function (value) {
             localStorage.setItem('sidebar-collapsed', value);
         };
+        window.localStorageGet = function (key) {
+            return localStorage.getItem(key);
+        };
+        window.localStorageSet = function (key, value) {
+            localStorage.setItem(key, value);
+        };
         window.registerGlobalKeyboardHandler = function (dotNetRef) {
             window.__globalKeyHandler = function (e) {
                 var tag = document.activeElement ? document.activeElement.tagName : '';

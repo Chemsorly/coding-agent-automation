@@ -9,6 +9,8 @@
 @inject IJSRuntime JS
 
 <div class="app-layout">
+    @* TODO: The @if guard and CSS display:none on .sidebar-overlay-backdrop are redundant — if @if is removed for animation purposes, CSS still hides it outside <600px *@
+    @* TODO: Hamburger button is rendered at all viewports (hidden via CSS). If triggered at >600px (e.g. via accessibility tools), overlay state is set with no visible effect. Consider guarding ToggleOverlay with a viewport width check. *@
     @if (_overlayOpen)
     {
         <div class="sidebar-overlay-backdrop" @onclick="CloseOverlay"></div>
