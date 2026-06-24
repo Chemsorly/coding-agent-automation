@@ -38,6 +38,7 @@
         <div class="agent-detail-confirm" style="margin-top: 12px;">
             <p>Delete this repository provider?</p>
             <div class="confirm-buttons">
+                @* TODO: OnDelete.InvokeAsync(id) is fire-and-forget — if delete fails asynchronously, user gets no error feedback. *@
                 <button class="btn-delete" @onclick="() => { var id = _deletingProviderId!; _showDeleteConfirm = false; _deletingProviderId = null; OnDelete.InvokeAsync(id); }">Delete</button>
                 <button class="btn-cancel" @onclick="() => { _showDeleteConfirm = false; _deletingProviderId = null; }">Cancel</button>
             </div>

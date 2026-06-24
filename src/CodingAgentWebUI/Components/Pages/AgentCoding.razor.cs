@@ -85,6 +85,7 @@ public partial class AgentCoding : IDisposable
     private bool _drawerLoading => PageService.DrawerLoading;
     private int _drawerPage => PageService.DrawerPage;
     private bool _drawerHasMore => PageService.DrawerHasMore;
+    private Dictionary<string, Pipeline.Models.DependencyCheckResult> _drawerReadiness => PageService.DrawerReadiness;
     private List<PullRequestSummary> _prDrawerPrs => PageService.PrDrawerPrs;
     private bool _prDrawerLoading => PageService.PrDrawerLoading;
     private int _prDrawerPage => PageService.PrDrawerPage;
@@ -251,6 +252,7 @@ public partial class AgentCoding : IDisposable
         // TODO: Loading indicator won't render — PageService sets DrawerLoading=true internally but no StateHasChanged() is called before the await, so the UI never shows the spinner. Same issue in OpenPrDrawer and OpenEpicDrawer.
         var error = await PageService.LoadDrawerIssuesAsync(template, 1);
         if (error != null) _errorMessage = error;
+        else _ = CheckDrawerDependenciesInBackground(template);
     }
 
     private void CloseDrawer() { _drawerOpen = false; _drawerTemplate = null; PageService.ClearDrawerIssues(); }
@@ -261,6 +263,7 @@ public partial class AgentCoding : IDisposable
         {
             var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, _drawerPage - 1);
             if (error != null) _errorMessage = error;
+            else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
         }
     }
 
@@ -270,7 +273,16 @@ public partial class AgentCoding : IDisposable
         {
             var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, _drawerPage + 1);
             if (error != null) _errorMessage = error;
+            else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
         }
+    }
+
+    // TODO: Add CancellationTokenSource cancelled on drawer close/page change to prevent stale writes and ObjectDisposedException.
+    // TODO: Wrap body in try/catch — InvokeAsync can throw ObjectDisposedException if component is disposed during background work.
+    private async Task CheckDrawerDependenciesInBackground(PipelineJobTemplate template)
+    {
+        await PageService.CheckDrawerDependenciesAsync(template, () => InvokeAsync(StateHasChanged));
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task DispatchFromDrawer(IssueSummary issue)

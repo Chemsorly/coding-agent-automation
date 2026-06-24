@@ -24,6 +24,7 @@
         StateHasChanged();
 
         var cts = _dismissCts;
+        // TODO: Task.Run is unnecessary in Blazor Server — use a simple async method to avoid the extra thread-pool hop.
         _ = Task.Run(async () =>
         {
             try
