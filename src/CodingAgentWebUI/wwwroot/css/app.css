@@ -53,7 +53,9 @@ select option { background: var(--surface); color: var(--text); }
 }
 .sidebar-link:hover { background: var(--surface-alt); color: var(--text); }
 .sidebar-link.active { background: var(--surface-alt); color: var(--accent-light); border-left-color: var(--accent); }
+.icon { width: 1em; height: 1em; vertical-align: middle; display: inline-block; }
 .sidebar-icon { font-size: 1.1rem; width: 24px; text-align: center; }
+.sidebar-icon .icon { width: 18px; height: 18px; }
 
 .main-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 
@@ -179,6 +181,7 @@ select option { background: var(--surface); color: var(--text); }
 .tree-group-header { display: flex; align-items: center; gap: 6px; padding: 8px 16px; font-size: 0.82rem; font-weight: 600; color: var(--text-muted); cursor: pointer; user-select: none; text-transform: uppercase; letter-spacing: 0.03em; }
 .tree-group-header:hover { color: var(--text); }
 .tree-chevron { font-size: 0.7rem; width: 12px; text-align: center; }
+.tree-chevron .icon { width: 10px; height: 10px; }
 .tree-group-children { display: flex; flex-direction: column; }
 .tree-node { padding: 6px 16px 6px 34px; font-size: 0.85rem; color: var(--text-muted); cursor: pointer; transition: background 0.15s, color 0.15s; border-left: 3px solid transparent; }
 .tree-node:hover { background: var(--surface-alt); color: var(--text); }
@@ -313,6 +316,7 @@ select option { background: var(--surface); color: var(--text); }
 .advanced-toggle { display: flex; align-items: center; gap: 6px; margin-top: 8px; padding-top: 10px; border-top: 1px dashed var(--border); cursor: pointer; user-select: none; font-size: 0.78rem; color: var(--text-muted); }
 .advanced-toggle:hover { color: var(--accent-light); }
 .advanced-toggle .toggle-chevron { font-size: 0.65rem; transition: transform 0.15s; }
+.advanced-toggle .toggle-chevron .icon { width: 10px; height: 10px; transition: transform 0.15s; }
 .advanced-toggle .toggle-chevron.expanded { transform: rotate(90deg); }
 .provider-form textarea {
     width: 100%; resize: vertical; padding: 8px 12px; border: 1px solid var(--border);
@@ -484,6 +488,7 @@ select option { background: var(--surface); color: var(--text); }
 .phase-header:hover { background: var(--surface-alt); }
 .phase-chevron { font-size: 0.75rem; width: 12px; color: var(--text-muted); flex-shrink: 0; }
 .phase-icon { font-size: 0.8rem; width: 18px; text-align: center; flex-shrink: 0; }
+.phase-icon .icon { width: 14px; height: 14px; }
 .phase-name { font-size: 0.82rem; font-weight: 600; flex: 1; }
 .phase-counter { font-size: 0.72rem; color: var(--text-muted); white-space: nowrap; }
 
@@ -507,6 +512,7 @@ select option { background: var(--surface); color: var(--text); }
 .step-card:hover { background: var(--surface-alt); }
 .step-card-header { display: flex; align-items: center; gap: 8px; }
 .step-card-icon { font-size: 0.8rem; width: 18px; text-align: center; flex-shrink: 0; }
+.step-card-icon .icon { width: 14px; height: 14px; }
 .step-card-name { font-size: 0.78rem; font-weight: 500; }
 .step-card-details { padding: 4px 0 2px 26px; }
 .step-detail { font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; }

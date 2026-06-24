@@ -1,0 +1,20 @@
+@namespace CodingAgentWebUI.Components.Shared
+
+@* TODO: Silently renders nothing when Name is not found in the dictionary — consider logging a warning for easier debugging *@
+@* TODO: If Name is null at runtime, TryGetValue will throw ArgumentNullException — consider adding null/empty guard *@
+@if (LucideIcons.Icons.TryGetValue(Name, out var paths))
+{
+    <svg xmlns="http://www.w3.org/2000/svg"
+         width="@(Size ?? "24")" height="@(Size ?? "24")"
+         viewBox="0 0 24 24"
+         fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+         class="icon @Class"
+         data-icon="@Name">@((MarkupString)paths)</svg>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Name { get; set; } = "";
+    [Parameter] public string? Size { get; set; }
+    [Parameter] public string? Class { get; set; }
+}
