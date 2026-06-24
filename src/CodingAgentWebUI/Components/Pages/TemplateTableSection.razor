@@ -63,7 +63,7 @@
                                         @{ var previewLabels = GetLabelPreview(template.RepoProviderId); }
                                         @if (previewLabels.Labels.Count > 0)
                                         {
-                                            <button class="btn-label-preview" @onclick="() => ToggleLabelPreview(template.Id)" title="Show label-mapped resources">ℹ</button>
+                                            <button class="btn-label-preview" @onclick="() => ToggleLabelPreview(template.Id)" title="Show label-mapped resources" aria-expanded="@(_expandedPreviewTemplateId == template.Id ? "true" : "false")">ℹ</button>
                                         }
                                     </td>
                                     <td>@(string.IsNullOrEmpty(template.BrainProviderId) ? "—" : GetProviderDisplayName(template.BrainProviderId, BrainProviders))</td>

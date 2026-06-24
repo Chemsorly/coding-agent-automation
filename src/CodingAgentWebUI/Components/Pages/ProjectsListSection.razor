@@ -76,14 +76,11 @@
 
     @if (_confirmingDelete is not null)
     {
-        <div class="projects-confirm-overlay">
-            <div class="projects-confirm-dialog">
-                <p>Delete project "<strong>@_confirmingDelete.Name</strong>"?</p>
-                <p class="form-hint">This action cannot be undone. All template associations will be lost.</p>
-                <div class="projects-confirm-actions">
-                    <button class="btn-delete" @onclick="ExecuteDeleteAsync">Delete</button>
-                    <button class="btn-cancel" @onclick="CancelDelete">Cancel</button>
-                </div>
+        <div class="agent-detail-confirm" style="margin-top: 12px;">
+            <p>Delete project "<strong>@_confirmingDelete.Name</strong>"? This action cannot be undone. All template associations will be lost.</p>
+            <div class="confirm-buttons">
+                <button class="btn-delete" @onclick="ExecuteDeleteAsync">Delete</button>
+                <button class="btn-cancel" @onclick="CancelDelete">Cancel</button>
             </div>
         </div>
     }

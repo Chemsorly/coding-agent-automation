@@ -196,6 +196,7 @@
             <PipelineSidebar Run="activeRun" IsRunning="PipelineService.IsRunning" OnCancel="CancelPipeline" MaxRetries="@_maxRetries" />
         }
     </div>
+    <UndoSnackbar @ref="_undoSnackbar" />
 </div>
 
 <!-- Dispatch Drawers -->

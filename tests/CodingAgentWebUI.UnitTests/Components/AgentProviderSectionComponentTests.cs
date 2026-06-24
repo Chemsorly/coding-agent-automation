@@ -314,6 +314,10 @@ public class AgentProviderSectionComponentTests : BunitContext
         var deleteButton = component.Find(".btn-delete");
         await deleteButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
+        // Confirm the deletion
+        var confirmButton = component.Find(".agent-detail-confirm .btn-delete");
+        await confirmButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
         Assert.Equal("ap-1", deletedId);
     }
 

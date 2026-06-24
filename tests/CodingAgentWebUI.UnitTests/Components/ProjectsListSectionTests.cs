@@ -109,12 +109,12 @@ public class ProjectsListSectionTests : BunitContext
         var nonDefaultDeleteBtn = deleteButtons[1]; // Second row's delete button
         await nonDefaultDeleteBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
-        // Confirmation dialog should appear
-        Assert.Contains("projects-confirm-overlay", cut.Markup);
+        // Confirmation dialog should appear (inline pattern)
+        Assert.Contains("agent-detail-confirm", cut.Markup);
         Assert.Contains("Deletable", cut.Markup);
 
         // Confirm deletion
-        var confirmBtn = cut.Find(".projects-confirm-dialog button.btn-delete");
+        var confirmBtn = cut.Find(".agent-detail-confirm button.btn-delete");
         await confirmBtn.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         _mockStore.Verify(s => s.DeleteProjectAsync("proj-1", It.IsAny<CancellationToken>()), Times.Once);

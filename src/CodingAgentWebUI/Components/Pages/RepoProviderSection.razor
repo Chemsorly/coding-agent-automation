@@ -27,11 +27,23 @@
                 </div>
                 <div class="provider-actions">
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
-                    <button class="btn-delete" @onclick="() => OnDelete.InvokeAsync(p.Id)">Delete</button>
+                    <button class="btn-delete" @onclick="() => { _deletingProviderId = p.Id; _showDeleteConfirm = true; }">Delete</button>
                 </div>
             </div>
         }
     </div>
+
+    @if (_showDeleteConfirm && _deletingProviderId != null)
+    {
+        <div class="agent-detail-confirm" style="margin-top: 12px;">
+            <p>Delete this repository provider?</p>
+            <div class="confirm-buttons">
+                <button class="btn-delete" @onclick="() => { var id = _deletingProviderId!; _showDeleteConfirm = false; _deletingProviderId = null; OnDelete.InvokeAsync(id); }">Delete</button>
+                <button class="btn-cancel" @onclick="() => { _showDeleteConfirm = false; _deletingProviderId = null; }">Cancel</button>
+            </div>
+        </div>
+    }
+
     @if (_showForm)
     {
         @if (_form.ProviderType == "GitLab")
@@ -73,9 +85,10 @@
                             </div>
                             <input type="text" @bind="_form.BlacklistedPaths" placeholder=".kiro, .github, .brain" />
                         </div>
-                        <details class="secrets-section">
-                            <summary class="secrets-section-header">🔑 Secrets (@_form.Secrets.Count)</summary>
-                            <div class="secrets-section-body">
+                        <Collapsible CssClass="secrets-section" HeaderClass="secrets-section-header" BodyClass="secrets-section-body"
+                                     IsExpanded="_secretsExpanded" IsExpandedChanged="v => _secretsExpanded = v">
+                            <Header>🔑 Secrets (@_form.Secrets.Count)</Header>
+                            <ChildContent>
                                 @for (var i = 0; i < _form.Secrets.Count; i++)
                                 {
                                     var index = i;
@@ -101,11 +114,13 @@
                                     }
                                 }
                                 <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
-                            </div>
-                        </details>
-                        <details class="setup-steps-section">
-                            <summary class="setup-steps-section-header">⚙️ Setup Steps (@_form.SetupSteps.Count)</summary>
-                            <div class="setup-steps-section-body"><span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
+                            </ChildContent>
+                        </Collapsible>
+                        <Collapsible CssClass="setup-steps-section" HeaderClass="setup-steps-section-header" BodyClass="setup-steps-section-body"
+                                     IsExpanded="_setupStepsExpanded" IsExpandedChanged="v => _setupStepsExpanded = v">
+                            <Header>⚙️ Setup Steps (@_form.SetupSteps.Count)</Header>
+                            <ChildContent>
+                                <span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
                                 @for (var i = 0; i < _form.SetupSteps.Count; i++)
                                 {
                                     var index = i;
@@ -135,8 +150,8 @@
                                     </div>
                                 }
                                 <button type="button" class="btn-add-inline" @onclick="AddSetupStep">+ Add Step</button>
-                            </div>
-                        </details>
+                            </ChildContent>
+                        </Collapsible>
                     }
                     <div class="form-group">
                         <label>Steering Instructions</label>
@@ -194,9 +209,10 @@
                             </div>
                             <input type="text" @bind="_form.BlacklistedPaths" placeholder=".kiro, .github, .brain" />
                         </div>
-                        <details class="secrets-section">
-                            <summary class="secrets-section-header">🔑 Secrets (@_form.Secrets.Count)</summary>
-                            <div class="secrets-section-body">
+                        <Collapsible CssClass="secrets-section" HeaderClass="secrets-section-header" BodyClass="secrets-section-body"
+                                     IsExpanded="_secretsExpanded" IsExpandedChanged="v => _secretsExpanded = v">
+                            <Header>🔑 Secrets (@_form.Secrets.Count)</Header>
+                            <ChildContent>
                                 @for (var i = 0; i < _form.Secrets.Count; i++)
                                 {
                                     var index = i;
@@ -222,11 +238,13 @@
                                     }
                                 }
                                 <button type="button" class="btn-add-inline" @onclick="AddSecret">+ Add Secret</button>
-                            </div>
-                        </details>
-                        <details class="setup-steps-section">
-                            <summary class="setup-steps-section-header">⚙️ Setup Steps (@_form.SetupSteps.Count)</summary>
-                            <div class="setup-steps-section-body"><span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
+                            </ChildContent>
+                        </Collapsible>
+                        <Collapsible CssClass="setup-steps-section" HeaderClass="setup-steps-section-header" BodyClass="setup-steps-section-body"
+                                     IsExpanded="_setupStepsExpanded" IsExpandedChanged="v => _setupStepsExpanded = v">
+                            <Header>⚙️ Setup Steps (@_form.SetupSteps.Count)</Header>
+                            <ChildContent>
+                                <span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
                                 @for (var i = 0; i < _form.SetupSteps.Count; i++)
                                 {
                                     var index = i;
@@ -256,8 +274,8 @@
                                     </div>
                                 }
                                 <button type="button" class="btn-add-inline" @onclick="AddSetupStep">+ Add Step</button>
-                            </div>
-                        </details>
+                            </ChildContent>
+                        </Collapsible>
                     }
                     <div class="form-group">
                         <label>Steering Instructions</label>
@@ -311,6 +329,10 @@
     private bool _validationSuccess;
     private bool _saving;
     private HashSet<int> _revealedSecrets = new();
+    private bool _secretsExpanded;
+    private bool _setupStepsExpanded;
+    private bool _showDeleteConfirm;
+    private string? _deletingProviderId;
 
     private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
 

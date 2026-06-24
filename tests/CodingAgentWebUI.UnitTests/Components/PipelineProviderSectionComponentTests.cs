@@ -158,6 +158,10 @@ public class PipelineProviderSectionComponentTests : BunitContext
         var deleteButton = component.Find(".btn-delete");
         await deleteButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
+        // Confirm the deletion
+        var confirmButton = component.Find(".agent-detail-confirm .btn-delete");
+        await confirmButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
         Assert.Equal("pp-1", deletedId);
     }
 

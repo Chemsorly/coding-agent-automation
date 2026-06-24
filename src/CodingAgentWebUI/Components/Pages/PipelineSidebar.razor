@@ -41,7 +41,7 @@
             <div @key="phase.Name" class="phase-group phase-group-@phaseStateClass"
                  data-testid="phase-@phaseTestId"
                  data-phase-state="@phaseStateClass">
-                <div class="phase-header" @onclick="() => TogglePhase(phase.Name)">
+                <div class="phase-header" @onclick="() => TogglePhase(phase.Name)" aria-expanded="@isPhaseExpanded.ToString().ToLower()">
                     <span class="phase-chevron">@(isPhaseExpanded ? "▾" : "▸")</span>
                     <span class="phase-icon">@GetPhaseIcon(phaseState)</span>
                     <span class="phase-name">@phase.Name</span>
@@ -63,7 +63,7 @@
                              data-testid="pipeline-step-@step"
                              data-step-state="@stepStateClass"
                              @onclick="() => ToggleStep(step, state)" @onclick:stopPropagation="true">
-                            <div class="step-card-header">
+                            <div class="step-card-header" aria-expanded="@isExpanded.ToString().ToLower()">
                                 <span class="step-card-icon">@GetStepIcon(state)</span>
                                 <span class="step-card-name">@step.ToDisplayName()</span>
                             </div>

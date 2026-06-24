@@ -4,7 +4,7 @@
 
 <div class="settings-tree">
     <div class="tree-group">
-        <div class="tree-group-header" @onclick="ToggleProviders">
+        <div class="tree-group-header" @onclick="ToggleProviders" aria-expanded="@_providersExpanded.ToString().ToLower()">
             <span class="tree-chevron">@(_providersExpanded ? "▼" : "▶")</span>
             Providers
         </div>
@@ -32,7 +32,7 @@
     </div>
 
     <div class="tree-group">
-        <div class="tree-group-header" @onclick="ToggleProjects">
+        <div class="tree-group-header" @onclick="ToggleProjects" aria-expanded="@_projectsExpanded.ToString().ToLower()">
             <span class="tree-chevron">@(_projectsExpanded ? "▼" : "▶")</span>
             Projects
         </div>
@@ -61,7 +61,7 @@
     </div>
 
     <div class="tree-group">
-        <div class="tree-group-header" @onclick="TogglePipeline">
+        <div class="tree-group-header" @onclick="TogglePipeline" aria-expanded="@_pipelineExpanded.ToString().ToLower()">
             <span class="tree-chevron">@(_pipelineExpanded ? "▼" : "▶")</span>
             Global Defaults
         </div>
@@ -105,7 +105,7 @@
     </div>
 
     <div class="tree-group">
-        <div class="tree-group-header" @onclick="ToggleLabelRouting">
+        <div class="tree-group-header" @onclick="ToggleLabelRouting" aria-expanded="@_labelRoutingExpanded.ToString().ToLower()">
             <span class="tree-chevron">@(_labelRoutingExpanded ? "▼" : "▶")</span>
             Label Routing
         </div>
