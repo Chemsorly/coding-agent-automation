@@ -46,6 +46,12 @@
                 window.__globalKeyHandler = null;
             }
         };
+        window.localStorageGet = function (key) {
+            return localStorage.getItem(key);
+        };
+        window.localStorageSet = function (key, value) {
+            localStorage.setItem(key, value);
+        };
     </script>
 </body>
 </html>
