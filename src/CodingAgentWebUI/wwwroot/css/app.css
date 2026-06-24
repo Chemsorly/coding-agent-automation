@@ -1377,9 +1377,6 @@ select option { background: var(--surface); color: var(--text); }
 .projects-actions-cell { display: flex; gap: 6px; }
 .projects-note-row td { padding: 2px 10px 8px 10px; border-bottom: 1px solid var(--border); }
 .projects-note { font-size: 0.72rem; color: var(--text-muted); font-style: italic; }
-.projects-confirm-overlay { display: none; }
-.projects-confirm-dialog { display: none; }
-.projects-confirm-actions { display: none; }
 .tree-group-header.active { color: var(--accent-light); font-weight: 600; }
 
 /* ═══ Undo Snackbar ═══ */
