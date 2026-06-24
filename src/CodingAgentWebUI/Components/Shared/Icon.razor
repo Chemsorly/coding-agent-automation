@@ -1,0 +1,16 @@
+@if (LucideIcons.Icons.TryGetValue(Name, out var svgContent))
+{
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+         fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+         class="icon @Class" data-icon="@Name" style="@SizeStyle">
+        @((MarkupString)svgContent)
+    </svg>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Name { get; set; } = "";
+    [Parameter] public string? Size { get; set; }
+    [Parameter] public string? Class { get; set; }
+
+    private string? SizeStyle => Size is not null ? $"width:{Size};height:{Size}" : null;
+}

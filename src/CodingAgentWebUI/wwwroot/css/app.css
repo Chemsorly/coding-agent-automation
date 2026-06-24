@@ -53,7 +53,10 @@ select option { background: var(--surface); color: var(--text); }
 }
 .sidebar-link:hover { background: var(--surface-alt); color: var(--text); }
 .sidebar-link.active { background: var(--surface-alt); color: var(--accent-light); border-left-color: var(--accent); }
+/* TODO: Update .sidebar-icon, .phase-icon, .step-card-icon rules to properly size SVG elements (font-size/text-align have no effect on SVG children) */
 .sidebar-icon { font-size: 1.1rem; width: 24px; text-align: center; }
+/* TODO: Add fill: currentColor per requirement (".icon CSS class must use currentColor for fill") — currently handled by inline stroke="currentColor" on SVG */
+.icon { width: 1em; height: 1em; vertical-align: middle; display: inline-block; }
 
 .main-content { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
 
