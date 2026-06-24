@@ -94,7 +94,6 @@ select option { background: var(--surface); color: var(--text); }
     .sidebar .sidebar-toggle { padding: 8px 12px; }
 }
 
-/* TODO: .sidebar.collapsed class can conflict with this media query when user collapses on wide viewport then resizes below 600px — consider clearing collapsed state via JS on resize or overriding .sidebar.collapsed within this query */
 /* Responsive: hamburger overlay at 600px */
 @media (max-width: 600px) {
     .sidebar {
