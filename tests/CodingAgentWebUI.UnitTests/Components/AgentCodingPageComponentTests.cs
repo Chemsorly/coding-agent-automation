@@ -243,8 +243,7 @@ public class AgentCodingPageComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration
             {
-                WorkspaceBaseDirectory = Path.GetTempPath(),
-                PipelineJobTemplates = new List<PipelineJobTemplate>()
+                WorkspaceBaseDirectory = Path.GetTempPath()
             });
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>());

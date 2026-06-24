@@ -9,9 +9,11 @@ namespace CodingAgentWebUI.UnitTests.Components;
 
 public class OnboardingChecklistComponentTests : BunitContext
 {
+    private readonly Mock<IJSRuntime> _mockJs = new();
+
     public OnboardingChecklistComponentTests()
     {
-        Services.AddSingleton(new Mock<IJSRuntime>().Object);
+        Services.AddSingleton<IJSRuntime>(_mockJs.Object);
     }
 
     [Fact]
@@ -114,11 +116,8 @@ public class OnboardingChecklistComponentTests : BunitContext
     [Fact]
     public void Checklist_HiddenWhenDismissedViaLocalStorage()
     {
-        // TODO: This registers a second IJSRuntime after the constructor already registered one. DI resolution order may cause the mock setup to be ignored. Consider removing the constructor registration or using a different test setup pattern.
-        var mockJs = new Mock<IJSRuntime>();
-        mockJs.Setup(j => j.InvokeAsync<string?>("localStorageGet", It.IsAny<object[]>()))
+        _mockJs.Setup(j => j.InvokeAsync<string?>("localStorageGet", It.IsAny<object[]>()))
             .ReturnsAsync("true");
-        Services.AddSingleton(mockJs.Object);
 
         var cut = Render<OnboardingChecklist>(p => p
             .Add(s => s.HasIssueProvider, false)
