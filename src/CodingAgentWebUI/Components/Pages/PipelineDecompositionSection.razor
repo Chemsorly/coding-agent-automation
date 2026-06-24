@@ -20,7 +20,7 @@
             <input type="number" @bind="_decompositionTimeoutMinutes" min="5" max="60" />
         </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
-            <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")">▶</span>
+            <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
             <span>Advanced settings</span>
         </div>
         @if (_showAdvanced)
