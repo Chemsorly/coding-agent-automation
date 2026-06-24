@@ -5,7 +5,7 @@
 <div class="settings-tree">
     <div class="tree-group">
         <div class="tree-group-header" @onclick="ToggleProviders" aria-expanded="@_providersExpanded.ToString().ToLower()">
-            <span class="tree-chevron">@(_providersExpanded ? "▼" : "▶")</span>
+            <span class="tree-chevron"><Icon Name="@(_providersExpanded ? "chevron-down" : "chevron-right")" /></span>
             Providers
         </div>
         @if (_providersExpanded)
@@ -33,7 +33,7 @@
 
     <div class="tree-group">
         <div class="tree-group-header" @onclick="ToggleProjects" aria-expanded="@_projectsExpanded.ToString().ToLower()">
-            <span class="tree-chevron">@(_projectsExpanded ? "▼" : "▶")</span>
+            <span class="tree-chevron"><Icon Name="@(_projectsExpanded ? "chevron-down" : "chevron-right")" /></span>
             Projects
         </div>
         @if (_projectsExpanded)
@@ -62,7 +62,7 @@
 
     <div class="tree-group">
         <div class="tree-group-header" @onclick="TogglePipeline" aria-expanded="@_pipelineExpanded.ToString().ToLower()">
-            <span class="tree-chevron">@(_pipelineExpanded ? "▼" : "▶")</span>
+            <span class="tree-chevron"><Icon Name="@(_pipelineExpanded ? "chevron-down" : "chevron-right")" /></span>
             Global Defaults
         </div>
         @if (_pipelineExpanded)
@@ -106,7 +106,7 @@
 
     <div class="tree-group">
         <div class="tree-group-header" @onclick="ToggleLabelRouting" aria-expanded="@_labelRoutingExpanded.ToString().ToLower()">
-            <span class="tree-chevron">@(_labelRoutingExpanded ? "▼" : "▶")</span>
+            <span class="tree-chevron"><Icon Name="@(_labelRoutingExpanded ? "chevron-down" : "chevron-right")" /></span>
             Label Routing
         </div>
         @if (_labelRoutingExpanded)
