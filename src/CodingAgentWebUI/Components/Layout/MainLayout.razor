@@ -13,11 +13,11 @@
     <nav class="sidebar" role="navigation" aria-label="Main navigation">
         <div class="sidebar-brand">Coding Agent</div>
         <NavLink href="/agent-chat" class="sidebar-link">
-            <span class="sidebar-icon">💬</span>
+            <span class="sidebar-icon"><Icon Name="message-circle" /></span>
             <span>Agent Chat</span>
         </NavLink>
         <NavLink href="/agent-coding" class="sidebar-link">
-            <span class="sidebar-icon">🤖</span>
+            <span class="sidebar-icon"><Icon Name="bot" /></span>
             <span>Agent Coding</span>
             @if (LoopService.IsLoopActive)
             {
@@ -25,11 +25,11 @@
             }
         </NavLink>
         <NavLink href="/agent-monitoring" class="sidebar-link">
-            <span class="sidebar-icon">📊</span>
+            <span class="sidebar-icon"><Icon Name="bar-chart-2" /></span>
             <span>Agent Monitoring</span>
         </NavLink>
         <NavLink href="/consolidation" class="sidebar-link">
-            <span class="sidebar-icon">🔄</span>
+            <span class="sidebar-icon"><Icon Name="refresh-cw" /></span>
             <span>Consolidation</span>
             @if (BadgeService.BadgeCount > 0)
             {
@@ -37,11 +37,11 @@
             }
         </NavLink>
         <NavLink href="/settings" class="sidebar-link">
-            <span class="sidebar-icon">⚙️</span>
+            <span class="sidebar-icon"><Icon Name="settings" /></span>
             <span>Settings</span>
         </NavLink>
         <NavLink href="/about" class="sidebar-link">
-            <span class="sidebar-icon">ℹ️</span>
+            <span class="sidebar-icon"><Icon Name="info" /></span>
             <span>About</span>
         </NavLink>
         <button class="sidebar-link sidebar-notification-btn" @onclick="ToggleNotificationPanel">
