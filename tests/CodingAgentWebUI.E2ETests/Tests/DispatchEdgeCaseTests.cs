@@ -121,10 +121,11 @@ public sealed class DispatchEdgeCaseTests : E2ETestBase, IClassFixture<E2EFixtur
         await codingPage.SelectTemplateAsync("Test Template");
         await codingPage.ClickBrowseIssuesAsync();
 
-        // Assert: the issue row should show "DISPATCHED" badge and be non-interactive
+        // Assert: the issue row should show "⏳ Queued" badge and be non-interactive
         var issueRow = Page.Locator("[data-testid='issue-row-51']");
-        var hasDispatchedBadge = await issueRow.Locator("text=DISPATCHED").CountAsync();
-        Assert.True(hasDispatchedBadge > 0, "Issue already being processed should show DISPATCHED badge");
+        // TODO: Tighten selector — "text=Queued" matches any element containing "Queued"; use a more specific locator for the badge text.
+        var hasDispatchedBadge = await issueRow.Locator("text=Queued").CountAsync();
+        Assert.True(hasDispatchedBadge > 0, "Issue already being processed should show Queued badge");
 
         // The row should have reduced opacity (pointer-events: none)
         var opacity = await issueRow.EvaluateAsync<string>("el => getComputedStyle(el).opacity");

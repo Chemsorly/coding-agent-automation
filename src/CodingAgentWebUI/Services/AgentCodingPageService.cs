@@ -56,6 +56,7 @@ public class AgentCodingPageService
     public int DrawerPage { get; private set; } = 1;
     public bool DrawerHasMore { get; private set; }
     public bool DrawerLoading { get; private set; }
+    public Dictionary<string, DependencyCheckResult> DrawerReadiness { get; private set; } = new();
 
     public List<PullRequestSummary> PrDrawerPrs { get; private set; } = new();
     public int PrDrawerPage { get; private set; } = 1;
@@ -240,7 +241,38 @@ public class AgentCodingPageService
         finally { DrawerLoading = false; }
     }
 
-    public void ClearDrawerIssues() { DrawerIssues.Clear(); DrawerPage = 1; DrawerHasMore = false; }
+    public void ClearDrawerIssues() { DrawerIssues.Clear(); DrawerPage = 1; DrawerHasMore = false; DrawerReadiness.Clear(); }
+
+    /// <summary>
+    /// Checks dependency readiness for all current drawer issues asynchronously.
+    /// Results are stored in <see cref="DrawerReadiness"/> and the caller is notified via onProgress.
+    /// </summary>
+    // TODO: Accept a CancellationToken and cancel on drawer close/page navigation to prevent concurrent mutations on DrawerReadiness from overlapping invocations.
+    public async Task CheckDrawerDependenciesAsync(PipelineJobTemplate template, Action? onProgress = null)
+    {
+        var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
+        if (providerConfig == null) return;
+
+        var issues = DrawerIssues.ToList(); // snapshot
+        var stateCache = new Dictionary<int, bool>();
+
+        try
+        {
+            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
+            foreach (var issue in issues)
+            {
+                var result = await _dependencyChecker.CheckAsync(
+                    issue.Identifier, issue.Description, provider, stateCache, CancellationToken.None);
+                DrawerReadiness[issue.Identifier] = result;
+                onProgress?.Invoke();
+            }
+        }
+        catch
+        {
+            // TODO: Log the exception at Warning level for diagnosability; re-throw OperationCanceledException when cancellation support is added.
+            // Best-effort: partial results are still useful
+        }
+    }
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchIssueAsync(
         IssueSummary issue, PipelineJobTemplate template)

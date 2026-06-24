@@ -38,8 +38,11 @@
                     @foreach (var issue in FilteredItems)
                     {
                         var isProcessing = IsBeingProcessed(issue.Identifier);
+                        var readiness = Readiness.GetValueOrDefault(issue.Identifier);
+                        // TODO: Guard against inconsistent DependencyCheckResult where IsReady=false but BlockedBy is empty — would render "🚫 Blocked by " with no issue numbers.
+                        var isBlocked = readiness is { IsReady: false };
                         var currentIdx = idx;
-                        <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(SelectedItem?.Identifier == issue.Identifier ? "drawer-issue-selected" : "") @GetHighlightClass(currentIdx)"
+                        <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(isBlocked ? "drawer-issue-blocked" : "") @(SelectedItem?.Identifier == issue.Identifier ? "drawer-issue-selected" : "") @GetHighlightClass(currentIdx)"
                              @onclick="() => SelectItem(issue)"
                              data-testid="issue-row-@issue.Identifier"
                              style="@(isProcessing ? "opacity: 0.6; pointer-events: none;" : "")">
@@ -47,10 +50,22 @@
                                 <span class="drawer-issue-number">#@issue.Identifier</span>
                                 @if (isProcessing)
                                 {
-                                    <span class="badge-default" style="background: var(--accent); color: white;">DISPATCHED</span>
+                                    <span class="badge-default" style="background: var(--accent); color: white;">⏳ Queued</span>
+                                }
+                                else if (isBlocked)
+                                {
+                                    <span class="badge-default drawer-badge-blocked" title="Blocked by @(string.Join(", ", readiness!.BlockedBy.Select(n => $"#{n}")))">🚫 Blocked by @(string.Join(", ", readiness.BlockedBy.Select(n => $"#{n}")))</span>
+                                }
+                                else if (readiness is { IsReady: true })
+                                {
+                                    <span class="badge-default drawer-badge-ready">✅ Ready</span>
                                 }
                             </div>
                             <div class="drawer-issue-title">@issue.Title</div>
+                            @if (!string.IsNullOrEmpty(issue.Description))
+                            {
+                                <div class="drawer-issue-preview">@UiFormatters.Truncate(GetBodyPreview(issue.Description), 100)</div>
+                            }
                             <div class="drawer-issue-labels">
                                 @foreach (var label in issue.Labels.Take(5))
                                 {
@@ -74,6 +89,8 @@
 
             @if (SelectedItem != null)
             {
+                var selectedReadiness = Readiness.GetValueOrDefault(SelectedItem.Identifier);
+                var selectedBlocked = selectedReadiness is { IsReady: false };
                 <div class="agent-detail-section" style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
                     <h4>#@SelectedItem.Identifier — @SelectedItem.Title</h4>
                     <div class="drawer-issue-labels" style="margin-bottom: 8px;">
@@ -88,7 +105,15 @@
                             Created: @SelectedItem.CreatedAt.Value.ToLocalTime().ToString("g")
                         </p>
                     }
-                    <button class="btn-save" @onclick="DispatchSelected" disabled="@IsDispatching"
+                    @if (selectedBlocked)
+                    {
+                        <p style="font-size: 0.78rem; color: var(--danger, #ef4444); margin: 0 0 8px;">
+                            🚫 Blocked by @(string.Join(", ", selectedReadiness!.BlockedBy.Select(n => $"#{n}")))
+                        </p>
+                    }
+                    <button class="btn-save" @onclick="DispatchSelected"
+                            disabled="@(IsDispatching || selectedBlocked)"
+                            title="@(selectedBlocked ? $"Blocked by open dependencies: {string.Join(", ", selectedReadiness!.BlockedBy.Select(n => $"#{n}"))}" : "")"
                             data-testid="dispatch-issue-btn">
                         @(IsDispatching ? "Dispatching..." : $"Start Pipeline on #{SelectedItem.Identifier}")
                     </button>
@@ -104,6 +129,7 @@
     [Parameter, EditorRequired] public int Page { get; set; }
     [Parameter] public EventCallback OnNextPage { get; set; }
     [Parameter] public EventCallback OnPrevPage { get; set; }
+    [Parameter] public Dictionary<string, DependencyCheckResult> Readiness { get; set; } = new();
 
     // TODO: ShouldPreventDefault unconditionally blocks all keydown defaults (including Tab), creating a keyboard trap. Should be conditional based on the key pressed.
     private bool ShouldPreventDefault => true;
@@ -122,4 +148,24 @@
 
     private async Task NextPage() => await OnNextPage.InvokeAsync();
     private async Task PrevPage() => await OnPrevPage.InvokeAsync();
+
+    /// <summary>
+    /// Extracts a plain-text preview from the issue body, stripping markdown headings and trimming.
+    /// Returns text up to the first ## heading or the first line of content.
+    /// </summary>
+    private static string GetBodyPreview(string body)
+    {
+        // Take content up to first ## heading (skip leading whitespace/blank lines)
+        var lines = body.Split('\n');
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (string.IsNullOrEmpty(trimmed)) continue;
+            if (trimmed.StartsWith("##")) continue;
+            // Strip leading # (title heading)
+            if (trimmed.StartsWith('#')) trimmed = trimmed.TrimStart('#').Trim();
+            return trimmed;
+        }
+        return string.Empty;
+    }
 }
