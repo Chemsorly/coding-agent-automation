@@ -171,8 +171,8 @@ public class SettingsTreeNavComponentTests : BunitContext
 
         var chevrons = cut.FindAll(".tree-chevron");
         Assert.Equal(4, chevrons.Count);
-        // All expanded by default, so all should show ▼
-        Assert.All(chevrons, c => Assert.Contains("▼", c.TextContent));
+        // All expanded by default, so all should show chevron-down icon
+        Assert.All(chevrons, c => Assert.NotNull(c.QuerySelector("[data-icon='chevron-down']")));
     }
 
     [Fact]
@@ -187,7 +187,7 @@ public class SettingsTreeNavComponentTests : BunitContext
         await providerHeader.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         var chevrons = cut.FindAll(".tree-chevron");
-        // First chevron (Providers) should now be ▶
-        Assert.Contains("▶", chevrons[0].TextContent);
+        // First chevron (Providers) should now be chevron-right
+        Assert.NotNull(chevrons[0].QuerySelector("[data-icon='chevron-right']"));
     }
 }
