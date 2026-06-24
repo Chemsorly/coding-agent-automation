@@ -10,28 +10,26 @@
 @using CodingAgentWebUI.Orchestration.Health
 @using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
+@using CodingAgentWebUI.Components.Shared
 @using Serilog
 @inject IConfigurationStore ConfigStore
 @inject GitHubValidationService GitHubValidator
 @inject GitLabValidationService GitLabValidator
 @inject IProviderFactory ProviderFactory
 @inject ModelFetchService ModelFetchService
+@inject NotificationService NotificationService
 
 <div class="settings-page">
     <header class="settings-header">
         <h1>Settings</h1>
     </header>
 
-    @if (!string.IsNullOrEmpty(_statusMessage))
-    {
-        <div class="settings-status @(_isError ? "status-error" : "status-success")">@_statusMessage</div>
-    }
-
     <div class="settings-layout">
         <SettingsTreeNav @ref="_treeNav" SelectedNode="@_selectedNode"
                          OnNodeSelected="SelectNode" />
 
         <div class="settings-content">
+            <InlineStatus Message="@_statusMessage" IsError="@_isError" OnDismissed="ClearStatus" />
             @if (_selectedNode.StartsWith($"{SettingsNodes.ProjectDetail}:", StringComparison.Ordinal))
             {
                 var projectId = _selectedNode[$"{SettingsNodes.ProjectDetail}:".Length..];
@@ -264,12 +262,24 @@
         _statusMessage = message;
         _isError = isError;
 
+        NotificationService.Add(message, isError ? NotificationSeverity.Error : NotificationSeverity.Success);
+
+        // Errors don't auto-dismiss — user must dismiss manually via InlineStatus
         _toastCts?.Cancel();
         _toastCts?.Dispose();
-        _toastCts = new CancellationTokenSource();
-        var token = _toastCts.Token;
+        _toastCts = null;
 
-        _ = DismissAfterDelay(token);
+        if (!isError)
+        {
+            _toastCts = new CancellationTokenSource();
+            _ = DismissAfterDelay(_toastCts.Token);
+        }
+    }
+
+    private void ClearStatus()
+    {
+        _statusMessage = null;
+        StateHasChanged();
     }
 
     private async Task DismissAfterDelay(CancellationToken token)

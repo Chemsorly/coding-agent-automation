@@ -33,6 +33,8 @@
             </div>
         }
 
+        @* TODO: Migrate _successMessage/_errorMessage to <InlineStatus> component for inline feedback (issue #876 requirement) *@
+        @* TODO: Error messages need a manual dismiss mechanism — errors must not auto-dismiss per requirements *@
         @if (!string.IsNullOrEmpty(_successMessage))
         {
             <div class="settings-status status-success">@_successMessage</div>

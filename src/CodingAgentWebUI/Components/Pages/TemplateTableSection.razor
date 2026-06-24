@@ -99,6 +99,10 @@
                                         {
                                             <span class="monitoring-muted" style="font-size: 0.7rem; margin-left: 4px;">next cycle</span>
                                         }
+                                        else if (RecentlyToggled.Contains(template.Id))
+                                        {
+                                            <span class="inline-status-saved" style="font-size: 0.7rem; margin-left: 4px;">Saved</span>
+                                        }
                                     </td>
                                     <td>
                                         @if (IsLoopActive && status != null)

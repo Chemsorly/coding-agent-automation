@@ -1,0 +1,45 @@
+@using CodingAgentWebUI.Services
+@inject NotificationService NotificationService
+
+@if (IsOpen)
+{
+    <div class="notification-panel">
+        <div class="notification-panel-header">
+            <span>Notifications</span>
+            <button class="notification-panel-close" @onclick="Close">✕</button>
+        </div>
+        <div class="notification-panel-body">
+            @{ var entries = NotificationService.GetAll(); }
+            @if (entries.Count == 0)
+            {
+                <div class="notification-panel-empty">No notifications yet.</div>
+            }
+            else
+            {
+                @foreach (var entry in entries)
+                {
+                    <div class="notification-entry notification-entry-@entry.Severity.ToString().ToLowerInvariant()">
+                        <span class="notification-entry-message">@entry.Message</span>
+                        <span class="notification-entry-time">@FormatTime(entry.Timestamp)</span>
+                    </div>
+                }
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private async Task Close() => await OnClose.InvokeAsync();
+
+    private static string FormatTime(DateTime utc)
+    {
+        var ago = DateTime.UtcNow - utc;
+        if (ago.TotalSeconds < 60) return "just now";
+        if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
+        if (ago.TotalHours < 24) return $"{(int)ago.TotalHours}h ago";
+        return utc.ToString("MMM dd HH:mm");
+    }
+}
