@@ -290,6 +290,10 @@ public class ProviderSectionComponentTests : BunitContext
         var deleteButton = cut.Find(".btn-delete");
         await deleteButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
+        // Confirm the deletion
+        var confirmButton = cut.Find(".agent-detail-confirm .btn-delete");
+        await confirmButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
         Assert.Equal("rp-del", deletedId);
     }
 
@@ -473,6 +477,10 @@ public class ProviderSectionComponentTests : BunitContext
 
         var deleteButton = cut.Find(".btn-delete");
         await deleteButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        // Confirm the deletion
+        var confirmButton = cut.Find(".agent-detail-confirm .btn-delete");
+        await confirmButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         Assert.Equal("ip-del", deletedId);
     }

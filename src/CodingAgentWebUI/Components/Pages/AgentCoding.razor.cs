@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.Components.Layout;
+using CodingAgentWebUI.Components.Shared;
 using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using Serilog;
@@ -25,7 +26,6 @@ public partial class AgentCoding : IDisposable
     [Inject] private IJobDispatcher JobDispatcher { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
     [Inject] private IJSRuntime JS { get; set; } = default!;
-    [Inject] private NotificationService NotificationService { get; set; } = default!;
     [CascadingParameter] private MainLayout? Layout { get; set; }
 
     private readonly object _outputLock = new();
@@ -50,6 +50,7 @@ public partial class AgentCoding : IDisposable
     private bool _showDeleteConfirm;
     private PipelineJobTemplate? _deletingTemplate;
     private HashSet<string> _recentlyToggled = new();
+    private UndoSnackbar _undoSnackbar = default!;
 
     // Manual Dispatch UI State
     private string _manualDispatchTemplateId = "";
@@ -84,7 +85,7 @@ public partial class AgentCoding : IDisposable
     private bool _drawerLoading => PageService.DrawerLoading;
     private int _drawerPage => PageService.DrawerPage;
     private bool _drawerHasMore => PageService.DrawerHasMore;
-    private Dictionary<string, DependencyCheckResult> _drawerReadiness => PageService.DrawerReadiness;
+    private Dictionary<string, Pipeline.Models.DependencyCheckResult> _drawerReadiness => PageService.DrawerReadiness;
     private List<PullRequestSummary> _prDrawerPrs => PageService.PrDrawerPrs;
     private bool _prDrawerLoading => PageService.PrDrawerLoading;
     private int _prDrawerPage => PageService.PrDrawerPage;
@@ -131,34 +132,70 @@ public partial class AgentCoding : IDisposable
     private void CancelDelete() => _showDeleteConfirm = false;
     private void ConfirmRemoveTemplate(PipelineJobTemplate template) { _deletingTemplate = template; _showDeleteConfirm = true; }
 
-    // TODO: Original code only added to _recentlyToggled when LoopService.IsLoopActive — behavior change may have unintended side effects
-    // TODO: error! uses null-forgiving operator — may pass null to NotificationService.Add if service returns success=false without error message
     private async Task ToggleTemplateEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleTemplateEnabledAsync(args.template, args.enabled);
-        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
-        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        if (!success) { _errorMessage = error; return; }
+        if (LoopService.IsLoopActive)
+        {
+            _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+            var prev = !args.enabled;
+            // TODO: Undo lambda captures args.template by reference — if template is deleted before Undo is clicked, callback operates on stale object.
+            await _undoSnackbar.Show($"Template {(args.enabled ? "enabled" : "disabled")}.", async () =>
+            {
+                await PageService.ToggleTemplateEnabledAsync(args.template, prev);
+                await InvokeAsync(StateHasChanged);
+            });
+        }
     }
 
     private async Task ToggleImplementationEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleImplementationEnabledAsync(args.template, args.enabled);
-        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
+        if (!success) { _errorMessage = error; return; }
+        // TODO: _recentlyToggled is added unconditionally here but conditionally in ToggleTemplateEnabled — inconsistent behavior when loop is inactive.
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        if (LoopService.IsLoopActive)
+        {
+            var prev = !args.enabled;
+            await _undoSnackbar.Show($"Implementation {(args.enabled ? "enabled" : "disabled")}.", async () =>
+            {
+                await PageService.ToggleImplementationEnabledAsync(args.template, prev);
+                await InvokeAsync(StateHasChanged);
+            });
+        }
     }
 
     private async Task ToggleReviewEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleReviewEnabledAsync(args.template, args.enabled);
-        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
+        if (!success) { _errorMessage = error; return; }
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        if (LoopService.IsLoopActive)
+        {
+            var prev = !args.enabled;
+            await _undoSnackbar.Show($"Review {(args.enabled ? "enabled" : "disabled")}.", async () =>
+            {
+                await PageService.ToggleReviewEnabledAsync(args.template, prev);
+                await InvokeAsync(StateHasChanged);
+            });
+        }
     }
 
     private async Task ToggleDecompositionEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleDecompositionEnabledAsync(args.template, args.enabled);
-        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
+        if (!success) { _errorMessage = error; return; }
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        if (LoopService.IsLoopActive)
+        {
+            var prev = !args.enabled;
+            await _undoSnackbar.Show($"Decomposition {(args.enabled ? "enabled" : "disabled")}.", async () =>
+            {
+                await PageService.ToggleDecompositionEnabledAsync(args.template, prev);
+                await InvokeAsync(StateHasChanged);
+            });
+        }
     }
 
     private async Task AddTemplate()
@@ -168,23 +205,19 @@ public partial class AgentCoding : IDisposable
         if (!valid) { _formError = formError; return; }
 
         var (success, error, successMessage) = await PageService.AddTemplateAsync(_addForm);
-        // TODO: error!/successMessage! use null-forgiving operator — may pass null to NotificationService.Add
-        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
+        if (!success) { _errorMessage = error; return; }
         _showAddForm = false;
         _successMessage = successMessage;
-        NotificationService.Add(successMessage!, NotificationSeverity.Success);
         _ = ClearSuccessAfterDelay();
     }
 
-    // TODO: error!/successMessage! use null-forgiving operator — may pass null to NotificationService.Add
     private async Task RemoveTemplate()
     {
         if (_deletingTemplate == null) return;
         var (success, error, successMessage) = await PageService.RemoveTemplateAsync(_deletingTemplate);
-        if (!success) { _errorMessage = error; NotificationService.Add(error!, NotificationSeverity.Error); return; }
+        if (!success) { _errorMessage = error; return; }
         _showDeleteConfirm = false;
         _successMessage = successMessage;
-        NotificationService.Add(successMessage!, NotificationSeverity.Success);
         _deletingTemplate = null;
         _ = ClearSuccessAfterDelay();
     }
@@ -244,6 +277,14 @@ public partial class AgentCoding : IDisposable
         }
     }
 
+    // TODO: Add CancellationTokenSource cancelled on drawer close/page change to prevent stale writes and ObjectDisposedException.
+    // TODO: Wrap body in try/catch — InvokeAsync can throw ObjectDisposedException if component is disposed during background work.
+    private async Task CheckDrawerDependenciesInBackground(PipelineJobTemplate template)
+    {
+        await PageService.CheckDrawerDependenciesAsync(template, () => InvokeAsync(StateHasChanged));
+        await InvokeAsync(StateHasChanged);
+    }
+
     private async Task DispatchFromDrawer(IssueSummary issue)
     {
         if (_drawerTemplate == null) return;
@@ -256,14 +297,6 @@ public partial class AgentCoding : IDisposable
         }
         catch (Exception ex) { _errorMessage = $"Dispatch failed: {ex.Message}"; }
         finally { _drawerDispatching = false; }
-    }
-
-    // TODO: Add CancellationTokenSource cancelled on drawer close/page change to prevent stale writes and ObjectDisposedException.
-    // TODO: Wrap body in try/catch — InvokeAsync can throw ObjectDisposedException if component is disposed during background work.
-    private async Task CheckDrawerDependenciesInBackground(PipelineJobTemplate template)
-    {
-        await PageService.CheckDrawerDependenciesAsync(template, () => InvokeAsync(StateHasChanged));
-        await InvokeAsync(StateHasChanged);
     }
 
     // ── PR Drawer ──

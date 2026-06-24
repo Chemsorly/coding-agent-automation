@@ -972,10 +972,6 @@ select option { background: var(--surface); color: var(--text); }
     background: var(--bg);
 }
 
-.feedback-section[open] > .feedback-section-header {
-    border-bottom: 1px solid var(--border);
-}
-
 .feedback-section-header {
     padding: 10px 14px;
     font-size: 0.85rem;
@@ -986,18 +982,18 @@ select option { background: var(--surface); color: var(--text); }
     list-style: none;
 }
 
-.feedback-section-header::-webkit-details-marker {
-    display: none;
-}
-
 .feedback-section-header::before {
     content: "▸ ";
     font-size: 0.75rem;
     color: var(--text-muted);
 }
 
-.feedback-section[open] > .feedback-section-header::before {
+.feedback-section-header[aria-expanded="true"]::before {
     content: "▾ ";
+}
+
+.feedback-section-header[aria-expanded="true"] {
+    border-bottom: 1px solid var(--border);
 }
 
 .feedback-section-body {
@@ -1133,10 +1129,6 @@ select option { background: var(--surface); color: var(--text); }
     background: var(--surface);
 }
 
-.secrets-section[open] > .secrets-section-header {
-    border-bottom: 1px solid var(--border);
-}
-
 .secrets-section-header {
     padding: 10px 14px;
     font-size: 0.85rem;
@@ -1146,18 +1138,18 @@ select option { background: var(--surface); color: var(--text); }
     list-style: none;
 }
 
-.secrets-section-header::-webkit-details-marker {
-    display: none;
-}
-
 .secrets-section-header::before {
     content: "▸ ";
     font-size: 0.75rem;
     color: var(--text-muted);
 }
 
-.secrets-section[open] > .secrets-section-header::before {
+.secrets-section-header[aria-expanded="true"]::before {
     content: "▾ ";
+}
+
+.secrets-section-header[aria-expanded="true"] {
+    border-bottom: 1px solid var(--border);
 }
 
 .secrets-section-body {
@@ -1257,10 +1249,6 @@ select option { background: var(--surface); color: var(--text); }
     background: var(--surface);
 }
 
-.setup-steps-section[open] > .setup-steps-section-header {
-    border-bottom: 1px solid var(--border);
-}
-
 .setup-steps-section-header {
     padding: 10px 14px;
     font-size: 0.85rem;
@@ -1270,18 +1258,18 @@ select option { background: var(--surface); color: var(--text); }
     list-style: none;
 }
 
-.setup-steps-section-header::-webkit-details-marker {
-    display: none;
-}
-
 .setup-steps-section-header::before {
     content: "▸ ";
     font-size: 0.75rem;
     color: var(--text-muted);
 }
 
-.setup-steps-section[open] > .setup-steps-section-header::before {
+.setup-steps-section-header[aria-expanded="true"]::before {
     content: "▾ ";
+}
+
+.setup-steps-section-header[aria-expanded="true"] {
+    border-bottom: 1px solid var(--border);
 }
 
 .setup-steps-section-body {
@@ -1395,11 +1383,13 @@ select option { background: var(--surface); color: var(--text); }
 .projects-actions-cell { display: flex; gap: 6px; }
 .projects-note-row td { padding: 2px 10px 8px 10px; border-bottom: 1px solid var(--border); }
 .projects-note { font-size: 0.72rem; color: var(--text-muted); font-style: italic; }
-.projects-confirm-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.projects-confirm-dialog { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; max-width: 400px; width: 90%; }
-.projects-confirm-dialog p { margin: 0 0 12px 0; font-size: 0.9rem; color: var(--text); }
-.projects-confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .tree-group-header.active { color: var(--accent-light); font-weight: 600; }
+
+/* ═══ Undo Snackbar ═══ */
+.undo-snackbar { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 16px; display: flex; align-items: center; gap: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 1100; font-size: 0.85rem; color: var(--text); }
+.undo-snackbar-message { white-space: nowrap; }
+.undo-snackbar-btn { background: var(--accent); color: white; border: none; border-radius: var(--radius); padding: 4px 10px; cursor: pointer; font-size: 0.8rem; font-weight: 600; }
+.undo-snackbar-btn:hover { opacity: 0.85; }
 
 /* ═══ Inline Status Component ═══ */
 .inline-status { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: var(--radius); font-size: 0.85rem; margin-bottom: 12px; animation: toast-in 0.3s ease-out; }

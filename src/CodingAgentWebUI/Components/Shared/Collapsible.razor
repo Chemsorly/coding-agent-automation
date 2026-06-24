@@ -1,0 +1,27 @@
+<div class="@CssClass">
+    <div class="@HeaderClass" @onclick="Toggle" role="button" aria-expanded="@IsExpanded.ToString().ToLower()">
+        @Header
+    </div>
+    @if (IsExpanded)
+    {
+        <div class="@BodyClass">
+            @ChildContent
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public RenderFragment? Header { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    [Parameter] public bool IsExpanded { get; set; }
+    [Parameter] public EventCallback<bool> IsExpandedChanged { get; set; }
+    [Parameter] public string CssClass { get; set; } = "";
+    [Parameter] public string HeaderClass { get; set; } = "";
+    [Parameter] public string BodyClass { get; set; } = "";
+
+    private async Task Toggle()
+    {
+        IsExpanded = !IsExpanded;
+        await IsExpandedChanged.InvokeAsync(IsExpanded);
+    }
+}

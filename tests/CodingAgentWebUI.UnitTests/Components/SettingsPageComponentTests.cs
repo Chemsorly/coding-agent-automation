@@ -226,9 +226,13 @@ public class SettingsPageComponentTests : BunitContext
         var component = Render<Settings>();
         Assert.Contains("To Delete", component.Markup);
 
-        // Click delete
+        // Click delete — shows confirmation
         var deleteButton = component.Find(".btn-delete");
         await deleteButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        // Confirm the deletion
+        var confirmButton = component.Find(".agent-detail-confirm .btn-delete");
+        await confirmButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
 
         _mockStore.Verify(s => s.DeleteProviderConfigAsync("del-1", ProviderKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }

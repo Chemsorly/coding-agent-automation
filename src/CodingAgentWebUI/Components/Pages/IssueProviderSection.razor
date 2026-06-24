@@ -23,7 +23,7 @@
                         @(_initializingProviderId == p.Id ? "Initializing..." : "Initialize Provider")
                     </button>
                     <button class="btn-edit" @onclick="() => EditProvider(p)">Edit</button>
-                    <button class="btn-delete" @onclick="() => OnDelete.InvokeAsync(p.Id)">Delete</button>
+                    <button class="btn-delete" @onclick="() => { _deletingProviderId = p.Id; _showDeleteConfirm = true; }">Delete</button>
                 </div>
                 @if (_initializeStatusProviderId == p.Id && !string.IsNullOrEmpty(_initializeStatus))
                 {
@@ -32,6 +32,19 @@
             </div>
         }
     </div>
+
+    @if (_showDeleteConfirm && _deletingProviderId != null)
+    {
+        <div class="agent-detail-confirm" style="margin-top: 12px;">
+            <p>Delete this issue provider?</p>
+            <div class="confirm-buttons">
+                @* TODO: OnDelete.InvokeAsync(id) is fire-and-forget — if delete fails asynchronously, user gets no error feedback. *@
+                <button class="btn-delete" @onclick="() => { var id = _deletingProviderId!; _showDeleteConfirm = false; _deletingProviderId = null; OnDelete.InvokeAsync(id); }">Delete</button>
+                <button class="btn-cancel" @onclick="() => { _showDeleteConfirm = false; _deletingProviderId = null; }">Cancel</button>
+            </div>
+        </div>
+    }
+
     @if (_showForm)
     {
         @if (_form.ProviderType == "GitLab")
@@ -111,6 +124,8 @@
 
     private CancellationTokenSource _cts = new();
     private bool _showForm;
+    private bool _showDeleteConfirm;
+    private string? _deletingProviderId;
     private ProviderConfig? _editingProvider;
     private IssueProviderForm _form = new();
     private List<(string FullName, string Owner, string Name)> _availableRepos = new();
