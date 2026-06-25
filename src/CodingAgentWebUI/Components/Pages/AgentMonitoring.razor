@@ -32,7 +32,7 @@
         <span class="freshness-indicator @(isStale ? "freshness-warning" : "")">
             @if (isStale)
             {
-                <text>⚠ Last updated: @FormatTimeAgo(_lastSuccessfulRefresh)@(_lastRefreshFailed ? " (refresh failed)" : " (stale)")</text>
+                <text><Icon Name="alert-triangle" Size="14" /> Last updated: @FormatTimeAgo(_lastSuccessfulRefresh)@(_lastRefreshFailed ? " (refresh failed)" : " (stale)")</text>
             }
             else
             {
@@ -43,7 +43,7 @@
 
     <!-- Active Runs -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2>🔄 Active Runs (@(_activeRuns.Count + _activeConsolidationRuns.Count))</h2>
+        <h2><Icon Name="refresh-cw" Size="16" /> Active Runs (@(_activeRuns.Count + _activeConsolidationRuns.Count))</h2>
         @{
             var implRuns = _activeRuns.Count(r => r.RunType == PipelineRunType.Implementation);
             var reviewRuns = _activeRuns.Count(r => r.RunType == PipelineRunType.Review);
@@ -53,7 +53,7 @@
         @if (_activeRuns.Count + _activeConsolidationRuns.Count > 0)
         {
             <div class="monitoring-run-counts" style="margin-bottom: 8px; font-size: 0.85rem; color: var(--text-muted);">
-                🔨 @implRuns implementation · 🔍 @reviewRuns review · 🧩 @decompRuns decomposition · 🧠 @consolidationRuns consolidation
+                <Icon Name="hammer" Size="14" /> @implRuns implementation · <Icon Name="search" Size="14" /> @reviewRuns review · <Icon Name="puzzle" Size="14" /> @decompRuns decomposition · <Icon Name="brain" Size="14" /> @consolidationRuns consolidation
             </div>
         }
         @if (_activeRuns.Count == 0 && _activeConsolidationRuns.Count == 0)
@@ -86,19 +86,19 @@
                                 <td>
                                     @if (run.RunType == PipelineRunType.Review)
                                     {
-                                        <span class="run-type-badge run-type-review" title="PR Review">🔍 Review</span>
+                                        <span class="run-type-badge run-type-review" title="PR Review"><Icon Name="search" Size="14" /> Review</span>
                                     }
                                     else if (run.RunType == PipelineRunType.DecompositionAnalysis)
                                     {
-                                        <span class="run-type-badge run-type-decomp" title="Decomposition Analysis">🧩 Decomp (Analysis)</span>
+                                        <span class="run-type-badge run-type-decomp" title="Decomposition Analysis"><Icon Name="puzzle" Size="14" /> Decomp (Analysis)</span>
                                     }
                                     else if (run.RunType == PipelineRunType.Decomposition)
                                     {
-                                        <span class="run-type-badge run-type-decomp" title="Decomposition">🧩 Decomp</span>
+                                        <span class="run-type-badge run-type-decomp" title="Decomposition"><Icon Name="puzzle" Size="14" /> Decomp</span>
                                     }
                                     else
                                     {
-                                        <span class="run-type-badge run-type-impl" title="Implementation">🔨 Impl</span>
+                                        <span class="run-type-badge run-type-impl" title="Implementation"><Icon Name="hammer" Size="14" /> Impl</span>
                                     }
                                 </td>
                                 <td title="#@run.IssueIdentifier @run.IssueTitle">
@@ -145,7 +145,7 @@
                                 <td class="monitoring-mono" title="@cRun.RunId">@cRun.RunId</td>
                                 <td>
                                     <span class="run-type-badge run-type-consolidation" title="@FormatConsolidationRunType(cRun.Type)">
-                                        @GetConsolidationTypeIcon(cRun.Type) @FormatConsolidationRunTypeShort(cRun.Type)
+                                        <Icon Name="@GetConsolidationTypeIcon(cRun.Type)" Size="14" /> @FormatConsolidationRunTypeShort(cRun.Type)
                                     </span>
                                 </td>
                                 <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
@@ -249,7 +249,7 @@
                                         <div class="detail-label">Status</div>
                                         <div class="detail-value">
                                             <span class="monitoring-status monitoring-status-@modalAgent.Status.ToString().ToLowerInvariant()">
-                                                @GetStatusIcon(modalAgent.Status) @modalAgent.Status
+                                                <Icon Name="circle" Size="14" Class="@GetStatusIconClass(modalAgent.Status)" /> @modalAgent.Status
                                             </span>
                                             @if (modalAgent.Disabled)
                                             {
@@ -337,7 +337,7 @@
 
     <!-- Registered Agents -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2>🤖 Registered Agents (@_agents.Count)</h2>
+        <h2><Icon Name="bot" Size="16" /> Registered Agents (@_agents.Count)</h2>
         @if (_agents.Count == 0)
         {
             <div class="monitoring-empty">No agents registered. Start agent containers to connect.</div>
@@ -370,7 +370,7 @@
                                 </td>
                                 <td>
                                     <span class="monitoring-status monitoring-status-@agent.Status.ToString().ToLowerInvariant()">
-                                        @GetStatusIcon(agent.Status) @agent.Status
+                                        <Icon Name="circle" Size="14" Class="@GetStatusIconClass(agent.Status)" /> @agent.Status
                                     </span>
                                     @if (agent.Disabled)
                                     {
@@ -390,7 +390,7 @@
 
     <!-- Job Queue -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2>📋 Job Queue (@(_queuedJobs.Count + _queuedConsolidationRuns.Count))</h2>
+        <h2><Icon Name="clipboard-list" Size="16" /> Job Queue (@(_queuedJobs.Count + _queuedConsolidationRuns.Count))</h2>
         @if (_queuedJobs.Count == 0 && _queuedConsolidationRuns.Count == 0)
         {
             <div class="monitoring-empty">No pending jobs in queue.</div>
@@ -421,19 +421,19 @@
                                 <td>
                                     @if (job.RunType == PipelineRunType.Review)
                                     {
-                                        <span class="run-type-badge run-type-review" title="PR Review">🔍 Review</span>
+                                        <span class="run-type-badge run-type-review" title="PR Review"><Icon Name="search" Size="14" /> Review</span>
                                     }
                                     else if (job.RunType == PipelineRunType.DecompositionAnalysis)
                                     {
-                                        <span class="run-type-badge run-type-decomp" title="Decomposition Analysis">🧩 Decomp (A)</span>
+                                        <span class="run-type-badge run-type-decomp" title="Decomposition Analysis"><Icon Name="puzzle" Size="14" /> Decomp (A)</span>
                                     }
                                     else if (job.RunType == PipelineRunType.Decomposition)
                                     {
-                                        <span class="run-type-badge run-type-decomp" title="Decomposition">🧩 Decomp</span>
+                                        <span class="run-type-badge run-type-decomp" title="Decomposition"><Icon Name="puzzle" Size="14" /> Decomp</span>
                                     }
                                     else
                                     {
-                                        <span class="run-type-badge run-type-impl" title="Implementation">🔨 Impl</span>
+                                        <span class="run-type-badge run-type-impl" title="Implementation"><Icon Name="hammer" Size="14" /> Impl</span>
                                     }
                                 </td>
                                 <td title="#@job.IssueIdentifier @job.IssueTitle">#@job.IssueIdentifier @job.IssueTitle</td>
@@ -468,7 +468,7 @@
                                 <td>@position</td>
                                 <td>
                                     <span class="run-type-badge run-type-consolidation" title="@FormatConsolidationRunType(cRun.Type)">
-                                        @GetConsolidationTypeIcon(cRun.Type) @FormatConsolidationRunTypeShort(cRun.Type)
+                                        <Icon Name="@GetConsolidationTypeIcon(cRun.Type)" Size="14" /> @FormatConsolidationRunTypeShort(cRun.Type)
                                     </span>
                                 </td>
                                 <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
@@ -506,15 +506,15 @@
     <section class="settings-section" style="margin: 16px 20px;">
         <div class="monitoring-section-toggle" @onclick="() => _historyExpanded = !_historyExpanded"
              role="button" tabindex="0">
-            <h2>📜 Recent Runs (@_runHistory.Count)</h2>
+            <h2><Icon Name="scroll-text" Size="16" /> Recent Runs (@_runHistory.Count)</h2>
             <span class="monitoring-toggle-icon">@(_historyExpanded ? "▾" : "▸")</span>
         </div>
         <div style="margin: 8px 0;">
             <a href="/api/export/runs.json" download class="btn-cancel" style="text-decoration: none; display: inline-block; font-size: 0.8rem; padding: 4px 12px;">
-                📥 Export All (JSON)
+                <Icon Name="download" Size="14" /> Export All (JSON)
             </a>
             <a href="/api/export/runs.json?feedbackOnly=true" download class="btn-cancel" style="text-decoration: none; display: inline-block; font-size: 0.8rem; padding: 4px 12px; margin-left: 8px;">
-                📥 Feedback Only (JSON)
+                <Icon Name="download" Size="14" /> Feedback Only (JSON)
             </a>
         </div>
         @if (_historyExpanded)
@@ -551,15 +551,15 @@
                                     <td>
                                         @if (run.RunType == PipelineRunType.Review)
                                         {
-                                            <span class="run-type-badge run-type-review" title="PR Review">🔍</span>
+                                            <span class="run-type-badge run-type-review" title="PR Review"><Icon Name="search" Size="14" /></span>
                                         }
                                         else if (run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
                                         {
-                                            <span class="run-type-badge run-type-decomp" title="@(run.RunType == PipelineRunType.DecompositionAnalysis ? "Decomposition Analysis" : "Decomposition")">🧩</span>
+                                            <span class="run-type-badge run-type-decomp" title="@(run.RunType == PipelineRunType.DecompositionAnalysis ? "Decomposition Analysis" : "Decomposition")"><Icon Name="puzzle" Size="14" /></span>
                                         }
                                         else
                                         {
-                                            <span class="run-type-badge run-type-impl" title="Implementation">🔨</span>
+                                            <span class="run-type-badge run-type-impl" title="Implementation"><Icon Name="hammer" Size="14" /></span>
                                         }
                                     </td>
                                     <td>@(string.IsNullOrEmpty(run.ProjectName) ? "—" : run.ProjectName)</td>
@@ -616,18 +616,18 @@
                 <h3 id="history-detail-title">
                     @if (_selectedHistoryRun.RunType == PipelineRunType.Review)
                     {
-                        <span class="run-type-badge run-type-review">🔍 Review</span>
+                        <span class="run-type-badge run-type-review"><Icon Name="search" Size="14" /> Review</span>
                     }
                     else if (_selectedHistoryRun.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
                     {
-                        <span class="run-type-badge run-type-decomp">🧩 Decomp</span>
+                        <span class="run-type-badge run-type-decomp"><Icon Name="puzzle" Size="14" /> Decomp</span>
                     }
                     Run @Truncate(_selectedHistoryRun.RunId, 12) — #@_selectedHistoryRun.IssueIdentifier @Truncate(_selectedHistoryRun.IssueTitle, 40)
                 </h3>
 
                 @if (!string.IsNullOrEmpty(_selectedHistoryRun.FailureReason))
                 {
-                    <div class="summary-failure-callout" role="alert">⚠️ @_selectedHistoryRun.FailureReason</div>
+                    <div class="summary-failure-callout" role="alert"><Icon Name="alert-triangle" Size="14" /> @_selectedHistoryRun.FailureReason</div>
                 }
 
                 <div class="modal-provider-list">
@@ -653,11 +653,12 @@
                         }
                         @if (_selectedHistoryRun.CodeReviewCriticalCount > 0 || _selectedHistoryRun.CodeReviewWarningCount > 0 || _selectedHistoryRun.CodeReviewSuggestionCount > 0)
                         {
-                            <div><strong>Findings:</strong> 🔴 @_selectedHistoryRun.CodeReviewCriticalCount critical · 🟡 @_selectedHistoryRun.CodeReviewWarningCount warning · 🔵 @_selectedHistoryRun.CodeReviewSuggestionCount suggestion</div>
+                            @* TODO: CSS classes text-danger, text-warning, text-info are not defined in any stylesheet - colored circles will not render distinct colors *@
+                            <div><strong>Findings:</strong> <Icon Name="circle" Size="14" Class="text-danger" /> @_selectedHistoryRun.CodeReviewCriticalCount critical · <Icon Name="circle" Size="14" Class="text-warning" /> @_selectedHistoryRun.CodeReviewWarningCount warning · <Icon Name="circle" Size="14" Class="text-info" /> @_selectedHistoryRun.CodeReviewSuggestionCount suggestion</div>
                         }
                         else
                         {
-                            <div><strong>Findings:</strong> ✅ No issues found</div>
+                            <div><strong>Findings:</strong> <Icon Name="check-circle" Size="14" /> No issues found</div>
                         }
                     }
                     @if (_selectedHistoryRun.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
@@ -1045,12 +1046,13 @@
         DismissRunDetailModal();
     }
 
-    private static string GetStatusIcon(AgentStatus status) => status switch
+    // TODO: CSS classes text-success, text-warning, text-danger, text-muted are not defined in any stylesheet - icons will not display color differentiation until these utility classes are added to app.css
+    private static string GetStatusIconClass(AgentStatus status) => status switch
     {
-        AgentStatus.Idle => "🟢",
-        AgentStatus.Busy => "🟡",
-        AgentStatus.Disconnected => "🔴",
-        _ => "⚪"
+        AgentStatus.Idle => "text-success",
+        AgentStatus.Busy => "text-warning",
+        AgentStatus.Disconnected => "text-danger",
+        _ => "text-muted"
     };
 
     private static string FormatRunType(PipelineRunType runType) => runType switch
@@ -1079,10 +1081,10 @@
 
     private static string GetConsolidationTypeIcon(ConsolidationRunType type) => type switch
     {
-        ConsolidationRunType.BrainConsolidation => "🧠",
-        ConsolidationRunType.RefactoringDetection => "🔄",
-        ConsolidationRunType.HarnessSuggestions => "✨",
-        _ => "📋"
+        ConsolidationRunType.BrainConsolidation => "brain",
+        ConsolidationRunType.RefactoringDetection => "refresh-cw",
+        ConsolidationRunType.HarnessSuggestions => "sparkles",
+        _ => "clipboard-list"
     };
 
     private static string FormatDuration(DateTime startedAt, DateTime? completedAt)
