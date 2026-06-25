@@ -124,8 +124,8 @@ public class QualityGateConfigSectionComponentTests : BunitContext
 
         var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
 
-        Assert.Contains("✅", cut.Markup);
-        Assert.Contains("❌", cut.Markup);
+        Assert.Contains("data-icon=\"check-circle\"", cut.Markup);
+        Assert.Contains("data-icon=\"x-circle\"", cut.Markup);
     }
 
     [Fact]

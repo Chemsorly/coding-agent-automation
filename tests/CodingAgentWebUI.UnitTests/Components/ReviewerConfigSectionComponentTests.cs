@@ -123,8 +123,8 @@ public class ReviewerConfigSectionComponentTests : BunitContext
 
         var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
 
-        Assert.Contains("✅", cut.Markup);
-        Assert.Contains("❌", cut.Markup);
+        Assert.Contains("data-icon=\"check-circle\"", cut.Markup);
+        Assert.Contains("data-icon=\"x-circle\"", cut.Markup);
     }
 
     [Fact]

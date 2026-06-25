@@ -32,7 +32,7 @@
             <div class="input-with-action" style="margin-top: 0.5rem;">
                 @if (!string.IsNullOrEmpty(PrivateKeyBase64))
                 {
-                    <span class="key-status" style="color: #4ade80;">✅ Key loaded</span>
+                    <span class="key-status" style="color: #4ade80;"><Icon Name="check-circle" /> Key loaded</span>
                 }
                 <button class="btn-edit" @onclick="OnFetchRepos" disabled="@LoadingRepos">
                     @(LoadingRepos ? "Loading..." : "Fetch Repos")
