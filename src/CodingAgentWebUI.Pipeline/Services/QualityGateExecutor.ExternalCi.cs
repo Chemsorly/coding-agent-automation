@@ -114,8 +114,7 @@ internal partial class QualityGateExecutor
 
             callbacks.EmitOutputLine("⏳ Waiting for external CI...");
             var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var ciStatus = await context.PipelineProvider.WaitForCompletionAsync(
-                run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
+            var ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, ct);
 
             var ciPassed = ciStatus.State == PipelineRunState.Passed;
             IReadOnlyDictionary<long, string>? ciLogPaths = null;
@@ -148,8 +147,7 @@ internal partial class QualityGateExecutor
                     var retryPollSha = retrySha;
 
                     callbacks.EmitOutputLine("⏳ Waiting for external CI (infrastructure retry)...");
-                    ciStatus = await context.PipelineProvider.WaitForCompletionAsync(
-                        run.BranchName!, retryPollSha, config.ExternalCiTimeout, ct);
+                    ciStatus = await PollCiWithNotStartedRetryAsync(context, retryPollSha, config, callbacks, ct);
                     ciPassed = ciStatus.State == PipelineRunState.Passed;
 
                     ciLogPaths = (!ciPassed && run.WorkspacePath != null)
@@ -220,5 +218,100 @@ internal partial class QualityGateExecutor
 
         _prOrchestrator.RecordBlacklistedFiles(run, blacklisted, config);
         callbacks.NotifyChange();
+    }
+
+    /// <summary>
+    /// Polls CI with automatic retry when CI never starts (GitHub Actions sometimes doesn't trigger).
+    /// First waits up to <see cref="PipelineConfiguration.CiNotStartedTimeout"/> for any runs to appear.
+    /// If no runs appear, creates an empty commit and re-pushes to trigger CI, repeating up to
+    /// <see cref="PipelineConfiguration.CiNotStartedMaxRetries"/> times.
+    /// Once runs are detected (or retries exhausted), delegates to the full WaitForCompletionAsync.
+    /// </summary>
+    private async Task<PipelineRunStatus> PollCiWithNotStartedRetryAsync(
+        QualityGateContext context,
+        string? pollSha,
+        PipelineConfiguration config,
+        IPipelineCallbacks callbacks,
+        CancellationToken ct)
+    {
+        var run = context.Run;
+        var maxRetries = config.CiNotStartedMaxRetries;
+        var notStartedTimeout = config.CiNotStartedTimeout;
+
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            // Wait up to CiNotStartedTimeout for any workflow runs to appear
+            var appeared = await WaitForCiRunsToAppearAsync(
+                context.PipelineProvider!, run.BranchName!, pollSha, notStartedTimeout, config.ExternalCiPollInterval, ct);
+
+            if (appeared)
+            {
+                // Runs detected — switch to the full wait-for-completion (uses the full ExternalCiTimeout)
+                return await context.PipelineProvider!.WaitForCompletionAsync(
+                    run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
+            }
+
+            // CI never started within the short timeout
+            if (attempt >= maxRetries)
+            {
+                _logger.Error("Pipeline {RunId} CI never started after {MaxRetries} re-push retries. " +
+                              "Falling back to full timeout wait.", run.RunId, maxRetries);
+                callbacks.EmitOutputLine($"⚠️ CI never started after {maxRetries} retries — waiting with full timeout as last resort...");
+                return await context.PipelineProvider!.WaitForCompletionAsync(
+                    run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
+            }
+
+            _logger.Warning(
+                "Pipeline {RunId} CI never started (attempt {Attempt}/{MaxRetries}, waited {Timeout}). Re-pushing to trigger.",
+                run.RunId, attempt + 1, maxRetries, notStartedTimeout);
+            callbacks.EmitOutputLine(
+                $"⚠️ CI never started (attempt {attempt + 1}/{maxRetries}) — re-pushing to trigger GitHub Actions...");
+
+            // Create empty commit and re-push
+            await context.RepoProvider.CommitAllAsync(
+                run.WorkspacePath!,
+                $"chore: re-trigger CI (not started, attempt {attempt + 1})",
+                config.BlacklistedPaths, allowEmpty: true, ct,
+                config.PipelineInjectedPaths);
+            await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
+
+            // Update the poll SHA to the new commit
+            try { pollSha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
+            catch (Exception shaEx) { _logger.Debug(shaEx, "Pipeline {RunId} could not read HEAD after re-push", run.RunId); }
+        }
+
+        // Should not reach here, but satisfy the compiler
+        return await context.PipelineProvider!.WaitForCompletionAsync(
+            run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
+    }
+
+    /// <summary>
+    /// Polls GetRunStatusAsync until at least one workflow run/job is detected or the timeout expires.
+    /// Returns true if runs appeared, false if the timeout expired with no runs.
+    /// </summary>
+    private async Task<bool> WaitForCiRunsToAppearAsync(
+        IPipelineProvider provider,
+        string branchName,
+        string? commitSha,
+        TimeSpan timeout,
+        TimeSpan pollInterval,
+        CancellationToken ct)
+    {
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        while (stopwatch.Elapsed < timeout)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var status = await provider.GetRunStatusAsync(branchName, commitSha, ct);
+
+            // Any non-empty state (Running, Passed, Failed, Cancelled) or jobs present means CI started
+            if (status.State != PipelineRunState.Pending || status.Jobs.Count > 0)
+                return true;
+
+            await Task.Delay(pollInterval, ct);
+        }
+        return false;
     }
 }

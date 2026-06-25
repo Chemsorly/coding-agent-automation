@@ -105,6 +105,12 @@ public static class PipelineConstants
     /// <summary>Default poll interval for external CI status (30 seconds).</summary>
     public static readonly TimeSpan DefaultExternalCiPollInterval = TimeSpan.FromSeconds(30);
 
+    /// <summary>Default timeout for detecting that CI never started (5 minutes).</summary>
+    public static readonly TimeSpan DefaultCiNotStartedTimeout = TimeSpan.FromMinutes(5);
+
+    /// <summary>Default max retries when CI never starts (re-push to trigger).</summary>
+    public const int DefaultCiNotStartedMaxRetries = 5;
+
     /// <summary>Default poll interval for closed-loop issue polling (60 seconds).</summary>
     public static readonly TimeSpan DefaultClosedLoopPollInterval = TimeSpan.FromSeconds(60);
 

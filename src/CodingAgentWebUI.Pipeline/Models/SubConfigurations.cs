@@ -28,6 +28,27 @@ public sealed record ExternalCiConfiguration
 {
     public TimeSpan ExternalCiTimeout { get; init; } = PipelineConstants.DefaultExternalCiTimeout;
     public TimeSpan ExternalCiPollInterval { get; init; } = PipelineConstants.DefaultExternalCiPollInterval;
+
+    /// <summary>
+    /// How long to wait for CI runs to appear before concluding CI never started.
+    /// When no workflow runs are detected within this window, the system short-circuits
+    /// and triggers a re-push retry instead of burning the full ExternalCiTimeout.
+    /// </summary>
+    public TimeSpan CiNotStartedTimeout { get; init; } = PipelineConstants.DefaultCiNotStartedTimeout;
+
+    /// <summary>
+    /// Maximum number of re-push retries when CI never starts.
+    /// Each retry creates an empty commit and force-pushes to re-trigger GitHub Actions.
+    /// </summary>
+    public int CiNotStartedMaxRetries
+    {
+        get => _ciNotStartedMaxRetries;
+        init => _ciNotStartedMaxRetries = value is >= 0 and <= 20
+            ? value
+            : throw new ArgumentOutOfRangeException(nameof(CiNotStartedMaxRetries), value, "Value must be between 0 and 20.");
+    }
+    private readonly int _ciNotStartedMaxRetries = PipelineConstants.DefaultCiNotStartedMaxRetries;
+
     public int MaxInfrastructureRetries
     {
         get => _maxInfrastructureRetries;
