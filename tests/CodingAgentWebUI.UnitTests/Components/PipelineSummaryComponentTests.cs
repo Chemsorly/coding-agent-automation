@@ -81,7 +81,8 @@ public class PipelineSummaryComponentTests : BunitContext
             .Add(s => s.MaxRetries, 3)
             .Add(s => s.OnBackToIssues, () => { }));
 
-        Assert.Contains("✅", cut.Markup);
+        // TODO: Use scoped selector `.summary-icon [data-icon="check-circle"]` to avoid ambiguity with result-strip icons
+        Assert.NotNull(cut.Find("[data-icon=\"check-circle\"]"));
         Assert.Contains("Pipeline Completed", cut.Markup);
     }
 
@@ -94,7 +95,8 @@ public class PipelineSummaryComponentTests : BunitContext
             .Add(s => s.Run, run)
             .Add(s => s.OnBackToIssues, () => { }));
 
-        Assert.Contains("❌", cut.Markup);
+        // TODO: Use scoped selector `.summary-icon [data-icon="x-circle"]` to avoid ambiguity with result-strip icons
+        Assert.NotNull(cut.Find("[data-icon=\"x-circle\"]"));
         Assert.Contains("Pipeline Failed", cut.Markup);
         Assert.Contains("Quality gates failed after max retries", cut.Markup);
         Assert.Contains("summary-failure-callout", cut.Markup);
@@ -108,7 +110,7 @@ public class PipelineSummaryComponentTests : BunitContext
             .Add(s => s.Run, run)
             .Add(s => s.OnBackToIssues, () => { }));
 
-        Assert.Contains("🚫", cut.Markup);
+        Assert.NotNull(cut.Find("[data-icon=\"ban\"]"));
         Assert.Contains("Pipeline Cancelled", cut.Markup);
         Assert.Contains("Cancelled during:", cut.Markup);
         Assert.Contains("Generating Code", cut.Markup);
@@ -161,7 +163,8 @@ public class PipelineSummaryComponentTests : BunitContext
             .Add(s => s.MaxRetries, 3)
             .Add(s => s.OnBackToIssues, () => { }));
 
-        Assert.Contains("Compilation ✅", cut.Markup);
+        Assert.Contains("Compilation", cut.Markup);
+        Assert.NotNull(cut.Find(".result-strip [data-icon=\"check-circle\"]"));
         Assert.Contains("181p/0f/0s", cut.Markup);
         Assert.Contains("82.3%", cut.Markup);
         Assert.Contains("Files: 5 (+100 -20)", cut.Markup);

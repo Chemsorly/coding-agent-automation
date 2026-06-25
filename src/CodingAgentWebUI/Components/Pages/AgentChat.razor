@@ -28,7 +28,7 @@
         {
             <!-- Agent Selection -->
             <div class="chat-setup">
-                <h2>💬 Interactive Chat</h2>
+                <h2><Icon Name="message-circle" /> Interactive Chat</h2>
                 <p class="chat-description">Send prompts to an idle agent for MCP validation and debugging.</p>
 
                 <div class="chat-agent-select">
@@ -44,11 +44,11 @@
 
                 @if (_idleAgents.Count == 0)
                 {
-                    <div class="agent-detail-warning">⚠️ No idle agents available</div>
+                    <div class="agent-detail-warning"><Icon Name="alert-triangle" /> No idle agents available</div>
                 }
 
                 <button class="btn-start-chat" @onclick="StartChat" disabled="@(string.IsNullOrEmpty(_selectedAgentId))">
-                    🚀 Start Chat
+                    <Icon Name="play" /> Start Chat
                 </button>
             </div>
         }
@@ -66,7 +66,7 @@
                     {
                         <div class="chat-message chat-message-@msg.Role.ToString().ToLowerInvariant()">
                             <div class="chat-message-header">
-                                <span class="chat-role">@GetRoleIcon(msg.Role) @msg.Role</span>
+                                <span class="chat-role"><Icon Name="@GetRoleIconName(msg.Role)" /> @msg.Role</span>
                                 <span class="chat-timestamp">@msg.Timestamp.ToLocalTime().ToString("HH:mm:ss")</span>
                             </div>
                             <div class="chat-message-content">
@@ -78,7 +78,7 @@
                     {
                         <div class="chat-message chat-message-agent">
                             <div class="chat-message-header">
-                                <span class="chat-role">🤖 Agent</span>
+                                <span class="chat-role"><Icon Name="bot" /> Agent</span>
                             </div>
                             <div class="chat-message-content chat-streaming">
                                 <pre>@(_streamingContent.Length > 0 ? _streamingContent.ToString() : "⏳ Thinking...")</pre>
@@ -367,12 +367,12 @@
         catch (Exception ex) { Log.Debug(ex, "Failed to scroll chat to bottom"); }
     }
 
-    private static string GetRoleIcon(ChatRole role) => role switch
+    private static string GetRoleIconName(ChatRole role) => role switch
     {
-        ChatRole.User => "👤",
-        ChatRole.Agent => "🤖",
-        ChatRole.System => "⚙️",
-        _ => "○"
+        ChatRole.User => "user",
+        ChatRole.Agent => "bot",
+        ChatRole.System => "settings",
+        _ => "circle"
     };
 
     public async ValueTask DisposeAsync()

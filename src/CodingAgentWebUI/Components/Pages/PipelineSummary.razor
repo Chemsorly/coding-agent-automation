@@ -3,7 +3,7 @@
 <div class="pipeline-summary">
     <div class="summary-header">
         <div class="summary-title">
-            <span class="summary-icon">@OutcomeIcon</span>
+            <span class="summary-icon"><Icon Name="@OutcomeIconName" /></span>
             <h2>
                 @if (Run.RunType == PipelineRunType.Review)
                 {
@@ -50,13 +50,13 @@
 
     @if (!string.IsNullOrEmpty(Run.FailureReason))
     {
-        <div class="summary-failure-callout" role="alert" data-testid="failure-reason">⚠️ @Run.FailureReason</div>
+        <div class="summary-failure-callout" role="alert" data-testid="failure-reason"><Icon Name="alert-triangle" /> @Run.FailureReason</div>
     }
 
     @if ((Run.BlacklistedFilesDetected?.Count ?? 0) > 0)
     {
         <div class="summary-blacklist-warning" role="alert">
-            ⚠️ Blacklisted files excluded from commit:
+            <Icon Name="alert-triangle" /> Blacklisted files excluded from commit:
             <ul>
                 @foreach (var file in Run.BlacklistedFilesDetected!)
                 {
@@ -80,11 +80,11 @@
             }
             @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
             {
-                <span>Findings: 🔴@(Run.CodeReviewCriticalCount) 🟡@(Run.CodeReviewWarningCount) 🔵@(Run.CodeReviewSuggestionCount)</span>
+                <span>Findings: <Icon Name="circle" Class="icon-critical" />@(Run.CodeReviewCriticalCount) <Icon Name="circle" Class="icon-warning" />@(Run.CodeReviewWarningCount) <Icon Name="circle" Class="icon-info" />@(Run.CodeReviewSuggestionCount)</span>
             }
             else
             {
-                <span>✅ No issues found</span>
+                <span><Icon Name="check-circle" /> No issues found</span>
             }
         </div>
     }
@@ -92,19 +92,19 @@
     {
         <div class="result-strip">
             @{ var qr = Run.LatestQualityReport; }
-            <span>Compilation @(qr?.Compilation.Passed == true ? "✅" : qr is not null ? "❌" : "—")</span>
+            <span>Compilation @if (qr?.Compilation.Passed == true) { <Icon Name="check-circle" /> } else if (qr is not null) { <Icon Name="x-circle" /> } else { <text>—</text> }</span>
             <span class="result-strip-sep">│</span>
-            <span>Tests @(qr is not null ? (qr.Tests.Passed ? "✅" : "❌") : "—") @FormatTestCounts(qr)</span>
+            <span>Tests @if (qr is not null) { @if (qr.Tests.Passed) { <Icon Name="check-circle" /> } else { <Icon Name="x-circle" /> } } else { <text>—</text> } @FormatTestCounts(qr)</span>
             <span class="result-strip-sep">│</span>
             <span>Coverage @FormatCoverage(qr)</span>
             <span class="result-strip-sep">│</span>
-            <span>Security @(qr?.SecurityScan is { } sec ? (sec.Passed ? "✅" : "❌") : "—")</span>
+            <span>Security @if (qr?.SecurityScan is { } sec) { @if (sec.Passed) { <Icon Name="check-circle" /> } else { <Icon Name="x-circle" /> } } else { <text>—</text> }</span>
             <span class="result-strip-sep">│</span>
             <span>Files: @Run.FilesChangedCount (+@Run.LinesAdded -@Run.LinesRemoved)</span>
             <span class="result-strip-sep">│</span>
             @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
             {
-                <span>Review: 🔴@(Run.CodeReviewCriticalCount) 🟡@(Run.CodeReviewWarningCount) 🔵@(Run.CodeReviewSuggestionCount)</span>
+                <span>Review: <Icon Name="circle" Class="icon-critical" />@(Run.CodeReviewCriticalCount) <Icon Name="circle" Class="icon-warning" />@(Run.CodeReviewWarningCount) <Icon Name="circle" Class="icon-info" />@(Run.CodeReviewSuggestionCount)</span>
                 <span class="result-strip-sep">│</span>
             }
             <span>Retries: @Run.RetryCount@(MaxRetries.HasValue ? $"/{MaxRetries}" : "")</span>
@@ -133,12 +133,12 @@
     /// <summary>Callback invoked when the user clicks "Back to Issues".</summary>
     [Parameter] public EventCallback OnBackToIssues { get; set; }
 
-    private string OutcomeIcon => Run.CurrentStep switch
+    private string OutcomeIconName => Run.CurrentStep switch
     {
-        PipelineStep.Completed => "✅",
-        PipelineStep.Failed => "❌",
-        PipelineStep.Cancelled => "🚫",
-        _ => "❓"
+        PipelineStep.Completed => "check-circle",
+        PipelineStep.Failed => "x-circle",
+        PipelineStep.Cancelled => "ban",
+        _ => "info"
     };
 
     private string OutcomeText => Run.CurrentStep switch
