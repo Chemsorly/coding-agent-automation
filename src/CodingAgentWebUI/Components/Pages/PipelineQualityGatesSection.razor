@@ -15,7 +15,7 @@
                     <label>CI Timeout (minutes)</label>
                     <span class="form-hint-icon" aria-hidden="true" title="Maximum time to wait for external CI checks to complete before marking as timed out. Default: 15 min">?</span>
                 </div>
-                <input type="number" @bind="_externalCiTimeoutMinutes" min="1" max="60" />
+                <input type="number" @bind="_externalCiTimeoutMinutes" min="1" />
             </div>
             <div class="form-group">
                 <div class="label-with-hint">
@@ -23,6 +23,20 @@
                     <span class="form-hint-icon" aria-hidden="true" title="How often the pipeline checks CI status while waiting for completion. Default: 30s">?</span>
                 </div>
                 <input type="number" @bind="_externalCiPollIntervalSeconds" min="10" max="300" />
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>CI Not Started Timeout (minutes)</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="How long to wait for CI runs to appear before concluding CI never started and re-pushing. Prevents burning the full CI timeout when GitHub Actions fails to trigger. Default: 5 min">?</span>
+                </div>
+                <input type="number" @bind="_ciNotStartedTimeoutMinutes" min="1" max="30" />
+            </div>
+            <div class="form-group">
+                <div class="label-with-hint">
+                    <label>CI Not Started Max Retries</label>
+                    <span class="form-hint-icon" aria-hidden="true" title="Maximum re-push retries when CI never starts. Each retry creates an empty commit and force-pushes to re-trigger GitHub Actions. Default: 5">?</span>
+                </div>
+                <input type="number" @bind="_ciNotStartedMaxRetries" min="0" max="20" />
             </div>
         </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
@@ -73,6 +87,8 @@
     private string? _codeReviewFixPrompt;
     private int _externalCiTimeoutMinutes = 15;
     private int _externalCiPollIntervalSeconds = 30;
+    private int _ciNotStartedTimeoutMinutes = 5;
+    private int _ciNotStartedMaxRetries = 5;
     private bool _showAdvanced;
 
     protected override async Task OnInitializedAsync()
@@ -83,6 +99,8 @@
         _codeReviewFixPrompt = config.CodeReview.FixPrompt;
         _externalCiTimeoutMinutes = (int)config.ExternalCiTimeout.TotalMinutes;
         _externalCiPollIntervalSeconds = (int)config.ExternalCiPollInterval.TotalSeconds;
+        _ciNotStartedTimeoutMinutes = (int)config.CiNotStartedTimeout.TotalMinutes;
+        _ciNotStartedMaxRetries = config.CiNotStartedMaxRetries;
     }
 
     private async Task SaveAsync()
@@ -100,7 +118,9 @@
                         InlineComments = current.CodeReview.InlineComments,
                     },
                     ExternalCiTimeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),
-                    ExternalCiPollInterval = TimeSpan.FromSeconds(_externalCiPollIntervalSeconds)
+                    ExternalCiPollInterval = TimeSpan.FromSeconds(_externalCiPollIntervalSeconds),
+                    CiNotStartedTimeout = TimeSpan.FromMinutes(_ciNotStartedTimeoutMinutes),
+                    CiNotStartedMaxRetries = _ciNotStartedMaxRetries
                 },
                 CancellationToken.None);
             await OnShowStatus.InvokeAsync(("Implementation settings saved.", false));

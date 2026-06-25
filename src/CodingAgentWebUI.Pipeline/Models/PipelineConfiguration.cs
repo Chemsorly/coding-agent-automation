@@ -218,6 +218,27 @@ public sealed record PipelineConfiguration
     }
 
     /// <summary>
+    /// How long to wait for CI runs to appear before concluding CI never started.
+    /// Triggers a re-push retry instead of burning the full ExternalCiTimeout. Default: 5 minutes.
+    /// </summary>
+    [Key(53)]
+    public TimeSpan CiNotStartedTimeout
+    {
+        get => ExternalCi.CiNotStartedTimeout;
+        init => ExternalCi = ExternalCi with { CiNotStartedTimeout = value };
+    }
+
+    /// <summary>
+    /// Maximum re-push retries when CI never starts. Default: 5.
+    /// </summary>
+    [Key(54)]
+    public int CiNotStartedMaxRetries
+    {
+        get => ExternalCi.CiNotStartedMaxRetries;
+        init => ExternalCi = ExternalCi with { CiNotStartedMaxRetries = value };
+    }
+
+    /// <summary>
     /// How long the agent can be silent (no output) before the stall monitor logs a warning.
     /// The warning resets after each occurrence so it fires again after another interval of silence.
     /// </summary>
@@ -295,6 +316,10 @@ public sealed record PipelineConfiguration
                 config = config with { ExternalCiTimeout = project.ExternalCiTimeout.Value };
             if (project.ExternalCiPollInterval.HasValue)
                 config = config with { ExternalCiPollInterval = project.ExternalCiPollInterval.Value };
+            if (project.CiNotStartedTimeout.HasValue)
+                config = config with { CiNotStartedTimeout = project.CiNotStartedTimeout.Value };
+            if (project.CiNotStartedMaxRetries.HasValue)
+                config = config with { CiNotStartedMaxRetries = project.CiNotStartedMaxRetries.Value };
             if (project.MaxInfrastructureRetries.HasValue)
                 config = config with { MaxInfrastructureRetries = project.MaxInfrastructureRetries.Value };
             if (project.StallWarningInterval.HasValue)

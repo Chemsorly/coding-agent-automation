@@ -74,6 +74,8 @@
     private bool? _baselineHealthCheckEnabled;
     private int? _externalCiTimeoutMinutes;
     private int? _externalCiPollIntervalSeconds;
+    private int? _ciNotStartedTimeoutMinutes;
+    private int? _ciNotStartedMaxRetries;
     private int? _maxInfrastructureRetries;
     private int? _stallWarningIntervalMinutes;
     private int? _maxDecompositionSubIssues;
@@ -147,6 +149,8 @@
         _baselineHealthCheckEnabled = _project.BaselineHealthCheckEnabled;
         _externalCiTimeoutMinutes = _project.ExternalCiTimeout.HasValue ? (int?)_project.ExternalCiTimeout.Value.TotalMinutes : null;
         _externalCiPollIntervalSeconds = _project.ExternalCiPollInterval.HasValue ? (int?)_project.ExternalCiPollInterval.Value.TotalSeconds : null;
+        _ciNotStartedTimeoutMinutes = _project.CiNotStartedTimeout.HasValue ? (int?)_project.CiNotStartedTimeout.Value.TotalMinutes : null;
+        _ciNotStartedMaxRetries = _project.CiNotStartedMaxRetries;
         _maxInfrastructureRetries = _project.MaxInfrastructureRetries;
         _stallWarningIntervalMinutes = _project.StallWarningInterval.HasValue ? (int?)_project.StallWarningInterval.Value.TotalMinutes : null;
         _maxDecompositionSubIssues = _project.MaxDecompositionSubIssues;
@@ -293,6 +297,8 @@
             @RenderIntOverride("Stall Warning Interval (minutes)", () => _stallWarningIntervalMinutes, v => _stallWarningIntervalMinutes = v, (int)_globalConfig.StallWarningInterval.TotalMinutes, 1, 60)
             @RenderIntOverride("External CI Timeout (minutes)", () => _externalCiTimeoutMinutes, v => _externalCiTimeoutMinutes = v, (int)_globalConfig.ExternalCiTimeout.TotalMinutes, 1, 120)
             @RenderIntOverride("External CI Poll Interval (seconds)", () => _externalCiPollIntervalSeconds, v => _externalCiPollIntervalSeconds = v, (int)_globalConfig.ExternalCiPollInterval.TotalSeconds, 5, 300)
+            @RenderIntOverride("CI Not Started Timeout (minutes)", () => _ciNotStartedTimeoutMinutes, v => _ciNotStartedTimeoutMinutes = v, (int)_globalConfig.CiNotStartedTimeout.TotalMinutes, 1, 30)
+            @RenderIntOverride("CI Not Started Max Retries", () => _ciNotStartedMaxRetries, v => _ciNotStartedMaxRetries = v, _globalConfig.CiNotStartedMaxRetries, 0, 20)
 
             <h3>Decomposition</h3>
             @RenderIntOverride("Max Sub-Issues Per Epic", () => _maxDecompositionSubIssues, v => _maxDecompositionSubIssues = v, _globalConfig.MaxDecompositionSubIssues, 1, 20)
@@ -544,6 +550,8 @@
                 BaselineHealthCheckEnabled = _baselineHealthCheckEnabled,
                 ExternalCiTimeout = _externalCiTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_externalCiTimeoutMinutes.Value) : null,
                 ExternalCiPollInterval = _externalCiPollIntervalSeconds.HasValue ? TimeSpan.FromSeconds(_externalCiPollIntervalSeconds.Value) : null,
+                CiNotStartedTimeout = _ciNotStartedTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_ciNotStartedTimeoutMinutes.Value) : null,
+                CiNotStartedMaxRetries = _ciNotStartedMaxRetries,
                 MaxInfrastructureRetries = _maxInfrastructureRetries,
                 StallWarningInterval = _stallWarningIntervalMinutes.HasValue ? TimeSpan.FromMinutes(_stallWarningIntervalMinutes.Value) : null,
                 MaxDecompositionSubIssues = _maxDecompositionSubIssues,

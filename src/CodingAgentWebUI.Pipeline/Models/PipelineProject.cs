@@ -43,6 +43,8 @@ public sealed record PipelineProject
     public bool? BaselineHealthCheckEnabled { get; init; }
     public TimeSpan? ExternalCiTimeout { get; init; }
     public TimeSpan? ExternalCiPollInterval { get; init; }
+    public TimeSpan? CiNotStartedTimeout { get; init; }
+    public int? CiNotStartedMaxRetries { get; init; }
     public int? MaxInfrastructureRetries { get; init; }
     public TimeSpan? StallWarningInterval { get; init; }
     public int? MaxDecompositionSubIssues { get; init; }
