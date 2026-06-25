@@ -6,7 +6,7 @@
         <div class="sidebar-issue" title="@Run.WorkspacePath">
             @if (Run.RunType == PipelineRunType.Review)
             {
-                <span class="run-type-badge run-type-review" style="font-size: 0.75rem;">🔍 Review</span>
+                <span class="run-type-badge run-type-review" style="font-size: 0.75rem;"><Icon Name="search" /> Review</span>
                 <text> PR #@Run.IssueIdentifier · @Truncate(Run.IssueTitle, 30)</text>
             }
             else
@@ -42,8 +42,8 @@
                  data-testid="phase-@phaseTestId"
                  data-phase-state="@phaseStateClass">
                 <div class="phase-header" @onclick="() => TogglePhase(phase.Name)" aria-expanded="@isPhaseExpanded.ToString().ToLower()">
-                    <span class="phase-chevron">@(isPhaseExpanded ? "▾" : "▸")</span>
-                    <span class="phase-icon">@GetPhaseIcon(phaseState)</span>
+                    <span class="phase-chevron"><Icon Name="@(isPhaseExpanded ? "chevron-down" : "chevron-right")" /></span>
+                    <span class="phase-icon"><Icon Name="@GetPhaseIcon(phaseState)" /></span>
                     <span class="phase-name">@phase.Name</span>
                     <span class="phase-counter">@GetPhaseCounter(phaseState, completedCount, visibleSteps.Count)</span>
                 </div>
@@ -64,7 +64,7 @@
                              data-step-state="@stepStateClass"
                              @onclick="() => ToggleStep(step, state)" @onclick:stopPropagation="true">
                             <div class="step-card-header" aria-expanded="@isExpanded.ToString().ToLower()">
-                                <span class="step-card-icon">@GetStepIcon(state)</span>
+                                <span class="step-card-icon"><Icon Name="@GetStepIcon(state)" /></span>
                                 <span class="step-card-name">@step.ToDisplayName()</span>
                             </div>
 
@@ -308,12 +308,12 @@
 
     private static string GetPhaseIcon(PhaseState state) => state switch
     {
-        PhaseState.Completed => "✅",
-        PhaseState.Active => "▶",
-        PhaseState.Failed => "❌",
-        PhaseState.Cancelled => "⊘",
-        PhaseState.Retry => "🔄",
-        _ => "○"
+        PhaseState.Completed => "check-circle",
+        PhaseState.Active => "play",
+        PhaseState.Failed => "x-circle",
+        PhaseState.Cancelled => "slash",
+        PhaseState.Retry => "refresh-cw",
+        _ => "circle"
     };
 
     private static string GetPhaseCounter(PhaseState state, int completed, int total) => state switch
@@ -458,12 +458,12 @@
 
     private static string GetStepIcon(StepState state) => state switch
     {
-        StepState.Completed => "✅",
-        StepState.Active => "▶",
-        StepState.Failed => "❌",
-        StepState.Cancelled => "⊘",
-        StepState.Revisited => "🔄",
-        _ => "○"
+        StepState.Completed => "check-circle",
+        StepState.Active => "play",
+        StepState.Failed => "x-circle",
+        StepState.Cancelled => "slash",
+        StepState.Revisited => "refresh-cw",
+        _ => "circle"
     };
 
     private void ToggleStep(PipelineStep step, StepState state)
@@ -547,11 +547,11 @@
             }
             else if (Run.BrainContextLoaded)
             {
-                <span>✅ @Run.BrainKnowledgeFileCount knowledge files loaded</span>
+                <span><Icon Name="check-circle" /> @Run.BrainKnowledgeFileCount knowledge files loaded</span>
             }
             else
             {
-                <span>⚠️ Brain context unavailable</span>
+                <span><Icon Name="alert-triangle" /> Brain context unavailable</span>
             }
         </div>
     };
@@ -568,7 +568,7 @@
 
     private RenderFragment RenderVerifyingBaselineDetails(StepState state) => __builder =>
     {
-        <div class="step-detail">@(Run.BaselineHealthPassed!.Value ? "✅ Baseline healthy" : "⚠️ Pre-existing issues")</div>
+        <div class="step-detail">@if (Run.BaselineHealthPassed!.Value) {<Icon Name="check-circle" /><text> Baseline healthy</text>} else {<Icon Name="alert-triangle" /><text> Pre-existing issues</text>}</div>
     };
 
     private RenderFragment RenderAnalyzingCodeDetails(StepState state) => __builder =>
@@ -576,11 +576,11 @@
         <div class="step-detail">@(Run.AnalysisSkipped ? "Skipped (existing)" : "Agent analysis")</div>
         if (Run.AnalysisRecommendation == AnalysisGateResult.NotReady)
         {
-            <div class="step-detail">⚠️ Needs refinement</div>
+            <div class="step-detail"><Icon Name="alert-triangle" /> Needs refinement</div>
         }
         else if (Run.AnalysisRecommendation == AnalysisGateResult.WontDo)
         {
-            <div class="step-detail">🚫 Won't do</div>
+            <div class="step-detail"><Icon Name="ban" /> Won't do</div>
         }
     };
 
@@ -616,7 +616,7 @@
         <div class="step-detail-box">
             @if (state == StepState.Active && Run.CodeReviewIterationInProgress > 0)
             {
-                <div>🔍 Iteration @Run.CodeReviewIterationInProgress/@Run.CodeReviewIterationsTotal</div>
+                <div><Icon Name="search" /> Iteration @Run.CodeReviewIterationInProgress/@Run.CodeReviewIterationsTotal</div>
                 <div class="step-detail-sub">Agent is reviewing &amp; fixing code</div>
             }
             else if (Run.CodeReviewIterationsCompleted > 0)
@@ -645,7 +645,7 @@
             <div class="step-detail-box">
                 @if (qr.AllPassed)
                 {
-                    <div class="qg-header-pass">All gates passed ✅</div>
+                    <div class="qg-header-pass">All gates passed <Icon Name="check-circle" /></div>
                 }
                 else
                 {
@@ -658,7 +658,7 @@
                     {
                         <div class="qgc-sub-item @(qgcResult.Passed ? "qgc-pass" : "qgc-fail")">
                             <div class="qgc-sub-header">
-                                @(qgcResult.Passed ? "✅" : "❌") @qgcResult.DisplayName
+                                @if (qgcResult.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} @qgcResult.DisplayName
                             </div>
                             <div class="qgc-sub-details">
                                 @if (qgcResult.Compilation is { } comp)
@@ -680,23 +680,23 @@
                 else
                 {
                     <div class="qg-line @(qr.Compilation.Passed ? "qg-pass" : "qg-fail")">
-                        @(qr.Compilation.Passed ? "✅" : "❌") Compilation
+                        @if (qr.Compilation.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Compilation
                     </div>
                     <div class="qg-line @(qr.Tests.Passed ? "qg-pass" : "qg-fail")">
-                        @(qr.Tests.Passed ? "✅" : "❌") Tests
+                        @if (qr.Tests.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Tests
                         <span class="qg-sub">@(qr.Tests.TestsPassed ?? 0) passed, @(qr.Tests.TestsFailed ?? 0) failed</span>
                     </div>
                     @if (qr.Coverage is { } cov)
                     {
                         <div class="qg-line @(cov.Passed ? "qg-pass" : "qg-fail")">
-                            @(cov.Passed ? "✅" : "❌") Coverage
+                            @if (cov.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Coverage
                             <span class="qg-sub">@(cov.CoveragePercent.HasValue ? $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%" : "N/A")</span>
                         </div>
                     }
                     @if (qr.SecurityScan is { } sec)
                     {
                         <div class="qg-line @(sec.Passed ? "qg-pass" : "qg-fail")">
-                            @(sec.Passed ? "✅" : "❌") Security
+                            @if (sec.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} Security
                         </div>
                     }
                     else
@@ -708,7 +708,7 @@
                 @if (qr.ExternalCi is { } ci)
                 {
                     <div class="qg-line @(ci.Passed ? "qg-pass" : "qg-fail")">
-                        @(ci.Passed ? "✅" : "❌") External CI
+                        @if (ci.Passed) {<Icon Name="check-circle" />} else {<Icon Name="x-circle" />} External CI
                         @if (!ci.Passed && !string.IsNullOrEmpty(ci.Details))
                         {
                             <span class="qg-sub">@Truncate(ci.Details, 60)</span>
@@ -728,7 +728,7 @@
                             var h = history[i];
                             var covPct = h.Coverage?.CoveragePercent;
                             <div class="qg-history-item">
-                                #@(i + 1): @(h.AllPassed ? "Passed ✅" : covPct.HasValue ? $"Coverage {covPct.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}% ❌" : "Failed ❌")
+                                #@(i + 1): @if (h.AllPassed) {<text>Passed </text><Icon Name="check-circle" />} else if (covPct.HasValue) {<text>Coverage @(covPct.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture))% </text><Icon Name="x-circle" />} else {<text>Failed </text><Icon Name="x-circle" />}
                             </div>
                         }
                     </div>
@@ -749,11 +749,11 @@
                 var linkedCount = Run.LinkedIssueContexts?.Count ?? 0;
                 @if (linkedCount > 0)
                 {
-                    <span>✅ @linkedCount linked issue(s) found</span>
+                    <span><Icon Name="check-circle" /> @linkedCount linked issue(s) found</span>
                 }
                 else
                 {
-                    <span>⚠️ No linked issues (using PR metadata)</span>
+                    <span><Icon Name="alert-triangle" /> No linked issues (using PR metadata)</span>
                 }
             }
         </div>
@@ -774,7 +774,7 @@
                 }
                 else
                 {
-                    <div>✅ No issues found</div>
+                    <div><Icon Name="check-circle" /> No issues found</div>
                 }
                 @if (!string.IsNullOrEmpty(Run.ReviewPrUrl))
                 {
@@ -794,7 +794,7 @@
             }
             @if (Run.BlacklistedFilesDetected.Count > 0)
             {
-                <div class="step-detail-warning">⚠️ @Run.BlacklistedFilesDetected.Count file(s) excluded (blacklisted)</div>
+                <div class="step-detail-warning"><Icon Name="alert-triangle" /> @Run.BlacklistedFilesDetected.Count file(s) excluded (blacklisted)</div>
             }
             <div><a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer" @onclick:stopPropagation="true">🔗 View on GitHub</a></div>
         </div>
@@ -809,7 +809,7 @@
             }
             else
             {
-                <span>✅ Reflection complete</span>
+                <span><Icon Name="check-circle" /> Reflection complete</span>
             }
         </div>
     };
@@ -823,11 +823,11 @@
             }
             else if (Run.BrainUpdatesPushed)
             {
-                <span>✅ @Run.BrainFilesCommitted file(s) pushed</span>
+                <span><Icon Name="check-circle" /> @Run.BrainFilesCommitted file(s) pushed</span>
             }
             else
             {
-                <span>⚠️ Brain updates not persisted</span>
+                <span><Icon Name="alert-triangle" /> Brain updates not persisted</span>
             }
         </div>
     };
@@ -841,7 +841,7 @@
             }
             else if (Run.OpenIssuesDownloaded > 0)
             {
-                <span>✅ @Run.OpenIssuesDownloaded issues downloaded</span>
+                <span><Icon Name="check-circle" /> @Run.OpenIssuesDownloaded issues downloaded</span>
             }
             else
             {
@@ -855,7 +855,7 @@
         <div class="step-detail">
             @if (state == StepState.Active)
             {
-                <span>🔍 Agent exploring codebase...</span>
+                <span><Icon Name="search" /> Agent exploring codebase...</span>
             }
             else
             {
@@ -869,11 +869,11 @@
         <div class="step-detail">
             @if (state == StepState.Active)
             {
-                <span>📝 Generating decomposition plan...</span>
+                <span><Icon Name="file-text" /> Generating decomposition plan...</span>
             }
             else
             {
-                <span>✅ Plan generated</span>
+                <span><Icon Name="check-circle" /> Plan generated</span>
             }
         </div>
     };
@@ -883,11 +883,11 @@
         <div class="step-detail">
             @if (state == StepState.Active)
             {
-                <span>🔍 Adversarial review in progress...</span>
+                <span><Icon Name="search" /> Adversarial review in progress...</span>
             }
             else
             {
-                <span>✅ Plan validated</span>
+                <span><Icon Name="check-circle" /> Plan validated</span>
             }
         </div>
     };
@@ -901,7 +901,7 @@
             }
             else
             {
-                <span>✅ Plan posted for review</span>
+                <span><Icon Name="check-circle" /> Plan posted for review</span>
             }
         </div>
     };
@@ -929,10 +929,10 @@
             }
             @if (Run.DecompositionSubIssuesAttempted > 0)
             {
-                <div>✅ @Run.DecompositionSubIssuesCreated/@Run.DecompositionSubIssuesAttempted created</div>
+                <div><Icon Name="check-circle" /> @Run.DecompositionSubIssuesCreated/@Run.DecompositionSubIssuesAttempted created</div>
                 @if (Run.DecompositionSubIssuesCreated < Run.DecompositionSubIssuesAttempted)
                 {
-                    <div class="step-detail-warning">⚠️ @(Run.DecompositionSubIssuesAttempted - Run.DecompositionSubIssuesCreated) failed</div>
+                    <div class="step-detail-warning"><Icon Name="alert-triangle" /> @(Run.DecompositionSubIssuesAttempted - Run.DecompositionSubIssuesCreated) failed</div>
                 }
             }
         </div>
@@ -947,7 +947,7 @@
             }
             else
             {
-                <span>✅ Summary posted</span>
+                <span><Icon Name="check-circle" /> Summary posted</span>
             }
         </div>
     };
