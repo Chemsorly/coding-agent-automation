@@ -50,7 +50,7 @@
         @if (!_hasAgentProfiles)
         {
             <div class="pipeline-warning-banner">
-                ⚠️ No Agent Profiles configured. Create at least one profile in Settings before dispatching jobs.
+                <Icon Name="alert-triangle" /> No Agent Profiles configured. Create at least one profile in Settings before dispatching jobs.
             </div>
         }
 
@@ -88,7 +88,7 @@
             }
             else if (IsDispatched)
             {
-                <text>✅ Dispatched</text>
+                <text><Icon Name="check-circle" /> Dispatched</text>
             }
             else
             {

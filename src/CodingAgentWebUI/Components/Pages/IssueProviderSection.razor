@@ -27,7 +27,7 @@
                 </div>
                 @if (_initializeStatusProviderId == p.Id && !string.IsNullOrEmpty(_initializeStatus))
                 {
-                    <div class="settings-status @(_initializeIsError ? "status-error" : "status-success")">@_initializeStatus</div>
+                    <div class="settings-status @(_initializeIsError ? "status-error" : "status-success")">@if (_initializeIconName is not null) {<Icon Name="@_initializeIconName" />} @_initializeStatus</div>
                 }
             </div>
         }
@@ -137,6 +137,7 @@
     private string? _initializingProviderId;
     private string? _initializeStatusProviderId;
     private string? _initializeStatus;
+    private string? _initializeIconName;
     private bool _initializeIsError;
 
     private async Task InitializeRepository(ProviderConfig config)
@@ -144,6 +145,7 @@
         _initializingProviderId = config.Id;
         _initializeStatusProviderId = config.Id;
         _initializeStatus = null;
+        // TODO: Reset _initializeIconName to null here for consistent state management (#912)
         if (!_cts.IsCancellationRequested) StateHasChanged();
 
         try
@@ -151,14 +153,16 @@
             await using var provider = ProviderFactory.CreateIssueProvider(config);
             var labelsOk = await provider.InitializeAsync(_cts.Token);
             _initializeStatus = labelsOk
-                ? "✅ Repository initialized successfully."
-                : "⚠️ Credentials validated but some labels could not be created.";
+                ? "Repository initialized successfully."
+                : "Credentials validated but some labels could not be created.";
+            _initializeIconName = labelsOk ? "check-circle" : "alert-triangle";
             _initializeIsError = !labelsOk;
         }
         catch (OperationCanceledException) { return; }
         catch (Exception ex)
         {
-            _initializeStatus = $"❌ Initialization failed: {ex.Message}";
+            _initializeStatus = $"Initialization failed: {ex.Message}";
+            _initializeIconName = "x-circle";
             _initializeIsError = true;
         }
         finally
@@ -414,7 +418,8 @@
                     return;
                 }
 
-                _validationMessage = $"✅ Connected to {result.ProjectPath} (access: {result.AccessLevel})";
+                // TODO: Add Icon component to child form components — emoji was removed but no visual indicator replaces it (#912)
+                _validationMessage = $"Connected to {result.ProjectPath} (access: {result.AccessLevel})";
                 _validationSuccess = true;
             }
 
