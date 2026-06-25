@@ -269,6 +269,15 @@ internal partial class QualityGateExecutor
             callbacks.EmitOutputLine(
                 $"⚠️ CI never started (attempt {attempt + 1}/{maxRetries}) — re-pushing to trigger GitHub Actions...");
 
+            // Final check before re-pushing — avoid racing with GitHub's delayed trigger
+            var lastCheck = await context.PipelineProvider!.GetRunStatusAsync(run.BranchName!, pollSha, ct);
+            if (lastCheck.State != PipelineRunState.Pending || lastCheck.Jobs.Count > 0)
+            {
+                _logger.Information("Pipeline {RunId} CI appeared just before re-push (race avoided), proceeding to full wait", run.RunId);
+                return await context.PipelineProvider!.WaitForCompletionAsync(
+                    run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
+            }
+
             // Create empty commit and re-push
             await context.RepoProvider.CommitAllAsync(
                 run.WorkspacePath!,
@@ -304,11 +313,20 @@ internal partial class QualityGateExecutor
         {
             ct.ThrowIfCancellationRequested();
 
-            var status = await provider.GetRunStatusAsync(branchName, commitSha, ct);
+            try
+            {
+                var status = await provider.GetRunStatusAsync(branchName, commitSha, ct);
 
-            // Any non-empty state (Running, Passed, Failed, Cancelled) or jobs present means CI started
-            if (status.State != PipelineRunState.Pending || status.Jobs.Count > 0)
-                return true;
+                // Any non-empty state (Running, Passed, Failed, Cancelled) or jobs present means CI started
+                if (status.State != PipelineRunState.Pending || status.Jobs.Count > 0)
+                    return true;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                // Transient API error (rate limit, network, etc.) — log and keep polling within the timeout
+                _logger.Debug(ex, "WaitForCiRunsToAppearAsync transient error polling {Branch}, will retry", branchName);
+            }
 
             await Task.Delay(pollInterval, ct);
         }
