@@ -24,7 +24,7 @@
 
     <!-- Per-Template Cards -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2>📋 Template Consolidation</h2>
+        <h2><Icon Name="clipboard-list" Size="16" /> Template Consolidation</h2>
         @if (_templates.Count == 0)
         {
             <div class="monitoring-empty">No enabled templates configured.</div>
@@ -91,14 +91,14 @@
                             {
                                 <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.BrainConsolidation, template.Id)"
                                         @onclick="() => TriggerConsolidation(ConsolidationRunType.BrainConsolidation, template.Id, template.Name)">
-                                    🧠 Brain Consolidation
+                                    <Icon Name="brain" Size="14" /> Brain Consolidation
                                 </button>
                             }
                             @if (supportsRefactoring)
                             {
                                 <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.RefactoringDetection, template.Id)"
                                         @onclick="() => TriggerConsolidation(ConsolidationRunType.RefactoringDetection, template.Id, template.Name)">
-                                    🔍 Refactoring Scan
+                                    <Icon Name="search" Size="14" /> Refactoring Scan
                                 </button>
                             }
                         </div>
@@ -110,7 +110,7 @@
 
     <!-- Global Harness Suggestions -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2>💡 Harness Suggestions</h2>
+        <h2><Icon Name="lightbulb" Size="16" /> Harness Suggestions</h2>
         @if (_harnessSuggestions == null)
         {
             <div class="monitoring-empty">No suggestions generated yet.</div>
@@ -143,14 +143,14 @@
         <div class="consolidation-card-actions" style="margin-top: 12px;">
             <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.HarnessSuggestions, null)"
                     @onclick="() => TriggerConsolidation(ConsolidationRunType.HarnessSuggestions, null, null)">
-                ✨ Generate Suggestions
+                <Icon Name="sparkles" Size="14" /> Generate Suggestions
             </button>
         </div>
     </section>
 
     <!-- Run History -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2>📜 Run History (@_runHistory.Count)</h2>
+        <h2><Icon Name="scroll" Size="16" /> Run History (@_runHistory.Count)</h2>
         @if (_runHistory.Count == 0)
         {
             <div class="monitoring-empty">No consolidation runs yet.</div>

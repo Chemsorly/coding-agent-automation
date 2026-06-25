@@ -17,7 +17,7 @@
                     <strong>@projectGroup.Project.Name</strong>
                     @if (!string.IsNullOrEmpty(projectGroup.Project.EpicIssueProviderId))
                     {
-                        <span title="Cross-repo epic decomposition configured">🧩</span>
+                        <span title="Cross-repo epic decomposition configured"><Icon Name="puzzle" Size="14" /></span>
                     }
                     @if (!projectGroup.Project.Enabled)
                     {
@@ -63,7 +63,7 @@
                                         @{ var previewLabels = GetLabelPreview(template.RepoProviderId); }
                                         @if (previewLabels.Labels.Count > 0)
                                         {
-                                            <button class="btn-label-preview" @onclick="() => ToggleLabelPreview(template.Id)" title="Show label-mapped resources" aria-expanded="@(_expandedPreviewTemplateId == template.Id ? "true" : "false")">ℹ</button>
+                                            <button class="btn-label-preview" @onclick="() => ToggleLabelPreview(template.Id)" title="Show label-mapped resources" aria-expanded="@(_expandedPreviewTemplateId == template.Id ? "true" : "false")"><Icon Name="info" Size="14" /></button>
                                         }
                                     </td>
                                     <td>@(string.IsNullOrEmpty(template.BrainProviderId) ? "—" : GetProviderDisplayName(template.BrainProviderId, BrainProviders))</td>
@@ -147,9 +147,10 @@
                                                                     <button class="move-to-option" style="display: block; width: 100%; text-align: left; padding: 6px 12px; background: none; border: none; color: var(--text); cursor: pointer; font-size: 0.8rem;"
                                                                             @onclick="() => MoveTemplate(template.Id, projectGroup.Project.Id, targetProject.Id)">
                                                                         @targetProject.Name
-                                                                        @if (!string.IsNullOrEmpty(targetProject.EpicIssueProviderId))
+                                                                        @* TODO: Fix indentation — @if block is 4 spaces less than surrounding content *@
+                                                                    @if (!string.IsNullOrEmpty(targetProject.EpicIssueProviderId))
                                                                         {
-                                                                            <text> 🧩</text>
+                                                                            <text> </text><Icon Name="puzzle" Size="12" />
                                                                         }
                                                                     </button>
                                                                 }

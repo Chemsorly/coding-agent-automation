@@ -4,7 +4,7 @@
 {
     <Collapsible CssClass="feedback-section" HeaderClass="feedback-section-header" BodyClass="feedback-section-body"
                  IsExpanded="_expanded" IsExpandedChanged="v => _expanded = v">
-        <Header>💬 Feedback (@FeedbackItemCount)</Header>
+        <Header><Icon Name="message-square" Size="14" /> Feedback (@FeedbackItemCount)</Header>
         <ChildContent>
             @* Harness Feedback *@
             @if (Feedback.Harness != null)
