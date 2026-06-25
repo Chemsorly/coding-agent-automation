@@ -49,7 +49,7 @@
                                 }
                             </td>
                             <td class="monitoring-mono">@GetProviderName(profile.AgentProviderConfigId)</td>
-                            <td>@(profile.Enabled ? "✅" : "❌")</td>
+                            <td><Icon Name="@(profile.Enabled ? "check-circle" : "x-circle")" /></td>
                             <td>@profile.Priority</td>
                             <td>@profile.McpServers.Count(s => !s.Disabled)</td>
                             <td>
@@ -124,7 +124,7 @@
                                         <td class="monitoring-mono">@server.Name</td>
                                         <td>@server.Type</td>
                                         <td class="monitoring-mono">@(server.Type == "http" ? server.Url : $"{server.Command} {server.Args}".Trim())</td>
-                                        <td>@(server.Enabled ? "✅" : "❌")</td>
+                                        <td><Icon Name="@(server.Enabled ? "check-circle" : "x-circle")" /></td>
                                         <td>
                                             <button class="btn-edit" @onclick="() => EditMcpServer(idx)">Edit</button>
                                             <button class="btn-delete" @onclick="() => RemoveMcpServer(idx)">Remove</button>
