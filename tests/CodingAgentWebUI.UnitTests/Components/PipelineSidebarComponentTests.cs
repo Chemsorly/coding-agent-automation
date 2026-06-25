@@ -7,6 +7,7 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// <summary>
 /// bUnit component tests for the PipelineSidebar component.
 /// </summary>
+// TODO: Add test assertions for remaining icon substitutions (phase state icons, step state icons for Completed/Active/Failed/Cancelled, quality gate pass/fail icons, chevron toggles) to catch misspelled icon names that would silently render empty SVGs.
 public class PipelineSidebarComponentTests : BunitContext
 {
     private static PipelineRun CreateRun(
