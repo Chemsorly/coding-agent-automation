@@ -378,7 +378,8 @@
                     return;
                 }
 
-                _validationMessage = $"✅ Connected to {result.ProjectPath} (access: {result.AccessLevel})";
+                // TODO: Add Icon component to child form components — emoji was removed but no visual indicator replaces it (#912)
+                _validationMessage = $"Connected to {result.ProjectPath} (access: {result.AccessLevel})";
                 _validationSuccess = true;
             }
 

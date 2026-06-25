@@ -119,7 +119,7 @@
                         </Collapsible>
                         <Collapsible CssClass="setup-steps-section" HeaderClass="setup-steps-section-header" BodyClass="setup-steps-section-body"
                                      IsExpanded="_setupStepsExpanded" IsExpandedChanged="v => _setupStepsExpanded = v">
-                            <Header>⚙️ Setup Steps (@_form.SetupSteps.Count)</Header>
+                            <Header><Icon Name="settings" /> Setup Steps (@_form.SetupSteps.Count)</Header>
                             <ChildContent>
                                 <span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
                                 @for (var i = 0; i < _form.SetupSteps.Count; i++)
@@ -243,7 +243,7 @@
                         </Collapsible>
                         <Collapsible CssClass="setup-steps-section" HeaderClass="setup-steps-section-header" BodyClass="setup-steps-section-body"
                                      IsExpanded="_setupStepsExpanded" IsExpandedChanged="v => _setupStepsExpanded = v">
-                            <Header>⚙️ Setup Steps (@_form.SetupSteps.Count)</Header>
+                            <Header><Icon Name="settings" /> Setup Steps (@_form.SetupSteps.Count)</Header>
                             <ChildContent>
                                 <span class="form-hint">Each step runs as a full shell command via <code>/bin/bash -c</code> after clone. The name is a label for logs only.</span>
                                 @for (var i = 0; i < _form.SetupSteps.Count; i++)
@@ -620,7 +620,8 @@
                     return;
                 }
 
-                _validationMessage = $"✅ Connected to {result.ProjectPath} (access: {result.AccessLevel})";
+                // TODO: Add Icon component to child form components — emoji was removed but no visual indicator replaces it (#912)
+                _validationMessage = $"Connected to {result.ProjectPath} (access: {result.AccessLevel})";
                 _validationSuccess = true;
             }
 
