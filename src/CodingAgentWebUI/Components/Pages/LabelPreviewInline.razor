@@ -11,7 +11,7 @@
     @if (Preview.QualityGates.Count > 0)
     {
         <div class="label-preview-section">
-            <span class="label-preview-heading">🔧 Quality Gates:</span>
+            <span class="label-preview-heading"><Icon Name="wrench" /> Quality Gates:</span>
             @foreach (var qg in Preview.QualityGates)
             {
                 <span class="label-preview-item label-preview-qg">@qg</span>
@@ -21,7 +21,7 @@
     @if (Preview.Reviewers.Count > 0)
     {
         <div class="label-preview-section">
-            <span class="label-preview-heading">📝 Reviewers:</span>
+            <span class="label-preview-heading"><Icon Name="pen-line" /> Reviewers:</span>
             @foreach (var rv in Preview.Reviewers)
             {
                 <span class="label-preview-item label-preview-rv">@rv</span>
@@ -31,7 +31,7 @@
     @if (Preview.Profiles.Count > 0)
     {
         <div class="label-preview-section">
-            <span class="label-preview-heading">🤖 Agent Profiles:</span>
+            <span class="label-preview-heading"><Icon Name="bot" /> Agent Profiles:</span>
             @foreach (var pr in Preview.Profiles)
             {
                 <span class="label-preview-item label-preview-pr">@pr</span>
@@ -39,7 +39,7 @@
         </div>
     }
     <div class="label-preview-section">
-        <span class="label-preview-heading">🖥️ Agents:</span>
+        <span class="label-preview-heading"><Icon Name="monitor" /> Agents:</span>
         @if (Preview.Agents.Count > 0)
         {
             @foreach (var ag in Preview.Agents)

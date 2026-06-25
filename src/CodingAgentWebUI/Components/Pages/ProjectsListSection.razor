@@ -33,11 +33,11 @@
                         <td class="projects-name-cell">
                             @if (isDefault)
                             {
-                                <span class="projects-lock-icon">🔒</span>
+                                <span class="projects-lock-icon"><Icon Name="lock" /></span>
                             }
                             @if (project.EpicIssueProviderId is not null)
                             {
-                                <span class="projects-epic-icon">🧩</span>
+                                <span class="projects-epic-icon"><Icon Name="puzzle" /></span>
                             }
                             <span>@project.Name</span>
                             @if (isDefault)

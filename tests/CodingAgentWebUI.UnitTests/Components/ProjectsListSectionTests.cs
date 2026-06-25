@@ -65,7 +65,7 @@ public class ProjectsListSectionTests : BunitContext
             .Add(s => s.OnNavigateToProject, EventCallback<string>.Empty)
             .Add(s => s.OnShowStatus, EventCallback<(string, bool)>.Empty));
 
-        Assert.Contains("🔒", cut.Markup);
+        Assert.Contains("data-icon=\"lock\"", cut.Markup);
         Assert.Contains("badge-default", cut.Markup);
     }
 
@@ -184,7 +184,7 @@ public class ProjectsListSectionTests : BunitContext
             .Add(s => s.OnNavigateToProject, EventCallback<string>.Empty)
             .Add(s => s.OnShowStatus, EventCallback<(string, bool)>.Empty));
 
-        Assert.Contains("🧩", cut.Markup);
+        Assert.Contains("data-icon=\"puzzle\"", cut.Markup);
     }
 
     [Fact]
@@ -202,6 +202,6 @@ public class ProjectsListSectionTests : BunitContext
             .Add(s => s.OnNavigateToProject, EventCallback<string>.Empty)
             .Add(s => s.OnShowStatus, EventCallback<(string, bool)>.Empty));
 
-        Assert.DoesNotContain("🧩", cut.Markup);
+        Assert.DoesNotContain("data-icon=\"puzzle\"", cut.Markup);
     }
 }

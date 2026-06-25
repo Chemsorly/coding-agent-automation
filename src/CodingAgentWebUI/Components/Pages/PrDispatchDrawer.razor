@@ -93,7 +93,7 @@
                     @if (SelectedItem.IsDraft)
                     {
                         <div class="settings-status status-error" style="margin-bottom: 8px; font-size: 0.78rem;">
-                            ⚠️ This PR is a draft. Review will still be dispatched.
+                            <Icon Name="alert-triangle" /> This PR is a draft. Review will still be dispatched.
                         </div>
                     }
                     @if (SelectedItem.CreatedAt.HasValue)

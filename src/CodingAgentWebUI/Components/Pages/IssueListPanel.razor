@@ -73,7 +73,7 @@
                     <span class="issue-id">#@issue.Identifier</span>
                     @if (isProcessing)
                     {
-                        <span class="issue-dispatched-badge" title="Processing or queued">🔄</span>
+                        <span class="issue-dispatched-badge" title="Processing or queued"><Icon Name="refresh-cw" /></span>
                     }
                     <span class="issue-title">@issue.Title</span>
                     @if (issue.Labels.Count > 0)
