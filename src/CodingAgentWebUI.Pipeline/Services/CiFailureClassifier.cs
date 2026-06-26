@@ -36,6 +36,8 @@ public static class CiFailureClassifier
         "Error downloading",
         "failed to create shim task",
         "connection refused",
+        "ECONNREFUSED",
+        "Executing the custom container implementation failed",
         "Cache service responded with",
         "Unable to load the service index"
     };
