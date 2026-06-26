@@ -21,7 +21,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
     /// 1 rate-limited (throws RateLimitExceededException).
     /// Verifies: healthy template dispatches, failing template records error, rate-limited template skips.
     /// </summary>
-    [Fact]
+    [Fact(Timeout = 30_000)]
     public async Task FullCycle_MixedTemplateHealth_HealthyDispatches_FailingRecordsError_RateLimitedSkips()
     {
         // Arrange: 3 templates with different health states
@@ -128,8 +128,10 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         var started = await loopService.StartLoopAsync();
         started.Should().BeTrue();
 
-        // Wait for at least one cycle to complete
-        await Task.Delay(2000);
+        // Wait for at least one cycle to complete (deadline loop instead of fixed delay)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!dispatchedIssues.Contains("101") && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         // Assert BEFORE stopping (statuses are cleared on stop)
         // Healthy template should have dispatched
@@ -146,10 +148,10 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         rateLimitedStatus.Should().NotBeNull();
         rateLimitedStatus!.RateLimitResetAt.Should().NotBeNull();
 
-        // Cleanup
+        // Cleanup: proper async teardown to prevent hangs
         loopService.StopLoop();
-        await Task.Delay(500);
         await cts.CancelAsync();
+        await loopService.StopAsync(CancellationToken.None);
     }
 
     /// <summary>

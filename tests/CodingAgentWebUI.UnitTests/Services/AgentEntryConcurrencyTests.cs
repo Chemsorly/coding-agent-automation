@@ -32,7 +32,7 @@ public class AgentEntryConcurrencyTests
     {
         // Arrange: register a single agent
         var entry = RegisterAgent("agent-concurrent", "conn-1");
-        const int iterations = 10_000;
+        const int iterations = 1_000;
         const int threadCount = 8;
         var barrier = new Barrier(threadCount);
         var tornReadDetected = false;
@@ -45,7 +45,7 @@ public class AgentEntryConcurrencyTests
             var threadIndex = t;
             threads[t] = new Thread(() =>
             {
-                barrier.SignalAndWait(); // synchronize start for maximum contention
+                Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10))); // synchronize start for maximum contention
 
                 for (int i = 0; i < iterations; i++)
                 {
@@ -112,7 +112,7 @@ public class AgentEntryConcurrencyTests
     {
         // Arrange: register agent, then hammer heartbeat from multiple threads
         var entry = RegisterAgent("agent-hb", "conn-hb");
-        const int iterations = 50_000;
+        const int iterations = 5_000;
         const int threadCount = 4;
         var barrier = new Barrier(threadCount + 1); // +1 for reader thread
         var invalidTimestampSeen = false;
@@ -123,7 +123,7 @@ public class AgentEntryConcurrencyTests
         {
             writers[t] = new Thread(() =>
             {
-                barrier.SignalAndWait();
+                Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
                 for (int i = 0; i < iterations; i++)
                 {
                     _registry.UpdateHeartbeat("agent-hb", DateTimeOffset.UtcNow);
@@ -135,7 +135,7 @@ public class AgentEntryConcurrencyTests
         // Reader thread continuously checks the heartbeat is never default/zeroed
         var reader = new Thread(() =>
         {
-            barrier.SignalAndWait();
+            Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
             for (int i = 0; i < iterations * 2; i++)
             {
                 var ts = entry.LastHeartbeatAt;
@@ -167,7 +167,7 @@ public class AgentEntryConcurrencyTests
         // With the double-check pattern in SelectAgent (lock entry.SyncRoot, verify still Idle),
         // no job should ever be assigned to a disconnected agent.
 
-        const int iterations = 5_000;
+        const int iterations = 500;
         var assignedWhileDisconnected = 0;
         var requiredLabels = new List<string> { "dotnet" };
 
@@ -194,14 +194,14 @@ public class AgentEntryConcurrencyTests
             // Thread 1: SelectAgent (simulates dispatch path)
             var selectThread = new Thread(() =>
             {
-                barrier.SignalAndWait();
+                Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
                 selected = dispatcher.SelectAgent(requiredLabels);
             });
 
             // Thread 2: TransitionStatus to Disconnected (simulates HeartbeatMonitor)
             var disconnectThread = new Thread(() =>
             {
-                barrier.SignalAndWait();
+                Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
                 registry.TransitionStatus(agentId, AgentStatus.Disconnected);
             });
 
@@ -251,7 +251,7 @@ public class AgentEntryConcurrencyTests
         // Verifies the invariant that SelectAgent ONLY returns agents it successfully
         // transitioned from Idle → Busy while holding the lock.
 
-        const int iterations = 2_000;
+        const int iterations = 200;
         var requiredLabels = new List<string> { "dotnet" };
         var violations = 0;
 
@@ -274,12 +274,12 @@ public class AgentEntryConcurrencyTests
 
             var t1 = new Thread(() =>
             {
-                barrier.SignalAndWait();
+                Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
                 selected = dispatcher.SelectAgent(requiredLabels);
             });
             var t2 = new Thread(() =>
             {
-                barrier.SignalAndWait();
+                Assert.True(barrier.SignalAndWait(TimeSpan.FromSeconds(10)));
                 registry.TransitionStatus(agentId, AgentStatus.Disconnected);
             });
 

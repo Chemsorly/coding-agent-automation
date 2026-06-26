@@ -134,7 +134,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             Times.AtLeastOnce);
     }
 
-    [Fact]
+    [Fact(Timeout = 15_000)]
     public async Task Shutdown_DoesNotBlock_WhenGitHubApiThrows()
     {
         // Arrange: issue provider throws on all calls
@@ -217,14 +217,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         var lifetime = _factory.Services.GetRequiredService<IHostApplicationLifetime>();
         lifetime.StopApplication();
 
-        var completed = await Task.Run(async () =>
-        {
-            await Task.Delay(5000);
-            return true;
-        });
-
-        // Assert: shutdown didn't hang
-        completed.Should().BeTrue();
+        // Assert: DisposeAsync completes (host's 5s ShutdownTimeout proceeds despite exceptions).
+        // If shutdown hangs, the xUnit 15s timeout will kill this test.
+        await _factory.DisposeAsync();
+        _factory = null;
     }
 
     [Fact]
@@ -271,7 +267,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
             Times.Never);
     }
 
-    [Fact]
+    [Fact(Timeout = 15_000)]
     public async Task Shutdown_DoesNotBlock_WhenProviderHangs()
     {
         // Arrange: issue provider hangs indefinitely (simulates network timeout)
@@ -293,9 +289,9 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
 
         var hangingProvider = new Mock<IIssueProvider>();
         hangingProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.Delay(Timeout.InfiniteTimeSpan));
+            .Returns((string _, string _, CancellationToken ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct));
         hangingProvider.Setup(p => p.AddLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.Delay(Timeout.InfiniteTimeSpan));
+            .Returns((string _, string _, CancellationToken ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct));
         hangingProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
 
         var configStore = new Mock<IConfigurationStore>();
@@ -356,14 +352,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         var lifetime = _factory.Services.GetRequiredService<IHostApplicationLifetime>();
         lifetime.StopApplication();
 
-        var completed = await Task.Run(async () =>
-        {
-            await Task.Delay(5000);
-            return true;
-        });
-
-        // Assert: shutdown didn't hang (host-level 5s timeout aborted the hanging callback)
-        completed.Should().BeTrue();
+        // Assert: DisposeAsync completes (host's 5s ShutdownTimeout aborts the hanging callback).
+        // If shutdown hangs, the xUnit 15s timeout will kill this test.
+        await _factory.DisposeAsync();
+        _factory = null;
     }
 
     private static void ReplaceService<T>(IServiceCollection services, T implementation) where T : class
