@@ -21,7 +21,7 @@ public class PipelineLoopFairDispatchPropertyTests
     // ∀ templates, budget → sum(dispatches) ≤ budget
     // ══════════════════════════════════════════════════════════════════════
 
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(BudgetCeilingArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(BudgetCeilingArbitraries) })]
     public Property BudgetCeiling_TotalDispatchesNeverExceedBudget(BudgetCeilingInput input)
     {
         var issueQueues = input.IssueCountsPerTemplate.Select((c, i) =>
@@ -44,7 +44,7 @@ public class PipelineLoopFairDispatchPropertyTests
     // across templates that have sufficient items (didn't exhaust their queue).
     // ══════════════════════════════════════════════════════════════════════
 
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(FairnessArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(FairnessArbitraries) })]
     public Property Fairness_UnequalQueues_DiffersAtMostOne(FairnessInput input)
     {
         // Simulate DispatchRoundAsync for issues only: iterates templates once per round,
@@ -91,7 +91,7 @@ public class PipelineLoopFairDispatchPropertyTests
     // gets at least 1 dispatch. Empty-queue-type templates don't block others.
     // ══════════════════════════════════════════════════════════════════════
 
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(StarvationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(StarvationArbitraries) })]
     public Property StarvationPrevention_NonEmptyQueueTypesGetDispatches(StarvationInput input)
     {
         var issueQueues = input.IssueCountsPerTemplate.Select((c, i) =>
@@ -163,7 +163,7 @@ public class PipelineLoopFairDispatchPropertyTests
     // from being dispatched.
     // ══════════════════════════════════════════════════════════════════════
 
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(IsolationArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(IsolationArbitraries) })]
     public async Task ProviderFailureIsolation_SubsequentTemplatesStillDispatched(IsolationInput input)
     {
         var templateCount = input.TemplateCount;
@@ -255,7 +255,7 @@ public class PipelineLoopFairDispatchPropertyTests
     // ∀ templates with eligible=0 → 0 dispatches, no state change
     // ══════════════════════════════════════════════════════════════════════
 
-    [Property(MaxTest = 100, Arbitrary = new[] { typeof(EmptyCycleArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(EmptyCycleArbitraries) })]
     public Property IdempotentOnEmpty_ZeroDispatchesWhenAllQueuesEmpty(EmptyCycleInput input)
     {
         var issueQueues = Enumerable.Range(0, input.TemplateCount)

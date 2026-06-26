@@ -10,6 +10,8 @@ namespace CodingAgentWebUI.IntegrationTests.SignalR;
 /// </summary>
 public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRTestFixture>, IAsyncLifetime
 {
+    private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(10);
+
     private readonly SignalRTestFixture _fixture;
 
     public SignalRReconnectionIntegrationTests(SignalRTestFixture fixture)
@@ -28,11 +30,13 @@ public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRT
     [Fact]
     public async Task Reconnection_PreservesAgentId_UpdatesConnectionId()
     {
+        using var cts = new CancellationTokenSource(TestTimeout);
+
         // Arrange: connect and register agent
         const string agentId = "reconnect-agent-1";
         await using var conn1 = _fixture.CreateHubConnection(agentId);
-        await conn1.StartAsync();
-        await RegisterAgentAsync(conn1, agentId);
+        await conn1.StartAsync(cts.Token);
+        await RegisterAgentAsync(conn1, agentId, cts.Token);
 
         var entry1 = _fixture.Registry.GetByAgentId(agentId);
         entry1.Should().NotBeNull();
@@ -43,8 +47,8 @@ public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRT
         await _fixture.WaitForStatusAsync(agentId, AgentStatus.Disconnected);
 
         await using var conn2 = _fixture.CreateHubConnection(agentId);
-        await conn2.StartAsync();
-        await RegisterAgentAsync(conn2, agentId);
+        await conn2.StartAsync(cts.Token);
+        await RegisterAgentAsync(conn2, agentId, cts.Token);
 
         // Assert: single agent entry with updated ConnectionId
         var agents = _fixture.Registry.GetAllAgents();
@@ -60,11 +64,13 @@ public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRT
     [Fact]
     public async Task StaleDetection_ReconnectionHealsStatus()
     {
+        using var cts = new CancellationTokenSource(TestTimeout);
+
         // Arrange: connect and register agent
         const string agentId = "stale-agent-1";
         await using var conn1 = _fixture.CreateHubConnection(agentId);
-        await conn1.StartAsync();
-        await RegisterAgentAsync(conn1, agentId);
+        await conn1.StartAsync(cts.Token);
+        await RegisterAgentAsync(conn1, agentId, cts.Token);
 
         // Simulate stale detection: set heartbeat far in past and transition to Disconnected
         var entry = _fixture.Registry.GetByAgentId(agentId)!;
@@ -77,8 +83,8 @@ public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRT
         await conn1.StopAsync();
 
         await using var conn2 = _fixture.CreateHubConnection(agentId);
-        await conn2.StartAsync();
-        await RegisterAgentAsync(conn2, agentId);
+        await conn2.StartAsync(cts.Token);
+        await RegisterAgentAsync(conn2, agentId, cts.Token);
 
         // Assert: agent recovered to Idle
         var healed = _fixture.Registry.GetByAgentId(agentId)!;
@@ -89,6 +95,8 @@ public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRT
     [Fact]
     public async Task InProgressJob_NotRedispatched_DuringBriefDisconnection()
     {
+        using var cts = new CancellationTokenSource(TestTimeout);
+
         // Arrange: connect two agents, assign job to agent-1
         const string agent1Id = "job-agent-1";
         const string agent2Id = "job-agent-2";
@@ -96,10 +104,10 @@ public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRT
 
         await using var conn1 = _fixture.CreateHubConnection(agent1Id);
         await using var conn2 = _fixture.CreateHubConnection(agent2Id);
-        await conn1.StartAsync();
-        await conn2.StartAsync();
-        await RegisterAgentAsync(conn1, agent1Id);
-        await RegisterAgentAsync(conn2, agent2Id);
+        await conn1.StartAsync(cts.Token);
+        await conn2.StartAsync(cts.Token);
+        await RegisterAgentAsync(conn1, agent1Id, cts.Token);
+        await RegisterAgentAsync(conn2, agent2Id, cts.Token);
 
         // Simulate job assignment by setting ActiveJobId directly
         var entry1 = _fixture.Registry.GetByAgentId(agent1Id)!;
@@ -120,8 +128,8 @@ public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRT
 
         // Act: reconnect agent-1 and re-register
         await using var conn1Reconnected = _fixture.CreateHubConnection(agent1Id);
-        await conn1Reconnected.StartAsync();
-        await RegisterAgentAsync(conn1Reconnected, agent1Id);
+        await conn1Reconnected.StartAsync(cts.Token);
+        await RegisterAgentAsync(conn1Reconnected, agent1Id, cts.Token);
 
         // Assert: agent-1 restored to Busy with same job (AddOrUpdate preserves ActiveJobId)
         var reconnectedEntry = _fixture.Registry.GetByAgentId(agent1Id)!;
@@ -132,11 +140,13 @@ public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRT
     [Fact]
     public async Task Reconnection_NoDuplicateAgentRecords()
     {
+        using var cts = new CancellationTokenSource(TestTimeout);
+
         // Arrange: connect and register
         const string agentId = "dedup-agent-1";
         await using var conn1 = _fixture.CreateHubConnection(agentId);
-        await conn1.StartAsync();
-        await RegisterAgentAsync(conn1, agentId);
+        await conn1.StartAsync(cts.Token);
+        await RegisterAgentAsync(conn1, agentId, cts.Token);
 
         _fixture.Registry.GetAllAgents().Should().HaveCount(1);
 
@@ -145,28 +155,28 @@ public sealed class SignalRReconnectionIntegrationTests : IClassFixture<SignalRT
         await _fixture.WaitForStatusAsync(agentId, AgentStatus.Disconnected);
 
         await using var conn2 = _fixture.CreateHubConnection(agentId);
-        await conn2.StartAsync();
-        await RegisterAgentAsync(conn2, agentId);
+        await conn2.StartAsync(cts.Token);
+        await RegisterAgentAsync(conn2, agentId, cts.Token);
 
         await conn2.StopAsync();
         await _fixture.WaitForStatusAsync(agentId, AgentStatus.Disconnected);
 
         await using var conn3 = _fixture.CreateHubConnection(agentId);
-        await conn3.StartAsync();
-        await RegisterAgentAsync(conn3, agentId);
+        await conn3.StartAsync(cts.Token);
+        await RegisterAgentAsync(conn3, agentId, cts.Token);
 
         // Assert: still exactly 1 agent
         _fixture.Registry.GetAllAgents().Should().HaveCount(1);
         _fixture.Registry.GetByAgentId(agentId)!.Status.Should().Be(AgentStatus.Idle);
     }
 
-    private static Task RegisterAgentAsync(HubConnection connection, string agentId)
+    private static Task RegisterAgentAsync(HubConnection connection, string agentId, CancellationToken ct = default)
     {
         return connection.InvokeAsync("RegisterAgent", new AgentRegistrationMessage
         {
             AgentId = agentId,
             Hostname = "test-host",
             Labels = ["dotnet"]
-        });
+        }, ct);
     }
 }
