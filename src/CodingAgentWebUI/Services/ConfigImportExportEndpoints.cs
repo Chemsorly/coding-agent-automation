@@ -2,6 +2,7 @@ using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 
@@ -97,6 +98,7 @@ public static class ConfigImportExportEndpoints
     internal static async Task<IResult> ImportConfigAsync(
         IFormFile file,
         IDbContextFactory<PipelineDbContext> dbFactory,
+        IConfigurationStore configStore,
         CancellationToken ct)
     {
         if (file is null || file.Length == 0)
@@ -122,6 +124,7 @@ public static class ConfigImportExportEndpoints
             return TypedResults.BadRequest(new ImportExportResult { Success = false, Message = "Empty or invalid bundle" });
 
         await using var db = await dbFactory.CreateDbContextAsync(ct);
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
 
         // Clear existing config (not runs/consolidation/work items)
         db.PipelineConfig.RemoveRange(db.PipelineConfig);
@@ -211,6 +214,10 @@ public static class ConfigImportExportEndpoints
         }
 
         await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+
+        // Invalidate config store caches (bypassed by direct DB writes)
+        configStore.InvalidateCaches();
 
         return TypedResults.Ok(new ImportExportResult
         {

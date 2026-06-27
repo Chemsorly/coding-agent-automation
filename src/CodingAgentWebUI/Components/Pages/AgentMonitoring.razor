@@ -17,6 +17,7 @@
 @inject PipelineOrchestrationService PipelineService
 @inject IConfigurationStore ConfigStore
 @inject IConsolidationService ConsolidationService
+@inject IWorkDistributor WorkDistributor
 @inject ConsolidationQueueService ConsolidationQueue
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
 @inject ILabelSwapper LabelSwapper
@@ -933,7 +934,33 @@
     private async Task CancelAgentRunById(string runId)
     {
         var run = PipelineService.GetAllActiveRuns().FirstOrDefault(r => r.RunId == runId);
-        if (run != null) await CancelAgentRun(run);
+        if (run != null)
+        {
+            await CancelAgentRun(run);
+            return;
+        }
+
+        // Run not in-memory (DB mode after restart) — cancel WorkItem directly
+        try
+        {
+            var cancelled = await WorkDistributor.CancelJobAsync(runId, CancellationToken.None);
+            if (cancelled)
+            {
+                Log.Information("Cancelled WorkItem {RunId} via IWorkDistributor", runId);
+            }
+            else
+            {
+                // WorkItem might already be terminal (Failed/Succeeded) — just log
+                Log.Information("WorkItem {RunId} could not be cancelled (already terminal or not found) — refreshing UI", runId);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to cancel WorkItem {RunId} via IWorkDistributor", runId);
+        }
+
+        await RefreshDataAsync();
+        StateHasChanged();
     }
 
     private async Task CancelAgentRun(PipelineRun run)
@@ -952,6 +979,10 @@
             HistoryService.AddRunToHistory(run);
             RunService.RemoveRun(run.RunId);
             Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+            // Also cancel the WorkItem in the DB (DB+SignalR mode)
+            try { await WorkDistributor.CancelJobAsync(run.RunId, CancellationToken.None); }
+            catch (Exception ex) { Log.Warning(ex, "Failed to cancel WorkItem for run {RunId}", run.RunId); }
 
             try
             {

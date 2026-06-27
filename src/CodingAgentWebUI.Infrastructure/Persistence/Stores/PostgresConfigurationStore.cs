@@ -33,9 +33,9 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     public void InvalidateCaches()
     {
         _pipelineConfigCache = null;
-        _cache.Dispose();
-        // Recreate a fresh empty cache (MemoryCache doesn't support Clear())
-        _cache = new MemoryCache(new MemoryCacheOptions());
+        // Swap to a fresh cache instance. Don't dispose the old one — concurrent readers
+        // may still hold a reference. GC will collect it after all references drain.
+        Interlocked.Exchange(ref _cache, new MemoryCache(new MemoryCacheOptions()));
     }
 
     // Cache keys
