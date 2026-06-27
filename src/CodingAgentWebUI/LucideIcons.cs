@@ -17,7 +17,6 @@ public static class LucideIcons
         ["chevron-right"] = """<path d="m9 18 6-6-6-6"/>""",
         ["chevron-down"] = """<path d="m6 9 6 6 6-6"/>""",
         ["brain"] = """<path d="M12 18V5"/><path d="M15 13a4.17 4.17 0 0 1-3-4 4.17 4.17 0 0 1-3 4"/><path d="M17.598 6.5A3 3 0 1 0 12 5a3 3 0 1 0-5.598 1.5"/><path d="M17.997 5.125a4 4 0 0 1 2.526 5.77"/><path d="M18 18a4 4 0 0 0 2-7.464"/><path d="M19.967 17.483A4 4 0 1 1 12 18a4 4 0 1 1-7.967-.517"/><path d="M6 18a4 4 0 0 1-2-7.464"/><path d="M6.003 5.125a4 4 0 0 0-2.526 5.77"/>""",
-        // TODO: search icon SVG path was changed from original (element order reversed, 4.3→4.34 coordinate difference) — verify visual consistency
         ["search"] = """<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>""",
         ["clipboard-list"] = """<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>""",
         ["lightbulb"] = """<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>""",
