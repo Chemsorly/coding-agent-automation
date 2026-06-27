@@ -52,7 +52,7 @@
                                 @FormatCommands(qgc)
                             </td>
                             <td>@(qgc.CoverageThreshold.HasValue ? $"{qgc.CoverageThreshold.Value}%" : "—")</td>
-                            <td>@(qgc.Enabled ? "✅" : "❌")</td>
+                            <td><Icon Name="@(qgc.Enabled ? "check-circle" : "x-circle")" /></td>
                             <td>@qgc.ExecutionOrder</td>
                             <td>
                                 <button class="btn-edit" @onclick="() => EditConfig(qgc)">Edit</button>
