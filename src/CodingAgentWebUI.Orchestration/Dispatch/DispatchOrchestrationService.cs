@@ -527,14 +527,14 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         try
         {
             // Revert label from agent:in-progress back to agent:next
-            Log.Warning("Reverting failed distribution for issue {IssueIdentifier}: swapping label back to agent:next",
+            _logger.Warning("Reverting failed distribution for issue {IssueIdentifier}: swapping label back to agent:next",
                 request.IssueIdentifier);
             await _labelSwapper.SwapLabelAsync(
                 request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.Next, ct);
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to revert label for issue {IssueIdentifier} after distribution failure",
+            _logger.Error(ex, "Failed to revert label for issue {IssueIdentifier} after distribution failure",
                 request.IssueIdentifier);
         }
 
@@ -548,13 +548,13 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             if (danglingRun is not null)
             {
                 _runService.RemoveRun(danglingRun.RunId);
-                Log.Information("Removed dangling run {RunId} for issue {IssueIdentifier} after distribution failure",
+                _logger.Information("Removed dangling run {RunId} for issue {IssueIdentifier} after distribution failure",
                     danglingRun.RunId, request.IssueIdentifier);
             }
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to remove dangling run for issue {IssueIdentifier} after distribution failure",
+            _logger.Error(ex, "Failed to remove dangling run for issue {IssueIdentifier} after distribution failure",
                 request.IssueIdentifier);
         }
     }

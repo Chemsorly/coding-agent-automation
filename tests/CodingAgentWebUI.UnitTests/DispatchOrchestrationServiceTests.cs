@@ -768,3 +768,141 @@ public class DispatchOrchestrationServiceTests
         activeRuns.Should().Contain(r => r.IssueIdentifier == "issue-42");
     }
 }
+
+/// <summary>
+/// Tests for <see cref="DispatchOrchestrationService.RevertFailedDistributionAsync"/>.
+/// Validates that distribution failure cleanup reverts the label and removes the dangling run.
+/// </summary>
+public class DispatchOrchestrationService_RevertFailedDistributionTests
+{
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILogger> _mockLogger = new();
+    private readonly OrchestratorRunService _runService;
+    private readonly DispatchOrchestrationService _service;
+
+    public DispatchOrchestrationService_RevertFailedDistributionTests()
+    {
+        _runService = new OrchestratorRunService(_mockLogger.Object);
+
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        var mockProviderFactory = new Mock<IProviderFactory>();
+        var mockTokenVending = new Mock<ITokenVendingService>();
+        var resolution = new DispatchResolutionService(
+            new ProfileResolver(),
+            new QualityGateResolver(),
+            new ReviewerResolver(),
+            mockConfigStore.Object,
+            _mockLogger.Object);
+        var orchestration = new PipelineOrchestrationService(
+            mockConfigStore.Object, mockProviderFactory.Object,
+            new IssueDescriptionParser(),
+            new Mock<IAgentPhaseExecutor>().Object,
+            new Mock<IQualityGateExecutor>().Object,
+            _mockLogger.Object,
+            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+            historyService: new Mock<IPipelineRunHistoryService>().Object,
+            runService: _runService);
+
+        _service = new DispatchOrchestrationService(
+            resolution, orchestration,
+            mockTokenVending.Object, mockProviderFactory.Object,
+            _mockLabelSwapper.Object, _runService, _mockLogger.Object);
+    }
+
+    [Fact]
+    public async Task RevertFailedDistribution_SwapsLabelBackToNext()
+    {
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#10",
+            IssueProviderConfigId = "ipc-1",
+            RepoProviderConfigId = "rpc-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600
+        };
+
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        _mockLabelSwapper.Verify(
+            s => s.SwapLabelAsync("ipc-1", "owner/repo#10", AgentLabels.Next, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RevertFailedDistribution_RemovesDanglingRun()
+    {
+        // Arrange: simulate a dangling run
+        var run = new PipelineRun
+        {
+            RunId = "run-abc",
+            IssueIdentifier = "owner/repo#20",
+            IssueTitle = "Test issue",
+            IssueProviderConfigId = "ipc-2",
+            RepoProviderConfigId = "rpc-2"
+        };
+        _runService.AddRun(run);
+
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#20",
+            IssueProviderConfigId = "ipc-2",
+            RepoProviderConfigId = "rpc-2",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600
+        };
+
+        // Act
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        // Assert: run removed
+        _runService.GetActiveRuns().Should().NotContain(r => r.IssueIdentifier == "owner/repo#20");
+    }
+
+    [Fact]
+    public async Task RevertFailedDistribution_LabelSwapFailure_DoesNotThrow()
+    {
+        _mockLabelSwapper
+            .Setup(s => s.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Provider unreachable"));
+
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#30",
+            IssueProviderConfigId = "ipc-3",
+            RepoProviderConfigId = "rpc-3",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600
+        };
+
+        // Should not throw
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task RevertFailedDistribution_NoMatchingRun_DoesNotThrow()
+    {
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#999",
+            IssueProviderConfigId = "ipc-nonexistent",
+            RepoProviderConfigId = "rpc-x",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600
+        };
+
+        // Should not throw even with no matching run
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        _mockLabelSwapper.Verify(
+            s => s.SwapLabelAsync("ipc-nonexistent", "owner/repo#999", AgentLabels.Next, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+}

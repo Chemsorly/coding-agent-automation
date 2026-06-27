@@ -4,6 +4,7 @@ using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -375,6 +376,79 @@ public sealed class SignalRWorkDistributorTests : IDisposable
 
         // Assert
         stuckCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task DetectStuckDispatchedItemsAsync_TransitionsStuckItemsToFailed()
+    {
+        // Arrange: one stuck item
+        var stuckId = Guid.NewGuid();
+        var sixMinutesAgo = DateTimeOffset.UtcNow.AddMinutes(-6);
+
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = stuckId,
+                IssueIdentifier = "stuck-transition-1",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Dispatched,
+                DispatchedAt = sixMinutesAgo,
+                AgentSelector = "kiro",
+                CreatedAt = sixMinutesAgo,
+                TimeoutSeconds = 3600
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        await _sut.DetectStuckDispatchedItemsAsync(TimeSpan.FromMinutes(5), CancellationToken.None);
+
+        // Assert: item transitioned to Failed with correct reason
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            var item = await db.WorkItems.FindAsync(stuckId);
+            item!.Status.Should().Be(WorkItemStatus.Failed);
+            item.FailureReason.Should().Be(FailureReason.InfrastructureFailure);
+            item.CompletedAt.Should().NotBeNull();
+            item.ErrorMessage.Should().Contain("Stuck in Dispatched");
+        }
+    }
+
+    [Fact]
+    public async Task ReconcileStuckItemsAsync_DelegatesToDetectStuckDispatchedItemsAsync()
+    {
+        // Arrange: one stuck item
+        var stuckId = Guid.NewGuid();
+        var tenMinutesAgo = DateTimeOffset.UtcNow.AddMinutes(-10);
+
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = stuckId,
+                IssueIdentifier = "reconcile-stuck-1",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Dispatched,
+                DispatchedAt = tenMinutesAgo,
+                AgentSelector = "kiro",
+                CreatedAt = tenMinutesAgo,
+                TimeoutSeconds = 3600
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act: call via the IWorkDistributor interface method
+        IWorkDistributor distributor = _sut;
+        var count = await distributor.ReconcileStuckItemsAsync(CancellationToken.None);
+
+        // Assert
+        count.Should().Be(1);
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            var item = await db.WorkItems.FindAsync(stuckId);
+            item!.Status.Should().Be(WorkItemStatus.Failed);
+        }
     }
 
     [Fact]
