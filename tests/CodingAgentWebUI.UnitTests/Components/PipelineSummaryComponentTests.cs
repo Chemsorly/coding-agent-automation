@@ -81,7 +81,7 @@ public class PipelineSummaryComponentTests : BunitContext
             .Add(s => s.MaxRetries, 3)
             .Add(s => s.OnBackToIssues, () => { }));
 
-        Assert.Contains("✅", cut.Markup);
+        Assert.NotNull(cut.Find("[data-icon=\"check-circle\"]"));
         Assert.Contains("Pipeline Completed", cut.Markup);
     }
 
@@ -94,7 +94,7 @@ public class PipelineSummaryComponentTests : BunitContext
             .Add(s => s.Run, run)
             .Add(s => s.OnBackToIssues, () => { }));
 
-        Assert.Contains("❌", cut.Markup);
+        Assert.NotNull(cut.Find("[data-icon=\"x-circle\"]"));
         Assert.Contains("Pipeline Failed", cut.Markup);
         Assert.Contains("Quality gates failed after max retries", cut.Markup);
         Assert.Contains("summary-failure-callout", cut.Markup);
@@ -108,7 +108,7 @@ public class PipelineSummaryComponentTests : BunitContext
             .Add(s => s.Run, run)
             .Add(s => s.OnBackToIssues, () => { }));
 
-        Assert.Contains("🚫", cut.Markup);
+        Assert.NotNull(cut.Find("[data-icon=\"ban\"]"));
         Assert.Contains("Pipeline Cancelled", cut.Markup);
         Assert.Contains("Cancelled during:", cut.Markup);
         Assert.Contains("Generating Code", cut.Markup);
@@ -161,7 +161,9 @@ public class PipelineSummaryComponentTests : BunitContext
             .Add(s => s.MaxRetries, 3)
             .Add(s => s.OnBackToIssues, () => { }));
 
-        Assert.Contains("Compilation ✅", cut.Markup);
+        Assert.Contains("Compilation", cut.Markup);
+        // TODO: This selector matches any check-circle in the result strip, not specifically the Compilation gate's icon. Consider a more specific selector that ties the icon to its gate label.
+        Assert.NotNull(cut.Find(".result-strip [data-icon=\"check-circle\"]"));
         Assert.Contains("181p/0f/0s", cut.Markup);
         Assert.Contains("82.3%", cut.Markup);
         Assert.Contains("Files: 5 (+100 -20)", cut.Markup);

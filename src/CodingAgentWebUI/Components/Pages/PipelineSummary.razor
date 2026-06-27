@@ -3,7 +3,7 @@
 <div class="pipeline-summary">
     <div class="summary-header">
         <div class="summary-title">
-            <span class="summary-icon">@OutcomeIcon</span>
+            <span class="summary-icon"><Icon Name="@OutcomeIconName" /></span>
             <h2>
                 @if (Run.RunType == PipelineRunType.Review)
                 {
@@ -43,20 +43,20 @@
         @if (Run.RunType == PipelineRunType.Review && !string.IsNullOrEmpty(Run.ReviewPrUrl))
         {
             <div class="summary-meta">
-                🔗 <a href="@Run.ReviewPrUrl" target="_blank" rel="noopener noreferrer">View PR on GitHub →</a>
+                <Icon Name="link" Size="16" /> <a href="@Run.ReviewPrUrl" target="_blank" rel="noopener noreferrer">View PR on GitHub →</a>
             </div>
         }
     </div>
 
     @if (!string.IsNullOrEmpty(Run.FailureReason))
     {
-        <div class="summary-failure-callout" role="alert" data-testid="failure-reason">⚠️ @Run.FailureReason</div>
+        <div class="summary-failure-callout" role="alert" data-testid="failure-reason"><Icon Name="alert-triangle" Size="16" /> @Run.FailureReason</div>
     }
 
     @if ((Run.BlacklistedFilesDetected?.Count ?? 0) > 0)
     {
         <div class="summary-blacklist-warning" role="alert">
-            ⚠️ Blacklisted files excluded from commit:
+            <Icon Name="alert-triangle" Size="16" /> Blacklisted files excluded from commit:
             <ul>
                 @foreach (var file in Run.BlacklistedFilesDetected!)
                 {
@@ -84,7 +84,7 @@
             }
             else
             {
-                <span>✅ No issues found</span>
+                <span><Icon Name="check-circle" Size="16" /> No issues found</span>
             }
         </div>
     }
@@ -92,13 +92,13 @@
     {
         <div class="result-strip">
             @{ var qr = Run.LatestQualityReport; }
-            <span>Compilation @(qr?.Compilation.Passed == true ? "✅" : qr is not null ? "❌" : "—")</span>
+            <span>Compilation @if (qr?.Compilation.Passed == true) { <Icon Name="check-circle" Size="16" /> } else if (qr is not null) { <Icon Name="x-circle" Size="16" /> } else { <text>—</text> }</span>
             <span class="result-strip-sep">│</span>
-            <span>Tests @(qr is not null ? (qr.Tests.Passed ? "✅" : "❌") : "—") @FormatTestCounts(qr)</span>
+            <span>Tests @if (qr is not null) { @if (qr.Tests.Passed) { <Icon Name="check-circle" Size="16" /> } else { <Icon Name="x-circle" Size="16" /> } } else { <text>—</text> } @FormatTestCounts(qr)</span>
             <span class="result-strip-sep">│</span>
-            <span>Coverage @FormatCoverage(qr)</span>
+            <span>Coverage @if (qr?.Coverage is { } cov) { @if (cov.Passed) { <Icon Name="check-circle" Size="16" /> } else { <Icon Name="x-circle" Size="16" /> } @FormatCoveragePercent(cov) } else { <text>—</text> }</span>
             <span class="result-strip-sep">│</span>
-            <span>Security @(qr?.SecurityScan is { } sec ? (sec.Passed ? "✅" : "❌") : "—")</span>
+            <span>Security @if (qr?.SecurityScan is { } sec) { @if (sec.Passed) { <Icon Name="check-circle" Size="16" /> } else { <Icon Name="x-circle" Size="16" /> } } else { <text>—</text> }</span>
             <span class="result-strip-sep">│</span>
             <span>Files: @Run.FilesChangedCount (+@Run.LinesAdded -@Run.LinesRemoved)</span>
             <span class="result-strip-sep">│</span>
@@ -114,7 +114,7 @@
     @if (!string.IsNullOrEmpty(Run.PullRequestUrl))
     {
         <div class="summary-pr-link" data-testid="pr-link">
-            🔗 PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "")
+            <Icon Name="link" Size="16" /> PR @(!string.IsNullOrEmpty(Run.PullRequestNumber) ? $"#{Run.PullRequestNumber}" : "")
             (@(Run.IsDraftPr ? "draft" : "final")) —
             <a href="@Run.PullRequestUrl" target="_blank" rel="noopener noreferrer">View on GitHub →</a>
         </div>
@@ -133,12 +133,12 @@
     /// <summary>Callback invoked when the user clicks "Back to Issues".</summary>
     [Parameter] public EventCallback OnBackToIssues { get; set; }
 
-    private string OutcomeIcon => Run.CurrentStep switch
+    private string OutcomeIconName => Run.CurrentStep switch
     {
-        PipelineStep.Completed => "✅",
-        PipelineStep.Failed => "❌",
-        PipelineStep.Cancelled => "🚫",
-        _ => "❓"
+        PipelineStep.Completed => "check-circle",
+        PipelineStep.Failed => "x-circle",
+        PipelineStep.Cancelled => "ban",
+        _ => "circle"
     };
 
     private string OutcomeText => Run.CurrentStep switch
@@ -169,11 +169,10 @@
         return $"{p}p/{f}f/{s}s";
     }
 
-    private static string FormatCoverage(QualityGateReport? qr)
+    private static string FormatCoveragePercent(GateResult cov)
     {
-        if (qr?.Coverage is not { } cov) return "—";
-        if (!cov.CoveragePercent.HasValue) return cov.Passed ? "✅ —" : "❌ —";
-        return $"{(cov.Passed ? "✅" : "❌")} {cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%";
+        if (!cov.CoveragePercent.HasValue) return "—";
+        return $"{cov.CoveragePercent.Value.ToString("F1", System.Globalization.CultureInfo.InvariantCulture)}%";
     }
 
     private PipelineStep GetLastReachedStep() => Run.GetLastReachedStep();

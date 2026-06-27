@@ -56,15 +56,15 @@
         {
             <div class="agent-summary-bar">
                 <span>
-                    🤖 @agentCount agent(s) registered ·
+                    <Icon Name="bot" Size="16" /> @agentCount agent(s) registered ·
                     @agentRuns.Count agent run(s) active
                     @if (implRunCount > 0 && reviewRunCount > 0)
                     {
-                        <text> (🔨@implRunCount impl · 🔍@reviewRunCount review)</text>
+                        <text> (🔨@implRunCount impl · </text><Icon Name="search" Size="16" /><text>@reviewRunCount review)</text>
                     }
                     else if (reviewRunCount > 0)
                     {
-                        <text> (🔍@reviewRunCount review)</text>
+                        <text> (</text><Icon Name="search" Size="16" /><text>@reviewRunCount review)</text>
                     }
                     @if (queueLength > 0)
                     {
@@ -126,7 +126,7 @@
                             <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                                 @if (!LoopService.IsLoopActive)
                                 {
-                                    <button class="btn-save" @onclick="StartLoop" disabled="@(_templates.Count == 0)">▶ Start Loop</button>
+                                    <button class="btn-save" @onclick="StartLoop" disabled="@(_templates.Count == 0)"><Icon Name="play" Size="16" /> Start Loop</button>
                                 }
                                 else
                                 {
