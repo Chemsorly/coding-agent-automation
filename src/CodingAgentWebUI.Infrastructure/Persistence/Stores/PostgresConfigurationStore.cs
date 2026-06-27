@@ -21,13 +21,22 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     private static readonly JsonSerializerOptions JsonOptions = PipelineJsonOptions.Default;
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly MemoryCache _cache;
+    private MemoryCache _cache;
     private readonly TimeSpan _cacheTtl;
     private readonly SemaphoreSlim _pipelineConfigLock = new(1, 1);
     private readonly SemaphoreSlim _projectLock = new(1, 1);
 
     // Pipeline config is cached permanently until write invalidates
     private PipelineConfiguration? _pipelineConfigCache;
+
+    /// <inheritdoc />
+    public void InvalidateCaches()
+    {
+        _pipelineConfigCache = null;
+        _cache.Dispose();
+        // Recreate a fresh empty cache (MemoryCache doesn't support Clear())
+        _cache = new MemoryCache(new MemoryCacheOptions());
+    }
 
     // Cache keys
     private const string ProviderCachePrefix = "providers_";

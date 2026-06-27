@@ -74,6 +74,37 @@ public sealed class ConfigExportService
             counts.PipelineRuns);
     }
 
+    /// <summary>
+    /// Exports only configuration data (no runs, no consolidation runs) to the output directory.
+    /// Used by the UI import/export feature.
+    /// </summary>
+    public async Task ExportConfigOnlyAsync(string outputDir, CancellationToken ct)
+    {
+        Logger.Information("ConfigExport: Exporting config-only to {OutputDir}", outputDir);
+
+        Directory.CreateDirectory(outputDir);
+
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        var counts = new ExportCounts();
+
+        await ExportPipelineConfigAsync(db, outputDir, counts, ct);
+        await ExportProviderConfigsAsync(db, outputDir, counts, ct);
+        await ExportAgentProfilesAsync(db, outputDir, counts, ct);
+        await ExportQualityGateConfigsAsync(db, outputDir, counts, ct);
+        await ExportReviewerConfigsAsync(db, outputDir, counts, ct);
+        await ExportProjectsAsync(db, outputDir, counts, ct);
+
+        Logger.Information(
+            "ConfigExport (config-only): Completed. " +
+            "PipelineConfig: {PipelineConfig}, ProviderConfigs: {Providers}, " +
+            "AgentProfiles: {Profiles}, QualityGates: {QualityGates}, " +
+            "Reviewers: {Reviewers}, Projects: {Projects}, Templates: {Templates}",
+            counts.PipelineConfig, counts.ProviderConfigs,
+            counts.AgentProfiles, counts.QualityGates,
+            counts.Reviewers, counts.Projects, counts.Templates);
+    }
+
     private static async Task ExportPipelineConfigAsync(
         PipelineDbContext db, string outputDir, ExportCounts counts, CancellationToken ct)
     {

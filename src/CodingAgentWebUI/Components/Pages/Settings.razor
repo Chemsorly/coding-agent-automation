@@ -141,6 +141,9 @@
                         ConfigStore="ConfigStore"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
+                case SettingsNodes.ConfigImportExport:
+                    <ConfigImportExportSection OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
+                    break;
             }
         </div>
     </div>

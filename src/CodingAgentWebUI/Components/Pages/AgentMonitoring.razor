@@ -938,10 +938,34 @@
 
     private async Task CancelAgentRun(PipelineRun run)
     {
-        if (run.AgentId == null) return;
+        var agent = run.AgentId is not null ? Registry.GetByAgentId(run.AgentId) : null;
 
-        var agent = Registry.GetByAgentId(run.AgentId);
-        if (agent == null) return;
+        // If agent not found (disconnected, never registered, null, or "local" placeholder),
+        // fail the run directly — there's no agent to send CancelJob to.
+        if (agent == null)
+        {
+            Log.Information("Cancel: agent '{AgentId}' not found for run {RunId}, removing run directly", run.AgentId, run.RunId);
+            run.FailureReason = "Cancelled — agent not available";
+            run.MarkCompleted();
+            run.CurrentStep = PipelineStep.Cancelled;
+
+            HistoryService.AddRunToHistory(run);
+            RunService.RemoveRun(run.RunId);
+            Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+            try
+            {
+                await LabelSwapper.SwapLabelAsync(
+                    run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled,
+                    run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue,
+                    CancellationToken.None);
+            }
+            catch (Exception ex) { Log.Warning(ex, "Failed to swap label for cancelled run {RunId}", run.RunId); }
+
+            await RefreshDataAsync();
+            StateHasChanged();
+            return;
+        }
 
         // Short-circuit: if the run is orphan-restored (agent crashed and lost its state),
         // the agent can't act on CancelJob — fail the run immediately on the orchestrator side.

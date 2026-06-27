@@ -299,6 +299,7 @@ app.MapHub<AgentHub>(HubRoutes.Agent).RequireAuthorization("AgentApiKey");
 if (!string.IsNullOrEmpty(dbConnectionString))
 {
     app.MapWorkItemEndpoints();
+    app.MapConfigImportExportEndpoints();
 }
 
 app.MapRazorComponents<App>()

@@ -127,6 +127,22 @@
             </div>
         }
     </div>
+
+    <div class="tree-group">
+        <div class="tree-group-header" @onclick="ToggleDataManagement" aria-expanded="@_dataManagementExpanded.ToString().ToLower()">
+            <span class="tree-chevron"><Icon Name="@(_dataManagementExpanded ? "chevron-down" : "chevron-right")" /></span>
+            Data Management
+        </div>
+        @if (_dataManagementExpanded)
+        {
+            <div class="tree-group-children">
+                <div class="tree-node @(SelectedNode == SettingsNodes.ConfigImportExport ? "active" : "")"
+                     @onclick="() => SelectNode(SettingsNodes.ConfigImportExport)">
+                    Import / Export
+                </div>
+            </div>
+        }
+    </div>
 </div>
 
 @code {
@@ -140,6 +156,7 @@
     private bool _projectsExpanded = true;
     private bool _pipelineExpanded = true;
     private bool _labelRoutingExpanded = true;
+    private bool _dataManagementExpanded = true;
 
     private IReadOnlyList<PipelineProject> _projects = [];
 
@@ -172,6 +189,11 @@
     private void ToggleLabelRouting()
     {
         _labelRoutingExpanded = !_labelRoutingExpanded;
+    }
+
+    private void ToggleDataManagement()
+    {
+        _dataManagementExpanded = !_dataManagementExpanded;
     }
 
     private async Task SelectNode(string nodeId)
