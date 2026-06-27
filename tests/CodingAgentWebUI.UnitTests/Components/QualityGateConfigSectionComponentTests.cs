@@ -124,9 +124,9 @@ public class QualityGateConfigSectionComponentTests : BunitContext
 
         var cut = Render<QualityGateConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
 
-        // TODO: Assertions don't verify icon-to-row association — test would pass even if conditional logic were inverted
-        Assert.NotNull(cut.Find("[data-icon=\"check-circle\"]"));
-        Assert.NotNull(cut.Find("[data-icon=\"x-circle\"]"));
+        // TODO: Assertions don't verify icon-to-row association — test would pass even if conditional logic were inverted. Scope assertions to each row's markup.
+        Assert.Contains("data-icon=\"check-circle\"", cut.Markup);
+        Assert.Contains("data-icon=\"x-circle\"", cut.Markup);
     }
 
     [Fact]
