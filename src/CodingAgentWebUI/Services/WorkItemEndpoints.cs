@@ -19,7 +19,7 @@ public sealed class WorkItemStatusRequest
 {
     public required WorkItemStatus Status { get; init; }
     public string? AgentId { get; init; }
-    public JsonDocument? Result { get; init; }
+    public string? Result { get; init; }
     public string? ErrorMessage { get; init; }
 }
 
@@ -119,7 +119,7 @@ public static class WorkItemEndpoints
         if (item.Payload is null)
             return TypedResults.NotFound();
 
-        var request = item.Payload.Deserialize<JobDistributionRequest>(PipelineJsonOptions.Default);
+        var request = JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload, PipelineJsonOptions.Default);
         if (request is null)
             return TypedResults.NotFound();
 

@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace CodingAgentWebUI.Infrastructure.Persistence.Entities;
 
 /// <summary>
@@ -12,8 +10,8 @@ public class ProjectEntity
     public bool Enabled { get; set; }
     public string? Description { get; set; }
 
-    /// <summary>JSONB: prompts, timeouts, secrets ref, and other project-specific settings.</summary>
-    public JsonDocument? Settings { get; set; }
+    /// <summary>JSONB string: prompts, timeouts, secrets ref, and other project-specific settings.</summary>
+    public string? Settings { get; set; }
 
     public List<string> TemplateIds { get; set; } = [];
 

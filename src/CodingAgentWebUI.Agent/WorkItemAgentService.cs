@@ -135,7 +135,16 @@ public sealed class WorkItemAgentService : BackgroundService
         }
 
         // Step 3: Connect SignalR for logs/tokens
-        await _hubManager.StartAsync(ct);
+        try
+        {
+            await _hubManager.StartAsync(ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.Error(ex, "Failed to connect SignalR hub for work item {WorkItemId}, posting Failed", _workItemId);
+            await PostFailedStatusAsync($"SignalR connection failed: {ex.Message}");
+            return 1;
+        }
         _logger.Information("Connected to SignalR hub for log streaming/token vending");
 
         // Step 4: Execute pipeline
@@ -269,13 +278,34 @@ public sealed class WorkItemAgentService : BackgroundService
         }
     }
 
-    private static JsonDocument? SerializeResult(JobCompletionPayload? completion)
+    private async Task PostFailedStatusAsync(string errorMessage)
+    {
+        if (_terminalStatusPosted) return;
+
+        try
+        {
+            var failUpdate = new WorkItemStatusUpdate
+            {
+                Status = "Failed",
+                AgentId = _agentIdentity.Id,
+                ErrorMessage = errorMessage,
+                FailureReason = "AgentError"
+            };
+            await _workItemClient.PostStatusAsync(_workItemId, failUpdate, CancellationToken.None);
+            _terminalStatusPosted = true;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to POST Failed status (ReconciliationService will handle)");
+        }
+    }
+
+    private static string? SerializeResult(JobCompletionPayload? completion)
     {
         if (completion is null) return null;
         try
         {
-            var json = JsonSerializer.Serialize(completion, PipelineJsonOptions.Default);
-            return JsonDocument.Parse(json);
+            return JsonSerializer.Serialize(completion, PipelineJsonOptions.Default);
         }
         catch
         {

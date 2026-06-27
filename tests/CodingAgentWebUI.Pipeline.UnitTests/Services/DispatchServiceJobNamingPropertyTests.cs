@@ -16,7 +16,7 @@ public class DispatchServiceJobNamingPropertyTests
     /// Property 8: Deterministic K8s Job Naming
     /// For any GUID, GenerateJobName produces "caa-" + guid.ToString("N")[0..8].
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property(MaxTest = 200)]
     public void GenerateJobName_MatchesDeterministicFormula(Guid workItemId)
     {
         var expected = "caa-" + workItemId.ToString("N")[..8];

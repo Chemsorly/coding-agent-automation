@@ -10,7 +10,6 @@ using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -49,7 +48,7 @@ public class WorkItemEndpointsTests : IDisposable
         db.Database.EnsureDeleted();
     }
 
-    private async Task SeedWorkItemAsync(Guid id, WorkItemStatus status, JsonDocument? payload = null)
+    private async Task SeedWorkItemAsync(Guid id, WorkItemStatus status, string? payload = null)
     {
         await using var db = _dbFactory.CreateDbContext();
         db.WorkItems.Add(new WorkItemEntity
@@ -80,7 +79,7 @@ public class WorkItemEndpointsTests : IDisposable
     public async Task GetAssignment_ReturnsGone_WhenWorkItemIsInTerminalStatus()
     {
         var id = Guid.NewGuid();
-        var payload = JsonDocument.Parse(JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default));
+        var payload = JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default);
         await SeedWorkItemAsync(id, WorkItemStatus.Succeeded, payload);
 
         var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
@@ -93,7 +92,7 @@ public class WorkItemEndpointsTests : IDisposable
     public async Task GetAssignment_Returns200_WithJobAssignmentDto_WhenWorkItemIsActive()
     {
         var id = Guid.NewGuid();
-        var payload = JsonDocument.Parse(JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default));
+        var payload = JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default);
         await SeedWorkItemAsync(id, WorkItemStatus.Dispatched, payload);
 
         var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
@@ -200,7 +199,7 @@ public class WorkItemEndpointsTests : IDisposable
     public async Task GetAssignment_Returns200_WhenWorkItemIsPending()
     {
         var id = Guid.NewGuid();
-        var payload = JsonDocument.Parse(JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default));
+        var payload = JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default);
         await SeedWorkItemAsync(id, WorkItemStatus.Pending, payload);
 
         var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
@@ -216,7 +215,7 @@ public class WorkItemEndpointsTests : IDisposable
     {
         var id = Guid.NewGuid();
         var sourcePayload = CreateTestPayload();
-        var payload = JsonDocument.Parse(JsonSerializer.Serialize(sourcePayload, PipelineJsonOptions.Default));
+        var payload = JsonSerializer.Serialize(sourcePayload, PipelineJsonOptions.Default);
         await SeedWorkItemAsync(id, WorkItemStatus.Running, payload);
 
         var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
@@ -246,7 +245,7 @@ public class WorkItemEndpointsTests : IDisposable
     public async Task GetAssignment_ReturnsGone_ForAllTerminalStatuses(WorkItemStatus terminalStatus)
     {
         var id = Guid.NewGuid();
-        var payload = JsonDocument.Parse(JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default));
+        var payload = JsonSerializer.Serialize(CreateTestPayload(), PipelineJsonOptions.Default);
         await SeedWorkItemAsync(id, terminalStatus, payload);
 
         var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
@@ -378,21 +377,8 @@ public class WorkItemEndpointsTests : IDisposable
         {
             base.OnModelCreating(modelBuilder);
 
-            var jsonConverter = new ValueConverter<JsonDocument?, string?>(
-                v => v == null ? null : v.RootElement.GetRawText(),
-                v => v == null ? null : JsonDocument.Parse(v, default));
-
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
-                foreach (var property in entityType.GetProperties())
-                {
-                    if (property.ClrType == typeof(JsonDocument))
-                    {
-                        property.SetValueConverter(jsonConverter);
-                        property.SetColumnType(null);
-                    }
-                }
-
                 var rowVersionProp = entityType.FindProperty("RowVersion");
                 if (rowVersionProp != null)
                 {

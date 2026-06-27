@@ -1,4 +1,3 @@
-using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Infrastructure.Persistence.Entities;
@@ -14,8 +13,8 @@ public class ProviderConfigEntity
     public string ProviderType { get; set; } = "";
     public bool Enabled { get; set; }
 
-    /// <summary>JSONB: provider-specific configuration fields.</summary>
-    public JsonDocument? Configuration { get; set; }
+    /// <summary>JSONB string: provider-specific configuration fields.</summary>
+    public string? Configuration { get; set; }
 
     /// <summary>Concurrency token mapped to PostgreSQL xmin system column.</summary>
     public uint RowVersion { get; set; }

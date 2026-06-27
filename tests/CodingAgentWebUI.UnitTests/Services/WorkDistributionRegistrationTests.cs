@@ -45,8 +45,13 @@ public class WorkDistributionRegistrationTests
     }
 
     [Fact]
+    [Trait("Category", "RequiresNonK8sEnvironment")]
     public void AddWorkDistribution_KubernetesModeOutsideCluster_ThrowsInvalidOperationException()
     {
+        // Skip if running inside K8s (CI runners with service account token mounted)
+        if (File.Exists("/var/run/secrets/kubernetes.io/serviceaccount/token"))
+            return;
+
         // Arrange: DB connection string set, mode is Kubernetes, but we're not in a cluster
         // (no /var/run/secrets/kubernetes.io/serviceaccount/token and no KUBERNETES_SERVICE_HOST env var)
         var config = new ConfigurationBuilder()

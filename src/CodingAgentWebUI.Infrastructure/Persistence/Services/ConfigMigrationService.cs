@@ -143,7 +143,7 @@ public sealed class ConfigMigrationService
         db.PipelineConfig.Add(new PipelineConfigEntity
         {
             Id = Guid.NewGuid(),
-            Configuration = SerializeToDocument(config)
+            Configuration = SerializeToJson(config)
         });
 
         counts.PipelineConfig = 1;
@@ -188,7 +188,7 @@ public sealed class ConfigMigrationService
                     DisplayName = config.DisplayName,
                     ProviderType = config.ProviderType,
                     Enabled = true,
-                    Configuration = SerializeToDocument(config)
+                    Configuration = SerializeToJson(config)
                 });
 
                 counts.ProviderConfigs++;
@@ -214,7 +214,7 @@ public sealed class ConfigMigrationService
             {
                 Id = guid,
                 Name = profile.DisplayName,
-                Configuration = SerializeToDocument(profile)
+                Configuration = SerializeToJson(profile)
             });
 
             counts.AgentProfiles++;
@@ -239,7 +239,7 @@ public sealed class ConfigMigrationService
             {
                 Id = guid,
                 Name = config.DisplayName,
-                Configuration = SerializeToDocument(config)
+                Configuration = SerializeToJson(config)
             });
 
             counts.QualityGates++;
@@ -264,7 +264,7 @@ public sealed class ConfigMigrationService
             {
                 Id = guid,
                 Name = config.DisplayName,
-                Configuration = SerializeToDocument(config)
+                Configuration = SerializeToJson(config)
             });
 
             counts.Reviewers++;
@@ -292,7 +292,7 @@ public sealed class ConfigMigrationService
                 Name = project.Name,
                 Enabled = project.Enabled,
                 Description = project.Description,
-                Settings = SerializeToDocument(project),
+                Settings = SerializeToJson(project),
                 TemplateIds = project.TemplateIds.ToList()
             });
 
@@ -315,7 +315,7 @@ public sealed class ConfigMigrationService
                         Id = templateGuid,
                         ProjectId = projectGuid,
                         Name = template.Name,
-                        Configuration = SerializeToDocument(template)
+                        Configuration = SerializeToJson(template)
                     });
 
                     counts.Templates++;
@@ -341,7 +341,7 @@ public sealed class ConfigMigrationService
             db.ConsolidationRuns.Add(new ConsolidationRunEntity
             {
                 Id = guid,
-                Data = SerializeToDocument(run)
+                Data = SerializeToJson(run)
             });
 
             counts.ConsolidationRuns++;
@@ -410,10 +410,9 @@ public sealed class ConfigMigrationService
         }
     }
 
-    private static JsonDocument SerializeToDocument<T>(T value)
+    private static string SerializeToJson<T>(T value)
     {
-        var json = JsonSerializer.Serialize(value, JsonOptions);
-        return JsonDocument.Parse(json);
+        return JsonSerializer.Serialize(value, JsonOptions);
     }
 
     private static bool HasAnyJsonFiles(string directory)

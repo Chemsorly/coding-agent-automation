@@ -1,6 +1,5 @@
 // Feature: Persistence Integration Tests
 // Property 2: Active WorkItem Uniqueness — Application-level dedup prevents duplicate active work items
-using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
@@ -12,7 +11,6 @@ using FsCheck.Fluent;
 using FsCheck.Xunit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CodingAgentWebUI.IntegrationTests.Persistence;
@@ -148,21 +146,8 @@ public class ActiveWorkItemUniquenessPropertyTests : IDisposable
         {
             base.OnModelCreating(modelBuilder);
 
-            var jsonConverter = new ValueConverter<JsonDocument?, string?>(
-                v => v == null ? null : v.RootElement.GetRawText(),
-                v => v == null ? null : JsonDocument.Parse(v, default));
-
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
-                foreach (var property in entityType.GetProperties())
-                {
-                    if (property.ClrType == typeof(JsonDocument))
-                    {
-                        property.SetValueConverter(jsonConverter);
-                        property.SetColumnType(null);
-                    }
-                }
-
                 var rowVersionProp = entityType.FindProperty("RowVersion");
                 if (rowVersionProp != null)
                 {

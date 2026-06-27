@@ -563,16 +563,17 @@ public sealed class DispatchService : BackgroundService
         if (!Guid.TryParse(projectId, out var projGuid))
             return null;
 
-        var project = await db.Projects
+        var settingsJson = await db.Projects
             .AsNoTracking()
             .Where(p => p.Id == projGuid)
             .Select(p => p.Settings)
             .FirstOrDefaultAsync(ct);
 
-        if (project is null)
+        if (settingsJson is null)
             return null;
 
         // Read Secrets from the Settings JSONB — stored under a "Secrets" property
+        using var project = JsonDocument.Parse(settingsJson);
         if (project.RootElement.TryGetProperty("Secrets", out var secretsElement) &&
             secretsElement.ValueKind == JsonValueKind.Object)
         {

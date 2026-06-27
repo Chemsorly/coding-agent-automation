@@ -184,7 +184,8 @@ try
         builder.Services.AddHttpClient<WorkItemHttpClient>(client =>
         {
             client.BaseAddress = new Uri(orchestratorUrl.TrimEnd('/'));
-            client.DefaultRequestHeaders.Add("AGENT_API_KEY", agentApiKey);
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
             client.Timeout = TimeSpan.FromSeconds(90); // Per-request timeout (retries handle longer waits)
         });
 

@@ -7,7 +7,6 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Xunit;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
@@ -348,10 +347,9 @@ public class ConfigExportServiceTests : IDisposable
         await db.SaveChangesAsync();
     }
 
-    private static JsonDocument SerializeToDocument<T>(T value)
+    private static string SerializeToDocument<T>(T value)
     {
-        var json = JsonSerializer.Serialize(value, PipelineJsonOptions.Default);
-        return JsonDocument.Parse(json);
+        return JsonSerializer.Serialize(value, PipelineJsonOptions.Default);
     }
 
     /// <summary>
@@ -384,21 +382,8 @@ public class ConfigExportServiceTests : IDisposable
         {
             base.OnModelCreating(modelBuilder);
 
-            var jsonConverter = new ValueConverter<JsonDocument?, string?>(
-                v => v == null ? null : v.RootElement.GetRawText(),
-                v => v == null ? null : JsonDocument.Parse(v, default));
-
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
-                foreach (var property in entityType.GetProperties())
-                {
-                    if (property.ClrType == typeof(JsonDocument))
-                    {
-                        property.SetValueConverter(jsonConverter);
-                        property.SetColumnType(null);
-                    }
-                }
-
                 var rowVersionProp = entityType.FindProperty("RowVersion");
                 if (rowVersionProp != null)
                 {

@@ -3,6 +3,7 @@
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
+using Xunit;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -41,7 +42,7 @@ public class WorkItemStateMachinePropertyTests
     /// if and only if the pair is in the allowed transition set.
     /// **Validates: Requirements 7.5**
     /// </summary>
-    [Property(MaxTest = 20, Arbitrary = new[] { typeof(WorkItemStatusPairArbitraries) })]
+    [Property(MaxTest = 200, Arbitrary = new[] { typeof(WorkItemStatusPairArbitraries) })]
     public void IsValidTransition_ReturnsTrue_IffPairInAllowedSet(WorkItemStatus current, WorkItemStatus target)
     {
         var expected = AllowedTransitions.Contains((current, target));
@@ -72,5 +73,35 @@ public class WorkItemStatusPairArbitraries
             WorkItemStatus.Failed,
             WorkItemStatus.Cancelled);
         return gen.ToArbitrary();
+    }
+}
+
+/// <summary>
+/// Compile-time guard: asserts that WorkItemStatus terminal-state ordinals match
+/// the partial unique index filter in PipelineDbContext's OnModelCreating.
+/// If this test fails, the migration filter "Status" NOT IN (3, 4, 5) is stale
+/// and must be regenerated.
+/// </summary>
+public class WorkItemStatusOrdinalGuardTests
+{
+    [Fact]
+    public void TerminalStatusOrdinals_MatchMigrationFilter()
+    {
+        // The partial unique index in PipelineDbContext uses:
+        //   .HasFilter("\"Status\" NOT IN (3, 4, 5)")
+        // These MUST correspond to Succeeded=3, Failed=4, Cancelled=5.
+        Assert.Equal(3, (int)WorkItemStatus.Succeeded);
+        Assert.Equal(4, (int)WorkItemStatus.Failed);
+        Assert.Equal(5, (int)WorkItemStatus.Cancelled);
+    }
+
+    [Fact]
+    public void NonTerminalStatusOrdinals_AreBelow3()
+    {
+        // Sanity: non-terminal statuses must have ordinals < 3
+        // to NOT be excluded by the partial unique index.
+        Assert.Equal(0, (int)WorkItemStatus.Pending);
+        Assert.Equal(1, (int)WorkItemStatus.Dispatched);
+        Assert.Equal(2, (int)WorkItemStatus.Running);
     }
 }

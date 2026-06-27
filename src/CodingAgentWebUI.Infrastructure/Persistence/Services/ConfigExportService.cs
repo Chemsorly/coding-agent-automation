@@ -81,7 +81,7 @@ public sealed class ConfigExportService
         if (entity?.Configuration is null)
             return;
 
-        var json = FormatJsonDocument(entity.Configuration);
+        var json = FormatJsonString(entity.Configuration);
         var path = Path.Combine(outputDir, "pipeline-config.json");
         await File.WriteAllTextAsync(path, json, ct);
         counts.PipelineConfig = 1;
@@ -115,7 +115,7 @@ public sealed class ConfigExportService
             var dir = Path.Combine(outputDir, "providers", kindDir);
             Directory.CreateDirectory(dir);
 
-            var json = FormatJsonDocument(entity.Configuration);
+            var json = FormatJsonString(entity.Configuration);
             var filePath = Path.Combine(dir, $"{entity.Id}.json");
             await File.WriteAllTextAsync(filePath, json, ct);
             counts.ProviderConfigs++;
@@ -137,7 +137,7 @@ public sealed class ConfigExportService
             if (entity.Configuration is null)
                 continue;
 
-            var json = FormatJsonDocument(entity.Configuration);
+            var json = FormatJsonString(entity.Configuration);
             var filePath = Path.Combine(dir, $"{entity.Id}.json");
             await File.WriteAllTextAsync(filePath, json, ct);
             counts.AgentProfiles++;
@@ -159,7 +159,7 @@ public sealed class ConfigExportService
             if (entity.Configuration is null)
                 continue;
 
-            var json = FormatJsonDocument(entity.Configuration);
+            var json = FormatJsonString(entity.Configuration);
             var filePath = Path.Combine(dir, $"{entity.Id}.json");
             await File.WriteAllTextAsync(filePath, json, ct);
             counts.QualityGates++;
@@ -181,7 +181,7 @@ public sealed class ConfigExportService
             if (entity.Configuration is null)
                 continue;
 
-            var json = FormatJsonDocument(entity.Configuration);
+            var json = FormatJsonString(entity.Configuration);
             var filePath = Path.Combine(dir, $"{entity.Id}.json");
             await File.WriteAllTextAsync(filePath, json, ct);
             counts.Reviewers++;
@@ -203,7 +203,7 @@ public sealed class ConfigExportService
             if (project.Settings is null)
                 continue;
 
-            var json = FormatJsonDocument(project.Settings);
+            var json = FormatJsonString(project.Settings);
             var filePath = Path.Combine(projectsDir, $"{project.Id}.json");
             await File.WriteAllTextAsync(filePath, json, ct);
             counts.Projects++;
@@ -224,7 +224,7 @@ public sealed class ConfigExportService
                     if (template.Configuration is null)
                         continue;
 
-                    var templateJson = FormatJsonDocument(template.Configuration);
+                    var templateJson = FormatJsonString(template.Configuration);
                     var templatePath = Path.Combine(templatesDir, $"{template.Id}.json");
                     await File.WriteAllTextAsync(templatePath, templateJson, ct);
                     counts.Templates++;
@@ -248,7 +248,7 @@ public sealed class ConfigExportService
             if (entity.Data is null)
                 continue;
 
-            var json = FormatJsonDocument(entity.Data);
+            var json = FormatJsonString(entity.Data);
             var filePath = Path.Combine(dir, $"{entity.Id}.json");
             await File.WriteAllTextAsync(filePath, json, ct);
             counts.ConsolidationRuns++;
@@ -299,8 +299,9 @@ public sealed class ConfigExportService
     /// Re-serializes a JsonDocument with indented formatting via PipelineJsonOptions.
     /// This ensures exported JSON uses the same formatting as the original files.
     /// </summary>
-    private static string FormatJsonDocument(JsonDocument doc)
+    private static string FormatJsonString(string json)
     {
+        using var doc = JsonDocument.Parse(json);
         using var stream = new MemoryStream();
         using (var writer = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true }))
         {

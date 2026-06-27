@@ -1,4 +1,3 @@
-using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Stores;
@@ -6,7 +5,6 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Xunit;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
@@ -695,24 +693,9 @@ public class PostgresConfigurationStoreTests : IDisposable
         {
             base.OnModelCreating(modelBuilder);
 
-            var jsonConverter = new ValueConverter<JsonDocument?, string?>(
-                v => v == null ? null : v.RootElement.GetRawText(),
-                v => v == null ? null : JsonDocument.Parse(v, default));
-
-            // Apply JsonDocument converter to all entities that use it
+            // Remove RowVersion concurrency token config for InMemory
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
-                foreach (var property in entityType.GetProperties())
-                {
-                    if (property.ClrType == typeof(JsonDocument))
-                    {
-                        property.SetValueConverter(jsonConverter);
-                        // Remove column type annotation (InMemory doesn't support 'jsonb')
-                        property.SetColumnType(null);
-                    }
-                }
-
-                // Remove RowVersion concurrency token config for InMemory
                 var rowVersionProp = entityType.FindProperty("RowVersion");
                 if (rowVersionProp != null)
                 {

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
@@ -8,7 +7,6 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -429,21 +427,8 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         {
             base.OnModelCreating(modelBuilder);
 
-            var jsonConverter = new ValueConverter<JsonDocument?, string?>(
-                v => v == null ? null : v.RootElement.GetRawText(),
-                v => v == null ? null : JsonDocument.Parse(v, default));
-
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
-                foreach (var property in entityType.GetProperties())
-                {
-                    if (property.ClrType == typeof(JsonDocument))
-                    {
-                        property.SetValueConverter(jsonConverter);
-                        property.SetColumnType(null);
-                    }
-                }
-
                 var rowVersionProp = entityType.FindProperty("RowVersion");
                 if (rowVersionProp != null)
                 {

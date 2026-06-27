@@ -183,7 +183,7 @@ public sealed class WorkItemStatusUpdate
 {
     public required string Status { get; init; }
     public string? AgentId { get; init; }
-    public JsonDocument? Result { get; init; }
+    public string? Result { get; init; }
     public string? ErrorMessage { get; init; }
     public string? FailureReason { get; init; }
 }

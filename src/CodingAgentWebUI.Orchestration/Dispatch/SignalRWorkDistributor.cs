@@ -56,7 +56,6 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
 
         // Serialize the request to JSONB payload
         var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
-        var payload = JsonDocument.Parse(payloadJson);
 
         // Insert WorkItem row with Status=Dispatched
         var entity = new WorkItemEntity
@@ -66,7 +65,7 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             IssueIdentifier = request.IssueIdentifier,
             IssueProviderConfigId = request.IssueProviderConfigId,
             Status = WorkItemStatus.Dispatched,
-            Payload = payload,
+            Payload = payloadJson,
             AgentSelector = request.AgentSelector,
             CreatedAt = now,
             DispatchedAt = now,
@@ -84,11 +83,10 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
         catch (DbUpdateException ex)
         {
             _logger.LogError(ex, "Failed to insert WorkItem for issue {IssueIdentifier}", request.IssueIdentifier);
-            payload.Dispose();
             return new DistributionResult(false, null, $"DB insert failed: {ex.Message}");
         }
 
-        // Detach entity so the JsonDocument (payload) is no longer referenced by change tracker
+        // Detach entity (no longer needed in change tracker after insert)
         db.Entry(entity).State = EntityState.Detached;
 
         _logger.LogInformation(

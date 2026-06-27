@@ -60,7 +60,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         if (entity?.Configuration is not null)
         {
             result = JsonSerializer.Deserialize<PipelineConfiguration>(
-                entity.Configuration.RootElement.GetRawText(), JsonOptions)
+                entity.Configuration, JsonOptions)
                 ?? new PipelineConfiguration();
         }
         else
@@ -82,7 +82,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
             var entity = await db.PipelineConfig.FirstOrDefaultAsync(ct);
 
-            var jsonDoc = SerializeToDocument(config);
+            var jsonDoc = SerializeToJson(config);
 
             if (entity is null)
             {
@@ -122,7 +122,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             if (entity?.Configuration is not null)
             {
                 var deserialized = JsonSerializer.Deserialize<PipelineConfiguration>(
-                    entity.Configuration.RootElement.GetRawText(), JsonOptions);
+                    entity.Configuration, JsonOptions);
                 if (deserialized is null)
                     throw new InvalidOperationException(
                         "Pipeline configuration row exists but contains invalid JSON.");
@@ -134,7 +134,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             }
 
             var updated = transform(current);
-            var jsonDoc = SerializeToDocument(updated);
+            var jsonDoc = SerializeToJson(updated);
 
             if (entity is null)
             {
@@ -210,7 +210,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         var entity = await db.ProviderConfigs
             .FirstOrDefaultAsync(e => e.Id == guid, ct);
 
-        var jsonDoc = SerializeToDocument(config);
+        var jsonDoc = SerializeToJson(config);
 
         if (entity is null)
         {
@@ -286,7 +286,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var entity = await db.AgentProfiles.FirstOrDefaultAsync(e => e.Id == guid, ct);
 
-        var jsonDoc = SerializeToDocument(profile);
+        var jsonDoc = SerializeToJson(profile);
 
         if (entity is null)
         {
@@ -358,7 +358,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var entity = await db.QualityGateConfigs.FirstOrDefaultAsync(e => e.Id == guid, ct);
 
-        var jsonDoc = SerializeToDocument(config);
+        var jsonDoc = SerializeToJson(config);
 
         if (entity is null)
         {
@@ -430,7 +430,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         var entity = await db.ReviewerConfigs.FirstOrDefaultAsync(e => e.Id == guid, ct);
 
-        var jsonDoc = SerializeToDocument(config);
+        var jsonDoc = SerializeToJson(config);
 
         if (entity is null)
         {
@@ -488,7 +488,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             {
                 Id = guid,
                 Name = config.DisplayName,
-                Configuration = SerializeToDocument(config)
+                Configuration = SerializeToJson(config)
             });
         }
 
@@ -544,7 +544,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
             var entity = await db.Projects.FirstOrDefaultAsync(e => e.Id == guid, ct);
 
-            var settingsDoc = SerializeToDocument(project);
+            var settingsDoc = SerializeToJson(project);
 
             if (entity is null)
             {
@@ -717,7 +717,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             var entity = await db.PipelineJobTemplates
                 .FirstOrDefaultAsync(e => e.Id == templateGuid, ct);
 
-            var jsonDoc = SerializeToDocument(template);
+            var jsonDoc = SerializeToJson(template);
 
             if (entity is null)
             {
@@ -833,23 +833,21 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
 
     // ── Private helpers ──────────────────────────────────────────────────
 
-    private static JsonDocument SerializeToDocument<T>(T value)
+    private static string SerializeToJson<T>(T value)
     {
-        var json = JsonSerializer.Serialize(value, JsonOptions);
-        return JsonDocument.Parse(json);
+        return JsonSerializer.Serialize(value, JsonOptions);
     }
 
-    private static T? DeserializeFromEntity<T>(JsonDocument? doc) where T : class
+    private static T? DeserializeFromEntity<T>(string? json) where T : class
     {
-        if (doc is null) return null;
-        return JsonSerializer.Deserialize<T>(doc.RootElement.GetRawText(), JsonOptions);
+        if (json is null) return null;
+        return JsonSerializer.Deserialize<T>(json, JsonOptions);
     }
 
     private static ProviderConfig? DeserializeProviderConfig(ProviderConfigEntity entity)
     {
         if (entity.Configuration is null) return null;
-        return JsonSerializer.Deserialize<ProviderConfig>(
-            entity.Configuration.RootElement.GetRawText(), JsonOptions);
+        return JsonSerializer.Deserialize<ProviderConfig>(entity.Configuration, JsonOptions);
     }
 
     private static PipelineProject? DeserializeProject(ProjectEntity entity)
@@ -867,8 +865,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             };
         }
 
-        var project = JsonSerializer.Deserialize<PipelineProject>(
-            entity.Settings.RootElement.GetRawText(), JsonOptions);
+        var project = JsonSerializer.Deserialize<PipelineProject>(entity.Settings, JsonOptions);
 
         return project;
     }

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Infrastructure.Persistence.Entities;
@@ -15,8 +14,9 @@ public class WorkItemEntity
     public string IssueProviderConfigId { get; set; } = "";
     public WorkItemStatus Status { get; set; }
 
-    /// <summary>Full JobDistributionRequest serialized as JSONB — contains NO secrets.</summary>
-    public JsonDocument? Payload { get; set; }
+    /// <summary>Full JobDistributionRequest serialized as JSONB string — contains NO secrets.
+    /// Stored as string to avoid JsonDocument memory leaks (ArrayPool buffer retention).</summary>
+    public string? Payload { get; set; }
 
     /// <summary>Sorted comma-joined agent selector labels for image resolution.</summary>
     public string AgentSelector { get; set; } = "";
@@ -31,8 +31,8 @@ public class WorkItemEntity
     public int RetryCount { get; set; }
     public int TimeoutSeconds { get; set; }
 
-    /// <summary>Agent-reported result payload (JSONB, nullable).</summary>
-    public JsonDocument? Result { get; set; }
+    /// <summary>Agent-reported result payload (JSONB string, nullable).</summary>
+    public string? Result { get; set; }
 
     public string? ProjectId { get; set; }
 

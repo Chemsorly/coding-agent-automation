@@ -1,6 +1,5 @@
 // Feature: 035a-postgres-work-queue
 // Property 3: IsIssueDistributed Consistency
-using System.Text.Json;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
@@ -11,7 +10,6 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
@@ -67,7 +65,7 @@ public class IsIssueDistributedConsistencyPropertyTests : IDisposable
     /// and calling IsIssueDistributedAsync returns true iff status is in {Pending, Dispatched, Running}.
     /// **Validates: Requirements 4.6**
     /// </summary>
-    [Property(MaxTest = 20, Arbitrary = new[] { typeof(IsIssueDistributedArbitraries) })]
+    [Property(MaxTest = 200, Arbitrary = new[] { typeof(IsIssueDistributedArbitraries) })]
     public async Task<bool> IsIssueDistributed_ReturnsTrue_IffStatusIsActive(WorkItemStatus status)
     {
         // Generate unique identifiers per test iteration to avoid cross-pollution
@@ -109,21 +107,8 @@ public class IsIssueDistributedConsistencyPropertyTests : IDisposable
         {
             base.OnModelCreating(modelBuilder);
 
-            var jsonConverter = new ValueConverter<JsonDocument?, string?>(
-                v => v == null ? null : v.RootElement.GetRawText(),
-                v => v == null ? null : JsonDocument.Parse(v, default));
-
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
-                foreach (var property in entityType.GetProperties())
-                {
-                    if (property.ClrType == typeof(JsonDocument))
-                    {
-                        property.SetValueConverter(jsonConverter);
-                        property.SetColumnType(null);
-                    }
-                }
-
                 var rowVersionProp = entityType.FindProperty("RowVersion");
                 if (rowVersionProp != null)
                 {

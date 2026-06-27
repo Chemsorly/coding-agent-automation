@@ -17,7 +17,7 @@ public class DispatchServiceFifoOrderingPropertyTests
     /// non-decreasing sequence of CreatedAt values.
     /// This validates that the DispatchService processes items in FIFO order.
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property(MaxTest = 200)]
     public bool DispatchOrder_AlwaysMatchesCreatedAtAscending(int[] offsets)
     {
         // Generate work items from random second offsets
@@ -45,7 +45,7 @@ public class DispatchServiceFifoOrderingPropertyTests
     /// Property 9 (supplementary): The first dispatched item always has the
     /// earliest CreatedAt among all pending items.
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property(MaxTest = 200)]
     public bool FirstDispatchedItem_HasEarliestCreatedAt(NonEmptyArray<int> offsets)
     {
         var items = offsets.Get.Select((offset, i) => new
@@ -64,7 +64,7 @@ public class DispatchServiceFifoOrderingPropertyTests
     /// Property 9 (supplementary): Dispatch ordering is deterministic —
     /// sorting the same list twice yields the same sequence.
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property(MaxTest = 200)]
     public bool DispatchOrder_IsDeterministic(int[] offsets)
     {
         var items = offsets.Select((offset, i) => new

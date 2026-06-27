@@ -19,7 +19,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     Name = table.Column<string>(type: "text", nullable: false),
-                    Configuration = table.Column<JsonDocument>(type: "jsonb", nullable: true),
+                    Configuration = table.Column<string>(type: "jsonb", nullable: true),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
@@ -32,7 +32,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    Data = table.Column<JsonDocument>(type: "jsonb", nullable: true),
+                    Data = table.Column<string>(type: "jsonb", nullable: true),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
@@ -45,7 +45,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
-                    Configuration = table.Column<JsonDocument>(type: "jsonb", nullable: true),
+                    Configuration = table.Column<string>(type: "jsonb", nullable: true),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
@@ -60,7 +60,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     ProjectId = table.Column<Guid>(type: "uuid", nullable: false),
                     Name = table.Column<string>(type: "text", nullable: false),
-                    Configuration = table.Column<JsonDocument>(type: "jsonb", nullable: true),
+                    Configuration = table.Column<string>(type: "jsonb", nullable: true),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
@@ -101,7 +101,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     Name = table.Column<string>(type: "text", nullable: false),
                     Enabled = table.Column<bool>(type: "boolean", nullable: false),
                     Description = table.Column<string>(type: "text", nullable: true),
-                    Settings = table.Column<JsonDocument>(type: "jsonb", nullable: true),
+                    Settings = table.Column<string>(type: "jsonb", nullable: true),
                     TemplateIds = table.Column<List<string>>(type: "text[]", nullable: false),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
@@ -119,7 +119,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     DisplayName = table.Column<string>(type: "text", nullable: false),
                     ProviderType = table.Column<string>(type: "text", nullable: false),
                     Enabled = table.Column<bool>(type: "boolean", nullable: false),
-                    Configuration = table.Column<JsonDocument>(type: "jsonb", nullable: true),
+                    Configuration = table.Column<string>(type: "jsonb", nullable: true),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
@@ -133,7 +133,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     Name = table.Column<string>(type: "text", nullable: false),
-                    Configuration = table.Column<JsonDocument>(type: "jsonb", nullable: true),
+                    Configuration = table.Column<string>(type: "jsonb", nullable: true),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
@@ -147,7 +147,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                 {
                     Id = table.Column<Guid>(type: "uuid", nullable: false),
                     Name = table.Column<string>(type: "text", nullable: false),
-                    Configuration = table.Column<JsonDocument>(type: "jsonb", nullable: true),
+                    Configuration = table.Column<string>(type: "jsonb", nullable: true),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>
@@ -164,7 +164,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     IssueIdentifier = table.Column<string>(type: "text", nullable: false),
                     IssueProviderConfigId = table.Column<string>(type: "text", nullable: false),
                     Status = table.Column<int>(type: "integer", nullable: false),
-                    Payload = table.Column<JsonDocument>(type: "jsonb", nullable: true),
+                    Payload = table.Column<string>(type: "jsonb", nullable: true),
                     AgentSelector = table.Column<string>(type: "text", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
                     DispatchedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
@@ -175,7 +175,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     FailureReason = table.Column<int>(type: "integer", nullable: true),
                     RetryCount = table.Column<int>(type: "integer", nullable: false),
                     TimeoutSeconds = table.Column<int>(type: "integer", nullable: false),
-                    Result = table.Column<JsonDocument>(type: "jsonb", nullable: true),
+                    Result = table.Column<string>(type: "jsonb", nullable: true),
                     ProjectId = table.Column<string>(type: "text", nullable: true),
                     ClaimedPvcName = table.Column<string>(type: "text", nullable: true),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)

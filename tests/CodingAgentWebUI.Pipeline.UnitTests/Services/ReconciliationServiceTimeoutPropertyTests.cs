@@ -16,7 +16,7 @@ public class ReconciliationServiceTimeoutPropertyTests
     /// For any work item in Dispatched/Running state with random CreatedAt and TimeoutSeconds,
     /// IsTimedOut returns true if and only if elapsed time >= TimeoutSeconds.
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property(MaxTest = 200)]
     public bool TimeoutDetection_MatchesElapsedVsTimeoutSeconds(PositiveInt timeoutSecondsRaw, PositiveInt elapsedSecondsRaw)
     {
         var timeoutSeconds = timeoutSecondsRaw.Get % 86400 + 1; // 1..86400 seconds (up to 24h)
@@ -35,7 +35,7 @@ public class ReconciliationServiceTimeoutPropertyTests
     /// Property 10 (supplementary): A work item created exactly at timeout boundary is timed out.
     /// For any positive timeout, now == createdAt + timeoutSeconds → IsTimedOut returns true.
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property(MaxTest = 200)]
     public bool TimeoutDetection_ExactBoundary_AlwaysTimedOut(PositiveInt timeoutSecondsRaw)
     {
         var timeoutSeconds = timeoutSecondsRaw.Get % 86400 + 1;
@@ -49,7 +49,7 @@ public class ReconciliationServiceTimeoutPropertyTests
     /// Property 10 (supplementary): A work item created 1 second before timeout is NOT timed out.
     /// For any timeout > 1, elapsed == timeoutSeconds - 1 → IsTimedOut returns false.
     /// </summary>
-    [Property(MaxTest = 20)]
+    [Property(MaxTest = 200)]
     public bool TimeoutDetection_OneSecondBeforeBoundary_NotTimedOut(PositiveInt timeoutSecondsRaw)
     {
         var timeoutSeconds = timeoutSecondsRaw.Get % 86400 + 2; // minimum 2 to allow -1

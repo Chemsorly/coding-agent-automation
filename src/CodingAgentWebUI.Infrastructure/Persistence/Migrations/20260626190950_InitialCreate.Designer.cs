@@ -33,7 +33,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<JsonDocument>("Configuration")
+                    b.Property<string>("Configuration")
                         .HasColumnType("jsonb");
 
                     b.Property<string>("Name")
@@ -57,7 +57,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<JsonDocument>("Data")
+                    b.Property<string>("Data")
                         .HasColumnType("jsonb");
 
                     b.Property<uint>("RowVersion")
@@ -77,7 +77,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<JsonDocument>("Configuration")
+                    b.Property<string>("Configuration")
                         .HasColumnType("jsonb");
 
                     b.Property<uint>("RowVersion")
@@ -97,7 +97,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<JsonDocument>("Configuration")
+                    b.Property<string>("Configuration")
                         .HasColumnType("jsonb");
 
                     b.Property<string>("Name")
@@ -202,7 +202,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .HasColumnType("xid")
                         .HasColumnName("xmin");
 
-                    b.Property<JsonDocument>("Settings")
+                    b.Property<string>("Settings")
                         .HasColumnType("jsonb");
 
                     b.PrimitiveCollection<List<string>>("TemplateIds")
@@ -220,7 +220,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<JsonDocument>("Configuration")
+                    b.Property<string>("Configuration")
                         .HasColumnType("jsonb");
 
                     b.Property<string>("DisplayName")
@@ -254,7 +254,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<JsonDocument>("Configuration")
+                    b.Property<string>("Configuration")
                         .HasColumnType("jsonb");
 
                     b.Property<string>("Name")
@@ -278,7 +278,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
-                    b.Property<JsonDocument>("Configuration")
+                    b.Property<string>("Configuration")
                         .HasColumnType("jsonb");
 
                     b.Property<string>("Name")
@@ -338,13 +338,13 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     b.Property<string>("K8sJobName")
                         .HasColumnType("text");
 
-                    b.Property<JsonDocument>("Payload")
+                    b.Property<string>("Payload")
                         .HasColumnType("jsonb");
 
                     b.Property<string>("ProjectId")
                         .HasColumnType("text");
 
-                    b.Property<JsonDocument>("Result")
+                    b.Property<string>("Result")
                         .HasColumnType("jsonb");
 
                     b.Property<int>("RetryCount")
