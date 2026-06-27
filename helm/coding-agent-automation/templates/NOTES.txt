@@ -19,3 +19,111 @@ Ingress is enabled. Access the UI at:
   http{{ if $.Values.orchestrator.ingress.tls }}s{{ end }}://{{ .host }}
 {{- end }}
 {{- end }}
+
+{{- if .Values.database.enabled }}
+
+═══════════════════════════════════════════════════════════════════════════════
+ POSTGRES WORK QUEUE — OPERATIONAL RUNBOOK
+═══════════════════════════════════════════════════════════════════════════════
+
+Mode: {{ .Values.workDistribution.mode }}
+{{- if .Values.database.migrateOnStartup }}
+Migrations: Applied on startup (dev mode)
+{{- else }}
+Migrations: Applied via Helm hook Job (production mode)
+{{- end }}
+
+── Database ──────────────────────────────────────────────────────────────────
+
+{{- if .Values.database.subchart.enabled }}
+PostgreSQL deployed as subchart:
+  Host: {{ include "coding-agent-automation.fullname" . }}-postgresql:5432
+  Database: {{ .Values.database.subchart.auth.database }}
+{{- else }}
+External PostgreSQL configured via:
+{{- if .Values.database.auth.existingSecret }}
+  Secret: {{ .Values.database.auth.existingSecret }} (key: connection-string)
+{{- else }}
+  Connection string in values or {{ include "coding-agent-automation.fullname" . }}-db Secret
+{{- end }}
+{{- end }}
+
+── Migrations ────────────────────────────────────────────────────────────────
+
+{{- if .Values.database.migrationJob.enabled }}
+A pre-install/pre-upgrade hook Job runs EF Core migrations before new pods deploy.
+Check migration status:
+  kubectl get jobs -l app.kubernetes.io/component=migration -n {{ .Release.Namespace }}
+  kubectl logs job/{{ include "coding-agent-automation.fullname" . }}-db-migrate -n {{ .Release.Namespace }}
+{{- end }}
+
+── Monitoring ────────────────────────────────────────────────────────────────
+
+Health endpoints:
+  Liveness:  /healthz (DB SELECT 1 on dedicated connection)
+  Readiness: /readyz  (unhealthy on DB loss, recovers on reconnect)
+
+Key metrics (OpenTelemetry):
+  workitems_by_status          — gauge by status and agent_selector
+  workitems_pending_duration_seconds — histogram
+  dispatch_latency_seconds     — histogram
+  dispatcher_last_poll_epoch_seconds — gauge (staleness detection)
+  credential_pool_available    — gauge (PVC pool headroom)
+
+{{- if eq .Values.workDistribution.mode "Kubernetes" }}
+
+── Kubernetes Mode Operations ────────────────────────────────────────────────
+
+Agent Jobs are spawned by the DispatchService. Job naming: caa-{workItemId[0:8]}
+
+View active agent jobs:
+  kubectl get jobs -l app.kubernetes.io/managed-by=caa-orchestrator -n {{ .Release.Namespace }}
+
+View pending work items (via orchestrator logs):
+  kubectl logs deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator -n {{ .Release.Namespace }} | grep "Pending"
+
+Leader election Lease:
+  kubectl get lease -n {{ .Release.Namespace }}
+
+RBAC: The orchestrator ServiceAccount has permissions for:
+  - Jobs (create/get/list/watch/delete)
+  - Leases (create/get/update)
+  - Secrets (create/delete — per-job credential injection)
+  - Pods (get/list — startup failure detection)
+
+{{- if .Values.credentialPools.kiro }}
+PVC Pool (kiro credentials):
+  Configured PVCs: {{ join ", " .Values.credentialPools.kiro }}
+  DispatchService claims an available PVC per kiro Job.
+  If pool is exhausted, Jobs wait (stay Pending) until a PVC is released.
+{{- end }}
+{{- end }}
+
+── Rollback Procedure ────────────────────────────────────────────────────────
+
+To export current DB state back to JSON files (enables rollback to pre-DB version):
+  kubectl exec deployment/{{ include "coding-agent-automation.fullname" . }}-orchestrator -n {{ .Release.Namespace }} -- \
+    dotnet CodingAgentWebUI.dll export-config --output /tmp/pipeline-export
+
+Then copy out:
+  kubectl cp {{ .Release.Namespace }}/$(kubectl get pod -l app.kubernetes.io/component=orchestrator -n {{ .Release.Namespace }} -o jsonpath='{.items[0].metadata.name}'):/tmp/pipeline-export ./pipeline-backup
+
+── Scaling ───────────────────────────────────────────────────────────────────
+
+{{- if gt (int .Values.orchestrator.replicas) 1 }}
+Multi-replica mode active ({{ .Values.orchestrator.replicas }} replicas).
+PodDisruptionBudget: minAvailable=1
+Leader election ensures only one replica runs dispatch/reconciliation.
+{{- if or .Values.signalr.redis.enabled .Values.signalr.redis.connectionString }}
+Redis backplane enabled for SignalR cross-replica delivery.
+{{- else }}
+⚠️  WARNING: Multi-replica without Redis backplane. SignalR messages
+   (logs, token vending) will only reach clients connected to the same replica.
+   Set signalr.redis.enabled=true for production multi-replica deployments.
+{{- end }}
+{{- else }}
+Single-replica mode. Scale to multiple replicas with:
+  orchestrator.replicas: N  (requires signalr.redis.enabled: true)
+{{- end }}
+
+{{- end }}

@@ -1,3 +1,4 @@
+{{- if not (and $.Values.database.enabled (eq $.Values.workDistribution.mode "Kubernetes")) }}
 {{- range .Values.agents }}
 {{- if .enabled }}
 ---
@@ -138,5 +139,6 @@ spec:
               - key: opencode-config-content
                 path: opencode.json
         {{- end }}
+{{- end }}
 {{- end }}
 {{- end }}

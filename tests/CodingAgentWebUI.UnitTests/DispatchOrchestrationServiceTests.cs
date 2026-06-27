@@ -1,0 +1,770 @@
+using AwesomeAssertions;
+using CodingAgentWebUI.Orchestration;
+using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
+using Moq;
+using ILogger = Serilog.ILogger;
+// ReSharper disable InconsistentNaming
+
+namespace CodingAgentWebUI.UnitTests;
+
+/// <summary>
+/// Unit tests for <see cref="DispatchOrchestrationService"/>.
+/// Verifies profile resolution, label swap, run creation, and provider config prep.
+/// </summary>
+public class DispatchOrchestrationServiceTests
+{
+    private readonly Mock<IConfigurationStore> _mockConfigStore = new();
+    private readonly Mock<IProviderFactory> _mockProviderFactory = new();
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ITokenVendingService> _mockTokenVending = new();
+    private readonly Mock<ILogger> _mockLogger = new();
+    private readonly OrchestratorRunService _runService;
+    private readonly DispatchResolutionService _resolution;
+
+    private static readonly AgentProfile TestProfile = new()
+    {
+        Id = "profile-1",
+        DisplayName = "Test Profile",
+        AgentProviderConfigId = "agent-config-1",
+        Enabled = true,
+        MatchLabels = ["dotnet"],
+        McpServers = []
+    };
+
+    private static readonly PipelineConfiguration TestConfig = new()
+    {
+        WorkspaceBaseDirectory = "/tmp/workspace"
+    };
+
+    private static readonly PipelineProject TestProject = new()
+    {
+        Id = "proj-1",
+        Name = "TestProject",
+        Enabled = true
+    };
+
+    private static readonly ProviderConfig TestRepoConfig = new()
+    {
+        Id = "repo-1",
+        DisplayName = "Repo",
+        ProviderType = "github",
+        Kind = ProviderKind.Repository
+    };
+
+    private static readonly ProviderConfig TestAgentConfig = new()
+    {
+        Id = "agent-config-1",
+        DisplayName = "Agent",
+        ProviderType = "kiro",
+        Kind = ProviderKind.Agent
+    };
+
+    public DispatchOrchestrationServiceTests()
+    {
+        _runService = new OrchestratorRunService(_mockLogger.Object);
+        _resolution = new DispatchResolutionService(
+            new ProfileResolver(),
+            new QualityGateResolver(),
+            new ReviewerResolver(),
+            _mockConfigStore.Object,
+            _mockLogger.Object);
+    }
+
+    private DispatchOrchestrationService CreateService(
+        PipelineOrchestrationService orchestration)
+    {
+        return new DispatchOrchestrationService(
+            _resolution,
+            orchestration,
+            _mockTokenVending.Object,
+            _mockProviderFactory.Object,
+            _mockLabelSwapper.Object,
+            _runService,
+            _mockLogger.Object);
+    }
+
+    private PipelineOrchestrationService CreateOrchestration()
+    {
+        var mockAgentExec = new Mock<IAgentPhaseExecutor>();
+        var mockQgExec = new Mock<IQualityGateExecutor>();
+        var mockBrainUpdate = new Mock<IBrainUpdateService>();
+        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
+
+        // Setup provider factory to return dummy providers
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(p => p.RepositoryFullName).Returns("owner/repo");
+        _mockProviderFactory
+            .Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+
+        return new PipelineOrchestrationService(
+            _mockConfigStore.Object,
+            _mockProviderFactory.Object,
+            new IssueDescriptionParser(),
+            mockAgentExec.Object,
+            mockQgExec.Object,
+            _mockLogger.Object,
+            brainUpdateService: mockBrainUpdate.Object,
+            historyService: mockHistoryService.Object,
+            runService: _runService);
+    }
+
+    private void SetupStandardMocks()
+    {
+        _mockConfigStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { TestProfile });
+
+        _mockConfigStore
+            .Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+
+        _mockConfigStore
+            .Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
+
+        _mockConfigStore
+            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestConfig);
+
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestRepoConfig);
+
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("agent-config-1", ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestAgentConfig);
+
+        _mockConfigStore
+            .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { TestRepoConfig });
+
+        _mockConfigStore
+            .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { TestAgentConfig });
+
+        _mockConfigStore
+            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+
+        // Issue provider mock
+        var issueConfig = new ProviderConfig
+        {
+            Id = "issue-1",
+            DisplayName = "Issue Provider",
+            ProviderType = "github",
+            Kind = ProviderKind.Issue
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("issue-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("issue-42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "issue-42",
+                Title = "Test Issue Title",
+                Description = "## Requirements\nDo the thing",
+                Labels = ["agent:next"]
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync("issue-42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        // Token vending pass-through
+        _mockTokenVending
+            .Setup(t => t.PrepareAgentConfigsAsync(
+                It.IsAny<IReadOnlyList<ProviderConfig>>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>(),
+                It.IsAny<bool>()))
+            .Returns<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>(
+                (configs, _, _, _) => Task.FromResult(configs));
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WithValidInputs_ReturnsResult()
+    {
+        SetupStandardMocks();
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+
+        var result = await service.PrepareAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            requiredLabels: ["dotnet"],
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.ResolvedProfile.Id.Should().Be("profile-1");
+        result.IssueDetail.Title.Should().Be("Test Issue Title");
+        result.CreatedRun.Should().NotBeNull();
+        result.CreatedRun.IssueIdentifier.Should().Be("issue-42");
+        result.Project.Id.Should().Be("proj-1");
+        result.PipelineConfiguration.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task PrepareAsync_SwapsLabelToInProgress()
+    {
+        SetupStandardMocks();
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+
+        await service.PrepareAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            requiredLabels: ["dotnet"],
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        _mockLabelSwapper.Verify(
+            l => l.SwapLabelAsync("issue-1", "issue-42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WhenNoProfileMatches_ReturnsNull()
+    {
+        SetupStandardMocks();
+        // Override profiles to return empty (no match)
+        _mockConfigStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+
+        var result = await service.PrepareAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            requiredLabels: ["dotnet"],
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WhenIssueProviderNotFound_ReturnsNull()
+    {
+        SetupStandardMocks();
+        // Override to return null for issue config
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("issue-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderConfig?)null);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+
+        var result = await service.PrepareAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            requiredLabels: ["dotnet"],
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PrepareAsync_CreatesRunViaOrchestrationService()
+    {
+        SetupStandardMocks();
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+
+        var result = await service.PrepareAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            requiredLabels: ["dotnet"],
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.CreatedRun.IssueIdentifier.Should().Be("issue-42");
+        result.CreatedRun.ProjectId.Should().Be("proj-1");
+        result.CreatedRun.ProjectName.Should().Be("TestProject");
+        // Run should be tracked
+        _runService.GetRun(result.CreatedRun.RunId).Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WhenExceptionThrown_ReturnsNull()
+    {
+        SetupStandardMocks();
+        // Make issue provider throw
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Throws(new InvalidOperationException("Provider crashed"));
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+
+        var result = await service.PrepareAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            requiredLabels: ["dotnet"],
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PrepareAsync_IncludesProviderConfigs()
+    {
+        SetupStandardMocks();
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+
+        var result = await service.PrepareAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            requiredLabels: ["dotnet"],
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.ProviderConfigs.Should().NotBeEmpty();
+        result.ProviderConfigs.Should().Contain(c => c.Id == "repo-1");
+        result.ProviderConfigs.Should().Contain(c => c.Id == "agent-config-1");
+    }
+
+    // ── IDispatchOrchestrationService interface method tests ───────────────────
+
+    [Fact]
+    public async Task PrepareDistributionRequestAsync_ReturnsJobDistributionRequest_WithCorrectFields()
+    {
+        SetupStandardMocks();
+        // Setup repo config with RequiredLabels so LabelResolver picks them up
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var request = await iface.PrepareDistributionRequestAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "test-user",
+            project: TestProject,
+            taskType: WorkItemTaskType.Implementation,
+            runType: PipelineRunType.Implementation,
+            ct: CancellationToken.None);
+
+        request.Should().NotBeNull();
+        request!.IssueIdentifier.Should().Be("issue-42");
+        request.RepoProviderConfigId.Should().Be("repo-1");
+        request.InitiatedBy.Should().Be("test-user");
+        request.TaskType.Should().Be(WorkItemTaskType.Implementation);
+        request.RunType.Should().Be(PipelineRunType.Implementation);
+        request.ProjectId.Should().Be("proj-1");
+        request.ProjectName.Should().Be("TestProject");
+        request.ResolvedProfileId.Should().Be("profile-1");
+        request.IssueDetail.Should().NotBeNull();
+        request.ProviderConfigs.Should().NotBeNullOrEmpty();
+        request.PipelineConfiguration.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task PrepareDistributionRequestAsync_SetsAgentSelector_AsSortedCommaJoinedLabels()
+    {
+        SetupStandardMocks();
+        // Profile with multiple match labels in unsorted order
+        var multiLabelProfile = new AgentProfile
+        {
+            Id = "profile-multi",
+            DisplayName = "Multi Label Profile",
+            AgentProviderConfigId = "agent-config-1",
+            Enabled = true,
+            MatchLabels = ["python", "dotnet", "aws"],
+            McpServers = []
+        };
+        _mockConfigStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { multiLabelProfile });
+
+        // Repo config returns all three labels
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["python", "dotnet", "aws"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var request = await iface.PrepareDistributionRequestAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        request.Should().NotBeNull();
+        // Labels sorted alphabetically: aws, dotnet, python
+        request!.AgentSelector.Should().Be("aws,dotnet,python");
+    }
+
+    [Fact]
+    public async Task PrepareDistributionRequestAsync_WhenNoMatchingProfile_ReturnsNull()
+    {
+        SetupStandardMocks();
+        _mockConfigStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+
+        // Repo config with labels that won't match any profile
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["java"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var result = await iface.PrepareDistributionRequestAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PrepareReviewDistributionRequestAsync_IncludesReviewSpecificFields()
+    {
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "issue-42",
+            PrBranchName = "feature/my-pr",
+            PrTitle = "My PR",
+            PrDescription = "This PR does things",
+            PrAuthor = "dev-user",
+            PrUrl = "https://github.com/org/repo/pull/42",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "review-loop"
+        };
+
+        var result = await iface.PrepareReviewDistributionRequestAsync(
+            reviewRequest, TestProject, CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.TaskType.Should().Be(WorkItemTaskType.Review);
+        result.RunType.Should().Be(PipelineRunType.Review);
+        result.LinkedPullRequest.Should().NotBeNull();
+        result.LinkedPullRequest!.Url.Should().Be("https://github.com/org/repo/pull/42");
+        result.LinkedPullRequest.BranchName.Should().Be("feature/my-pr");
+        result.ReviewPrTargetBranch.Should().Be("main");
+        result.ReviewPrDescription.Should().Be("This PR does things");
+        result.ReviewPrAuthor.Should().Be("dev-user");
+    }
+
+    [Fact]
+    public async Task PrepareReviewDistributionRequestAsync_WhenOrchestrationFails_ReturnsNull()
+    {
+        SetupStandardMocks();
+        // No profiles → orchestration fails
+        _mockConfigStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "issue-42",
+            PrBranchName = "feature/x",
+            PrTitle = "X",
+            PrUrl = "https://github.com/org/repo/pull/42",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            InitiatedBy = "loop"
+        };
+
+        var result = await iface.PrepareReviewDistributionRequestAsync(
+            reviewRequest, TestProject, CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PrepareDecompositionDistributionRequestAsync_ReturnsRequestWithDecompositionFields()
+    {
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        // Mock issue provider for the epic
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("epic-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "epic-1",
+                Title = "Epic: Build the thing",
+                Description = "## Requirements\nBuild all the things",
+                Labels = ["agent:next"]
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync("epic-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var result = await iface.PrepareDecompositionDistributionRequestAsync(
+            epicIdentifier: "epic-1",
+            epicTitle: "Epic: Build the thing",
+            phaseType: PipelineRunType.Decomposition,
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            initiatedBy: "decomp-loop",
+            project: TestProject,
+            decompositionSource: "https://github.com/org/repo/issues/100",
+            ct: CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.TaskType.Should().Be(WorkItemTaskType.Decomposition);
+        result.RunType.Should().Be(PipelineRunType.Decomposition);
+        result.DecompositionSource.Should().Be("https://github.com/org/repo/issues/100");
+        result.IssueIdentifier.Should().Be("epic-1");
+    }
+
+    [Fact]
+    public async Task PrepareDecompositionDistributionRequestAsync_WhenOrchestrationFails_ReturnsNull()
+    {
+        SetupStandardMocks();
+        // Issue provider throws
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Throws(new InvalidOperationException("boom"));
+
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var result = await iface.PrepareDecompositionDistributionRequestAsync(
+            epicIdentifier: "epic-1",
+            epicTitle: "Epic Title",
+            phaseType: PipelineRunType.Decomposition,
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            initiatedBy: "loop",
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task PrepareDistributionRequestAsync_ResolvesLabelsFromRepoConfig()
+    {
+        SetupStandardMocks();
+        // Setup repo config that uses RequiredLabels property
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var result = await iface.PrepareDistributionRequestAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        // Profile with ["dotnet"] matches the resolved labels
+        result.Should().NotBeNull();
+        result!.ResolvedProfileId.Should().Be("profile-1");
+        result.AgentSelector.Should().Be("dotnet");
+    }
+
+    [Fact]
+    public async Task PrepareDistributionRequestAsync_RunTrackedByOrchestratorRunService()
+    {
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var result = await iface.PrepareDistributionRequestAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        result.Should().NotBeNull();
+        // The run should be registered in OrchestratorRunService
+        var activeRuns = _runService.GetActiveRuns();
+        activeRuns.Should().Contain(r => r.IssueIdentifier == "issue-42");
+    }
+}

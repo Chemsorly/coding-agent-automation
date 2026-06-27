@@ -24,7 +24,7 @@ public class DispatchFeedbackComponentTests : BunitContext
     private readonly Mock<IProviderFactory> _mockFactory;
     private readonly Mock<IIssueProvider> _mockIssueProvider;
     private readonly Mock<IRepositoryProvider> _mockRepoProvider;
-    private readonly Mock<IJobDispatcher> _mockJobDispatcher;
+    private readonly Mock<IWorkDistributor> _mockWorkDistributor;
 
     public DispatchFeedbackComponentTests()
     {
@@ -32,7 +32,9 @@ public class DispatchFeedbackComponentTests : BunitContext
         _mockFactory = new Mock<IProviderFactory>();
         _mockIssueProvider = new Mock<IIssueProvider>();
         _mockRepoProvider = new Mock<IRepositoryProvider>();
-        _mockJobDispatcher = new Mock<IJobDispatcher>();
+        _mockWorkDistributor = new Mock<IWorkDistributor>();
+        _mockWorkDistributor.Setup(w => w.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<(string IssueIdentifier, string IssueProviderConfigId)>());
 
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockValidator = new Mock<IQualityGateValidator>();
@@ -64,7 +66,7 @@ public class DispatchFeedbackComponentTests : BunitContext
         Services.AddSingleton(registry);
         Services.AddSingleton(new JobDispatcherService(registry, mockLogger.Object));
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
-        Services.AddSingleton<IJobDispatcher>(_mockJobDispatcher.Object);
+        Services.AddSingleton<IWorkDistributor>(_mockWorkDistributor.Object);
         Services.AddSingleton<IDependencyChecker>(new DependencyChecker(mockLogger.Object));
 
         Services.AddScoped<AgentCodingPageService>();

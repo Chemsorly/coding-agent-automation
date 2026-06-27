@@ -17,6 +17,7 @@
     <PackageReference Include="AwesomeAssertions" />
     <PackageReference Include="FsCheck" />
     <PackageReference Include="FsCheck.Xunit" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Moq" />
     <PackageReference Include="xunit" />
@@ -32,6 +33,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\CodingAgentWebUI\CodingAgentWebUI.csproj" />
+    <ProjectReference Include="..\..\src\CodingAgentWebUI.Infrastructure\CodingAgentWebUI.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Orchestration\CodingAgentWebUI.Orchestration.csproj" />
     <ProjectReference Include="..\..\src\CodingAgentWebUI.Pipeline\CodingAgentWebUI.Pipeline.csproj" />
   </ItemGroup>

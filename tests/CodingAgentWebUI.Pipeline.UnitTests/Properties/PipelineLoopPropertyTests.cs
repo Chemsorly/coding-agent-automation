@@ -343,7 +343,7 @@ public class PipelineLoopPropertyTests
             }).DistinctBy(c => c.Id).ToList());
     }
 
-    private static PipelineLoopService CreateService(Mock<IConfigurationStore> mockStore, Mock<IProviderFactory> mockFactory, IJobDispatcher? dispatcher = null)
+    private static PipelineLoopService CreateService(Mock<IConfigurationStore> mockStore, Mock<IProviderFactory> mockFactory, IWorkDistributor? distributor = null)
     {
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockValidator = new Mock<IQualityGateValidator>();
@@ -355,6 +355,6 @@ public class PipelineLoopPropertyTests
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
-        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object, dispatcher);
+        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object, distributor);
     }
 }

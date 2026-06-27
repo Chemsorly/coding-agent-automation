@@ -1,0 +1,15 @@
+{{- if gt (int .Values.orchestrator.replicas) 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-orchestrator
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "coding-agent-automation.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: orchestrator
+{{- end }}

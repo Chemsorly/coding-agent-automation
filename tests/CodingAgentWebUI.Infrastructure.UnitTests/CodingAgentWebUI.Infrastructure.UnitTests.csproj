@@ -16,6 +16,8 @@
     </PackageReference>
     <PackageReference Include="FsCheck" />
     <PackageReference Include="FsCheck.Xunit" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Moq" />
     <PackageReference Include="NGitLab" />

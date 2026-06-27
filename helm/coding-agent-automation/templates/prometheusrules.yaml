@@ -1,0 +1,80 @@
+{{- if .Values.monitoring.prometheusRules.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    - name: coding-agent-automation.rules
+      rules:
+        # Alert when work items are stuck pending for too long
+        - alert: WorkItemsPendingTooLong
+          expr: |
+            workitems_pending_duration_seconds{quantile="0.99"} > 300
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Work items stuck in Pending state"
+            description: "P99 pending duration exceeds 5 minutes for {{ "{{ $labels.instance }}" }}."
+
+        # Alert when dispatch latency is high
+        - alert: DispatchLatencyHigh
+          expr: |
+            dispatch_latency_seconds{quantile="0.99"} > 60
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Dispatch latency is high"
+            description: "P99 dispatch latency exceeds 60 seconds for {{ "{{ $labels.instance }}" }}."
+
+        # Alert when orchestrator DB is unreachable
+        - alert: OrchestratorDatabaseUnreachable
+          expr: |
+            up{job=~".*coding-agent.*orchestrator.*"} == 1
+            unless
+            probe_success{job=~".*coding-agent.*db.*"}
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Orchestrator cannot reach database"
+            description: "Database health check failing for over 2 minutes."
+
+        # Alert when too many work items are failing
+        - alert: WorkItemFailureRateHigh
+          expr: |
+            rate(workitems_by_status{status="Failed"}[5m]) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High work item failure rate"
+            description: "More than 0.1 failures/sec sustained for 10 minutes."
+
+        # Alert when credential pool is exhausted
+        - alert: CredentialPoolExhausted
+          expr: |
+            credential_pool_available == 0 and credential_pool_claimed > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Credential pool exhausted"
+            description: "No available credentials in pool. New kiro jobs will be delayed."
+
+        # Alert when dispatcher hasn't polled recently
+        - alert: DispatcherStalled
+          expr: |
+            time() - dispatcher_last_poll_epoch_seconds > 120
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Dispatch service stalled"
+            description: "Dispatcher has not polled for pending work items in over 2 minutes."
+{{- end }}

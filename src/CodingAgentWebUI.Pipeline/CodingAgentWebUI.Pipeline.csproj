@@ -12,6 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
     <InternalsVisibleTo Include="CodingAgentWebUI" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Agent" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Agent.KiroCli" />

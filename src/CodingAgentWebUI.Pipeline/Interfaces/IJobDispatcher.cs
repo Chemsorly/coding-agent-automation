@@ -3,10 +3,11 @@ using CodingAgentWebUI.Pipeline.Models;
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
-/// Abstraction for dispatching pipeline jobs to remote agents.
-/// <see cref="Services.PipelineLoopService"/> dispatches issues to agents via this interface.
+/// Internal abstraction for dispatching pipeline jobs to remote agents.
+/// Consumed only by <c>LegacyWorkDistributor</c> and <c>JobQueueDrainService</c> (same assembly).
+/// External code should use <see cref="IWorkDistributor"/> instead.
 /// </summary>
-public interface IJobDispatcher
+internal interface IJobDispatcher
 {
     /// <summary>
     /// Attempts to dispatch an issue to an available agent.

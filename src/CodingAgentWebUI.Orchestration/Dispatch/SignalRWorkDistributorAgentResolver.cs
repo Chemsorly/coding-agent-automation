@@ -1,0 +1,37 @@
+using CodingAgentWebUI.Orchestration.Registry;
+
+namespace CodingAgentWebUI.Orchestration.Dispatch;
+
+/// <summary>
+/// Resolves a SignalR connection ID for an agent matching the requested labels.
+/// Wraps <see cref="AgentRegistryService"/> and <see cref="JobDispatcherService"/> to
+/// select an idle, label-compatible agent and reserve it atomically.
+/// Registered as singleton in SignalR mode.
+/// </summary>
+public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributorAgentResolver
+{
+    private readonly AgentRegistryService _registry;
+    private readonly JobDispatcherService _dispatcher;
+
+    public SignalRWorkDistributorAgentResolver(
+        AgentRegistryService registry,
+        JobDispatcherService dispatcher)
+    {
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(dispatcher);
+
+        _registry = registry;
+        _dispatcher = dispatcher;
+    }
+
+    /// <inheritdoc />
+    public string? ResolveConnectionId(string agentSelector)
+    {
+        var requiredLabels = string.IsNullOrWhiteSpace(agentSelector)
+            ? (IReadOnlyList<string>)Array.Empty<string>()
+            : agentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var agent = _dispatcher.SelectAgent(requiredLabels);
+        return agent?.ConnectionId;
+    }
+}

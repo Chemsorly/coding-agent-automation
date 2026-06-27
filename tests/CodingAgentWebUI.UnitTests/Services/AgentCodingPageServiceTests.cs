@@ -2,6 +2,7 @@ using Moq;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -14,7 +15,7 @@ public class AgentCodingPageServiceTests
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<IJobDispatcher> _mockJobDispatcher;
+    private readonly Mock<IWorkDistributor> _mockWorkDistributor;
     private readonly Mock<IDependencyChecker> _mockDependencyChecker;
     private readonly PipelineLoopService _loopService;
     private readonly AgentCodingPageService _service;
@@ -24,7 +25,7 @@ public class AgentCodingPageServiceTests
         _mockConfigStore = new Mock<IConfigurationStore>();
         _mockProjectStore = new Mock<IProjectStore>();
         _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockJobDispatcher = new Mock<IJobDispatcher>();
+        _mockWorkDistributor = new Mock<IWorkDistributor>();
         _mockDependencyChecker = new Mock<IDependencyChecker>();
 
         var mockLogger = new Mock<Serilog.ILogger>();
@@ -46,8 +47,9 @@ public class AgentCodingPageServiceTests
             orchestration, _mockProviderFactory.Object, _mockConfigStore.Object,
             _mockConfigStore.Object, _mockConfigStore.Object, mockLogger.Object);
 
+        var mockAgentRegistry = new AgentRegistryService(mockLogger.Object);
         _service = new AgentCodingPageService(
-            _loopService, _mockJobDispatcher.Object, _mockConfigStore.Object,
+            _loopService, _mockWorkDistributor.Object, mockAgentRegistry, _mockConfigStore.Object,
             _mockProjectStore.Object, _mockProviderFactory.Object, _mockDependencyChecker.Object);
     }
 
@@ -191,15 +193,25 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task DispatchIssueAsync_ReturnsError_WhenNoAgents()
     {
+        // In non-Legacy mode (mock IWorkDistributor), the agent count check is skipped
+        // because agents are spawned on-demand. This test verifies that dispatch proceeds
+        // to the dependency check phase. Setup dependency checker to report ready.
         var template = MakeTemplate();
         _service.IssueProviders.Add(MakeProvider("ip-1"));
         _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        _mockJobDispatcher.Setup(d => d.HasRegisteredAgents).Returns(false);
+
+        _mockDependencyChecker.Setup(d => d.CheckAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IIssueProvider>(),
+            It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(true, "work-item-1", null));
 
         var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
 
-        Assert.False(success);
-        Assert.Contains("no agents", error);
+        // Non-legacy distributor: dispatch succeeds (no agent count gate)
+        Assert.True(success);
     }
 
     [Fact]

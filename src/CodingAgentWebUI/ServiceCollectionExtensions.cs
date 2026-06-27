@@ -48,6 +48,22 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
+    /// Registers infrastructure services WITHOUT config store registrations.
+    /// Used in DB mode where PostgresConfigurationStore is registered by AddWorkDistribution.
+    /// </summary>
+    public static IServiceCollection AddInfrastructureServicesWithoutConfigStore(
+        this IServiceCollection services)
+    {
+        services.AddSingleton<IProviderFactory>(sp => new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
+
+        services.AddTransient<GitHubValidationService>(sp =>
+            new GitHubValidationService(sp.GetRequiredService<IProviderFactory>()));
+        services.AddTransient<GitLabValidationService>();
+
+        return services;
+    }
+
+    /// <summary>
     /// Registers WebUI-specific pipeline services: orchestration, loop service, lifecycle, and history.
     /// </summary>
     public static IServiceCollection AddPipelineCoreServices(this IServiceCollection services)
@@ -121,7 +137,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IProviderConfigStore>(),
             sp.GetRequiredService<IProjectStore>(),
             Log.Logger,
-            sp.GetRequiredService<IJobDispatcher>(),
+            sp.GetService<IWorkDistributor>(),
+            sp.GetService<IDispatchOrchestrationService>(),
             sp.GetRequiredService<IDependencyChecker>()));
         services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
 
@@ -142,7 +159,8 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddOrchestrationServices(
         this IServiceCollection services,
-        PipelineConfiguration pipelineConfig)
+        PipelineConfiguration pipelineConfig,
+        string? workDistributionMode = null)
     {
         services.AddSingleton(sp => new AgentRegistryService(Log.Logger));
         services.AddSingleton(sp => new JobDispatcherService(
@@ -164,15 +182,24 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IProviderFactory>(),
             Log.Logger));
 
-        services.AddHostedService(sp => new HeartbeatMonitorService(
-            sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<OrchestratorRunService>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<JobDispatcherService>(),
-            sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<IConfigurationStore>(),
-            Log.Logger));
+        // HeartbeatMonitorService: registered in Legacy and SignalR modes only.
+        // In K8s mode, agent liveness is handled by ReconciliationService.
+        var isKubernetesMode = string.Equals(workDistributionMode, "Kubernetes", StringComparison.OrdinalIgnoreCase);
+        if (!isKubernetesMode)
+        {
+            services.AddHostedService(sp => new HeartbeatMonitorService(
+                sp.GetRequiredService<AgentRegistryService>(),
+                sp.GetRequiredService<OrchestratorRunService>(),
+                sp.GetRequiredService<IPipelineRunHistoryService>(),
+                sp.GetRequiredService<JobDispatcherService>(),
+                sp.GetRequiredService<ILabelSwapper>(),
+                sp.GetRequiredService<IConfigurationStore>(),
+                Log.Logger));
+        }
 
+        // JobQueueDrainService: registered as singleton always (AgentHubFacade depends on it),
+        // but only registered as hosted service (active background loop) in Legacy mode.
+        // In DB modes (SignalR/K8s), work distribution via IWorkDistributor — in-memory queue unused.
         services.AddSingleton(sp => new JobQueueDrainService(
             sp.GetRequiredService<JobDispatcherService>(),
             sp.GetRequiredService<AgentRegistryService>(),
@@ -183,7 +210,11 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IConsolidationDispatcher>(),
             sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
             Log.Logger));
-        services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainService>());
+        var hasDatabase = !string.IsNullOrEmpty(workDistributionMode);
+        if (!hasDatabase)
+        {
+            services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainService>());
+        }
 
         services.AddSingleton<ProfileResolver>();
         services.AddSingleton<QualityGateResolver>();
@@ -209,6 +240,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IAgentCommunication>(),
             Log.Logger));
 
+        // AgentJobDispatcher: registered as singleton (internal class).
+        // Consumed by JobQueueDrainService and LegacyWorkDistributor within the same assembly scope.
         services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
             sp.GetRequiredService<JobDispatcherService>(),
             sp.GetRequiredService<AgentRegistryService>(),

@@ -2,7 +2,6 @@ namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
 /// Groups all parameters needed to dispatch a PR review job.
-/// Replaces the 10-parameter signature on <see cref="Interfaces.IJobDispatcher.TryDispatchReviewAsync"/>.
 /// </summary>
 public sealed record ReviewDispatchRequest
 {

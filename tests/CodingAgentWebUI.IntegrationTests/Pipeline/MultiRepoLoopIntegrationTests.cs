@@ -100,15 +100,15 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         MockFactory.Setup(f => f.CreateIssueProvider(It.Is<ProviderConfig>(c => c.Id == "ip-ratelimited")))
             .Returns(rateLimitedProvider.Object);
 
-        // Setup dispatcher
-        var mockDispatcher = new Mock<IJobDispatcher>();
+        // Setup distributor
+        var mockDistributor = new Mock<IWorkDistributor>();
         var dispatchedIssues = new List<string>();
-        mockDispatcher.Setup(d => d.TryDispatchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>(),
-                It.IsAny<PipelineProject?>()))
-            .Callback<string, string, string, string?, string?, string, CancellationToken, string?, PipelineProject?>(
-                (issueId, _, _, _, _, _, _, _, _) => dispatchedIssues.Add(issueId))
-            .ReturnsAsync(true);
+        mockDistributor.Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>(
+                (request, _) => dispatchedIssues.Add(request.IssueIdentifier))
+            .ReturnsAsync(new DistributionResult(true, null, null));
+        mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<(string, string)>());
 
         var orchestration = new PipelineOrchestrationService(
             ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
@@ -119,7 +119,7 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(
-            orchestration, MockFactory.Object, ConfigStore, ConfigStore, ConfigStore, MockLogger.Object, mockDispatcher.Object);
+            orchestration, MockFactory.Object, ConfigStore, ConfigStore, ConfigStore, MockLogger.Object, mockDistributor.Object);
 
         using var cts = new CancellationTokenSource();
         await loopService.StartAsync(cts.Token);

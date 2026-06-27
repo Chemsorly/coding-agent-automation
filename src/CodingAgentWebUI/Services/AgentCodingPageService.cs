@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -15,7 +16,8 @@ namespace CodingAgentWebUI.Services;
 public class AgentCodingPageService
 {
     private readonly PipelineLoopService _loopService;
-    private readonly IJobDispatcher _jobDispatcher;
+    private readonly IWorkDistributor _workDistributor;
+    private readonly AgentRegistryService _agentRegistry;
     private readonly IConfigurationStore _configStore;
     private readonly IProjectStore _projectStore;
     private readonly IProviderFactory _providerFactory;
@@ -23,14 +25,16 @@ public class AgentCodingPageService
 
     public AgentCodingPageService(
         PipelineLoopService loopService,
-        IJobDispatcher jobDispatcher,
+        IWorkDistributor workDistributor,
+        AgentRegistryService agentRegistry,
         IConfigurationStore configStore,
         IProjectStore projectStore,
         IProviderFactory providerFactory,
         IDependencyChecker dependencyChecker)
     {
         _loopService = loopService;
-        _jobDispatcher = jobDispatcher;
+        _workDistributor = workDistributor;
+        _agentRegistry = agentRegistry;
         _configStore = configStore;
         _projectStore = projectStore;
         _providerFactory = providerFactory;
@@ -279,7 +283,7 @@ public class AgentCodingPageService
     {
         if (!IssueProviders.Any(p => p.Id == template.IssueProviderId) || !RepoProviders.Any(p => p.Id == template.RepoProviderId))
             return (false, "Template references providers that no longer exist.", null);
-        if (!_jobDispatcher.HasRegisteredAgents)
+        if (_workDistributor is LegacyWorkDistributor && _agentRegistry.GetAllAgents().Count == 0)
             return (false, "Could not dispatch — no agents are currently connected.", null);
 
         var depProviderConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
@@ -291,10 +295,30 @@ public class AgentCodingPageService
                 return (false, $"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", depResult.BlockedBy.Select(n => $"#{n}"))}", null);
         }
 
-        var dispatched = await _jobDispatcher.TryDispatchAsync(issue.Identifier, template.IssueProviderId, template.RepoProviderId,
-            template.BrainProviderId, template.PipelineProviderId, initiatedBy: "manual", CancellationToken.None,
-            issueTitle: issue.Title, project: GetParentProject(template.Id));
-        if (dispatched) return (true, null, $"✅ Dispatched #{issue.Identifier}");
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = issue.Identifier,
+            IssueProviderConfigId = template.IssueProviderId,
+            RepoProviderConfigId = template.RepoProviderId,
+            BrainProviderConfigId = template.BrainProviderId,
+            PipelineProviderConfigId = template.PipelineProviderId,
+            InitiatedBy = "manual",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+            ProjectId = GetParentProject(template.Id)?.Id,
+            ProjectName = GetParentProject(template.Id)?.Name,
+            RunType = PipelineRunType.Implementation,
+            IssueDetail = new IssueDetail
+            {
+                Title = issue.Title ?? "",
+                Identifier = issue.Identifier,
+                Description = issue.Description ?? "",
+                Labels = issue.Labels ?? []
+            }
+        };
+        var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
+        if (result.Success) return (true, null, $"✅ Dispatched #{issue.Identifier}");
         return (false, "Could not dispatch — issue is already being processed or queued, or no agents are available.", null);
     }
 
@@ -320,17 +344,42 @@ public class AgentCodingPageService
     public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchPrReviewAsync(
         PullRequestSummary pr, PipelineJobTemplate template)
     {
-        if (!_jobDispatcher.HasRegisteredAgents)
+        if (_workDistributor is LegacyWorkDistributor && _agentRegistry.GetAllAgents().Count == 0)
             return (false, "Could not dispatch — no agents are currently connected.", null);
 
-        var dispatched = await _jobDispatcher.TryDispatchReviewAsync(new ReviewDispatchRequest
+        var request = new JobDistributionRequest
         {
-            PrIdentifier = pr.Identifier, PrBranchName = pr.BranchName, PrTitle = pr.Title,
-            PrDescription = pr.Description, PrAuthor = pr.Author, PrUrl = pr.Url, PrTargetBranch = pr.TargetBranch,
-            IssueProviderId = template.IssueProviderId, RepoProviderId = template.RepoProviderId,
-            BrainProviderId = template.BrainProviderId, InitiatedBy = "manual"
-        }, CancellationToken.None, project: GetParentProject(template.Id));
-        if (dispatched) return (true, null, $"PR #{pr.Identifier} dispatched for review.");
+            IssueIdentifier = pr.Identifier,
+            IssueProviderConfigId = template.IssueProviderId,
+            RepoProviderConfigId = template.RepoProviderId,
+            BrainProviderConfigId = template.BrainProviderId,
+            InitiatedBy = "manual",
+            TaskType = WorkItemTaskType.Review,
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+            ProjectId = GetParentProject(template.Id)?.Id,
+            ProjectName = GetParentProject(template.Id)?.Name,
+            RunType = PipelineRunType.Review,
+            IssueDetail = new IssueDetail
+            {
+                Title = pr.Title ?? "",
+                Identifier = pr.Identifier,
+                Description = pr.Description ?? "",
+                Labels = []
+            },
+            LinkedPullRequest = new LinkedPullRequest
+            {
+                BranchName = pr.BranchName,
+                Url = pr.Url,
+                IsDraft = pr.IsDraft,
+                Number = pr.Number
+            },
+            ReviewPrTargetBranch = pr.TargetBranch,
+            ReviewPrDescription = pr.Description,
+            ReviewPrAuthor = pr.Author
+        };
+        var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
+        if (result.Success) return (true, null, $"PR #{pr.Identifier} dispatched for review.");
         return (false, $"PR #{pr.Identifier} is already being processed or queued.", null);
     }
 
@@ -362,19 +411,46 @@ public class AgentCodingPageService
     {
         if (!IssueProviders.Any(p => p.Id == template.IssueProviderId) || !RepoProviders.Any(p => p.Id == template.RepoProviderId))
             return (false, "Template references providers that no longer exist.", null);
-        if (!_jobDispatcher.HasRegisteredAgents)
+        if (_workDistributor is LegacyWorkDistributor && _agentRegistry.GetAllAgents().Count == 0)
             return (false, "Could not dispatch — no agents are currently connected.", null);
 
         var phaseType = issue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase)
             ? PipelineRunType.Decomposition : PipelineRunType.DecompositionAnalysis;
-        var dispatched = await _jobDispatcher.TryDispatchDecompositionAsync(issue.Identifier, issue.Title, phaseType,
-            template.IssueProviderId, template.RepoProviderId, template.BrainProviderId,
-            initiatedBy: "manual", CancellationToken.None, project: GetParentProject(template.Id));
-        if (dispatched) return (true, null, $"✅ Dispatched epic #{issue.Identifier} for {(phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition")}");
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = issue.Identifier,
+            IssueProviderConfigId = template.IssueProviderId,
+            RepoProviderConfigId = template.RepoProviderId,
+            BrainProviderConfigId = template.BrainProviderId,
+            InitiatedBy = "manual",
+            TaskType = WorkItemTaskType.Decomposition,
+            AgentSelector = "",
+            TimeoutSeconds = 3600,
+            ProjectId = GetParentProject(template.Id)?.Id,
+            ProjectName = GetParentProject(template.Id)?.Name,
+            RunType = phaseType,
+            IssueDetail = new IssueDetail
+            {
+                Title = issue.Title ?? "",
+                Identifier = issue.Identifier,
+                Description = issue.Description ?? "",
+                Labels = issue.Labels ?? []
+            }
+        };
+        var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
+        if (result.Success) return (true, null, $"✅ Dispatched epic #{issue.Identifier} for {(phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition")}");
         return (false, "Could not dispatch — epic is already being processed or queued, or no agents are available.", null);
     }
 
     // ── Helpers ──
+
+    /// <summary>
+    /// Checks if an issue is currently distributed (Pending, Dispatched, or Running)
+    /// via <see cref="IWorkDistributor.IsIssueDistributedAsync"/>.
+    /// Used by drawer components to show processing status.
+    /// </summary>
+    public Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId)
+        => _workDistributor.IsIssueDistributedAsync(issueIdentifier, issueProviderConfigId, CancellationToken.None);
 
     public PipelineProject? GetParentProject(string templateId) =>
         Projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId));

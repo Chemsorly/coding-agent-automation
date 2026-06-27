@@ -79,9 +79,9 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             .Returns(_mockIssueProvider.Object);
     }
 
-    private PipelineLoopService CreateService(IJobDispatcher? jobDispatcher = null)
+    private PipelineLoopService CreateService(IWorkDistributor? workDistributor = null)
     {
-        _loopService = new PipelineLoopService(_orchestration, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, _mockLogger.Object, jobDispatcher);
+        _loopService = new PipelineLoopService(_orchestration, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, _mockLogger.Object, workDistributor);
         return _loopService;
     }
 
@@ -588,17 +588,14 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
             });
 
-        var mockDispatcher = new Mock<IJobDispatcher>();
-        mockDispatcher.Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>(),
-                It.IsAny<PipelineProject?>()))
-            .ReturnsAsync(true);
-        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<string>()))
-            .Returns(false);
+        var mockDistributor = new Mock<IWorkDistributor>();
+        mockDistributor.Setup(d => d.DistributeAsync(
+                It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(true, null, null));
+        mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<(string, string)>());
 
-        var svc = CreateService(mockDispatcher.Object);
+        var svc = CreateService(mockDistributor.Object);
         using var cts = new CancellationTokenSource();
 
         await svc.StartAsync(cts.Token);
@@ -754,11 +751,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         await svc.StartAsync(cts.Token);
         await svc.StartLoopAsync();
 
-        // 100ms + 200ms + 300ms(capped) + 300ms(capped) = ~900ms for 4 calls; wait 5s for CI headroom
-        await Task.Delay(5000);
+        // 100ms + 200ms + 300ms(capped) + 300ms(capped) = ~900ms for 4 calls; wait 2s for CI headroom
+        await Task.Delay(2000);
 
         svc.StopLoop();
-        await Task.Delay(500);
+        await Task.Delay(200);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 

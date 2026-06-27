@@ -10,6 +10,7 @@
 @using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
 @using Serilog
+@inject IActiveRunQueryService ActiveRunQuery
 @inject AgentRegistryService Registry
 @inject JobDispatcherService Dispatcher
 @inject OrchestratorRunService RunService
@@ -79,7 +80,7 @@
                     <tbody>
                         @foreach (var run in _activeRuns)
                         {
-                            var elapsed = DateTimeOffset.UtcNow - run.StartedAtOffset;
+                            var elapsed = DateTimeOffset.UtcNow - run.StartedAt;
                             <tr class="monitoring-row-clickable"
                                 @onclick="() => OpenRunDetail(run.RunId)">
                                 <td class="monitoring-mono" title="@run.RunId">@run.RunId</td>
@@ -117,13 +118,13 @@
                                         @run.CurrentStep.ToDisplayName()
                                     </span>
                                 </td>
-                                <td>@run.StartedAtOffset.ToLocalTime().ToString("HH:mm:ss")</td>
+                                <td>@run.StartedAt.ToLocalTime().ToString("HH:mm:ss")</td>
                                 <td>@elapsed.ToString(@"hh\:mm\:ss")</td>
                                 <td>
                                     @if (run.AgentId != null)
                                     {
                                         <button class="btn-cancel-small" @onclick:stopPropagation="true"
-                                                @onclick="() => CancelAgentRun(run)">
+                                                @onclick="() => CancelAgentRunById(run.RunId)">
                                             Cancel
                                         </button>
                                     }
@@ -168,7 +169,7 @@
     @* ── Run Detail Modal ── *@
     @if (_showRunDetailModal)
     {
-        var modalRun = _activeRuns.FirstOrDefault(r => r.RunId == _selectedRunId);
+        var modalRun = PipelineService.GetAllActiveRuns().FirstOrDefault(r => r.RunId == _selectedRunId);
         if (modalRun != null)
         {
             var modalAgent = modalRun.AgentId != null ? Registry.GetByAgentId(modalRun.AgentId) : null;
@@ -713,7 +714,7 @@
     private const string JsScrollToBottom = "scrollToBottom";
     private const string JsScrollActiveStep = "scrollActiveStepIntoView";
 
-    private IReadOnlyList<PipelineRun> _activeRuns = [];
+    private IReadOnlyList<ActiveRunSummary> _activeRuns = [];
     private IReadOnlyList<AgentEntry> _agents = [];
     private IReadOnlyList<PendingJob> _queuedJobs = [];
     private IReadOnlyList<ConsolidationRun> _activeConsolidationRuns = [];
@@ -816,14 +817,15 @@
         }
     }
 
-    private Task RefreshDataAsync(bool includeConsolidation = false)
+    private async Task RefreshDataAsync(bool includeConsolidation = false)
     {
-        _activeRuns = PipelineService.GetAllActiveRuns();
+        _activeRuns = await ActiveRunQuery.GetActiveRunsAsync();
         _agents = Registry.GetAllAgents();
         _queuedJobs = Dispatcher.GetQueuedJobs();
         _runHistory = PipelineService.GetRunHistory();
 
-        return includeConsolidation ? RefreshConsolidationAsync() : Task.CompletedTask;
+        if (includeConsolidation)
+            await RefreshConsolidationAsync();
     }
 
     private async Task RefreshConsolidationAsync()
@@ -926,6 +928,12 @@
     {
         if (e.Key == "Escape")
             DismissRunDetailModal();
+    }
+
+    private async Task CancelAgentRunById(string runId)
+    {
+        var run = PipelineService.GetAllActiveRuns().FirstOrDefault(r => r.RunId == runId);
+        if (run != null) await CancelAgentRun(run);
     }
 
     private async Task CancelAgentRun(PipelineRun run)

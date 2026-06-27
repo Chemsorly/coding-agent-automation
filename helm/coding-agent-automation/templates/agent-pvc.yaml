@@ -1,3 +1,4 @@
+{{- if not (and $.Values.database.enabled (eq $.Values.workDistribution.mode "Kubernetes")) }}
 {{- range .Values.agents }}
 {{- if and .enabled (eq .persistence.type "pvc") (eq .providerType "kiro") }}
 ---
@@ -18,5 +19,6 @@ spec:
   resources:
     requests:
       storage: {{ .persistence.pvc.size }}
+{{- end }}
 {{- end }}
 {{- end }}
