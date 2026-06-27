@@ -33,22 +33,25 @@ spec:
             description: "P99 dispatch latency exceeds 60 seconds for {{ "{{ $labels.instance }}" }}."
 
         # Alert when orchestrator DB is unreachable
+        # Uses the app-exported readiness state. When DatabaseReadinessMonitor detects
+        # DB is down, /readyz goes 503 and the kube-state-metrics probe reports unhealthy.
         - alert: OrchestratorDatabaseUnreachable
           expr: |
-            up{job=~".*coding-agent.*orchestrator.*"} == 1
-            unless
-            probe_success{job=~".*coding-agent.*db.*"}
+            kube_pod_status_ready{pod=~".*orchestrator.*", condition="true"} == 0
+            and
+            kube_pod_status_phase{pod=~".*orchestrator.*", phase="Running"} == 1
           for: 2m
           labels:
             severity: critical
           annotations:
-            summary: "Orchestrator cannot reach database"
-            description: "Database health check failing for over 2 minutes."
+            summary: "Orchestrator not ready (likely database unreachable)"
+            description: "Orchestrator pod is Running but not Ready for over 2 minutes. Check database connectivity."
 
         # Alert when too many work items are failing
+        # Uses the workitems_terminated counter (tagged by status) instead of the gauge.
         - alert: WorkItemFailureRateHigh
           expr: |
-            rate(workitems_by_status{status="Failed"}[5m]) > 0.1
+            rate(workdistribution_workitems_terminated{status="Failed"}[5m]) > 0.1
           for: 10m
           labels:
             severity: warning

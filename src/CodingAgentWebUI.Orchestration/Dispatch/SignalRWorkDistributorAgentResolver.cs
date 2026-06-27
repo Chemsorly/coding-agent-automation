@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
@@ -12,6 +13,9 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
 {
     private readonly AgentRegistryService _registry;
     private readonly JobDispatcherService _dispatcher;
+
+    /// <summary>Tracks the last resolved agent ID for revert on failure.</summary>
+    private string? _lastResolvedAgentId;
 
     public SignalRWorkDistributorAgentResolver(
         AgentRegistryService registry,
@@ -32,6 +36,17 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
             : agentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         var agent = _dispatcher.SelectAgent(requiredLabels);
+        _lastResolvedAgentId = agent?.AgentId;
         return agent?.ConnectionId;
+    }
+
+    /// <inheritdoc />
+    public void ReleaseLastResolvedAgent()
+    {
+        var agentId = _lastResolvedAgentId;
+        if (agentId is null) return;
+
+        _lastResolvedAgentId = null;
+        _registry.TransitionStatus(agentId, AgentStatus.Idle);
     }
 }

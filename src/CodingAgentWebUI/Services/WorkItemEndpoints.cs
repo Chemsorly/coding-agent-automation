@@ -53,9 +53,15 @@ public sealed class WorkItemAssignmentDto
     public IReadOnlyList<ProviderConfig>? ProviderConfigs { get; init; }
     public PipelineConfiguration? PipelineConfiguration { get; init; }
     public string? ResolvedProfileId { get; init; }
+    public string? AgentProviderConfigId { get; init; }
     public IReadOnlyList<QualityGateConfiguration>? QualityGateConfigs { get; init; }
     public IReadOnlyList<ReviewerConfiguration>? ReviewerConfigs { get; init; }
     public IReadOnlyList<McpServerConfig>? McpServers { get; init; }
+    public bool ForceRefreshAnalysis { get; init; }
+    public string? ProjectSteeringContent { get; init; }
+    public string? RepoSteeringContent { get; init; }
+    public Dictionary<string, string>? TraceContext { get; init; }
+    public IReadOnlyList<LinkedIssueContext>? LinkedIssueContexts { get; init; }
 
     // Review-specific
     public LinkedPullRequest? LinkedPullRequest { get; init; }
@@ -213,9 +219,11 @@ public static class WorkItemEndpoints
         ParsedIssue = request.ParsedIssue,
         IssueComments = request.IssueComments,
         ExistingAnalysis = request.ExistingAnalysis,
+        ForceRefreshAnalysis = request.ForceRefreshAnalysis,
         ProviderConfigs = request.ProviderConfigs,
         PipelineConfiguration = request.PipelineConfiguration,
         ResolvedProfileId = request.ResolvedProfileId,
+        AgentProviderConfigId = request.AgentProviderConfigId,
         QualityGateConfigs = request.QualityGateConfigs,
         ReviewerConfigs = request.ReviewerConfigs,
         McpServers = request.McpServers,
@@ -224,6 +232,10 @@ public static class WorkItemEndpoints
         ReviewPrDescription = request.ReviewPrDescription,
         ReviewPrAuthor = request.ReviewPrAuthor,
         ProjectContext = request.ProjectContext,
-        DecompositionSource = request.DecompositionSource
+        DecompositionSource = request.DecompositionSource,
+        ProjectSteeringContent = request.ProjectSteeringContent,
+        RepoSteeringContent = request.RepoSteeringContent,
+        TraceContext = request.TraceContext,
+        LinkedIssueContexts = request.LinkedIssueContexts
     };
 }

@@ -262,12 +262,12 @@ public class WorkItemEndpointsTests : IDisposable
         var id = Guid.NewGuid();
         await SeedWorkItemAsync(id, WorkItemStatus.Running);
 
-        var resultDoc = JsonDocument.Parse("{\"pullRequestUrl\":\"https://github.com/org/repo/pull/42\"}");
+        var resultJson = "{\"pullRequestUrl\":\"https://github.com/org/repo/pull/42\"}";
         var request = new WorkItemStatusRequest
         {
             Status = WorkItemStatus.Succeeded,
             AgentId = "agent-1",
-            Result = resultDoc
+            Result = resultJson
         };
 
         await WorkItemEndpoints.PostStatus(id, request, _transitionService, _runService.Object, _dbFactory);
@@ -275,7 +275,8 @@ public class WorkItemEndpointsTests : IDisposable
         await using var verifyDb = _dbFactory.CreateDbContext();
         var item = await verifyDb.WorkItems.FindAsync(id);
         item!.Result.Should().NotBeNull();
-        item.Result!.RootElement.GetProperty("pullRequestUrl").GetString().Should().Be("https://github.com/org/repo/pull/42");
+        item.Result.Should().Contain("pullRequestUrl");
+        item.Result.Should().Contain("https://github.com/org/repo/pull/42");
     }
 
     [Fact]

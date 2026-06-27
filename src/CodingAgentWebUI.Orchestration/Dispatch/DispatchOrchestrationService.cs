@@ -509,12 +509,53 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             ParsedIssue = result.ParsedIssue,
             IssueComments = result.IssueComments,
             ExistingAnalysis = result.ExistingAnalysis,
+            ForceRefreshAnalysis = result.ForceRefreshAnalysis,
             ProviderConfigs = result.ProviderConfigs,
             PipelineConfiguration = result.PipelineConfiguration,
             ResolvedProfileId = result.ResolvedProfile.Id,
+            AgentProviderConfigId = result.ResolvedProfile.AgentProviderConfigId,
             QualityGateConfigs = result.QualityGateConfigs,
             ReviewerConfigs = result.ReviewerConfigs,
-            McpServers = result.McpServers
+            McpServers = result.McpServers,
+            TraceContext = result.TraceContext
         };
+    }
+
+    /// <inheritdoc />
+    public async Task RevertFailedDistributionAsync(JobDistributionRequest request, CancellationToken ct)
+    {
+        try
+        {
+            // Revert label from agent:in-progress back to agent:next
+            Log.Warning("Reverting failed distribution for issue {IssueIdentifier}: swapping label back to agent:next",
+                request.IssueIdentifier);
+            await _labelSwapper.SwapLabelAsync(
+                request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.Next, ct);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to revert label for issue {IssueIdentifier} after distribution failure",
+                request.IssueIdentifier);
+        }
+
+        try
+        {
+            // Remove the dangling run that was created during PrepareAsync
+            var activeRuns = _runService.GetActiveRuns();
+            var danglingRun = activeRuns.FirstOrDefault(r =>
+                r.IssueIdentifier == request.IssueIdentifier &&
+                r.IssueProviderConfigId == request.IssueProviderConfigId);
+            if (danglingRun is not null)
+            {
+                _runService.RemoveRun(danglingRun.RunId);
+                Log.Information("Removed dangling run {RunId} for issue {IssueIdentifier} after distribution failure",
+                    danglingRun.RunId, request.IssueIdentifier);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to remove dangling run for issue {IssueIdentifier} after distribution failure",
+                request.IssueIdentifier);
+        }
     }
 }

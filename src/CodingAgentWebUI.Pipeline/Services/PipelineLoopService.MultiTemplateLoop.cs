@@ -251,6 +251,21 @@ public sealed partial class PipelineLoopService
             ? await _workDistributor.GetActiveIssueIdentifiersAsync(ct)
             : new HashSet<(string, string)>();
 
+        // Detect and remediate stuck work items (SignalR mode: Dispatched > 5min → Failed)
+        if (_workDistributor is not null)
+        {
+            try
+            {
+                var stuckCount = await _workDistributor.ReconcileStuckItemsAsync(ct);
+                if (stuckCount > 0)
+                    _logger.Information("Reconciled {StuckCount} stuck work items at cycle start", stuckCount);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to reconcile stuck work items at cycle start");
+            }
+        }
+
         return new CycleSnapshot(
             config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
             templateLookup.AsReadOnly(), pollInterval, maxRunsPerCycle, maxConsecutiveFailures, maxPagesToFetch,
@@ -708,6 +723,8 @@ public sealed partial class PipelineLoopService
                         {
                             var result = await _workDistributor!.DistributeAsync(request, stopToken);
                             dispatched = result.Success;
+                            if (!dispatched)
+                                await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
                         }
                         else
                         {
@@ -821,6 +838,8 @@ public sealed partial class PipelineLoopService
                         {
                             var result = await _workDistributor!.DistributeAsync(request, stopToken);
                             dispatched = result.Success;
+                            if (!dispatched)
+                                await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
                         }
                         else
                         {
@@ -931,6 +950,8 @@ public sealed partial class PipelineLoopService
                         {
                             var result = await _workDistributor!.DistributeAsync(request, stopToken);
                             dispatched = result.Success;
+                            if (!dispatched)
+                                await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
                         }
                         else
                         {

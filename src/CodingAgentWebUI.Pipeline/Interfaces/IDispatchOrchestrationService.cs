@@ -58,4 +58,14 @@ public interface IDispatchOrchestrationService
         PipelineProject project,
         string? decompositionSource = null,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Reverts the side effects of a failed distribution attempt: swaps the issue label
+    /// back to <c>agent:next</c> and removes the dangling <see cref="Models.PipelineRun"/>
+    /// created during preparation. Call this when <see cref="IWorkDistributor.DistributeAsync"/>
+    /// returns <c>Success = false</c> after a successful <c>PrepareAsync</c>.
+    /// </summary>
+    /// <param name="request">The request that was prepared but failed to distribute.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task RevertFailedDistributionAsync(JobDistributionRequest request, CancellationToken ct);
 }

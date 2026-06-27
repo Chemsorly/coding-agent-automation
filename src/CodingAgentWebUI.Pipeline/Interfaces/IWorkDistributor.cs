@@ -62,4 +62,15 @@ public interface IWorkDistributor
     /// <param name="ct">Cancellation token.</param>
     /// <returns>A set of (IssueIdentifier, IssueProviderConfigId) tuples for all active work items.</returns>
     Task<HashSet<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct);
+
+    /// <summary>
+    /// Detects and transitions work items stuck in non-terminal states beyond expected thresholds.
+    /// In SignalR mode: items stuck in Dispatched > 5 minutes are transitioned to Failed.
+    /// In Kubernetes mode: handled by ReconciliationService instead (no-op here).
+    /// In Legacy mode: no-op.
+    /// Called once per dispatch cycle before issue polling.
+    /// </summary>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Number of stuck items detected and remediated.</returns>
+    Task<int> ReconcileStuckItemsAsync(CancellationToken ct) => Task.FromResult(0);
 }

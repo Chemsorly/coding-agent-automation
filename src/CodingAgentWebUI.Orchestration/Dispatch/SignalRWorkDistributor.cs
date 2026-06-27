@@ -119,6 +119,9 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
                 "SignalR delivery failed for WorkItem {WorkItemId}, transitioning to Failed",
                 workItemId);
 
+            // Revert agent Busy status — agent never received the job
+            _agentResolver.ReleaseLastResolvedAgent();
+
             await TransitionToFailed(workItemId, $"SignalR delivery failure: {ex.Message}", ct);
             return new DistributionResult(false, workItemId.ToString(), $"SignalR delivery failed: {ex.Message}");
         }
@@ -188,9 +191,14 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
     /// Called from PipelineLoopService at each cycle start in DB+SignalR mode.
     /// Logs a Warning per stuck item to surface silent SignalR delivery failures.
     /// </summary>
+    /// <summary>
+    /// Detects work items stuck in Dispatched status beyond the threshold (default 5 minutes)
+    /// and transitions them to Failed. This catches silent SignalR delivery failures
+    /// where the message was sent but the agent never processed it.
+    /// </summary>
     /// <param name="stuckThreshold">Time after which a Dispatched item is considered stuck (default: 5 minutes).</param>
     /// <param name="ct">Cancellation token.</param>
-    /// <returns>The number of stuck items detected.</returns>
+    /// <returns>The number of stuck items detected and transitioned to Failed.</returns>
     public async Task<int> DetectStuckDispatchedItemsAsync(TimeSpan? stuckThreshold = null, CancellationToken ct = default)
     {
         var threshold = stuckThreshold ?? TimeSpan.FromMinutes(5);
@@ -207,12 +215,25 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
         {
             _logger.LogWarning(
                 "WorkItem {WorkItemId} for issue {IssueIdentifier} stuck in Dispatched status since before {Cutoff}. " +
-                "Possible silent SignalR delivery failure.",
+                "Transitioning to Failed (silent SignalR delivery failure).",
                 item.Id, item.IssueIdentifier, cutoff);
+
+            await _transitionService.TransitionAsync(
+                item.Id, WorkItemStatus.Failed,
+                entity =>
+                {
+                    entity.CompletedAt = DateTimeOffset.UtcNow;
+                    entity.FailureReason = FailureReason.InfrastructureFailure;
+                    entity.ErrorMessage = "Stuck in Dispatched status — likely silent SignalR delivery failure";
+                }, ct);
         }
 
         return stuckItems.Count;
     }
+
+    /// <inheritdoc />
+    public Task<int> ReconcileStuckItemsAsync(CancellationToken ct)
+        => DetectStuckDispatchedItemsAsync(ct: ct);
 
     private async Task TransitionToFailed(Guid workItemId, string errorMessage, CancellationToken ct)
     {
@@ -248,9 +269,11 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             },
             IssueComments = request.IssueComments ?? [],
             ExistingAnalysis = request.ExistingAnalysis,
+            ForceRefreshAnalysis = request.ForceRefreshAnalysis,
             LinkedPullRequest = request.LinkedPullRequest,
+            LinkedIssueContexts = request.LinkedIssueContexts,
             RepoProviderConfigId = request.RepoProviderConfigId,
-            AgentProviderConfigId = request.RepoProviderConfigId, // Agent provider resolved upstream
+            AgentProviderConfigId = request.AgentProviderConfigId ?? request.RepoProviderConfigId,
             BrainProviderConfigId = request.BrainProviderConfigId,
             PipelineProviderConfigId = request.PipelineProviderConfigId,
             ProviderConfigs = request.ProviderConfigs ?? [],
@@ -267,7 +290,13 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             ProjectContext = request.ProjectContext,
             ProjectId = request.ProjectId,
             ProjectName = request.ProjectName,
+            ProjectSteeringContent = request.ProjectSteeringContent,
+            RepoSteeringContent = request.RepoSteeringContent,
+            TraceContext = request.TraceContext,
             IssueProviderConfigId = request.IssueProviderConfigId
+            // NOTE: ProjectSecrets are NOT serialized to WorkItem payload (security).
+            // In SignalR mode, secrets are delivered at DistributeAsync time from Project.Secrets.
+            // TODO: Load project secrets from DB and inject here.
         };
     }
 

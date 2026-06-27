@@ -85,9 +85,8 @@ public class KubernetesWorkDistributorTests : IDisposable
         var item = await db.WorkItems.FirstAsync(w => w.Id == Guid.Parse(result.WorkItemId!));
 
         // Payload should contain the serialized request
-        var rawJson = item.Payload!.RootElement.GetRawText();
-        rawJson.Should().Contain("owner/repo#2");
-        rawJson.Should().Contain("provider-2");
+        item.Payload.Should().Contain("owner/repo#2");
+        item.Payload.Should().Contain("provider-2");
     }
 
     [Fact]

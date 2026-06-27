@@ -56,6 +56,9 @@ public record JobDistributionRequest
     /// <summary>Existing analysis content from a previous run, if any.</summary>
     public string? ExistingAnalysis { get; init; }
 
+    /// <summary>Whether existing analysis should be force-refreshed (e.g., after gate rejection).</summary>
+    public bool ForceRefreshAnalysis { get; init; }
+
     // --- Provider configs (serialized without secrets) ---
 
     /// <summary>Provider configurations relevant to this work item.</summary>
@@ -67,6 +70,9 @@ public record JobDistributionRequest
     /// <summary>Resolved agent profile ID for this work item.</summary>
     public string? ResolvedProfileId { get; init; }
 
+    /// <summary>Resolved agent provider config ID from the agent profile.</summary>
+    public string? AgentProviderConfigId { get; init; }
+
     /// <summary>Quality gate configurations applicable to this work item.</summary>
     public IReadOnlyList<QualityGateConfiguration>? QualityGateConfigs { get; init; }
 
@@ -75,6 +81,18 @@ public record JobDistributionRequest
 
     /// <summary>MCP server configurations for the agent workspace.</summary>
     public IReadOnlyList<McpServerConfig>? McpServers { get; init; }
+
+    /// <summary>Project-level steering content (markdown) for agent workspace.</summary>
+    public string? ProjectSteeringContent { get; init; }
+
+    /// <summary>Repository-level steering content (markdown) for agent workspace.</summary>
+    public string? RepoSteeringContent { get; init; }
+
+    /// <summary>W3C trace context (traceparent, tracestate) for distributed tracing.</summary>
+    public Dictionary<string, string>? TraceContext { get; init; }
+
+    /// <summary>Pre-fetched linked issue contexts for PR review runs.</summary>
+    public IReadOnlyList<LinkedIssueContext>? LinkedIssueContexts { get; init; }
 
     // --- Review-specific ---
 
