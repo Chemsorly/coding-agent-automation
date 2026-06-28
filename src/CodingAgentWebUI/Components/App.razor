@@ -59,6 +59,18 @@
                 window.__globalKeyHandler = null;
             }
         };
+        window.downloadFileFromStream = async function (fileName, streamRef) {
+            var buffer = await streamRef.arrayBuffer();
+            var blob = new Blob([buffer], { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        };
     </script>
 </body>
 </html>

@@ -12,7 +12,7 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: caa
@@ -21,7 +21,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./config/postgres:/var/lib/postgresql/data
+      - ./config/postgres:/var/lib/postgresql/18/docker
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U caa -d coding_agent_automation"]
       interval: 5s
@@ -32,7 +32,7 @@ services:
       - coding-agent-net
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     restart: unless-stopped
     ports:
       - "6379:6379"

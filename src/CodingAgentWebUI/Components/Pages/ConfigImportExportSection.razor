@@ -26,9 +26,13 @@
             <p>
                 Download the current database configuration as a single JSON file.
             </p>
-            <a href="/api/config/export" download="pipeline-config-export.json" class="btn btn-secondary">
+            <button class="btn btn-secondary" @onclick="ExportAsync" disabled="@_exporting">
+                @if (_exporting)
+                {
+                    <span class="spinner-sm"></span>
+                }
                 Download Config
-            </a>
+            </button>
         </div>
 
         <div class="action-card">
@@ -68,8 +72,78 @@
 
     private IBrowserFile? _selectedFile;
     private bool _loading;
+    private bool _exporting;
     private string? _resultMessage;
     private bool _resultSuccess;
+
+    private async Task ExportAsync()
+    {
+        _exporting = true;
+        _resultMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var bundle = new ConfigBundle
+            {
+                PipelineConfig = await db.PipelineConfig.AsNoTracking()
+                    .Select(e => e.Configuration).FirstOrDefaultAsync(),
+                ProviderConfigs = await db.ProviderConfigs.AsNoTracking().Select(e => new ProviderConfigDto
+                {
+                    Id = e.Id, Kind = e.Kind, DisplayName = e.DisplayName,
+                    ProviderType = e.ProviderType, Enabled = e.Enabled, Configuration = e.Configuration
+                }).ToListAsync(),
+                AgentProfiles = await db.AgentProfiles.AsNoTracking().Select(e => new NamedConfigDto
+                {
+                    Id = e.Id, Name = e.Name, Configuration = e.Configuration
+                }).ToListAsync(),
+                QualityGateConfigs = await db.QualityGateConfigs.AsNoTracking().Select(e => new NamedConfigDto
+                {
+                    Id = e.Id, Name = e.Name, Configuration = e.Configuration
+                }).ToListAsync(),
+                ReviewerConfigs = await db.ReviewerConfigs.AsNoTracking().Select(e => new NamedConfigDto
+                {
+                    Id = e.Id, Name = e.Name, Configuration = e.Configuration
+                }).ToListAsync(),
+                Projects = await db.Projects.AsNoTracking().Select(e => new ProjectDto
+                {
+                    Id = e.Id, Name = e.Name, Enabled = e.Enabled,
+                    Description = e.Description, Settings = e.Settings, TemplateIds = e.TemplateIds
+                }).ToListAsync(),
+                JobTemplates = await db.PipelineJobTemplates.AsNoTracking().Select(e => new JobTemplateDto
+                {
+                    Id = e.Id, ProjectId = e.ProjectId, Name = e.Name, Configuration = e.Configuration
+                }).ToListAsync()
+            };
+
+            var json = JsonSerializer.SerializeToUtf8Bytes(bundle, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+
+            using var stream = new MemoryStream(json);
+            using var streamRef = new DotNetStreamReference(stream);
+            await JS.InvokeVoidAsync("downloadFileFromStream", "pipeline-config-export.json", streamRef);
+
+            _resultSuccess = true;
+            _resultMessage = "Export downloaded successfully.";
+            await OnShowStatus.InvokeAsync((_resultMessage, false));
+        }
+        catch (Exception ex)
+        {
+            _resultSuccess = false;
+            _resultMessage = $"Export failed: {ex.Message}";
+            await OnShowStatus.InvokeAsync((_resultMessage, true));
+        }
+        finally
+        {
+            _exporting = false;
+            StateHasChanged();
+        }
+    }
 
     private void OnFileSelected(InputFileChangeEventArgs e)
     {
