@@ -18,10 +18,10 @@ public sealed partial class AgentHub
     // ── Job lifecycle ───────────────────────────────────────────────────
 
     /// <summary>
-    /// Agent acknowledges job acceptance. Transitions agent to Busy.
+    /// Agent acknowledges job acceptance. Transitions agent to Busy and WorkItem to Running.
     /// </summary>
     [RequiresActiveJob]
-    public Task JobAccepted(string jobId)
+    public async Task JobAccepted(string jobId)
     {
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         if (agent is not null)
@@ -31,7 +31,17 @@ public sealed partial class AgentHub
             _orchestration.NotifyChange();
         }
 
-        return Task.CompletedTask;
+        // Transition WorkItem from Dispatched → Running (DB+SignalR mode).
+        // This is critical: without it, ReportJobCompleted cannot transition to Succeeded
+        // because Dispatched → Succeeded is not a valid state transition.
+        try
+        {
+            await _facade.TransitionWorkItemAsync(jobId, WorkItemStatus.Running, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to transition WorkItem {JobId} to Running on JobAccepted", jobId);
+        }
     }
 
     /// <summary>

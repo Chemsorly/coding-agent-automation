@@ -3,6 +3,7 @@ using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.GitLab;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
@@ -12,6 +13,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Logging;
 using Serilog;
 
 namespace CodingAgentWebUI;
@@ -262,7 +264,9 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<JobQueueDrainService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IConfigurationStore>(),
-            sp.GetRequiredService<IProviderFactory>()));
+            sp.GetRequiredService<IProviderFactory>(),
+            sp.GetRequiredService<ILogger<AgentHubFacade>>(),
+            sp.GetService<WorkItemTransitionService>()));
 
         return services;
     }

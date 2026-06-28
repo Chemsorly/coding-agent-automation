@@ -7,6 +7,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using Microsoft.Extensions.Logging;
 
 namespace CodingAgentWebUI.Hubs;
 
@@ -24,6 +25,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
     private readonly WorkItemTransitionService? _workItemTransition;
+    private readonly ILogger<AgentHubFacade> _logger;
 
     public AgentHubFacade(
         AgentRegistryService registry,
@@ -33,6 +35,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         IPipelineRunHistoryService historyService,
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
+        ILogger<AgentHubFacade> logger,
         WorkItemTransitionService? workItemTransition = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
@@ -42,6 +45,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         ArgumentNullException.ThrowIfNull(historyService);
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
+        ArgumentNullException.ThrowIfNull(logger);
 
         _registry = registry;
         _runService = runService;
@@ -50,6 +54,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _historyService = historyService;
         _configStore = configStore;
         _providerFactory = providerFactory;
+        _logger = logger;
         _workItemTransition = workItemTransition;
     }
 
@@ -101,19 +106,68 @@ public sealed class AgentHubFacade : IAgentHubFacade
         {
             try
             {
-                await _workItemTransition.TransitionAsync(workItemId, status, item =>
+                var result = await _workItemTransition.TransitionAsync(workItemId, status, item =>
                 {
                     item.CompletedAt = DateTimeOffset.UtcNow;
                 }, ct);
-                return; // Success
+
+                if (result)
+                {
+                    _logger.LogInformation(
+                        "WorkItem {WorkItemId} transitioned to {Status}",
+                        workItemId, status);
+                    return;
+                }
+
+                // Transition rejected — likely Dispatched → Succeeded/Cancelled (skipped Running).
+                // Attempt two-step: Dispatched → Running → terminal status.
+                if (status is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled)
+                {
+                    _logger.LogWarning(
+                        "WorkItem {WorkItemId} direct transition to {Status} rejected, attempting two-step via Running",
+                        workItemId, status);
+
+                    var intermediateResult = await _workItemTransition.TransitionAsync(
+                        workItemId, WorkItemStatus.Running, ct: ct);
+
+                    if (intermediateResult)
+                    {
+                        var finalResult = await _workItemTransition.TransitionAsync(workItemId, status, item =>
+                        {
+                            item.CompletedAt = DateTimeOffset.UtcNow;
+                        }, ct);
+
+                        if (finalResult)
+                        {
+                            _logger.LogInformation(
+                                "WorkItem {WorkItemId} two-step transition to {Status} succeeded (via Running)",
+                                workItemId, status);
+                            return;
+                        }
+                    }
+                }
+
+                // If we get here, transition was rejected for a non-recoverable reason
+                // (e.g., already terminal). Log and exit — not an error.
+                _logger.LogWarning(
+                    "WorkItem {WorkItemId} transition to {Status} rejected (may already be terminal)",
+                    workItemId, status);
+                return;
             }
             catch (Exception ex) when (attempt < maxAttempts - 1
                 && ex is not Polly.CircuitBreaker.BrokenCircuitException)
             {
+                _logger.LogWarning(ex,
+                    "WorkItem {WorkItemId} transition to {Status} failed on attempt {Attempt}, retrying",
+                    workItemId, status, attempt + 1);
                 // Wait 2s before final retry — gives brief recovery window after Polly exhaustion
                 await Task.Delay(TimeSpan.FromSeconds(2), ct);
             }
         }
+
+        _logger.LogError(
+            "WorkItem {WorkItemId} transition to {Status} failed after all retry attempts",
+            workItemId, status);
     }
 
     /// <inheritdoc />

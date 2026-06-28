@@ -162,7 +162,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
 
         var rows = cut.FindAll(".monitoring-table:last-of-type tbody tr");
         Assert.Contains("agent-01", rows[0].TextContent);
-        Assert.Contains("local", rows[1].TextContent);
+        Assert.Contains("—", rows[1].TextContent);
     }
 
     [Fact]

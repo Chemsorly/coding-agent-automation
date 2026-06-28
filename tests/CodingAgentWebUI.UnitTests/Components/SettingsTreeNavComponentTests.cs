@@ -130,8 +130,8 @@ public class SettingsTreeNavComponentTests : BunitContext
 
         // After collapse, children should not be visible
         var childNodes = cut.FindAll(".tree-group-children");
-        // The Providers group children should be gone (Projects, Global Defaults, and Label Routing remain)
-        Assert.Equal(3, childNodes.Count);
+        // The Providers group children should be gone (Projects, Global Defaults, Label Routing, and Data Management remain)
+        Assert.Equal(4, childNodes.Count);
     }
 
     [Fact]
@@ -157,9 +157,9 @@ public class SettingsTreeNavComponentTests : BunitContext
             .Add(s => s.SelectedNode, "")
             .Add(s => s.OnNodeSelected, EventCallback<string>.Empty));
 
-        // All four groups should have children visible
+        // All five groups should have children visible
         var childGroups = cut.FindAll(".tree-group-children");
-        Assert.Equal(4, childGroups.Count);
+        Assert.Equal(5, childGroups.Count);
     }
 
     [Fact]
@@ -170,7 +170,7 @@ public class SettingsTreeNavComponentTests : BunitContext
             .Add(s => s.OnNodeSelected, EventCallback<string>.Empty));
 
         var chevrons = cut.FindAll(".tree-chevron");
-        Assert.Equal(4, chevrons.Count);
+        Assert.Equal(5, chevrons.Count);
         // All expanded by default, so all should show chevron-down icon
         Assert.All(chevrons, c => Assert.NotNull(c.QuerySelector("[data-icon='chevron-down']")));
     }
