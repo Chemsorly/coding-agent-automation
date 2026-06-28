@@ -91,10 +91,12 @@ public sealed class AgentHubFacade : IAgentHubFacade
         if (_workItemTransition is null || !Guid.TryParse(jobId, out var workItemId))
             return;
 
-        // Retry with short backoff — this is the only opportunity to record the correct
-        // terminal status. If all retries fail, ReconciliationService will eventually
-        // mark it Failed (which may be incorrect if the agent actually succeeded).
-        const int maxAttempts = 3;
+        // Single retry with longer backoff — acts as a safety net above the Polly pipeline
+        // in WorkItemTransitionService (which handles transient DB errors with 5 retries).
+        // This outer retry only fires if the entire Polly pipeline fails or the circuit breaks.
+        // If all retries fail, ReconciliationService will eventually mark it Failed
+        // (which may be incorrect if the agent actually succeeded).
+        const int maxAttempts = 2;
         for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
             try
@@ -105,10 +107,11 @@ public sealed class AgentHubFacade : IAgentHubFacade
                 }, ct);
                 return; // Success
             }
-            catch (Exception) when (attempt < maxAttempts - 1)
+            catch (Exception ex) when (attempt < maxAttempts - 1
+                && ex is not Polly.CircuitBreaker.BrokenCircuitException)
             {
-                // Brief backoff before retry (500ms, 1000ms)
-                await Task.Delay(TimeSpan.FromMilliseconds(500 * (attempt + 1)), ct);
+                // Wait 2s before final retry — gives brief recovery window after Polly exhaustion
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
             }
         }
     }

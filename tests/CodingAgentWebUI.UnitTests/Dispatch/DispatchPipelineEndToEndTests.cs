@@ -141,8 +141,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .Returns<IReadOnlyList<ProviderConfig>, string, CancellationToken, bool>((c, _, _, _) => Task.FromResult(c));
 
-        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns("conn-agent-1");
-        _mockResolver.Setup(r => r.LastResolvedAgentId).Returns("agent-dotnet-1");
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-agent-1", "agent-dotnet-1"));
         _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
