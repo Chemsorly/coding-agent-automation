@@ -129,21 +129,6 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             // Set ActiveJobId on the agent entry so HeartbeatMonitor and monitoring UI
             // can correlate the agent with its active run.
             _agentResolver.AssignJob(resolvedAgentId, workItemId.ToString());
-
-            // Update WorkItem with the resolved agent ID for UI display
-            await using var updateDb = await _dbFactory.CreateDbContextAsync(ct);
-            var workItem = await updateDb.WorkItems.FindAsync([workItemId], ct);
-            if (workItem is not null)
-            {
-                workItem.AssignedAgentId = resolvedAgentId;
-                await updateDb.SaveChangesAsync(ct);
-            }
-
-            _logger.LogInformation(
-                "WorkItem {WorkItemId} pushed via SignalR to connection {ConnectionId}",
-                workItemId, connectionId);
-
-            return new DistributionResult(true, workItemId.ToString(), null);
         }
         catch (Exception ex)
         {
@@ -158,6 +143,32 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             await TransitionToFailed(workItemId, $"SignalR delivery failure: {ex.Message}", ct);
             return new DistributionResult(false, workItemId.ToString(), $"SignalR delivery failed: {ex.Message}");
         }
+
+        // Post-delivery: update WorkItem with resolved agent ID for UI display.
+        // This is cosmetic — failure here must NOT release the agent or fail the WorkItem
+        // since the agent already received and is working on the job.
+        try
+        {
+            await using var updateDb = await _dbFactory.CreateDbContextAsync(ct);
+            var workItem = await updateDb.WorkItems.FindAsync([workItemId], ct);
+            if (workItem is not null)
+            {
+                workItem.AssignedAgentId = resolvedAgentId;
+                await updateDb.SaveChangesAsync(ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "Failed to update AssignedAgentId on WorkItem {WorkItemId} (cosmetic, agent already has the job)",
+                workItemId);
+        }
+
+        _logger.LogInformation(
+            "WorkItem {WorkItemId} pushed via SignalR to connection {ConnectionId}",
+            workItemId, connectionId);
+
+        return new DistributionResult(true, workItemId.ToString(), null);
     }
 
     /// <inheritdoc />

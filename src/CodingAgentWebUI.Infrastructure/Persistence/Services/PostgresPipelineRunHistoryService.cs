@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Services;
 /// PostgreSQL-backed implementation of <see cref="IPipelineRunHistoryService"/>.
 /// Persists completed run summaries to the PipelineRuns table with a JSONB SummaryJson column
 /// for lossless round-trip of all <see cref="PipelineRunSummary"/> fields.
-/// Indexed columns (AgentId, StartedAt, FinalStep) enable efficient queries.
+/// Indexed columns: StartedAt (desc), AgentId, (FinalStep + CompletedAt) composite.
 /// </summary>
 public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryService
 {
@@ -129,25 +129,25 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
     private async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync()
     {
-        await using var db = await _dbFactory.CreateDbContextAsync();
+        await using var db = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
         var entities = await db.PipelineRuns
             .AsNoTracking()
             .OrderByDescending(r => r.StartedAt)
             .Take(MaxHistorySize)
-            .ToListAsync();
+            .ToListAsync().ConfigureAwait(false);
 
         return entities.Select(DeserializeSummary).Where(s => s is not null).ToList()!;
     }
 
     private async Task<IReadOnlyList<PipelineRunSummary>> GetRunsByAgentIdAsync(string agentId, int limit)
     {
-        await using var db = await _dbFactory.CreateDbContextAsync();
+        await using var db = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
         var entities = await db.PipelineRuns
             .AsNoTracking()
             .Where(r => r.AgentId == agentId)
             .OrderByDescending(r => r.StartedAt)
             .Take(limit)
-            .ToListAsync();
+            .ToListAsync().ConfigureAwait(false);
 
         return entities.Select(DeserializeSummary).Where(s => s is not null).ToList()!;
     }
@@ -156,11 +156,11 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     {
         var entity = ToEntity(summary);
 
-        await using var db = await _dbFactory.CreateDbContextAsync();
+        await using var db = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
 
         // Upsert: a PipelineRunEntity row may already exist (created at dispatch time
         // by DispatchOrchestrationService for active run tracking). Update it with final state.
-        var existing = await db.PipelineRuns.FindAsync(entity.RunId);
+        var existing = await db.PipelineRuns.FindAsync(entity.RunId).ConfigureAwait(false);
         if (existing is not null)
         {
             existing.IssueIdentifier = entity.IssueIdentifier;
@@ -180,13 +180,39 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             db.PipelineRuns.Add(entity);
         }
 
-        await db.SaveChangesAsync();
+        try
+        {
+            await db.SaveChangesAsync().ConfigureAwait(false);
+        }
+        catch (DbUpdateException ex) when (IsPrimaryKeyViolation(ex))
+        {
+            // Concurrent insert race: another thread inserted the same RunId between
+            // FindAsync (miss) and SaveChangesAsync. Retry as update.
+            _logger.Warning("Upsert race for run {RunId}, retrying as update", entity.RunId);
+            db.ChangeTracker.Clear();
+            var retry = await db.PipelineRuns.FindAsync(entity.RunId).ConfigureAwait(false);
+            if (retry is not null)
+            {
+                retry.IssueIdentifier = entity.IssueIdentifier;
+                retry.IssueTitle = entity.IssueTitle;
+                retry.FinalStep = entity.FinalStep;
+                retry.CompletedAt = entity.CompletedAt;
+                retry.RetryCount = entity.RetryCount;
+                retry.PullRequestUrl = entity.PullRequestUrl;
+                retry.ModelName = entity.ModelName;
+                retry.AgentId = entity.AgentId;
+                retry.ProjectName = entity.ProjectName;
+                retry.RunType = entity.RunType;
+                retry.SummaryJson = entity.SummaryJson;
+                await db.SaveChangesAsync().ConfigureAwait(false);
+            }
+        }
     }
 
     private async Task<IReadOnlyList<(string RunId, DateTimeOffset CompletedAt)>> GetExpiredFailedRunsAsync(
         DateTimeOffset cutoff, string? activeRunId)
     {
-        await using var db = await _dbFactory.CreateDbContextAsync();
+        await using var db = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
         var query = db.PipelineRuns
             .AsNoTracking()
             .Where(r => r.FinalStep != PipelineStep.Completed)
@@ -197,7 +223,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
         var results = await query
             .Select(r => new { RunId = r.RunId.ToString(), CompletedAt = r.CompletedAt!.Value })
-            .ToListAsync();
+            .ToListAsync().ConfigureAwait(false);
 
         return results.Select(r => (r.RunId, r.CompletedAt)).ToList();
     }
@@ -261,5 +287,28 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             ProjectName = entity.ProjectName,
             RunType = entity.RunType
         };
+    }
+
+    /// <summary>
+    /// Detects PK violation exceptions from Npgsql (code 23505) or generic DbUpdateException
+    /// wrapping a unique constraint violation.
+    /// </summary>
+    private static bool IsPrimaryKeyViolation(DbUpdateException ex)
+    {
+        // Npgsql wraps PostgreSQL error 23505 (unique_violation) in a PostgresException.
+        // For in-memory provider (tests), there's no inner Npgsql exception — treat any
+        // DbUpdateException during Add as a potential duplicate.
+        var inner = ex.InnerException;
+        if (inner is not null && inner.GetType().Name == "PostgresException")
+        {
+            // Npgsql PostgresException has a SqlState property
+            var sqlStateProp = inner.GetType().GetProperty("SqlState");
+            if (sqlStateProp?.GetValue(inner) is string sqlState)
+                return sqlState == "23505";
+        }
+
+        // Fallback: treat as PK violation if it's a generic constraint error
+        return ex.InnerException?.Message?.Contains("duplicate key", StringComparison.OrdinalIgnoreCase) == true
+            || ex.InnerException?.Message?.Contains("unique constraint", StringComparison.OrdinalIgnoreCase) == true;
     }
 }

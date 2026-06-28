@@ -592,7 +592,11 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
             return null;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // Real cancellation — propagate
+        }
+        catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to create isolated session for workspace {WorkspacePath}", workspacePath);
             return null;

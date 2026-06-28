@@ -31,7 +31,7 @@ public class OpenCodeExceptionContainmentPropertyTests
     /// **Validates: Requirements 10.3**
     /// </summary>
     [Property(Arbitrary = [typeof(ExceptionContainmentArbitrary)], MaxTest = 20)]
-    public async void AnyNonCancellationException_IsCaughtAndReturnedAsAgentResult(ThrowingExceptionOutcome outcome)
+    public async Task AnyNonCancellationException_IsCaughtAndReturnedAsAgentResult(ThrowingExceptionOutcome outcome)
     {
         // Arrange
         var handler = new ThrowingHandler(outcome.ExceptionToThrow, throwOnSessionCreate: false);
@@ -60,7 +60,7 @@ public class OpenCodeExceptionContainmentPropertyTests
     /// **Validates: Requirements 10.3**
     /// </summary>
     [Property(Arbitrary = [typeof(ExceptionContainmentArbitrary)], MaxTest = 20)]
-    public async void AnyNonCancellationException_DuringSessionCreate_IsCaughtAndReturnedAsAgentResult(ThrowingExceptionOutcome outcome)
+    public async Task AnyNonCancellationException_DuringSessionCreate_IsCaughtAndReturnedAsAgentResult(ThrowingExceptionOutcome outcome)
     {
         // Arrange
         var handler = new ThrowingHandler(outcome.ExceptionToThrow, throwOnSessionCreate: true);

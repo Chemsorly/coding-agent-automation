@@ -51,6 +51,7 @@ public class PipelineDbContext : DbContext
             e.Property(r => r.SummaryJson).HasColumnType("jsonb");
             e.HasIndex(r => r.StartedAt).IsDescending();
             e.HasIndex(r => r.AgentId);
+            e.HasIndex(r => new { r.FinalStep, r.CompletedAt });
         });
 
         modelBuilder.Entity<ProjectEntity>(e =>

@@ -198,6 +198,11 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                 descending: new bool[0]);
 
             migrationBuilder.CreateIndex(
+                name: "IX_PipelineRuns_FinalStep_CompletedAt",
+                table: "PipelineRuns",
+                columns: new[] { "FinalStep", "CompletedAt" });
+
+            migrationBuilder.CreateIndex(
                 name: "IX_WorkItems_IssueIdentifier_IssueProviderConfigId",
                 table: "WorkItems",
                 columns: new[] { "IssueIdentifier", "IssueProviderConfigId" },

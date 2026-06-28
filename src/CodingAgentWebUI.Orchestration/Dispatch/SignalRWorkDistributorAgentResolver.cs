@@ -67,6 +67,16 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     public void ReleaseAgent(string agentId)
     {
         ArgumentNullException.ThrowIfNull(agentId);
+
+        var entry = _registry.GetByAgentId(agentId);
+        if (entry is not null)
+        {
+            lock (entry.SyncRoot)
+            {
+                entry.ActiveJobId = null;
+            }
+        }
+
         _registry.TransitionStatus(agentId, AgentStatus.Idle);
     }
 

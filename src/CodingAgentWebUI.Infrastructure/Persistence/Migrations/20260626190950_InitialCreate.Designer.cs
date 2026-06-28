@@ -180,6 +180,8 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     b.HasIndex("StartedAt")
                         .IsDescending();
 
+                    b.HasIndex("FinalStep", "CompletedAt");
+
                     b.ToTable("PipelineRuns");
                 });
 
