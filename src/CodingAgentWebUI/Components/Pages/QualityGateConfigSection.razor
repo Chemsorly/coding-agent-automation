@@ -52,7 +52,7 @@
                                 @FormatCommands(qgc)
                             </td>
                             <td>@(qgc.CoverageThreshold.HasValue ? $"{qgc.CoverageThreshold.Value}%" : "—")</td>
-                            <td>@(qgc.Enabled ? "✅" : "❌")</td>
+                            <td><Icon Name="@(qgc.Enabled ? "check-circle" : "x-circle")" /></td>
                             <td>@qgc.ExecutionOrder</td>
                             <td>
                                 <button class="btn-edit" @onclick="() => EditConfig(qgc)">Edit</button>
@@ -135,7 +135,7 @@
                 <input type="number" @bind="_form.ProcessTimeoutSeconds" min="30" max="3600" />
             </div>
             <div class="advanced-toggle" @onclick="() => _showFormAdvanced = !_showFormAdvanced">
-                <span class="toggle-chevron @(_showFormAdvanced ? "expanded" : "")">▶</span>
+                <span class="toggle-chevron @(_showFormAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
                 <span>Advanced settings</span>
             </div>
             @if (_showFormAdvanced)

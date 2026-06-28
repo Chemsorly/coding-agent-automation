@@ -123,8 +123,9 @@ public class ReviewerConfigSectionComponentTests : BunitContext
 
         var cut = Render<ReviewerConfigSection>(p => p.Add(s => s.ConfigStore, _mockStore.Object));
 
-        Assert.Contains("✅", cut.Markup);
-        Assert.Contains("❌", cut.Markup);
+        // TODO: Assertions don't verify icon-to-row association — test would pass even if conditional logic were inverted
+        Assert.NotNull(cut.Find("[data-icon=\"check-circle\"]"));
+        Assert.NotNull(cut.Find("[data-icon=\"x-circle\"]"));
     }
 
     [Fact]

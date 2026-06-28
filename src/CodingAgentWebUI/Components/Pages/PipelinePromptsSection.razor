@@ -16,7 +16,7 @@
             <button type="button" class="btn-revert" disabled="@(_implementationPrompt == PipelineConfiguration.DefaultImplementationPrompt)" @onclick="() => _implementationPrompt = PipelineConfiguration.DefaultImplementationPrompt">Reset to default</button>
         </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
-            <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")">▶</span>
+            <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
             <span>Advanced settings</span>
         </div>
         @if (_showAdvanced)
@@ -24,7 +24,7 @@
         <div class="config-sub-fields" style="margin-top: 1rem;">
             <h3>Analysis Review (Adversarial)</h3>
             <div class="form-hint">
-                ℹ️ When enabled, a second agent reviews the analysis in an isolated session and feeds findings back for refinement before implementation begins.
+                <Icon Name="info" /> When enabled, a second agent reviews the analysis in an isolated session and feeds findings back for refinement before implementation begins.
             </div>
             <div class="form-group form-checkbox">
                 <label>

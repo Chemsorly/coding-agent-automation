@@ -54,7 +54,7 @@
                                         @template.Name
                                         @if (providerMissing)
                                         {
-                                            <span class="badge-disabled-table" title="Referenced provider no longer exists">⚠️</span>
+                                            <span class="badge-disabled-table" title="Referenced provider no longer exists"><Icon Name="alert-triangle" Size="14" /></span>
                                         }
                                     </td>
                                     <td class="monitoring-mono">@GetProviderDisplayName(template.IssueProviderId, IssueProviders)</td>

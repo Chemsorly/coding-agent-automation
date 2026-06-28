@@ -306,7 +306,7 @@ public class AgentCodingPageComponentTests : BunitContext
         var component = Render<AgentCoding>();
 
         // Should show warning indicator for missing provider
-        Assert.Contains("⚠️", component.Markup);
+        Assert.NotNull(component.Find("[data-icon=\"alert-triangle\"]"));
     }
 
     [Fact]

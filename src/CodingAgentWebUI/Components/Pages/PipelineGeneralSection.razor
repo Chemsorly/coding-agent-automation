@@ -34,7 +34,7 @@
             <input type="number" @bind="_failedWorkspaceRetentionDays" min="-1" />
         </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
-            <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")">▶</span>
+            <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
             <span>Advanced settings</span>
         </div>
         @if (_showAdvanced)
