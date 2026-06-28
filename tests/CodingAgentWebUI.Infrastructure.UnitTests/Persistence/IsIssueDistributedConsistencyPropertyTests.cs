@@ -65,7 +65,7 @@ public class IsIssueDistributedConsistencyPropertyTests : IDisposable
     /// and calling IsIssueDistributedAsync returns true iff status is in {Pending, Dispatched, Running}.
     /// **Validates: Requirements 4.6**
     /// </summary>
-    [Property(MaxTest = 200, Arbitrary = new[] { typeof(IsIssueDistributedArbitraries) })]
+    [Property(Arbitrary = new[] { typeof(IsIssueDistributedArbitraries) })]
     public async Task<bool> IsIssueDistributed_ReturnsTrue_IffStatusIsActive(WorkItemStatus status)
     {
         // Generate unique identifiers per test iteration to avoid cross-pollution

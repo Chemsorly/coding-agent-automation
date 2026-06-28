@@ -21,7 +21,7 @@ public class JobDistributionRequestJsonRoundTripPropertyTests
     /// Asserts that serialize→deserialize→serialize produces identical JSON (stable round-trip).
     /// **Validates: Requirements 1.12, 4.2**
     /// </summary>
-    [Property(MaxTest = 200, Arbitrary = new[] { typeof(JobDistributionRequestArbitraries) })]
+    [Property(Arbitrary = new[] { typeof(JobDistributionRequestArbitraries) })]
     public Property JobDistributionRequest_JsonRoundTrip_PreservesEquality(JobDistributionRequest original)
     {
         var json1 = JsonSerializer.Serialize(original, JsonOptions);

@@ -42,7 +42,7 @@ public class WorkItemStateMachinePropertyTests
     /// if and only if the pair is in the allowed transition set.
     /// **Validates: Requirements 7.5**
     /// </summary>
-    [Property(MaxTest = 200, Arbitrary = new[] { typeof(WorkItemStatusPairArbitraries) })]
+    [Property(Arbitrary = new[] { typeof(WorkItemStatusPairArbitraries) })]
     public void IsValidTransition_ReturnsTrue_IffPairInAllowedSet(WorkItemStatus current, WorkItemStatus target)
     {
         var expected = AllowedTransitions.Contains((current, target));

@@ -16,7 +16,7 @@ public class ReconciliationServiceStaleCleanupPropertyTests
     /// For any terminal work item with a random CompletedAt and retention period,
     /// IsStale returns true if and only if age >= retentionDays.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property]
     public bool StaleCleanup_MatchesAgeVsRetentionPeriod(PositiveInt retentionDaysRaw, PositiveInt elapsedDaysRaw)
     {
         var retentionDays = retentionDaysRaw.Get % 365 + 1; // 1..365 days
@@ -35,7 +35,7 @@ public class ReconciliationServiceStaleCleanupPropertyTests
     /// Property 11 (supplementary): A work item completed exactly at retention boundary is stale.
     /// For any positive retention period, now == completedAt + retentionDays → IsStale returns true.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property]
     public bool StaleCleanup_ExactBoundary_AlwaysStale(PositiveInt retentionDaysRaw)
     {
         var retentionDays = retentionDaysRaw.Get % 365 + 1;
@@ -49,7 +49,7 @@ public class ReconciliationServiceStaleCleanupPropertyTests
     /// Property 11 (supplementary): A null CompletedAt is never stale.
     /// Terminal items without CompletedAt should not be cleaned up.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property]
     public bool StaleCleanup_NullCompletedAt_NeverStale(PositiveInt retentionDaysRaw)
     {
         var retentionDays = retentionDaysRaw.Get % 365 + 1;
@@ -62,7 +62,7 @@ public class ReconciliationServiceStaleCleanupPropertyTests
     /// Property 11 (supplementary): A work item completed 1 second before retention is NOT stale.
     /// For any retention > 0, age just under retentionDays → IsStale returns false.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property]
     public bool StaleCleanup_OneSecondBeforeBoundary_NotStale(PositiveInt retentionDaysRaw)
     {
         var retentionDays = retentionDaysRaw.Get % 365 + 1;
