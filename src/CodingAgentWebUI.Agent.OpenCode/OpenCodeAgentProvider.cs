@@ -547,7 +547,17 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         // threads overwrite/read the shared field and end up sharing a session.
         if (!request.UseResume)
         {
-            return await CreateIsolatedSessionAsync(request.WorkspacePath, ct);
+            var sessionId = await CreateIsolatedSessionAsync(request.WorkspacePath, ct);
+            if (sessionId is not null)
+            {
+                // Update shared state so subsequent UseResume=true calls can find this session.
+                // This write is safe: parallel callers don't read _currentSessionId (they use
+                // the local return value), and sequential callers (UseResume=true) only run
+                // after all parallel calls complete.
+                _currentSessionId = sessionId;
+                _currentSessionWorkspacePath = Path.GetFullPath(request.WorkspacePath);
+            }
+            return sessionId;
         }
 
         // Fallback: UseResume=true but no existing session — create one (shared path)
