@@ -579,6 +579,43 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         Guid.TryParse(result.WorkItemId, out _).Should().BeTrue();
     }
 
+    [Fact]
+    public async Task DistributeAsync_Success_CallsAssignJobOnResolver()
+    {
+        // Arrange
+        var runId = Guid.NewGuid().ToString();
+        var request = CreateMinimalRequest() with { RunId = runId };
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockAgentComm
+            .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert: AssignJob called with correct agentId and workItemId
+        result.Success.Should().BeTrue();
+        _mockResolver.Verify(r => r.AssignJob("agent-1", runId), Times.Once);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_SignalRFails_DoesNotCallAssignJob()
+    {
+        // Arrange
+        var request = CreateMinimalRequest() with { RunId = Guid.NewGuid().ToString() };
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockAgentComm
+            .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection lost"));
+
+        // Act
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert: AssignJob never called on failure
+        result.Success.Should().BeFalse();
+        _mockResolver.Verify(r => r.AssignJob(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
     private static JobDistributionRequest CreateMinimalRequest() => new()
     {
         IssueIdentifier = "owner/repo#1",

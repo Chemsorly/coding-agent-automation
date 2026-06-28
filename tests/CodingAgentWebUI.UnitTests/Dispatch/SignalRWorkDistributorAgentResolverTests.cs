@@ -114,4 +114,34 @@ public class SignalRWorkDistributorAgentResolverTests
         // Assert
         connectionId.Should().BeNull();
     }
+
+    [Fact]
+    public void AssignJob_SetsActiveJobIdOnAgentEntry()
+    {
+        // Arrange: register an idle agent, resolve to mark Busy
+        _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-5",
+            Labels = ["dotnet"],
+            Hostname = "host-5"
+        }, "conn-mno");
+        _resolver.ResolveAgent("dotnet");
+
+        var agent = _registry.GetByAgentId("agent-5");
+        agent!.Status.Should().Be(AgentStatus.Busy);
+        agent.ActiveJobId.Should().BeNull(); // precondition: not set yet
+
+        // Act
+        _resolver.AssignJob("agent-5", "run-123");
+
+        // Assert
+        agent.ActiveJobId.Should().Be("run-123");
+    }
+
+    [Fact]
+    public void AssignJob_UnknownAgent_DoesNotThrow()
+    {
+        var act = () => _resolver.AssignJob("nonexistent-agent", "run-456");
+        act.Should().NotThrow();
+    }
 }

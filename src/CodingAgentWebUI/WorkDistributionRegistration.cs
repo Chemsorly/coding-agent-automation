@@ -105,6 +105,11 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<IOrchestratorRunService>()));
 
+        // ── IPipelineRunHistoryService (DB mode — persists to PipelineRuns table) ──
+        services.AddSingleton<IPipelineRunHistoryService>(sp => new PostgresPipelineRunHistoryService(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            Log.Logger));
+
         // ── DispatchOrchestrationService (DB modes only — null in Legacy mode) ──
         services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
             sp.GetRequiredService<DispatchResolutionService>(),

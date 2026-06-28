@@ -86,6 +86,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     ProjectId = table.Column<string>(type: "text", nullable: true),
                     ProjectName = table.Column<string>(type: "text", nullable: true),
                     RunType = table.Column<int>(type: "integer", nullable: false),
+                    SummaryJson = table.Column<string>(type: "jsonb", nullable: true),
                     xmin = table.Column<uint>(type: "xid", rowVersion: true, nullable: false)
                 },
                 constraints: table =>

@@ -54,4 +54,13 @@ public interface ISignalRWorkDistributorAgentResolver
     /// </summary>
     /// <param name="agentId">The agent ID to release (from <see cref="AgentResolveResult.AgentId"/>).</param>
     void ReleaseAgent(string agentId);
+
+    /// <summary>
+    /// Sets the active job ID on the agent entry after successful dispatch.
+    /// Must be called after SignalR delivery succeeds so HeartbeatMonitor and the
+    /// monitoring UI can correlate the agent with its active run.
+    /// </summary>
+    /// <param name="agentId">The agent ID (from <see cref="AgentResolveResult.AgentId"/>).</param>
+    /// <param name="jobId">The run/work-item ID assigned to this agent.</param>
+    void AssignJob(string agentId, string jobId);
 }

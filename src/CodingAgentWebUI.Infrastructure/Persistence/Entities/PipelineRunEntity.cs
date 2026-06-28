@@ -25,6 +25,9 @@ public class PipelineRunEntity
     public string? ProjectName { get; set; }
     public PipelineRunType RunType { get; set; }
 
+    /// <summary>Full serialized PipelineRunSummary as JSONB for lossless round-trip.</summary>
+    public string? SummaryJson { get; set; }
+
     /// <summary>Concurrency token mapped to PostgreSQL xmin system column.</summary>
     public uint RowVersion { get; set; }
 }

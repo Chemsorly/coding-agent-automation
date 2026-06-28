@@ -126,6 +126,10 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             var message = BuildJobAssignmentMessage(workItemId, request);
             await _agentComm.AssignJobAsync(connectionId, message, ct);
 
+            // Set ActiveJobId on the agent entry so HeartbeatMonitor and monitoring UI
+            // can correlate the agent with its active run.
+            _agentResolver.AssignJob(resolvedAgentId, workItemId.ToString());
+
             // Update WorkItem with the resolved agent ID for UI display
             await using var updateDb = await _dbFactory.CreateDbContextAsync(ct);
             var workItem = await updateDb.WorkItems.FindAsync([workItemId], ct);

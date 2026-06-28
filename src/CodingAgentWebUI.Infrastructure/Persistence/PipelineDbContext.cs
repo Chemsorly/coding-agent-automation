@@ -48,6 +48,7 @@ public class PipelineDbContext : DbContext
         {
             e.HasKey(r => r.RunId);
             e.Property(r => r.RowVersion).IsRowVersion();
+            e.Property(r => r.SummaryJson).HasColumnType("jsonb");
             e.HasIndex(r => r.StartedAt).IsDescending();
             e.HasIndex(r => r.AgentId);
         });

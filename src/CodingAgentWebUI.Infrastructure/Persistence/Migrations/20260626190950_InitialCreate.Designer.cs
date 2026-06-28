@@ -167,6 +167,9 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset>("StartedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("SummaryJson")
+                        .HasColumnType("jsonb");
+
                     b.Property<Guid?>("WorkItemId")
                         .HasColumnType("uuid");
 

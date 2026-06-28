@@ -158,10 +158,20 @@ var orchestratorLogLevel = Environment.GetEnvironmentVariable("LOG_LEVEL")?.ToLo
     "error" or "err" => Serilog.Events.LogEventLevel.Error,
     _ => Serilog.Events.LogEventLevel.Information
 };
+var dbLogLevel = Environment.GetEnvironmentVariable("DB_LOG_LEVEL")?.ToLowerInvariant() switch
+{
+    "debug" or "dbg" => Serilog.Events.LogEventLevel.Debug,
+    "information" or "info" => Serilog.Events.LogEventLevel.Information,
+    "verbose" or "trace" => Serilog.Events.LogEventLevel.Verbose,
+    "error" or "err" => Serilog.Events.LogEventLevel.Error,
+    _ => Serilog.Events.LogEventLevel.Warning
+};
 builder.Host.UseSerilog((ctx, lc) => lc
     .MinimumLevel.Is(orchestratorLogLevel)
     // Suppress noisy ASP.NET Core framework logging (health checks, static files, Blazor negotiation, auth)
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
+    // EF Core SQL command logging — controlled separately via DB_LOG_LEVEL env var
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", dbLogLevel)
     .Enrich.FromLogContext()
     .Enrich.WithSpan()
     .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
