@@ -2593,6 +2593,13 @@ public class PipelineOrchestrationServiceTests : IDisposable
         // Create mock pipeline provider returning failed CI status
         var mockPipelineProvider = new Mock<IPipelineProvider>();
         mockPipelineProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Running,
+                Jobs = new List<PipelineJobResult> { new() { Name = "build", State = PipelineRunState.Running } }
+            });
         mockPipelineProvider.Setup(p => p.WaitForCompletionAsync(
                 It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineRunStatus

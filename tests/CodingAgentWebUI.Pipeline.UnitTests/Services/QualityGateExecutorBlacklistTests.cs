@@ -52,6 +52,15 @@ public class QualityGateExecutorBlacklistTests
             .Returns(Task.CompletedTask);
         _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+
+        // Mock GetRunStatusAsync so CI polling exits immediately (CI "appeared")
+        _mockPipelineProvider.Setup(p => p.GetRunStatusAsync(
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineRunStatus
+            {
+                State = PipelineRunState.Running,
+                Jobs = new List<PipelineJobResult> { new() { Name = "build", State = PipelineRunState.Running } }
+            });
     }
 
     [Fact]
