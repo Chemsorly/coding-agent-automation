@@ -22,6 +22,7 @@ public class AgentCodingPageService
     private readonly IProjectStore _projectStore;
     private readonly IProviderFactory _providerFactory;
     private readonly IDependencyChecker _dependencyChecker;
+    private readonly IDispatchOrchestrationService? _dispatchOrchestration;
 
     public AgentCodingPageService(
         PipelineLoopService loopService,
@@ -30,7 +31,8 @@ public class AgentCodingPageService
         IConfigurationStore configStore,
         IProjectStore projectStore,
         IProviderFactory providerFactory,
-        IDependencyChecker dependencyChecker)
+        IDependencyChecker dependencyChecker,
+        IDispatchOrchestrationService? dispatchOrchestration = null)
     {
         _loopService = loopService;
         _workDistributor = workDistributor;
@@ -39,6 +41,7 @@ public class AgentCodingPageService
         _projectStore = projectStore;
         _providerFactory = providerFactory;
         _dependencyChecker = dependencyChecker;
+        _dispatchOrchestration = dispatchOrchestration;
     }
 
     // ── State ──
@@ -295,7 +298,29 @@ public class AgentCodingPageService
                 return (false, $"Cannot dispatch — issue is blocked by open dependencies: {string.Join(", ", depResult.BlockedBy.Select(n => $"#{n}"))}", null);
         }
 
-        var request = new JobDistributionRequest
+        // DB mode: use full orchestration to build a complete request with ProviderConfigs + token vending
+        if (_dispatchOrchestration is not null)
+        {
+            var project = GetParentProject(template.Id) ?? new PipelineProject { Id = "", Name = "Unknown" };
+            var request = await _dispatchOrchestration.PrepareDistributionRequestAsync(
+                issue.Identifier,
+                template.IssueProviderId, template.RepoProviderId,
+                template.BrainProviderId, template.PipelineProviderId,
+                "manual", project,
+                ct: CancellationToken.None);
+
+            if (request is null)
+                return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
+
+            var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
+            if (result.Success) return (true, null, $"✅ Dispatched #{issue.Identifier}");
+            if (!result.Success)
+                await _dispatchOrchestration.RevertFailedDistributionAsync(request, CancellationToken.None);
+            return (false, "Could not dispatch — distribution failed.", null);
+        }
+
+        // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
+        var minimalRequest = new JobDistributionRequest
         {
             IssueIdentifier = issue.Identifier,
             IssueProviderConfigId = template.IssueProviderId,
@@ -317,8 +342,8 @@ public class AgentCodingPageService
                 Labels = issue.Labels ?? []
             }
         };
-        var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
-        if (result.Success) return (true, null, $"✅ Dispatched #{issue.Identifier}");
+        var legacyResult = await _workDistributor.DistributeAsync(minimalRequest, CancellationToken.None);
+        if (legacyResult.Success) return (true, null, $"✅ Dispatched #{issue.Identifier}");
         return (false, "Could not dispatch — issue is already being processed or queued, or no agents are available.", null);
     }
 
@@ -347,7 +372,38 @@ public class AgentCodingPageService
         if (_workDistributor is LegacyWorkDistributor && _agentRegistry.GetAllAgents().Count == 0)
             return (false, "Could not dispatch — no agents are currently connected.", null);
 
-        var request = new JobDistributionRequest
+        // DB mode: use full orchestration for ProviderConfigs + RunId + token vending
+        if (_dispatchOrchestration is not null)
+        {
+            var project = GetParentProject(template.Id) ?? new PipelineProject { Id = "", Name = "Unknown" };
+            var reviewRequest = new ReviewDispatchRequest
+            {
+                PrIdentifier = pr.Identifier,
+                PrBranchName = pr.BranchName,
+                PrTitle = pr.Title ?? "",
+                PrUrl = pr.Url,
+                PrTargetBranch = pr.TargetBranch,
+                PrDescription = pr.Description,
+                PrAuthor = pr.Author,
+                IssueProviderId = template.IssueProviderId,
+                RepoProviderId = template.RepoProviderId,
+                BrainProviderId = template.BrainProviderId,
+                InitiatedBy = "manual"
+            };
+            var request = await _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
+                reviewRequest, project, CancellationToken.None);
+
+            if (request is null)
+                return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
+
+            var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
+            if (result.Success) return (true, null, $"PR #{pr.Identifier} dispatched for review.");
+            await _dispatchOrchestration.RevertFailedDistributionAsync(request, CancellationToken.None);
+            return (false, $"PR #{pr.Identifier} is already being processed or queued.", null);
+        }
+
+        // Legacy mode
+        var minimalRequest = new JobDistributionRequest
         {
             IssueIdentifier = pr.Identifier,
             IssueProviderConfigId = template.IssueProviderId,
@@ -378,8 +434,8 @@ public class AgentCodingPageService
             ReviewPrDescription = pr.Description,
             ReviewPrAuthor = pr.Author
         };
-        var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
-        if (result.Success) return (true, null, $"PR #{pr.Identifier} dispatched for review.");
+        var legacyResult = await _workDistributor.DistributeAsync(minimalRequest, CancellationToken.None);
+        if (legacyResult.Success) return (true, null, $"PR #{pr.Identifier} dispatched for review.");
         return (false, $"PR #{pr.Identifier} is already being processed or queued.", null);
     }
 
@@ -416,7 +472,27 @@ public class AgentCodingPageService
 
         var phaseType = issue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase)
             ? PipelineRunType.Decomposition : PipelineRunType.DecompositionAnalysis;
-        var request = new JobDistributionRequest
+
+        // DB mode: use full orchestration
+        if (_dispatchOrchestration is not null)
+        {
+            var project = GetParentProject(template.Id) ?? new PipelineProject { Id = "", Name = "Unknown" };
+            var request = await _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
+                issue.Identifier, issue.Title ?? "", phaseType,
+                template.IssueProviderId, template.RepoProviderId, template.BrainProviderId,
+                "manual", project, ct: CancellationToken.None);
+
+            if (request is null)
+                return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
+
+            var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
+            if (result.Success) return (true, null, $"✅ Dispatched epic #{issue.Identifier} for {(phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition")}");
+            await _dispatchOrchestration.RevertFailedDistributionAsync(request, CancellationToken.None);
+            return (false, "Could not dispatch — epic is already being processed or queued, or no agents are available.", null);
+        }
+
+        // Legacy mode
+        var minimalRequest = new JobDistributionRequest
         {
             IssueIdentifier = issue.Identifier,
             IssueProviderConfigId = template.IssueProviderId,
@@ -437,8 +513,8 @@ public class AgentCodingPageService
                 Labels = issue.Labels ?? []
             }
         };
-        var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
-        if (result.Success) return (true, null, $"✅ Dispatched epic #{issue.Identifier} for {(phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition")}");
+        var legacyResult = await _workDistributor.DistributeAsync(minimalRequest, CancellationToken.None);
+        if (legacyResult.Success) return (true, null, $"✅ Dispatched epic #{issue.Identifier} for {(phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition")}");
         return (false, "Could not dispatch — epic is already being processed or queued, or no agents are available.", null);
     }
 

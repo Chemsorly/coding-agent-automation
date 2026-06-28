@@ -16,6 +16,12 @@ public interface ISignalRWorkDistributorAgentResolver
     string? ResolveConnectionId(string agentSelector);
 
     /// <summary>
+    /// Returns the agent ID from the last <see cref="ResolveConnectionId"/> call.
+    /// Used to set AssignedAgentId on WorkItems after successful dispatch.
+    /// </summary>
+    string? LastResolvedAgentId { get; }
+
+    /// <summary>
     /// Reverts the last resolved agent back to Idle status.
     /// Call this when SignalR push fails after reservation to prevent the agent
     /// from being permanently stuck in Busy state.

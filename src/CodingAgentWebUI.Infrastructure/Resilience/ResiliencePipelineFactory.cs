@@ -19,7 +19,11 @@ public static class ResiliencePipelineFactory
     private static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(30);
     internal static readonly TimeSpan DefaultOuterTimeout = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan GitNetworkTimeout = TimeSpan.FromSeconds(120);
+    internal static readonly TimeSpan GitNetworkOuterTimeout = TimeSpan.FromMinutes(5);
     internal static readonly TimeSpan SignalRTimeout = TimeSpan.FromSeconds(30);
+    internal static readonly TimeSpan SignalROuterTimeout = TimeSpan.FromMinutes(2);
+    internal static readonly TimeSpan HttpOuterTimeout = TimeSpan.FromMinutes(3);
+    internal static readonly TimeSpan GitLabOuterTimeout = TimeSpan.FromMinutes(3);
 
     /// <summary>
     /// Creates a resilience pipeline for GitHub API (Octokit) calls.
@@ -100,13 +104,20 @@ public static class ResiliencePipelineFactory
 
     /// <summary>
     /// Creates a resilience pipeline for LibGit2Sharp network operations (Clone, Fetch, Push, Pull).
+    /// Uses an outer timeout (default: 5 minutes) that caps the entire retry sequence,
+    /// and a per-attempt timeout (default: 120s) for individual git operations.
+    /// Pattern: outer timeout → retry → per-attempt timeout.
     /// </summary>
     public static ResiliencePipeline CreateGitNetworkPipeline(ILogger logger)
-        => CreateGitNetworkPipeline(logger, GitNetworkTimeout);
+        => CreateGitNetworkPipeline(logger, GitNetworkTimeout, GitNetworkOuterTimeout);
 
-    internal static ResiliencePipeline CreateGitNetworkPipeline(ILogger logger, TimeSpan timeout)
+    internal static ResiliencePipeline CreateGitNetworkPipeline(ILogger logger, TimeSpan timeout, TimeSpan? outerTimeout = null)
     {
+        var outer = outerTimeout ?? GitNetworkOuterTimeout;
+
         return new ResiliencePipelineBuilder()
+            // Outer timeout: caps total time including all retries.
+            .AddTimeout(outer)
             .AddRetry(new RetryStrategyOptions
             {
                 MaxRetryAttempts = 2,
@@ -121,16 +132,22 @@ public static class ResiliencePipelineFactory
                     return ValueTask.CompletedTask;
                 }
             })
+            // Per-attempt timeout: caps each individual git operation.
             .AddTimeout(timeout)
             .Build();
     }
 
     /// <summary>
     /// Creates a resilience pipeline for HTTP client calls (e.g., TokenVendingService).
+    /// Uses an outer timeout (default: 3 minutes) that caps the entire retry sequence,
+    /// and a per-attempt timeout (default: 30s) for individual HTTP calls.
+    /// Pattern: outer timeout → retry → per-attempt timeout.
     /// </summary>
     public static ResiliencePipeline CreateHttpPipeline(ILogger logger)
     {
         return new ResiliencePipelineBuilder()
+            // Outer timeout: caps total time including all retries.
+            .AddTimeout(HttpOuterTimeout)
             .AddRetry(new RetryStrategyOptions
             {
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
@@ -147,19 +164,27 @@ public static class ResiliencePipelineFactory
                     return ValueTask.CompletedTask;
                 }
             })
+            // Per-attempt timeout: caps each individual HTTP call.
             .AddTimeout(DefaultTimeout)
             .Build();
     }
 
     /// <summary>
     /// Creates a resilience pipeline for SignalR hub invocations.
+    /// Uses an outer timeout (default: 2 minutes) that caps the entire retry sequence,
+    /// and a per-attempt timeout (default: 30s) for individual invocations.
+    /// Pattern: outer timeout → retry → per-attempt timeout.
     /// </summary>
     public static ResiliencePipeline CreateSignalRPipeline(ILogger logger)
-        => CreateSignalRPipeline(logger, SignalRTimeout);
+        => CreateSignalRPipeline(logger, SignalRTimeout, SignalROuterTimeout);
 
-    internal static ResiliencePipeline CreateSignalRPipeline(ILogger logger, TimeSpan timeout)
+    internal static ResiliencePipeline CreateSignalRPipeline(ILogger logger, TimeSpan timeout, TimeSpan? outerTimeout = null)
     {
+        var outer = outerTimeout ?? SignalROuterTimeout;
+
         return new ResiliencePipelineBuilder()
+            // Outer timeout: caps total time including all retries.
+            .AddTimeout(outer)
             .AddRetry(new RetryStrategyOptions
             {
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
@@ -179,6 +204,7 @@ public static class ResiliencePipelineFactory
                     return ValueTask.CompletedTask;
                 }
             })
+            // Per-attempt timeout: caps each individual SignalR invocation.
             .AddTimeout(timeout)
             .Build();
     }
@@ -186,10 +212,15 @@ public static class ResiliencePipelineFactory
     /// <summary>
     /// Creates a resilience pipeline for GitLab API (NGitLab) read calls.
     /// Retries on transient errors (5xx, 408, 429, network) with exponential backoff + jitter.
+    /// Uses an outer timeout (default: 3 minutes) that caps the entire retry sequence,
+    /// and a per-attempt timeout (default: 30s) for individual API calls.
+    /// Pattern: outer timeout → retry → per-attempt timeout.
     /// </summary>
     public static ResiliencePipeline CreateGitLabApiPipeline(ILogger logger)
     {
         return new ResiliencePipelineBuilder()
+            // Outer timeout: caps total time including all retries.
+            .AddTimeout(GitLabOuterTimeout)
             .AddRetry(new RetryStrategyOptions
             {
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
@@ -207,6 +238,7 @@ public static class ResiliencePipelineFactory
                     return ValueTask.CompletedTask;
                 }
             })
+            // Per-attempt timeout: caps each individual GitLab API call.
             .AddTimeout(DefaultTimeout)
             .Build();
     }
@@ -214,12 +246,17 @@ public static class ResiliencePipelineFactory
     /// <summary>
     /// Creates a resilience pipeline for GitLab API write operations (safe-to-retry POST/PUT).
     /// Only retries on 5xx server errors (not 429/408) since write operations may not be idempotent for those.
+    /// Uses an outer timeout (default: 3 minutes) that caps the entire retry sequence,
+    /// and a per-attempt timeout (default: 30s) for individual API calls.
+    /// Pattern: outer timeout → retry → per-attempt timeout.
     /// </summary>
     public static ResiliencePipeline CreateGitLabWritePipeline(ILogger logger)
     {
         const int writeMaxRetryAttempts = 2;
 
         return new ResiliencePipelineBuilder()
+            // Outer timeout: caps total time including all retries.
+            .AddTimeout(GitLabOuterTimeout)
             .AddRetry(new RetryStrategyOptions
             {
                 MaxRetryAttempts = writeMaxRetryAttempts,
@@ -237,6 +274,7 @@ public static class ResiliencePipelineFactory
                     return ValueTask.CompletedTask;
                 }
             })
+            // Per-attempt timeout: caps each individual GitLab write call.
             .AddTimeout(DefaultTimeout)
             .Build();
     }

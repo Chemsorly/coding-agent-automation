@@ -8,17 +8,20 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Services;
 /// <summary>
 /// DB-backed implementation of <see cref="IActiveRunQueryService"/>.
 /// Queries WorkItems WHERE Status IN (Dispatched, Running) joined with PipelineRuns
-/// for display fields. Uses <c>AsNoTracking()</c> for read-only performance.
-/// Enables non-leader replicas to display current run state from Postgres
-/// without needing in-memory sync from the leader.
+/// for display fields. Enriches results with live in-memory state from
+/// <see cref="IOrchestratorRunService"/> for real-time step/agent updates.
 /// </summary>
 public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
 {
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
+    private readonly IOrchestratorRunService? _runService;
 
-    public PostgresActiveRunQueryService(IDbContextFactory<PipelineDbContext> dbFactory)
+    public PostgresActiveRunQueryService(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        IOrchestratorRunService? runService = null)
     {
         _dbFactory = dbFactory ?? throw new ArgumentNullException(nameof(dbFactory));
+        _runService = runService;
     }
 
     public async Task<IReadOnlyList<ActiveRunSummary>> GetActiveRunsAsync(CancellationToken ct = default)
@@ -63,6 +66,23 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
             ProjectName = r.ProjectName,
             CurrentStep = MapStatusToStep(r.Status)
         }).ToList();
+
+        // Enrich with live in-memory state (real-time step transitions, agent assignment)
+        if (_runService is not null)
+        {
+            for (var i = 0; i < summaries.Count; i++)
+            {
+                var liveRun = _runService.GetRun(summaries[i].RunId);
+                if (liveRun is null) continue;
+
+                summaries[i] = summaries[i] with
+                {
+                    CurrentStep = liveRun.CurrentStep,
+                    AgentId = summaries[i].AgentId ?? liveRun.AgentId,
+                    IssueTitle = !string.IsNullOrEmpty(liveRun.IssueTitle) ? liveRun.IssueTitle : summaries[i].IssueTitle
+                };
+            }
+        }
 
         return summaries;
     }

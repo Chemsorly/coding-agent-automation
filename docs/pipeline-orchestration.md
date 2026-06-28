@@ -8,6 +8,24 @@ The pipeline is a state machine that progresses through a fixed sequence of step
 
 All three workflows share the same dispatch mechanism, label lifecycle, and agent infrastructure.
 
+## Dispatch Modes
+
+The pipeline supports three dispatch modes, selected automatically based on configuration:
+
+| Mode | Trigger | Description |
+|------|---------|-------------|
+| **Legacy** | No `Database__ConnectionString` set | In-memory state + direct SignalR push. `AgentJobDispatcher` creates the PipelineRun and sends `JobAssignmentMessage` in one atomic operation. |
+| **DB+SignalR** | `Database__ConnectionString` set, no K8s | `DispatchOrchestrationService` prepares the request (creates PipelineRun, resolves providers, vends tokens), then `SignalRWorkDistributor` persists a WorkItem row and pushes via SignalR. |
+| **DB+Kubernetes** | `workDistribution.mode=Kubernetes` | Same orchestration, but `KubernetesWorkDistributor` creates a WorkItem row and a K8s Job picks it up. |
+
+In DB+SignalR mode, the dispatch chain ensures a single ID flows end-to-end:
+
+```
+PipelineRun.RunId (orchestration) = WorkItem.Id (DB) = JobAssignmentMessage.JobId (agent) = hub GetRun(jobId)
+```
+
+This ID alignment is critical — hub methods (`RequestTokenRefresh`, `ReportStepTransition`, `ReportJobCompleted`) look up the PipelineRun by the agent's `jobId`. If these don't match, the hub returns "No active run found".
+
 See also: [Configuration](configuration.md) for all pipeline settings, and [Issue Workflows](github-issue-workflows.md) for how users interact with the pipeline via labels.
 
 ```mermaid

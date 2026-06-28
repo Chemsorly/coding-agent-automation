@@ -324,7 +324,7 @@ if (queuedRuns.Count > 0)
             TemplateId = run.TemplateId,
             WorkspacePath = Path.Combine(pipelineConfig.WorkspaceBaseDirectory, "consolidation", run.RunId),
             RequiredLabels = run.QueuedRequiredLabels ?? [],
-            EnqueuedAt = new DateTimeOffset(run.StartedAtUtc, TimeSpan.Zero) // TODO: StartedAtUtc may deserialize with DateTimeKind.Unspecified; explicit UTC offset ensures correct semantics
+            EnqueuedAt = run.StartedAtUtc
         };
         consolidationQueue.EnqueueJob(job);
     }

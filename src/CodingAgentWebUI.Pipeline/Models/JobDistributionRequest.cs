@@ -115,4 +115,12 @@ public record JobDistributionRequest
 
     /// <summary>Source of decomposition request (e.g., epic issue URL).</summary>
     public string? DecompositionSource { get; init; }
+
+    /// <summary>
+    /// Pre-assigned run/job ID from orchestration. When set, the work distributor
+    /// should use this as the WorkItem ID instead of generating a new one.
+    /// This ensures the agent's jobId matches the in-memory PipelineRun.RunId
+    /// for hub method routing (token refresh, step transitions, etc.).
+    /// </summary>
+    public string? RunId { get; init; }
 }

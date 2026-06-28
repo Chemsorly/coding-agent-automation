@@ -41,6 +41,32 @@ The `docker-compose.yml` defines 8 services: 1 orchestrator + 2 Kiro .NET agents
 
 To add more agents, copy a service definition with a new name and volume — don't use `--scale` (each agent needs its own named volume to avoid SQLite corruption).
 
+### DB+SignalR Mode (Postgres)
+
+For persistent state across container restarts, use the Postgres overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build
+```
+
+This adds PostgreSQL (persistence) and Redis (SignalR backplane). The orchestrator stores all configuration, work items, and run history in Postgres instead of JSON files. The dispatch flow uses `SignalRWorkDistributor`: work items are tracked in DB rows while job delivery uses SignalR push to connected agents.
+
+After first start, import your pipeline configuration via **Settings → Data Management** using a JSON bundle file.
+
+**Key differences from JSON-file mode:**
+- Configuration stored in Postgres (tables: `ProviderConfigs`, `AgentProfiles`, `QualityGateConfigs`, `PipelineJobTemplates`, `Projects`)
+- Work items tracked in `WorkItems` table with lifecycle transitions (Pending → Dispatched → Running → Succeeded/Failed/Cancelled)
+- Active runs enriched from in-memory state for real-time UI updates (step transitions, output streaming)
+- Config changes take effect immediately (cache invalidated on import)
+
+**Environment variables (Postgres overlay):**
+
+| Variable | Description |
+|----------|-------------|
+| `Database__ConnectionString` | PostgreSQL connection string |
+| `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`) |
+| `SignalR__Redis__ConnectionString` | Redis connection string for SignalR backplane (optional for single instance) |
+
 ## Volume Mounts
 
 ### Orchestrator
@@ -138,6 +164,7 @@ The chart deploys:
 |------|-------------|
 | `orchestrator.image.repository/tag` | Orchestrator container image |
 | `orchestrator.persistence.type` | Storage backend: `pvc` (default), `hostPath`, or `emptyDir` |
+| `orchestrator.persistence.mountMode` | Config volume mount mode: `readWrite` (default), `readOnly` (migration source when database enabled), `disabled` (after migration complete) |
 | `agents[]` | List of agent definitions (name, image, labels, providerType) |
 | `agents[].providerType` | `kiro` or `opencode` — determines volume mount profile |
 | `agents[].labels` | Comma-separated routing labels (e.g., `kiro,dotnet,dotnet10`) |
@@ -147,6 +174,19 @@ The chart deploys:
 | `existingSecret` | Use a pre-existing K8s Secret instead of chart-managed one |
 | `otel.endpoint` | OTLP collector endpoint |
 | `orchestrator.ingress.enabled` | Enable Ingress for external access |
+| `database.enabled` | Enable PostgreSQL-backed persistence (default: `false`, uses JSON file store when disabled) |
+| `database.connectionString` | Direct connection string for external managed Postgres (RDS, CloudSQL, etc.) |
+| `database.auth.existingSecret` | Reference a K8s Secret containing key `connection-string` (recommended for production) |
+| `database.migrateOnStartup` | Apply EF Core migrations on orchestrator startup (default: `true`) |
+| `database.migrationJob.enabled` | Pre-install/pre-upgrade Helm hook Job for migrations (default: `true`) |
+| `workDistribution.mode` | Dispatch mode: `SignalR` (default, docker-compose compatible) or `Kubernetes` (K8s Job dispatch) |
+| `workDistribution.imageMapping` | Map of sorted agent labels → container image for K8s Job dispatch |
+| `workDistribution.jobResources` | Resource requests/limits for spawned agent Jobs |
+| `workDistribution.maxConcurrentPods` | Max concurrent pods per agent selector group |
+| `credentialPools.kiro` | List of PVC names for kiro agent credential data (DispatchService claims one per Job) |
+| `signalr.redis.enabled` | Enable Redis backplane for multi-replica orchestrator SignalR (default: `false`) |
+| `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
+| `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
 
 ### Scaling Agents
 

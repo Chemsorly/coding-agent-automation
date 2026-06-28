@@ -170,7 +170,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     {
         // No agents registered
         var svc = CreateService();
-        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow };
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow };
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
@@ -189,7 +189,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow, TemplateName = "Test" };
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow, TemplateName = "Test" };
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
@@ -212,7 +212,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             .ThrowsAsync(new InvalidOperationException("Connection lost"));
 
         var svc = CreateService();
-        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow };
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow };
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
@@ -256,7 +256,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService(config);
-        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.RefactoringDetection, TemplateId = "t1", StartedAtUtc = DateTime.UtcNow };
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.RefactoringDetection, TemplateId = "t1", StartedAtUtc = DateTimeOffset.UtcNow };
 
         await svc.TryDispatchAsync(run, ConsolidationRunType.RefactoringDetection, "t1", null, "/tmp", CancellationToken.None);
 
@@ -274,7 +274,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.HarnessSuggestions, StartedAtUtc = DateTime.UtcNow };
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.HarnessSuggestions, StartedAtUtc = DateTimeOffset.UtcNow };
 
         // Should succeed — null templateId means global scope, default labels
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.HarnessSuggestions, null, null, "/tmp", CancellationToken.None);
@@ -357,7 +357,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.HarnessSuggestions, StartedAtUtc = DateTime.UtcNow };
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.HarnessSuggestions, StartedAtUtc = DateTimeOffset.UtcNow };
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.HarnessSuggestions, null, null, "/tmp", CancellationToken.None);
 
@@ -386,7 +386,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow };
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow };
 
         await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
@@ -418,7 +418,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow };
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow };
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
@@ -449,7 +449,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 
         // Use a non-existent directory
         var svc = CreateService(runsDir: Path.Combine(_tempDir, "nonexistent"));
-        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow };
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow };
 
         await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
@@ -486,7 +486,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow };
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow };
 
         await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
@@ -510,7 +510,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow };
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow };
 
         // Should not throw
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);

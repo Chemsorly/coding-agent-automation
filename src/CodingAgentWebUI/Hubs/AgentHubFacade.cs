@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
+using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
@@ -21,6 +23,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
+    private readonly WorkItemTransitionService? _workItemTransition;
 
     public AgentHubFacade(
         AgentRegistryService registry,
@@ -29,7 +32,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
         JobQueueDrainService drainService,
         IPipelineRunHistoryService historyService,
         IConfigurationStore configStore,
-        IProviderFactory providerFactory)
+        IProviderFactory providerFactory,
+        WorkItemTransitionService? workItemTransition = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(runService);
@@ -46,6 +50,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _historyService = historyService;
         _configStore = configStore;
         _providerFactory = providerFactory;
+        _workItemTransition = workItemTransition;
     }
 
     // ── Registry operations ─────────────────────────────────────────────
@@ -79,6 +84,18 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public PipelineRun? GetRun(string jobId)
         => _runService.GetRun(jobId);
+
+    /// <inheritdoc />
+    public async Task TransitionWorkItemAsync(string jobId, WorkItemStatus status, CancellationToken ct)
+    {
+        if (_workItemTransition is null || !Guid.TryParse(jobId, out var workItemId))
+            return;
+
+        await _workItemTransition.TransitionAsync(workItemId, status, item =>
+        {
+            item.CompletedAt = DateTimeOffset.UtcNow;
+        }, ct);
+    }
 
     /// <inheritdoc />
     public void AddRun(PipelineRun run)

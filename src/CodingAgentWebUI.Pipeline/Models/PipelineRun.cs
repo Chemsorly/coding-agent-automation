@@ -66,7 +66,17 @@ public sealed class PipelineRun
     public required string IssueTitle { get; set; }
     public required string IssueProviderConfigId { get; init; }
     public required string RepoProviderConfigId { get; init; }
-    public PipelineStep CurrentStep { get; set; }
+
+    /// <summary>
+    /// Current pipeline step. Uses a volatile backing field to ensure cross-thread visibility
+    /// since this is read by HeartbeatMonitorService and written by SignalR hub methods.
+    /// </summary>
+    public PipelineStep CurrentStep
+    {
+        get => (PipelineStep)Volatile.Read(ref _currentStep);
+        set => Volatile.Write(ref _currentStep, (int)value);
+    }
+    private int _currentStep;
 
     /// <summary>Highest pipeline step ever reached during this run (excludes terminal states). Used by the sidebar to show revisited steps.</summary>
     public PipelineStep HighWaterMark { get; set; }
@@ -102,8 +112,17 @@ public sealed class PipelineRun
         CompletedAtOffset = timestamp;
     }
 
-    /// <summary>Last time the pipeline step changed (set via ReportStepTransition). Used by HeartbeatMonitorService to detect stuck-in-Busy agents.</summary>
-    public DateTimeOffset LastStepChangeAt { get; set; }
+    /// <summary>
+    /// Last time the pipeline step changed (set via ReportStepTransition).
+    /// Used by HeartbeatMonitorService to detect stuck-in-Busy agents.
+    /// Uses Interlocked on ticks for thread-safe reads/writes (DateTimeOffset is not atomic).
+    /// </summary>
+    public DateTimeOffset LastStepChangeAt
+    {
+        get => new DateTimeOffset(Interlocked.Read(ref _lastStepChangeAtTicks), TimeSpan.Zero);
+        set => Interlocked.Exchange(ref _lastStepChangeAtTicks, value.UtcTicks);
+    }
+    private long _lastStepChangeAtTicks;
 
     public string? WorkspacePath { get; set; }
     public string? BranchName { get; set; }
@@ -293,7 +312,7 @@ public sealed class PipelineRun
     public IReadOnlyList<LinkedIssueContext>? LinkedIssueContexts { get; init; }
 
     /// <summary>Which agent is executing this run, or null for test runs.</summary>
-    public string? AgentId { get; init; }
+    public string? AgentId { get; set; }
 
     /// <summary>Agent provider config ID used for this run, or null for test runs.</summary>
     public string? AgentProviderConfigId { get; init; }

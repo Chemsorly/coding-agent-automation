@@ -17,6 +17,9 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     /// <summary>Tracks the last resolved agent ID for revert on failure.</summary>
     private string? _lastResolvedAgentId;
 
+    /// <inheritdoc />
+    public string? LastResolvedAgentId => _lastResolvedAgentId;
+
     public SignalRWorkDistributorAgentResolver(
         AgentRegistryService registry,
         JobDispatcherService dispatcher)

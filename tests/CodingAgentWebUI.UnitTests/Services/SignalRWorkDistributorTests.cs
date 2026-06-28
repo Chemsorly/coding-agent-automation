@@ -50,6 +50,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _mockAgentComm.Object,
             transitionService,
             _mockResolver.Object,
+            new Mock<IOrchestratorRunService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance);
     }
 
@@ -477,6 +478,108 @@ public sealed class SignalRWorkDistributorTests : IDisposable
 
         // Assert
         stuckCount.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_WithRunId_UsesRunIdAsWorkItemId()
+    {
+        // Arrange: request has a pre-assigned RunId from DispatchOrchestrationService
+        var preAssignedRunId = Guid.NewGuid().ToString();
+        var request = CreateMinimalRequest() with { RunId = preAssignedRunId };
+        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns("conn-1");
+        _mockResolver.Setup(r => r.LastResolvedAgentId).Returns("agent-1");
+        _mockAgentComm
+            .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert: WorkItem ID matches the pre-assigned RunId
+        result.Success.Should().BeTrue();
+        result.WorkItemId.Should().Be(preAssignedRunId);
+
+        // Verify the DB row was created with the orchestration's RunId
+        await using var db = new InMemoryPipelineDbContext(_dbOptions);
+        var workItem = await db.WorkItems.FindAsync(Guid.Parse(preAssignedRunId));
+        workItem.Should().NotBeNull();
+        workItem!.Status.Should().Be(WorkItemStatus.Dispatched);
+
+        // Verify the JobAssignmentMessage sent to agent uses this same ID
+        _mockAgentComm.Verify(c => c.AssignJobAsync("conn-1",
+            It.Is<JobAssignmentMessage>(m => m.JobId == preAssignedRunId),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_WithRunId_UpdatesPipelineRunAgentId()
+    {
+        // Arrange: mock OrchestratorRunService with a run that has AgentId="pending"
+        var runId = Guid.NewGuid().ToString();
+        var mockRunService = new Mock<IOrchestratorRunService>();
+        var pipelineRun = PipelineRun.Create(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "pending");
+        mockRunService.Setup(r => r.GetRun(runId)).Returns(pipelineRun);
+
+        var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+        var sut = new SignalRWorkDistributor(
+            _dbFactory, _mockAgentComm.Object, transitionService,
+            _mockResolver.Object, mockRunService.Object,
+            NullLogger<SignalRWorkDistributor>.Instance);
+
+        var request = CreateMinimalRequest() with { RunId = runId };
+        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns("conn-1");
+        _mockResolver.Setup(r => r.LastResolvedAgentId).Returns("agent-dotnet-1");
+        _mockAgentComm
+            .Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert: PipelineRun.AgentId updated from "pending" to actual agent
+        result.Success.Should().BeTrue();
+        pipelineRun.AgentId.Should().Be("agent-dotnet-1");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_Success_SetsAssignedAgentIdOnWorkItemRow()
+    {
+        // Arrange
+        var request = CreateMinimalRequest() with { RunId = Guid.NewGuid().ToString() };
+        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns("conn-1");
+        _mockResolver.Setup(r => r.LastResolvedAgentId).Returns("agent-kiro-2");
+        _mockAgentComm
+            .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert: WorkItem row has AssignedAgentId set
+        result.Success.Should().BeTrue();
+        await using var db = new InMemoryPipelineDbContext(_dbOptions);
+        var workItem = await db.WorkItems.FindAsync(Guid.Parse(result.WorkItemId!));
+        workItem.Should().NotBeNull();
+        workItem!.AssignedAgentId.Should().Be("agent-kiro-2");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_WithoutRunId_GeneratesNewWorkItemId()
+    {
+        // Arrange: no RunId set (legacy path)
+        var request = CreateMinimalRequest(); // RunId is null
+        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns("conn-1");
+        _mockAgentComm
+            .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert: A new GUID was generated (not null, and it's a valid GUID)
+        result.Success.Should().BeTrue();
+        result.WorkItemId.Should().NotBeNullOrEmpty();
+        Guid.TryParse(result.WorkItemId, out _).Should().BeTrue();
     }
 
     private static JobDistributionRequest CreateMinimalRequest() => new()

@@ -74,7 +74,7 @@ public sealed class ConsolidationService : IConsolidationService
                 {
                     run.Status = ConsolidationRunStatus.Failed;
                     run.Summary = "Orphaned: application restarted before completion";
-                    run.CompletedAtUtc = DateTime.UtcNow;
+                    run.CompletedAtUtc = DateTimeOffset.UtcNow;
 
                     var updatedJson = JsonSerializer.Serialize(run, PipelineJsonOptions.Default);
                     await File.WriteAllTextAsync(file, updatedJson, ct);
@@ -126,7 +126,7 @@ public sealed class ConsolidationService : IConsolidationService
             Type = type,
             TemplateId = templateId,
             TemplateName = templateName,
-            StartedAtUtc = DateTime.UtcNow,
+            StartedAtUtc = DateTimeOffset.UtcNow,
             Status = ConsolidationRunStatus.Running
         };
 
@@ -309,7 +309,7 @@ public sealed class ConsolidationService : IConsolidationService
             // Update mutable fields
             run.Status = status;
             run.Summary = summary;
-            run.CompletedAtUtc = DateTime.UtcNow;
+            run.CompletedAtUtc = DateTimeOffset.UtcNow;
             run.TotalTokens = totalTokens;
 
             // Persist updated run
@@ -500,7 +500,7 @@ public sealed class ConsolidationService : IConsolidationService
 
             var allRuns = _runHistoryService.GetRunHistory();
             var feedbackEntries = allRuns
-                .Where(r => r.Feedback is not null && r.StartedAtOffset > new DateTimeOffset(sinceUtc, TimeSpan.Zero))
+                .Where(r => r.Feedback is not null && r.StartedAtOffset > sinceUtc)
                 .Select(r => r.Feedback!)
                 .ToList();
 
@@ -526,14 +526,14 @@ public sealed class ConsolidationService : IConsolidationService
 
     /// <summary>
     /// Determines the timestamp of the last successful harness suggestion run by scanning
-    /// persisted run files. Returns <see cref="DateTime.MinValue"/> if no prior run exists.
+    /// persisted run files. Returns <see cref="DateTimeOffset.MinValue"/> if no prior run exists.
     /// </summary>
-    internal async Task<DateTime> GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken ct = default)
+    internal async Task<DateTimeOffset> GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken ct = default)
     {
         if (!Directory.Exists(_consolidationRunsDirectory))
-            return DateTime.MinValue;
+            return DateTimeOffset.MinValue;
 
-        var latestCompletedUtc = DateTime.MinValue;
+        var latestCompletedUtc = DateTimeOffset.MinValue;
 
         foreach (var file in Directory.GetFiles(_consolidationRunsDirectory, "*.json"))
         {

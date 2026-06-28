@@ -300,15 +300,16 @@ public sealed class WorkItemAgentService : BackgroundService
         }
     }
 
-    private static string? SerializeResult(JobCompletionPayload? completion)
+    private string? SerializeResult(JobCompletionPayload? completion)
     {
         if (completion is null) return null;
         try
         {
             return JsonSerializer.Serialize(completion, PipelineJsonOptions.Default);
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.Warning(ex, "Failed to serialize JobCompletionPayload — result field will be omitted from terminal status");
             return null;
         }
     }

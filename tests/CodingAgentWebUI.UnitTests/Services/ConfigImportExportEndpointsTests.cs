@@ -5,8 +5,10 @@ using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Moq;
 
 namespace CodingAgentWebUI.UnitTests.Services;
 
@@ -148,7 +150,7 @@ public class ConfigImportExportEndpointsTests : IDisposable
         var file = CreateFormFile(bundleJson, "config.json");
 
         // Act
-        var result = await ConfigImportExportEndpoints.ImportConfigAsync(file, _dbFactory, CancellationToken.None);
+        var result = await ConfigImportExportEndpoints.ImportConfigAsync(file, _dbFactory, new Mock<IConfigurationStore>().Object, CancellationToken.None);
 
         // Assert
         var okResult = result as Microsoft.AspNetCore.Http.HttpResults.Ok<ImportExportResult>;
@@ -177,7 +179,7 @@ public class ConfigImportExportEndpointsTests : IDisposable
     {
         var file = CreateFormFile("not valid json {{{", "bad.json");
 
-        var result = await ConfigImportExportEndpoints.ImportConfigAsync(file, _dbFactory, CancellationToken.None);
+        var result = await ConfigImportExportEndpoints.ImportConfigAsync(file, _dbFactory, new Mock<IConfigurationStore>().Object, CancellationToken.None);
 
         var badRequest = result as Microsoft.AspNetCore.Http.HttpResults.BadRequest<ImportExportResult>;
         badRequest.Should().NotBeNull();

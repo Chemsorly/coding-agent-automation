@@ -113,7 +113,7 @@
                                         <text>#@run.IssueIdentifier @run.IssueTitle</text>
                                     }
                                 </td>
-                                <td title="@(run.AgentId ?? "local")">@(run.AgentId ?? "local")</td>
+                                <td title="@(run.AgentId ?? "—")">@(run.AgentId ?? "—")</td>
                                 <td>
                                     <span class="monitoring-step monitoring-step-@run.CurrentStep.ToString().ToLowerInvariant()">
                                         @run.CurrentStep.ToDisplayName()
@@ -122,20 +122,10 @@
                                 <td>@run.StartedAt.ToLocalTime().ToString("HH:mm:ss")</td>
                                 <td>@elapsed.ToString(@"hh\:mm\:ss")</td>
                                 <td>
-                                    @if (run.AgentId != null)
-                                    {
-                                        <button class="btn-cancel-small" @onclick:stopPropagation="true"
-                                                @onclick="() => CancelAgentRunById(run.RunId)">
-                                            Cancel
-                                        </button>
-                                    }
-                                    else
-                                    {
-                                        <button class="btn-cancel-small" @onclick:stopPropagation="true"
-                                                @onclick="CancelLocalRun">
-                                            Cancel
-                                        </button>
-                                    }
+                                    <button class="btn-cancel-small" @onclick:stopPropagation="true"
+                                            @onclick="() => CancelAgentRunById(run.RunId)">
+                                        Cancel
+                                    </button>
                                 </td>
                             </tr>
                         }
@@ -192,7 +182,7 @@
                                 @{
                                     var agentProviderConfig = ResolveProvider(modalRun.AgentProviderConfigId);
                                 }
-                                <div><strong>Agent:</strong> @(agentProviderConfig?.DisplayName ?? modalRun.AgentId ?? "local") (@(agentProviderConfig?.ProviderType ?? "—")) — Model: @(modalRun.ModelName ?? "—")</div>
+                                <div><strong>Agent:</strong> @(agentProviderConfig?.DisplayName ?? modalRun.AgentId ?? "—") (@(agentProviderConfig?.ProviderType ?? "—")) — Model: @(modalRun.ModelName ?? "—")</div>
                                 @if (modalRun.BrainProviderConfigId != null)
                                 {
                                     var brainConfig = ResolveProvider(modalRun.BrainProviderConfigId);
@@ -575,7 +565,7 @@
                                             <text>#@run.IssueIdentifier @run.IssueTitle</text>
                                         }
                                     </td>
-                                    <td>@(run.AgentId ?? "local")</td>
+                                    <td>@(run.AgentId ?? "—")</td>
                                     <td>
                                         <span class="step-badge step-@run.FinalStep.ToString().ToLowerInvariant()">
                                             @run.FinalStep.ToDisplayName()
@@ -641,7 +631,7 @@
                     </div>
                     <div><strong>Duration:</strong> @FormatDuration(_selectedHistoryRun.StartedAt, _selectedHistoryRun.CompletedAt)</div>
                     @* TODO: [UX-24] Add AgentProviderConfigId to PipelineRunSummary and resolve display name/type here *@
-                    <div><strong>Agent:</strong> @(_selectedHistoryRun.AgentId ?? "local")</div>
+                    <div><strong>Agent:</strong> @(_selectedHistoryRun.AgentId ?? "—")</div>
                     <div><strong>Initiated By:</strong> @_selectedHistoryRun.InitiatedBy</div>
                     @if (_selectedHistoryRun.RunType == PipelineRunType.Review)
                     {
@@ -967,7 +957,7 @@
     {
         var agent = run.AgentId is not null ? Registry.GetByAgentId(run.AgentId) : null;
 
-        // If agent not found (disconnected, never registered, null, or "local" placeholder),
+        // If agent not found (disconnected, never registered, or null),
         // fail the run directly — there's no agent to send CancelJob to.
         if (agent == null)
         {
@@ -1037,11 +1027,6 @@
             await HubContext.Clients.Client(agent.ConnectionId).CancelJob(run.RunId);
         }
         catch (Exception ex) { Log.Warning(ex, "Failed to cancel run {RunId} on agent {AgentId}", run.RunId, run.AgentId); }
-    }
-
-    private async Task CancelLocalRun()
-    {
-        await PipelineService.CancelPipelineAsync();
     }
 
     private async Task RemoveFromQueue(string issueIdentifier, string issueProviderId)

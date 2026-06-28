@@ -22,6 +22,7 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
     private readonly IAgentCommunication _agentComm;
     private readonly WorkItemTransitionService _transitionService;
     private readonly ISignalRWorkDistributorAgentResolver _agentResolver;
+    private readonly IOrchestratorRunService _runService;
     private readonly ILogger<SignalRWorkDistributor> _logger;
 
     /// <summary>Non-terminal statuses used for dedup queries.</summary>
@@ -37,12 +38,14 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
         IAgentCommunication agentComm,
         WorkItemTransitionService transitionService,
         ISignalRWorkDistributorAgentResolver agentResolver,
+        IOrchestratorRunService runService,
         ILogger<SignalRWorkDistributor> logger)
     {
         _dbFactory = dbFactory;
         _agentComm = agentComm;
         _transitionService = transitionService;
         _agentResolver = agentResolver;
+        _runService = runService;
         _logger = logger;
     }
 
@@ -51,7 +54,11 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var workItemId = Guid.NewGuid();
+        // Use orchestration-assigned RunId if available; otherwise generate a new ID.
+        // This ensures the agent's jobId matches the in-memory PipelineRun.RunId for hub routing.
+        var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedId)
+            ? parsedId
+            : Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
 
         // Serialize the request to JSONB payload
@@ -104,8 +111,30 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
                 return new DistributionResult(false, workItemId.ToString(), "No connected agent available");
             }
 
+            // Update the in-memory PipelineRun with the resolved agent ID
+            // so HeartbeatMonitor doesn't orphan it (it was created with agentId="pending")
+            var resolvedAgentId = _agentResolver.LastResolvedAgentId;
+            if (resolvedAgentId is not null && !string.IsNullOrEmpty(request.RunId))
+            {
+                var run = _runService.GetRun(request.RunId);
+                if (run is not null)
+                    run.AgentId = resolvedAgentId;
+            }
+
             var message = BuildJobAssignmentMessage(workItemId, request);
             await _agentComm.AssignJobAsync(connectionId, message, ct);
+
+            // Update WorkItem with the resolved agent ID for UI display
+            if (resolvedAgentId is not null)
+            {
+                await using var updateDb = await _dbFactory.CreateDbContextAsync(ct);
+                var workItem = await updateDb.WorkItems.FindAsync([workItemId], ct);
+                if (workItem is not null)
+                {
+                    workItem.AssignedAgentId = resolvedAgentId;
+                    await updateDb.SaveChangesAsync(ct);
+                }
+            }
 
             _logger.LogInformation(
                 "WorkItem {WorkItemId} pushed via SignalR to connection {ConnectionId}",

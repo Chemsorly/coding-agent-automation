@@ -20,6 +20,8 @@ Projects can override most general settings on a per-project basis using a nulla
 | `codeReview.maxIterations` | 2 | Max review → fix cycles |
 | `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion (CI runs automatically when a Pipeline Provider is configured on the job template) |
 | `externalCiPollInterval` | 00:00:30 | How often to poll external CI for status updates |
+| `ciNotStartedTimeout` | 00:05:00 | How long to wait for CI runs to appear before concluding CI never started. Triggers re-push instead of burning the full `externalCiTimeout` |
+| `ciNotStartedMaxRetries` | 5 | Max re-push retries when CI never starts (range: 0–20). Each retry creates an empty commit and force-pushes to re-trigger CI |
 | `acceptanceCriteriaEnabled` | true | Enable acceptance criteria compliance check (runs in parallel with code reviewers, produces structured JSON report) |
 | `blacklistedPaths` | .agent, .brain | Paths excluded from agent commits |
 
@@ -89,6 +91,26 @@ Templates are managed in the **Agent Coding** page. When creating or viewing a t
 ## Environment Variables
 
 These environment variables are used by the Docker containers:
+
+### Database (DB+SignalR Mode)
+
+| Variable | Description |
+|----------|-------------|
+| `Database__ConnectionString` | PostgreSQL connection string. When set, the orchestrator uses Postgres instead of JSON files for all configuration and work item persistence. |
+| `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`). Disable if using the Helm migration job. |
+
+### Config Import/Export
+
+In DB mode, pipeline configuration is managed via **Settings → Data Management**:
+
+- **Export** — Downloads the full configuration as a single JSON bundle (providers, profiles, quality gates, reviewers, projects, templates)
+- **Import** — Uploads a JSON bundle, clears existing config, and inserts from the bundle. Cache is invalidated immediately; UI refreshes automatically.
+
+The bundle format is a flat JSON object with arrays for each entity type. Provider configurations include their inner `configuration` JSON (serialized `ProviderConfig` with full settings including credentials).
+
+API endpoints:
+- `GET /api/config/export` — returns the bundle as `application/json`
+- `POST /api/config/import` — accepts multipart form upload of the bundle file
 
 ### Orchestrator
 

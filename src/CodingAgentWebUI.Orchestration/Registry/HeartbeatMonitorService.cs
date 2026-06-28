@@ -167,34 +167,36 @@ public sealed class HeartbeatMonitorService : BackgroundService
                     if (run is not null && run.LastStepChangeAt != default)
                     {
                         var progressTimeout = pipelineConfig.AgentBusyProgressTimeout;
-                        // TODO: Race condition — if ReportJobCompleted runs concurrently, the run may already be
-                        // completed/removed. Consider using RemoveRun first and acting only if non-null to avoid
-                        // potential duplicate history entries. (Matches existing Phase 1.5 accepted risk.)
                         var elapsed = now - run.LastStepChangeAt;
                         if (elapsed > progressTimeout)
                         {
-                            _logger.Warning(
-                                "Agent {AgentId} stuck in Busy: job {JobId} has not progressed for {Elapsed:F0}s (timeout={Timeout}). " +
-                                "Marking run as Failed and returning agent to Idle.",
-                                agent.AgentId, agent.ActiveJobId, elapsed.TotalSeconds, progressTimeout);
-
-                            run.FailureReason = $"Agent busy without progress for {elapsed.TotalMinutes:F0} minutes (progress timeout)";
-                            run.MarkCompleted();
-                            run.CurrentStep = PipelineStep.Failed;
-
-                            _historyService.AddRunToHistory(run);
-                            _runService.RemoveRun(agent.ActiveJobId);
-                            _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-
-                            await TrySwapLabelToErrorAsync(run, ct);
-
-                            lock (agent.SyncRoot)
+                            // Use RemoveRun as atomic claim — if another thread (ReportJobCompleted)
+                            // already removed it, we get null and skip duplicate processing.
+                            var claimedRun = _runService.RemoveRun(agent.ActiveJobId);
+                            if (claimedRun is not null)
                             {
-                                agent.ActiveJobId = null;
-                                agent.OrphanRestoredAt = null;
-                            }
+                                _logger.Warning(
+                                    "Agent {AgentId} stuck in Busy: job {JobId} has not progressed for {Elapsed:F0}s (timeout={Timeout}). " +
+                                    "Marking run as Failed and returning agent to Idle.",
+                                    agent.AgentId, agent.ActiveJobId, elapsed.TotalSeconds, progressTimeout);
 
-                            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                                claimedRun.FailureReason = $"Agent busy without progress for {elapsed.TotalMinutes:F0} minutes (progress timeout)";
+                                claimedRun.MarkCompleted();
+                                claimedRun.CurrentStep = PipelineStep.Failed;
+
+                                _historyService.AddRunToHistory(claimedRun);
+                                _dispatcher.MarkIssueComplete(claimedRun.IssueIdentifier, claimedRun.IssueProviderConfigId);
+
+                                await TrySwapLabelToErrorAsync(claimedRun, ct);
+
+                                lock (agent.SyncRoot)
+                                {
+                                    agent.ActiveJobId = null;
+                                    agent.OrphanRestoredAt = null;
+                                }
+
+                                _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                            }
                         }
                     }
                     else if (run is null)

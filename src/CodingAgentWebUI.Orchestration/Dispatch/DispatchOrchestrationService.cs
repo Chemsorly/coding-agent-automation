@@ -295,33 +295,31 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         CancellationToken ct)
     {
         var configs = new List<ProviderConfig>();
+        var store = _resolution.ConfigStore;
 
-        var repoConfigs = await _resolution.ConfigStore
-            .LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
-        if (repoConfig is not null)
-            configs.Add(repoConfig);
+        var repoConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+        var repoConfig = await ProviderConfigResolver.ResolveAsync(
+            store, repoProviderId, ProviderKind.Repository, repoConfigs, required: true, _logger, ct);
+        configs.Add(repoConfig!);
 
-        var agentConfigs = await _resolution.ConfigStore
-            .LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-        var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == agentProviderId);
-        if (agentConfig is not null)
-            configs.Add(agentConfig);
+        var agentConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
+        var agentConfig = await ProviderConfigResolver.ResolveAsync(
+            store, agentProviderId, ProviderKind.Agent, agentConfigs, required: true, _logger, ct);
+        configs.Add(agentConfig!);
 
         if (!string.IsNullOrEmpty(brainProviderId))
         {
-            var brainConfig = repoConfigs
-                .FirstOrDefault(c => c.Id == brainProviderId);
+            var brainConfig = await ProviderConfigResolver.ResolveAsync(
+                store, brainProviderId, ProviderKind.Repository, repoConfigs, required: false, _logger, ct);
             if (brainConfig is not null)
                 configs.Add(brainConfig);
         }
 
         if (!string.IsNullOrEmpty(pipelineProviderId))
         {
-            var pipelineConfigs = await _resolution.ConfigStore
-                .LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
-            var pipelineConfig = pipelineConfigs
-                .FirstOrDefault(c => c.Id == pipelineProviderId);
+            var pipelineConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
+            var pipelineConfig = await ProviderConfigResolver.ResolveAsync(
+                store, pipelineProviderId, ProviderKind.Pipeline, pipelineConfigs, required: false, _logger, ct);
             if (pipelineConfig is not null)
                 configs.Add(pipelineConfig);
         }
@@ -517,7 +515,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             QualityGateConfigs = result.QualityGateConfigs,
             ReviewerConfigs = result.ReviewerConfigs,
             McpServers = result.McpServers,
-            TraceContext = result.TraceContext
+            TraceContext = result.TraceContext,
+            RunId = result.CreatedRun.RunId
         };
     }
 

@@ -97,7 +97,8 @@ public static class WorkDistributionRegistration
 
         // ── IActiveRunQueryService (DB mode — queries Postgres for active run state) ──
         services.AddSingleton<IActiveRunQueryService>(sp => new PostgresActiveRunQueryService(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<IOrchestratorRunService>()));
 
         // ── DispatchOrchestrationService (DB modes only — null in Legacy mode) ──
         services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
@@ -217,6 +218,7 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IAgentCommunication>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>()));
 
         // HeartbeatMonitorService remains registered (handled by AddOrchestrationServices)

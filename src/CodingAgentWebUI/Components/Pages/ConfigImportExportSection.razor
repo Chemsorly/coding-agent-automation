@@ -63,6 +63,9 @@
     [Parameter]
     public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
+    [Parameter]
+    public EventCallback OnImportCompleted { get; set; }
+
     private IBrowserFile? _selectedFile;
     private bool _loading;
     private string? _resultMessage;
@@ -204,6 +207,7 @@
                              $"{bundle.Projects?.Count ?? 0} projects, " +
                              $"{bundle.JobTemplates?.Count ?? 0} templates";
             await OnShowStatus.InvokeAsync((_resultMessage, false));
+            await OnImportCompleted.InvokeAsync();
         }
         catch (JsonException ex)
         {

@@ -3,6 +3,7 @@ using System.Text.Json;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -109,6 +110,19 @@ public sealed partial class AgentHub
             // Persist to history and remove from active runs
             _facade.AddRunToHistory(run);
             _facade.RemoveRun(jobId);
+
+            // Transition the WorkItem row in Postgres (DB+SignalR mode)
+            var workItemStatus = payload.FinalStep == PipelineStep.Completed
+                ? WorkItemStatus.Succeeded
+                : WorkItemStatus.Failed;
+            try
+            {
+                await _facade.TransitionWorkItemAsync(jobId, workItemStatus, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to transition WorkItem {JobId} to {Status}", jobId, workItemStatus);
+            }
 
             _logger.Information(
                 "Job {JobId} completed: step={FinalStep}, PR={PullRequestUrl}",

@@ -109,7 +109,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         run.TemplateId.Should().Be("tmpl-1");
         run.TemplateName.Should().Be("DotNet Repo");
         run.RunId.Should().NotBeNullOrEmpty();
-        run.StartedAtUtc.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
+        run.StartedAtUtc.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -214,7 +214,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         updated.Status.Should().Be(ConsolidationRunStatus.Succeeded);
         updated.Summary.Should().Be("All done");
         updated.CompletedAtUtc.Should().NotBeNull();
-        updated.CompletedAtUtc!.Value.Should().BeCloseTo(DateTime.UtcNow, TimeSpan.FromSeconds(5));
+        updated.CompletedAtUtc!.Value.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
     }
 
     [Fact]
@@ -461,7 +461,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         var result = await sut.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
 
         // Assert
-        result.Should().Be(DateTime.MinValue);
+        result.Should().Be(DateTimeOffset.MinValue);
     }
 
     [Fact]
@@ -470,23 +470,23 @@ public sealed class ConsolidationServiceTests : IDisposable
         // Arrange
         var sut = CreateSut();
         Directory.CreateDirectory(_runsDir);
-        WriteConsolidationRunFile("run-1", ConsolidationRunType.HarnessSuggestions, ConsolidationRunStatus.Failed, DateTime.UtcNow);
+        WriteConsolidationRunFile("run-1", ConsolidationRunType.HarnessSuggestions, ConsolidationRunStatus.Failed, DateTimeOffset.UtcNow);
 
         // Act
         var result = await sut.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
 
         // Assert
-        result.Should().Be(DateTime.MinValue);
+        result.Should().Be(DateTimeOffset.MinValue);
     }
 
-    private void WriteConsolidationRunFile(string runId, ConsolidationRunType type, ConsolidationRunStatus status, DateTime? completedAtUtc)
+    private void WriteConsolidationRunFile(string runId, ConsolidationRunType type, ConsolidationRunStatus status, DateTimeOffset? completedAtUtc)
     {
         var json = System.Text.Json.JsonSerializer.Serialize(new
         {
             runId,
             type = type.ToString(),
             status = status.ToString(),
-            startedAtUtc = DateTime.UtcNow.AddHours(-1),
+            startedAtUtc = DateTimeOffset.UtcNow.AddHours(-1),
             completedAtUtc
         }, new System.Text.Json.JsonSerializerOptions
         {

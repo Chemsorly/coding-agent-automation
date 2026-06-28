@@ -107,6 +107,8 @@ public sealed class HubConnectionManager : IAsyncDisposable
             })
             .AddMessagePackProtocol()
             .WithAutomaticReconnect(new InfiniteRetryPolicy())
+            .WithServerTimeout(TimeSpan.FromSeconds(60))
+            .WithKeepAliveInterval(TimeSpan.FromSeconds(15))
             .Build();
 
         // Wire up connection lifecycle events
