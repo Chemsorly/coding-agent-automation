@@ -2,24 +2,48 @@ using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Polly;
+using Polly.Registry;
 
 namespace CodingAgentWebUI.Infrastructure.Persistence.Services;
 
 /// <summary>
 /// Handles optimistic concurrency conflicts on WorkItem status updates.
 /// Uses IDbContextFactory for singleton-safe context creation (compatible with BackgroundServices).
+/// Wraps DB operations with a Polly resilience pipeline for transient fault tolerance.
 /// </summary>
 public sealed class WorkItemTransitionService
 {
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly ILogger<WorkItemTransitionService> _logger;
+    private readonly ResiliencePipeline? _resiliencePipeline;
+
+    /// <summary>
+    /// Well-known pipeline key for DB background operations (matches WorkDistributionRegistration).
+    /// </summary>
+    internal const string DbBackgroundPipelineKey = "db-background";
 
     public WorkItemTransitionService(
         IDbContextFactory<PipelineDbContext> dbFactory,
-        ILogger<WorkItemTransitionService> logger)
+        ILogger<WorkItemTransitionService> logger,
+        ResiliencePipelineProvider<string>? pipelineProvider = null)
     {
         _dbFactory = dbFactory;
         _logger = logger;
+
+        // Optional: if Polly pipelines are registered (DB mode), use them for transient fault retry.
+        if (pipelineProvider is not null)
+        {
+            try
+            {
+                _resiliencePipeline = pipelineProvider.GetPipeline(DbBackgroundPipelineKey);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to resolve resilience pipeline '{Key}', operating without retry protection",
+                    DbBackgroundPipelineKey);
+            }
+        }
     }
 
     /// <summary>
@@ -37,6 +61,21 @@ public sealed class WorkItemTransitionService
         Guid workItemId, WorkItemStatus target,
         Action<WorkItemEntity>? mutate = null,
         CancellationToken ct = default, int maxRetries = 3)
+    {
+        if (_resiliencePipeline is not null)
+        {
+            return await _resiliencePipeline.ExecuteAsync(
+                async token => await TransitionCoreAsync(workItemId, target, mutate, token, maxRetries),
+                ct);
+        }
+
+        return await TransitionCoreAsync(workItemId, target, mutate, ct, maxRetries);
+    }
+
+    private async Task<bool> TransitionCoreAsync(
+        Guid workItemId, WorkItemStatus target,
+        Action<WorkItemEntity>? mutate,
+        CancellationToken ct, int maxRetries)
     {
         for (int attempt = 0; attempt <= maxRetries; attempt++)
         {

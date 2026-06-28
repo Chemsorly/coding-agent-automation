@@ -65,7 +65,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     {
         // Arrange
         var request = CreateMinimalRequest();
-        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns("conn-1");
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-1", "agent-1"));
         _mockAgentComm
             .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -92,7 +92,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     {
         // Arrange
         var request = CreateMinimalRequest();
-        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns((string?)null);
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns((AgentResolveResult?)null);
 
         // Act
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
@@ -115,7 +115,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     {
         // Arrange
         var request = CreateMinimalRequest();
-        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns("conn-1");
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-1", "agent-1"));
         _mockAgentComm
             .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Connection lost"));
@@ -486,8 +486,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         // Arrange: request has a pre-assigned RunId from DispatchOrchestrationService
         var preAssignedRunId = Guid.NewGuid().ToString();
         var request = CreateMinimalRequest() with { RunId = preAssignedRunId };
-        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns("conn-1");
-        _mockResolver.Setup(r => r.LastResolvedAgentId).Returns("agent-1");
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-1", "agent-1"));
         _mockAgentComm
             .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -527,8 +526,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             NullLogger<SignalRWorkDistributor>.Instance);
 
         var request = CreateMinimalRequest() with { RunId = runId };
-        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns("conn-1");
-        _mockResolver.Setup(r => r.LastResolvedAgentId).Returns("agent-dotnet-1");
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-1", "agent-dotnet-1"));
         _mockAgentComm
             .Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -546,8 +544,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     {
         // Arrange
         var request = CreateMinimalRequest() with { RunId = Guid.NewGuid().ToString() };
-        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns("conn-1");
-        _mockResolver.Setup(r => r.LastResolvedAgentId).Returns("agent-kiro-2");
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-1", "agent-kiro-2"));
         _mockAgentComm
             .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -568,7 +565,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     {
         // Arrange: no RunId set (legacy path)
         var request = CreateMinimalRequest(); // RunId is null
-        _mockResolver.Setup(r => r.ResolveConnectionId(It.IsAny<string>())).Returns("conn-1");
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-1", "agent-1"));
         _mockAgentComm
             .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);

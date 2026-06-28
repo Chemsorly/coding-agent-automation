@@ -1,6 +1,13 @@
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
+/// Result of a successful agent resolution. Carries both the connection ID (for SignalR push)
+/// and the agent ID (for DB tracking and failure rollback) as an atomic unit.
+/// This eliminates the thread-safety issue of storing "last resolved" in a shared field.
+/// </summary>
+public sealed record AgentResolveResult(string ConnectionId, string AgentId);
+
+/// <summary>
 /// Resolves the SignalR connection ID for an agent matching the given selector labels.
 /// Implemented by the WebUI project using <see cref="Registry.AgentRegistryService"/>
 /// and <see cref="JobDispatcherService"/> to select and reserve an idle, label-compatible agent.
@@ -16,9 +23,19 @@ public interface ISignalRWorkDistributorAgentResolver
     string? ResolveConnectionId(string agentSelector);
 
     /// <summary>
+    /// Resolves a suitable agent and returns both connection ID and agent ID atomically.
+    /// Returns <c>null</c> if no compatible idle agent is available.
+    /// The selected agent is atomically reserved (set to Busy).
+    /// Thread-safe: no shared mutable state — result is returned to the caller.
+    /// </summary>
+    /// <param name="agentSelector">Sorted comma-joined agent labels (e.g., "dotnet,kiro").</param>
+    AgentResolveResult? ResolveAgent(string agentSelector);
+
+    /// <summary>
     /// Returns the agent ID from the last <see cref="ResolveConnectionId"/> call.
     /// Used to set AssignedAgentId on WorkItems after successful dispatch.
     /// </summary>
+    [Obsolete("Use ResolveAgent() which returns AgentResolveResult. This property is not thread-safe.")]
     string? LastResolvedAgentId { get; }
 
     /// <summary>
@@ -26,5 +43,15 @@ public interface ISignalRWorkDistributorAgentResolver
     /// Call this when SignalR push fails after reservation to prevent the agent
     /// from being permanently stuck in Busy state.
     /// </summary>
+    [Obsolete("Use ReleaseAgent(string agentId) for thread-safe release.")]
     void ReleaseLastResolvedAgent();
+
+    /// <summary>
+    /// Reverts a specific agent back to Idle status.
+    /// Call this when SignalR push fails after reservation to prevent the agent
+    /// from being permanently stuck in Busy state.
+    /// Thread-safe: operates on the explicit agent ID, not shared state.
+    /// </summary>
+    /// <param name="agentId">The agent ID to release (from <see cref="AgentResolveResult.AgentId"/>).</param>
+    void ReleaseAgent(string agentId);
 }

@@ -14,7 +14,7 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     private readonly AgentRegistryService _registry;
     private readonly JobDispatcherService _dispatcher;
 
-    /// <summary>Tracks the last resolved agent ID for revert on failure.</summary>
+    /// <summary>Tracks the last resolved agent ID for revert on failure (legacy, not thread-safe).</summary>
     private string? _lastResolvedAgentId;
 
     /// <inheritdoc />
@@ -34,13 +34,23 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     /// <inheritdoc />
     public string? ResolveConnectionId(string agentSelector)
     {
+        var result = ResolveAgent(agentSelector);
+        _lastResolvedAgentId = result?.AgentId;
+        return result?.ConnectionId;
+    }
+
+    /// <inheritdoc />
+    public AgentResolveResult? ResolveAgent(string agentSelector)
+    {
         var requiredLabels = string.IsNullOrWhiteSpace(agentSelector)
             ? (IReadOnlyList<string>)Array.Empty<string>()
             : agentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         var agent = _dispatcher.SelectAgent(requiredLabels);
-        _lastResolvedAgentId = agent?.AgentId;
-        return agent?.ConnectionId;
+        if (agent is null)
+            return null;
+
+        return new AgentResolveResult(agent.ConnectionId, agent.AgentId);
     }
 
     /// <inheritdoc />
@@ -50,6 +60,13 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
         if (agentId is null) return;
 
         _lastResolvedAgentId = null;
+        _registry.TransitionStatus(agentId, AgentStatus.Idle);
+    }
+
+    /// <inheritdoc />
+    public void ReleaseAgent(string agentId)
+    {
+        ArgumentNullException.ThrowIfNull(agentId);
         _registry.TransitionStatus(agentId, AgentStatus.Idle);
     }
 }

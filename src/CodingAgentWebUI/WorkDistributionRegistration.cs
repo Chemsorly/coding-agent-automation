@@ -13,9 +13,11 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using k8s;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Resilience;
 using Polly;
 using Polly.CircuitBreaker;
+using Polly.Registry;
 using Polly.Retry;
 using Serilog;
 
@@ -92,8 +94,11 @@ public static class WorkDistributionRegistration
         // ── Distributed lock provider (Postgres advisory locks) ─────────────
         services.AddDistributedLockProvider(connectionString);
 
-        // ── WorkItemTransitionService (singleton, uses factory) ──────────────
-        services.AddSingleton<WorkItemTransitionService>();
+        // ── WorkItemTransitionService (singleton, uses factory + Polly pipeline) ──────────────
+        services.AddSingleton<WorkItemTransitionService>(sp => new WorkItemTransitionService(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger<WorkItemTransitionService>(),
+            sp.GetService<ResiliencePipelineProvider<string>>()));
 
         // ── IActiveRunQueryService (DB mode — queries Postgres for active run state) ──
         services.AddSingleton<IActiveRunQueryService>(sp => new PostgresActiveRunQueryService(

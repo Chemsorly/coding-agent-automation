@@ -91,10 +91,26 @@ public sealed class AgentHubFacade : IAgentHubFacade
         if (_workItemTransition is null || !Guid.TryParse(jobId, out var workItemId))
             return;
 
-        await _workItemTransition.TransitionAsync(workItemId, status, item =>
+        // Retry with short backoff — this is the only opportunity to record the correct
+        // terminal status. If all retries fail, ReconciliationService will eventually
+        // mark it Failed (which may be incorrect if the agent actually succeeded).
+        const int maxAttempts = 3;
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
         {
-            item.CompletedAt = DateTimeOffset.UtcNow;
-        }, ct);
+            try
+            {
+                await _workItemTransition.TransitionAsync(workItemId, status, item =>
+                {
+                    item.CompletedAt = DateTimeOffset.UtcNow;
+                }, ct);
+                return; // Success
+            }
+            catch (Exception) when (attempt < maxAttempts - 1)
+            {
+                // Brief backoff before retry (500ms, 1000ms)
+                await Task.Delay(TimeSpan.FromMilliseconds(500 * (attempt + 1)), ct);
+            }
+        }
     }
 
     /// <inheritdoc />

@@ -101,20 +101,22 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             workItemId, request.IssueIdentifier);
 
         // Resolve agent connection and push via SignalR
+        var resolveResult = _agentResolver.ResolveAgent(request.AgentSelector);
+        if (resolveResult is null)
+        {
+            // No connected agent — mark as Failed
+            await TransitionToFailed(workItemId, "No connected agent found for selector: " + request.AgentSelector, ct);
+            return new DistributionResult(false, workItemId.ToString(), "No connected agent available");
+        }
+
+        var connectionId = resolveResult.ConnectionId;
+        var resolvedAgentId = resolveResult.AgentId;
+
         try
         {
-            var connectionId = _agentResolver.ResolveConnectionId(request.AgentSelector);
-            if (connectionId is null)
-            {
-                // No connected agent — mark as Failed
-                await TransitionToFailed(workItemId, "No connected agent found for selector: " + request.AgentSelector, ct);
-                return new DistributionResult(false, workItemId.ToString(), "No connected agent available");
-            }
-
             // Update the in-memory PipelineRun with the resolved agent ID
             // so HeartbeatMonitor doesn't orphan it (it was created with agentId="pending")
-            var resolvedAgentId = _agentResolver.LastResolvedAgentId;
-            if (resolvedAgentId is not null && !string.IsNullOrEmpty(request.RunId))
+            if (!string.IsNullOrEmpty(request.RunId))
             {
                 var run = _runService.GetRun(request.RunId);
                 if (run is not null)
@@ -125,15 +127,12 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             await _agentComm.AssignJobAsync(connectionId, message, ct);
 
             // Update WorkItem with the resolved agent ID for UI display
-            if (resolvedAgentId is not null)
+            await using var updateDb = await _dbFactory.CreateDbContextAsync(ct);
+            var workItem = await updateDb.WorkItems.FindAsync([workItemId], ct);
+            if (workItem is not null)
             {
-                await using var updateDb = await _dbFactory.CreateDbContextAsync(ct);
-                var workItem = await updateDb.WorkItems.FindAsync([workItemId], ct);
-                if (workItem is not null)
-                {
-                    workItem.AssignedAgentId = resolvedAgentId;
-                    await updateDb.SaveChangesAsync(ct);
-                }
+                workItem.AssignedAgentId = resolvedAgentId;
+                await updateDb.SaveChangesAsync(ct);
             }
 
             _logger.LogInformation(
@@ -148,8 +147,9 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
                 "SignalR delivery failed for WorkItem {WorkItemId}, transitioning to Failed",
                 workItemId);
 
-            // Revert agent Busy status — agent never received the job
-            _agentResolver.ReleaseLastResolvedAgent();
+            // Revert agent Busy status — agent never received the job.
+            // Thread-safe: uses explicit agent ID from the local resolveResult, not shared state.
+            _agentResolver.ReleaseAgent(resolvedAgentId);
 
             await TransitionToFailed(workItemId, $"SignalR delivery failure: {ex.Message}", ct);
             return new DistributionResult(false, workItemId.ToString(), $"SignalR delivery failed: {ex.Message}");
