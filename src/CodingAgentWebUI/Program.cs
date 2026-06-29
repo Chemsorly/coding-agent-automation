@@ -53,17 +53,17 @@ if (args.Length >= 1 && args[0] == "export-config")
         .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
         .CreateLogger();
 
-    var connectionString = Environment.GetEnvironmentVariable("Database__ConnectionString")
-        ?? new ConfigurationBuilder()
-            .AddJsonFile("appsettings.json", optional: true)
-            .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"}.json", optional: true)
-            .AddEnvironmentVariables()
-            .Build()
-            .GetValue<string>("Database:ConnectionString");
+    var exportConfig = new ConfigurationBuilder()
+        .AddJsonFile("appsettings.json", optional: true)
+        .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"}.json", optional: true)
+        .AddEnvironmentVariables()
+        .Build();
+
+    var connectionString = CodingAgentWebUI.Services.DatabaseConnectionResolver.Resolve(exportConfig);
 
     if (string.IsNullOrWhiteSpace(connectionString))
     {
-        Log.Error("export-config requires Database:ConnectionString to be configured");
+        Log.Error("export-config requires Database:Host to be configured");
         return;
     }
 
@@ -97,7 +97,7 @@ var configStore = new JsonConfigurationStore(PipelineConstants.ConfigBaseDirecto
 var pipelineConfig = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
 
 // Domain service registrations (extracted into focused extension methods)
-var dbConnectionString = builder.Configuration.GetValue<string>("Database:ConnectionString");
+var dbConnectionString = CodingAgentWebUI.Services.DatabaseConnectionResolver.Resolve(builder.Configuration);
 builder.Services.AddSingleton(new CodingAgentWebUI.Services.FeatureFlags
 {
     IsDatabaseMode = !string.IsNullOrEmpty(dbConnectionString)

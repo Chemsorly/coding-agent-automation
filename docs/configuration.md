@@ -96,7 +96,11 @@ These environment variables are used by the Docker containers:
 
 | Variable | Description |
 |----------|-------------|
-| `Database__ConnectionString` | PostgreSQL connection string. When set, the orchestrator uses Postgres instead of JSON files for all configuration and work item persistence. |
+| `Database__Host` | PostgreSQL hostname. When set, the orchestrator uses Postgres instead of JSON files for all configuration and work item persistence. |
+| `Database__Port` | PostgreSQL port (default: `5432`) |
+| `Database__Username` | PostgreSQL username (default: `postgres`) |
+| `Database__Password` | PostgreSQL password |
+| `Database__Name` | PostgreSQL database name (default: `coding_agent_automation`) |
 | `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`). Disable if using the Helm migration job. |
 
 ### Config Import/Export

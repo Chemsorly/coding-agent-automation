@@ -42,7 +42,8 @@ PostgreSQL deployed as subchart:
 {{- else }}
 External PostgreSQL configured via:
 {{- if .Values.database.auth.existingSecret }}
-  Secret: {{ .Values.database.auth.existingSecret }} (key: connection-string)
+  Secret: {{ .Values.database.auth.existingSecret }} (keys: {{ .Values.database.auth.keys.username }}, {{ .Values.database.auth.keys.password }}, {{ .Values.database.auth.keys.database }})
+  Host: {{ .Values.database.host }}:{{ .Values.database.port | default 5432 }}
 {{- else }}
   Connection string in values or {{ include "coding-agent-automation.fullname" . }}-db Secret
 {{- end }}

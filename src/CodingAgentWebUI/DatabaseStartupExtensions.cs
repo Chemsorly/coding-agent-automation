@@ -20,7 +20,7 @@ public static class DatabaseStartupExtensions
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = configuration.GetValue<string>("Database:ConnectionString");
+        var connectionString = Services.DatabaseConnectionResolver.Resolve(configuration);
         if (string.IsNullOrEmpty(connectionString))
             return services; // Legacy mode — no DB health monitoring needed
 
@@ -50,7 +50,7 @@ public static class DatabaseStartupExtensions
     /// </summary>
     public static async Task InitializeDatabaseAsync(this WebApplication app)
     {
-        var connectionString = app.Configuration.GetValue<string>("Database:ConnectionString");
+        var connectionString = Services.DatabaseConnectionResolver.Resolve(app.Configuration);
         if (string.IsNullOrEmpty(connectionString))
             return; // Legacy mode — nothing to initialize
 

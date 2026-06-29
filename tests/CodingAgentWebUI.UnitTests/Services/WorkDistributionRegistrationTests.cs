@@ -27,7 +27,8 @@ public class WorkDistributionRegistrationTests
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Database:ConnectionString"] = "Host=localhost;Database=test",
+                ["Database:Host"] = "localhost",
+                ["Database:Name"] = "test",
                 ["WorkDistribution:Mode"] = invalidMode,
             })
             .Build();
@@ -57,7 +58,8 @@ public class WorkDistributionRegistrationTests
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Database:ConnectionString"] = "Host=localhost;Database=test",
+                ["Database:Host"] = "localhost",
+                ["Database:Name"] = "test",
                 ["WorkDistribution:Mode"] = "Kubernetes",
             })
             .Build();
@@ -92,7 +94,8 @@ public class WorkDistributionRegistrationTests
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Database:ConnectionString"] = "Host=localhost;Database=test",
+                ["Database:Host"] = "localhost",
+                ["Database:Name"] = "test",
                 ["WorkDistribution:Mode"] = "SignalR",
             })
             .Build();

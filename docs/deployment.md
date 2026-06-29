@@ -63,7 +63,11 @@ After first start, import your pipeline configuration via **Settings → Data Ma
 
 | Variable | Description |
 |----------|-------------|
-| `Database__ConnectionString` | PostgreSQL connection string |
+| `Database__Host` | PostgreSQL hostname |
+| `Database__Port` | PostgreSQL port (default: `5432`) |
+| `Database__Username` | PostgreSQL username |
+| `Database__Password` | PostgreSQL password |
+| `Database__Name` | PostgreSQL database name |
 | `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`) |
 | `SignalR__Redis__ConnectionString` | Redis connection string for SignalR backplane (optional for single instance) |
 
@@ -175,8 +179,9 @@ The chart deploys:
 | `otel.endpoint` | OTLP collector endpoint |
 | `orchestrator.ingress.enabled` | Enable Ingress for external access |
 | `database.enabled` | Enable PostgreSQL-backed persistence (default: `false`, uses JSON file store when disabled) |
-| `database.connectionString` | Direct connection string for external managed Postgres (RDS, CloudSQL, etc.) |
-| `database.auth.existingSecret` | Reference a K8s Secret containing key `connection-string` (recommended for production) |
+| `database.host` | PostgreSQL hostname (required when database enabled) |
+| `database.port` | PostgreSQL port (default: `5432`) |
+| `database.auth.existingSecret` | K8s Secret containing database credentials (keys: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) |
 | `database.migrateOnStartup` | Apply EF Core migrations on orchestrator startup (default: `true`) |
 | `database.migrationJob.enabled` | Pre-install/pre-upgrade Helm hook Job for migrations (default: `true`) |
 | `workDistribution.mode` | Dispatch mode: `SignalR` (default, docker-compose compatible) or `Kubernetes` (K8s Job dispatch) |
