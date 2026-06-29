@@ -43,6 +43,11 @@ orchestrator:
       # for topology-aware provisioning (PVC provisioned on same node as pod).
       storageClassName: ""
       size: 5Gi
+    # Controls how the legacy pipeline-config volume is mounted.
+    # readWrite  — default, current behavior (read+write to JSON config files)
+    # readOnly   — migration source when database.enabled: true (mount at /app/config/pipeline read-only)
+    # disabled   — no mount (after migration is confirmed complete)
+    mountMode: readWrite
   probes:
     liveness:
       path: /healthz
@@ -169,3 +174,86 @@ serviceAccount:
   automountServiceAccountToken: false
   annotations: {}
   name: ""
+
+# ── Database (PostgreSQL) ────────────────────────────────────────────────────
+
+database:
+  # Enable PostgreSQL-backed persistence. When false, system uses JSON file store (current behavior).
+  enabled: false
+  # Direct connection string for external managed Postgres (RDS, CloudSQL).
+  # Operators deploy PostgreSQL independently and provide the connection string here.
+  connectionString: ""
+  # Reference a pre-created K8s Secret containing key "connection-string".
+  # Recommended for production over plaintext connectionString.
+  auth:
+    existingSecret: ""
+  # Apply EF Core migrations on orchestrator startup (dev/single-instance mode).
+  # In production multi-replica mode, set to false and use migrationJob instead.
+  migrateOnStartup: true
+  # Pre-install/pre-upgrade Helm hook Job that runs EF Core migrations before new pods roll out.
+  migrationJob:
+    enabled: true
+
+# ── Work Distribution ────────────────────────────────────────────────────────
+
+workDistribution:
+  # Mode: SignalR (default, docker-compose compatible) or Kubernetes (K8s Job dispatch).
+  mode: SignalR
+  # DispatchService settings (Kubernetes mode only)
+  dispatch:
+    intervalSeconds: 10
+    rateLimitPerSecond: 10
+  # ReconciliationService settings (Kubernetes mode only)
+  reconciliation:
+    intervalSeconds: 30
+    timeoutEnforcementEnabled: true
+    staleRetentionDays: 7
+  # Image mapping: sorted comma-joined agent labels → container image.
+  # Example: "kiro,dotnet,dotnet10": "chemsorly/coding-agent:coding-agent-kiro-dotnet10"
+  imageMapping: {}
+  # Resource requests/limits for spawned agent Jobs
+  jobResources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+  # Max concurrent pods per agent selector group (no limit if not specified)
+  maxConcurrentPods: {}
+  # Pod scheduling fields injected into spawned Job pod templates
+  scheduling:
+    priorityClassName: ""
+    nodeSelector: {}
+    tolerations: []
+    topologySpreadConstraints: []
+
+# ── Credential Pools ─────────────────────────────────────────────────────────
+
+credentialPools:
+  # List of PVC names for kiro agent credential data.
+  # DispatchService claims an available PVC per kiro-type Job.
+  kiro: []
+  # Example:
+  # kiro:
+  #   - caa-kiro-cli-data-0
+  #   - caa-kiro-cli-data-1
+  #   - caa-kiro-cli-data-2
+
+# ── SignalR Backplane (Redis) ────────────────────────────────────────────────
+
+signalr:
+  redis:
+    # Enable Redis backplane for SignalR. Required for multi-replica orchestrator
+    # to deliver agent log streaming and real-time UI updates across replicas.
+    enabled: false
+    # Connection string for Redis. Operators deploy Redis independently
+    # (e.g., Bitnami Redis chart, ElastiCache, Memorystore).
+    connectionString: ""
+
+# ── Monitoring ───────────────────────────────────────────────────────────────
+
+monitoring:
+  prometheusRules:
+    # Create PrometheusRule resources for alerting (requires Prometheus Operator).
+    enabled: false

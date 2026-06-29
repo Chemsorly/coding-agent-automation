@@ -736,11 +736,12 @@ public sealed partial class AgentJobDispatcher
         IEnumerable<string>? additionalRepoProviderIds = null)
     {
         var configs = new List<ProviderConfig>();
+        var store = _resolution.ConfigStore;
 
-        var repoConfigs = await _resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == repoProviderId);
-        if (repoConfig != null)
-            configs.Add(repoConfig);
+        var repoConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+        var repoConfig = await ProviderConfigResolver.ResolveAsync(
+            store, repoProviderId, ProviderKind.Repository, repoConfigs, required: true, _logger, ct);
+        configs.Add(repoConfig!);
 
         // Include additional repo provider configs for cross-repo decomposition.
         // These are needed so the agent can clone secondary repos for code exploration.
@@ -752,29 +753,32 @@ public sealed partial class AgentJobDispatcher
                 if (string.IsNullOrEmpty(additionalId) || !addedIds.Add(additionalId))
                     continue; // skip null/empty or duplicates
 
-                var additionalConfig = repoConfigs.FirstOrDefault(c => c.Id == additionalId);
-                if (additionalConfig != null)
+                var additionalConfig = await ProviderConfigResolver.ResolveAsync(
+                    store, additionalId, ProviderKind.Repository, repoConfigs, required: false, _logger, ct);
+                if (additionalConfig is not null)
                     configs.Add(additionalConfig);
             }
         }
 
-        var agentConfigs = await _resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-        var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == agentProviderId);
-        if (agentConfig != null)
-            configs.Add(agentConfig);
+        var agentConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
+        var agentConfig = await ProviderConfigResolver.ResolveAsync(
+            store, agentProviderId, ProviderKind.Agent, agentConfigs, required: true, _logger, ct);
+        configs.Add(agentConfig!);
 
         if (!string.IsNullOrEmpty(brainProviderId))
         {
-            var brainConfig = repoConfigs.FirstOrDefault(c => c.Id == brainProviderId);
-            if (brainConfig != null)
+            var brainConfig = await ProviderConfigResolver.ResolveAsync(
+                store, brainProviderId, ProviderKind.Repository, repoConfigs, required: false, _logger, ct);
+            if (brainConfig is not null)
                 configs.Add(brainConfig);
         }
 
         if (!string.IsNullOrEmpty(pipelineProviderId))
         {
-            var pipelineConfigs = await _resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
-            var pipelineConfig = pipelineConfigs.FirstOrDefault(c => c.Id == pipelineProviderId);
-            if (pipelineConfig != null)
+            var pipelineConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
+            var pipelineConfig = await ProviderConfigResolver.ResolveAsync(
+                store, pipelineProviderId, ProviderKind.Pipeline, pipelineConfigs, required: false, _logger, ct);
+            if (pipelineConfig is not null)
                 configs.Add(pipelineConfig);
         }
 

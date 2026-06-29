@@ -218,7 +218,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
             TemplateName = run.TemplateName,
             ProviderConfigs = providerConfigs,
             PipelineConfiguration = _config,
-            LastSuccessfulRunUtc = lastSuccessfulRunUtc,
+            LastSuccessfulRunUtc = lastSuccessfulRunUtc?.UtcDateTime,
             FeedbackDataJson = feedbackDataJson,
             WorkspacePath = workspacePath,
             TraceContext = CaptureTraceContext()
@@ -269,11 +269,11 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         {
             // Determine the "since" timestamp from the last successful harness suggestion run
             var sinceUtc = await GetLastSuccessfulRunUtcAsync(
-                ConsolidationRunType.HarnessSuggestions, null, ct) ?? DateTime.MinValue;
+                ConsolidationRunType.HarnessSuggestions, null, ct) ?? DateTimeOffset.MinValue;
 
             var allRuns = _runHistoryService.GetRunHistory();
             var feedbackEntries = allRuns
-                .Where(r => r.Feedback is not null && r.StartedAtOffset > new DateTimeOffset(sinceUtc, TimeSpan.Zero))
+                .Where(r => r.Feedback is not null && r.StartedAtOffset > sinceUtc)
                 .Select(r => r.Feedback!)
                 .ToList();
 
@@ -407,7 +407,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     /// <summary>
     /// Gets the CompletedAtUtc of the last successful run for the given type and template.
     /// </summary>
-    private async Task<DateTime?> GetLastSuccessfulRunUtcAsync(
+    private async Task<DateTimeOffset?> GetLastSuccessfulRunUtcAsync(
         ConsolidationRunType type,
         string? templateId,
         CancellationToken ct)
@@ -415,7 +415,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         if (!Directory.Exists(_consolidationRunsDirectory))
             return null;
 
-        DateTime? latest = null;
+        DateTimeOffset? latest = null;
         foreach (var file in Directory.GetFiles(_consolidationRunsDirectory, "*.json"))
         {
             try

@@ -4,7 +4,10 @@
     <!-- Prevent orphaned MSBuild node processes after dotnet test/build -->
     <UseSharedCompilation>false</UseSharedCompilation>
     <!-- CS0618: Obsolete members used intentionally during migration periods:
-         - PipelineRun/PipelineRunSummary StartedAt/CompletedAt → StartedAtOffset/CompletedAtOffset -->
-    <NoWarn>$(NoWarn);CS0618</NoWarn>
+         - PipelineRun/PipelineRunSummary StartedAt/CompletedAt → StartedAtOffset/CompletedAtOffset
+         MSB3277: Npgsql.EntityFrameworkCore.PostgreSQL 10.0.2 ships with assembly reference to
+         Microsoft.EntityFrameworkCore.Relational 10.0.4, but we pin EF Core at 10.0.9 centrally.
+         The higher version is backward-compatible; suppress until Npgsql releases a 10.0.9-aligned build. -->
+    <NoWarn>$(NoWarn);CS0618;MSB3277</NoWarn>
   </PropertyGroup>
 </Project>

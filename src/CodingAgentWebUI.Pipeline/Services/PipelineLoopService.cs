@@ -7,8 +7,8 @@ namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
 /// Background service that polls for agent:next issues and dispatches them to agents
-/// via the <see cref="IJobDispatcher"/>. Issues are always dispatched to agents or enqueued;
-/// if no dispatcher is available, issues are skipped.
+/// via the <see cref="IWorkDistributor"/>. Issues are always dispatched to agents or enqueued;
+/// if no distributor is available, issues are skipped.
 /// Starts dormant and is activated via <see cref="StartLoop"/>. Survives page navigation.
 /// </summary>
 public sealed partial class PipelineLoopService : BackgroundService
@@ -18,7 +18,8 @@ public sealed partial class PipelineLoopService : BackgroundService
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IProjectStore _projectStore;
-    private readonly IJobDispatcher? _jobDispatcher;
+    private readonly IWorkDistributor? _workDistributor;
+    private readonly IDispatchOrchestrationService? _dispatchOrchestration;
     private readonly IDependencyChecker? _dependencyChecker;
     private readonly Serilog.ILogger _logger;
 
@@ -94,7 +95,8 @@ public sealed partial class PipelineLoopService : BackgroundService
         IProviderConfigStore providerConfigStore,
         IProjectStore projectStore,
         Serilog.ILogger logger,
-        IJobDispatcher? jobDispatcher = null,
+        IWorkDistributor? workDistributor = null,
+        IDispatchOrchestrationService? dispatchOrchestration = null,
         IDependencyChecker? dependencyChecker = null)
     {
         ArgumentNullException.ThrowIfNull(orchestration);
@@ -110,7 +112,8 @@ public sealed partial class PipelineLoopService : BackgroundService
         _providerConfigStore = providerConfigStore;
         _projectStore = projectStore;
         _logger = logger;
-        _jobDispatcher = jobDispatcher;
+        _workDistributor = workDistributor;
+        _dispatchOrchestration = dispatchOrchestration;
         _dependencyChecker = dependencyChecker;
     }
 

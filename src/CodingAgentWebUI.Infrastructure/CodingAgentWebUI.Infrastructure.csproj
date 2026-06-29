@@ -15,14 +15,17 @@
   <ItemGroup>
     <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
+    <InternalsVisibleTo Include="CodingAgentWebUI.UnitTests" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="LibGit2Sharp" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.Resilience" />
     <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
     <PackageReference Include="NGitLab" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="Octokit" />
     <PackageReference Include="Serilog" />
     <PackageReference Include="Serilog.Sinks.OpenTelemetry" />

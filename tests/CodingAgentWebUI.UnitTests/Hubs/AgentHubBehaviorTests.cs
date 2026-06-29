@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hubs;
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -224,6 +225,49 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         _mockFacade.Verify(f => f.Signal(), Times.Once);
         agent.ActiveJobId.Should().BeNull();
+    }
+
+    #endregion
+
+    #region ReportJobCompleted_WorkItemTransition
+
+    [Fact]
+    public async Task ReportJobCompleted_Succeeded_TransitionsWorkItemToSucceeded()
+    {
+        // This test asserts that when an agent reports job completion,
+        // the WorkItem row in Postgres transitions to the correct terminal status.
+        // Without this, WorkItems stay stuck in Dispatched/Running forever.
+        var agent = CreateAgent();
+        var run = CreateRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportJobCompleted("job-1", payload);
+
+        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReportJobCompleted_Failed_TransitionsWorkItemToFailed()
+    {
+        var agent = CreateAgent();
+        var run = CreateRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Failed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportJobCompleted("job-1", payload);
+
+        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

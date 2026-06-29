@@ -63,4 +63,14 @@ public static class AgentDefaults
 
     /// <summary>OpenRouter API key for LLM access.</summary>
     public const string EnvOpenRouterApiKey = "OPENROUTER_API_KEY";
+
+    // ── K8s mode environment variables ───────────────────────────────────
+
+    /// <summary>File path containing the agent API key (K8s Secret mount).</summary>
+    public const string EnvAgentApiKeyFile = "AGENT_API_KEY_FILE";
+
+    // ── CLI arguments ────────────────────────────────────────────────────
+
+    /// <summary>CLI argument prefix for work item ID (K8s mode).</summary>
+    public const string CliWorkItemIdPrefix = "--work-item-id=";
 }

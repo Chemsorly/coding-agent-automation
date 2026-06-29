@@ -1,0 +1,42 @@
+{{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-orchestrator
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
+rules:
+  # Job management for agent dispatch
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  # Leader election via Lease
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "update"]
+  # Per-job secrets for project credentials
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]
+  # Pod status checks (startup failure detection)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "coding-agent-automation.fullname" . }}-orchestrator
+  labels:
+    {{- include "coding-agent-automation.labels" . | nindent 4 }}
+    app.kubernetes.io/component: orchestrator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "coding-agent-automation.fullname" . }}-orchestrator
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "coding-agent-automation.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

@@ -1,0 +1,305 @@
+@using System.Text.Json
+@using CodingAgentWebUI.Infrastructure.Persistence
+@using CodingAgentWebUI.Infrastructure.Persistence.Entities
+@using CodingAgentWebUI.Pipeline
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Services
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<PipelineDbContext> DbFactory
+@inject IConfigurationStore ConfigStore
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<div class="section-content">
+    <h2>Data Management</h2>
+    <p class="section-description">
+        Export configuration as a single JSON file (download) or import from an uploaded JSON file.
+        Covers pipeline config, providers, profiles, quality gates, reviewers, and projects.
+        Run history and consolidation runs are excluded.
+    </p>
+
+    <div class="import-export-actions">
+        <div class="action-card">
+            <h3>Export Configuration</h3>
+            <p>
+                Download the current database configuration as a single JSON file.
+            </p>
+            <button class="btn btn-secondary" @onclick="ExportAsync" disabled="@_exporting">
+                @if (_exporting)
+                {
+                    <span class="spinner-sm"></span>
+                }
+                Download Config
+            </button>
+        </div>
+
+        <div class="action-card">
+            <h3>Import Configuration</h3>
+            <p>
+                Upload a previously exported JSON file to replace all configuration in the database.
+                This <strong>overwrites</strong> existing config.
+            </p>
+            <InputFile OnChange="OnFileSelected" accept=".json" />
+            @if (_selectedFile is not null)
+            {
+                <button class="btn btn-primary" @onclick="ImportAsync" disabled="@_loading">
+                    @if (_loading)
+                    {
+                        <span class="spinner-sm"></span>
+                    }
+                    Import @_selectedFile.Name
+                </button>
+            }
+        </div>
+    </div>
+
+    @if (_resultMessage is not null)
+    {
+        <div class="result-message @(_resultSuccess ? "success" : "error")">
+            @_resultMessage
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+
+    [Parameter]
+    public EventCallback OnImportCompleted { get; set; }
+
+    private IBrowserFile? _selectedFile;
+    private bool _loading;
+    private bool _exporting;
+    private string? _resultMessage;
+    private bool _resultSuccess;
+
+    private async Task ExportAsync()
+    {
+        _exporting = true;
+        _resultMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var bundle = new ConfigBundle
+            {
+                PipelineConfig = await db.PipelineConfig.AsNoTracking()
+                    .Select(e => e.Configuration).FirstOrDefaultAsync(),
+                ProviderConfigs = await db.ProviderConfigs.AsNoTracking().Select(e => new ProviderConfigDto
+                {
+                    Id = e.Id, Kind = e.Kind, DisplayName = e.DisplayName,
+                    ProviderType = e.ProviderType, Enabled = e.Enabled, Configuration = e.Configuration
+                }).ToListAsync(),
+                AgentProfiles = await db.AgentProfiles.AsNoTracking().Select(e => new NamedConfigDto
+                {
+                    Id = e.Id, Name = e.Name, Configuration = e.Configuration
+                }).ToListAsync(),
+                QualityGateConfigs = await db.QualityGateConfigs.AsNoTracking().Select(e => new NamedConfigDto
+                {
+                    Id = e.Id, Name = e.Name, Configuration = e.Configuration
+                }).ToListAsync(),
+                ReviewerConfigs = await db.ReviewerConfigs.AsNoTracking().Select(e => new NamedConfigDto
+                {
+                    Id = e.Id, Name = e.Name, Configuration = e.Configuration
+                }).ToListAsync(),
+                Projects = await db.Projects.AsNoTracking().Select(e => new ProjectDto
+                {
+                    Id = e.Id, Name = e.Name, Enabled = e.Enabled,
+                    Description = e.Description, Settings = e.Settings, TemplateIds = e.TemplateIds
+                }).ToListAsync(),
+                JobTemplates = await db.PipelineJobTemplates.AsNoTracking().Select(e => new JobTemplateDto
+                {
+                    Id = e.Id, ProjectId = e.ProjectId, Name = e.Name, Configuration = e.Configuration
+                }).ToListAsync()
+            };
+
+            var json = JsonSerializer.SerializeToUtf8Bytes(bundle, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+            });
+
+            using var stream = new MemoryStream(json);
+            using var streamRef = new DotNetStreamReference(stream);
+            await JS.InvokeVoidAsync("downloadFileFromStream", "pipeline-config-export.json", streamRef);
+
+            _resultSuccess = true;
+            _resultMessage = "Export downloaded successfully.";
+            await OnShowStatus.InvokeAsync((_resultMessage, false));
+        }
+        catch (Exception ex)
+        {
+            _resultSuccess = false;
+            _resultMessage = $"Export failed: {ex.Message}";
+            await OnShowStatus.InvokeAsync((_resultMessage, true));
+        }
+        finally
+        {
+            _exporting = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        _selectedFile = e.File;
+        _resultMessage = null;
+    }
+
+    private async Task ImportAsync()
+    {
+        if (_selectedFile is null) return;
+
+        _loading = true;
+        _resultMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            // Read the file content directly (Blazor Server — file streams from browser to server)
+            using var stream = _selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+
+            var bundle = await JsonSerializer.DeserializeAsync<ConfigBundle>(stream, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+            });
+
+            if (bundle is null)
+            {
+                _resultMessage = "Empty or invalid bundle";
+                _resultSuccess = false;
+                await OnShowStatus.InvokeAsync((_resultMessage, true));
+                return;
+            }
+
+            // Import directly using DbFactory (server-side, no HTTP round-trip)
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            // Clear existing config
+            db.PipelineConfig.RemoveRange(db.PipelineConfig);
+            db.ProviderConfigs.RemoveRange(db.ProviderConfigs);
+            db.AgentProfiles.RemoveRange(db.AgentProfiles);
+            db.QualityGateConfigs.RemoveRange(db.QualityGateConfigs);
+            db.ReviewerConfigs.RemoveRange(db.ReviewerConfigs);
+            db.Projects.RemoveRange(db.Projects);
+            db.PipelineJobTemplates.RemoveRange(db.PipelineJobTemplates);
+            await db.SaveChangesAsync();
+
+            // Insert from bundle
+            if (bundle.PipelineConfig is not null)
+            {
+                db.PipelineConfig.Add(new PipelineConfigEntity
+                {
+                    Id = Guid.NewGuid(),
+                    Configuration = bundle.PipelineConfig
+                });
+            }
+
+            foreach (var p in bundle.ProviderConfigs ?? [])
+            {
+                db.ProviderConfigs.Add(new ProviderConfigEntity
+                {
+                    Id = p.Id,
+                    Kind = p.Kind,
+                    DisplayName = p.DisplayName,
+                    ProviderType = p.ProviderType,
+                    Enabled = p.Enabled,
+                    Configuration = p.Configuration
+                });
+            }
+
+            foreach (var a in bundle.AgentProfiles ?? [])
+            {
+                db.AgentProfiles.Add(new AgentProfileEntity
+                {
+                    Id = a.Id,
+                    Name = a.Name,
+                    Configuration = a.Configuration
+                });
+            }
+
+            foreach (var q in bundle.QualityGateConfigs ?? [])
+            {
+                db.QualityGateConfigs.Add(new QualityGateConfigEntity
+                {
+                    Id = q.Id,
+                    Name = q.Name,
+                    Configuration = q.Configuration
+                });
+            }
+
+            foreach (var r in bundle.ReviewerConfigs ?? [])
+            {
+                db.ReviewerConfigs.Add(new ReviewerConfigEntity
+                {
+                    Id = r.Id,
+                    Name = r.Name,
+                    Configuration = r.Configuration
+                });
+            }
+
+            foreach (var proj in bundle.Projects ?? [])
+            {
+                db.Projects.Add(new ProjectEntity
+                {
+                    Id = proj.Id,
+                    Name = proj.Name,
+                    Enabled = proj.Enabled,
+                    Description = proj.Description,
+                    Settings = proj.Settings,
+                    TemplateIds = proj.TemplateIds ?? []
+                });
+            }
+
+            foreach (var t in bundle.JobTemplates ?? [])
+            {
+                db.PipelineJobTemplates.Add(new PipelineJobTemplateEntity
+                {
+                    Id = t.Id,
+                    ProjectId = t.ProjectId,
+                    Name = t.Name,
+                    Configuration = t.Configuration
+                });
+            }
+
+            await db.SaveChangesAsync();
+
+            // Invalidate the singleton config store caches (bypassed by direct DB writes)
+            ConfigStore.InvalidateCaches();
+
+            _resultSuccess = true;
+            _resultMessage = $"Imported: {bundle.ProviderConfigs?.Count ?? 0} providers, " +
+                             $"{bundle.AgentProfiles?.Count ?? 0} profiles, " +
+                             $"{bundle.QualityGateConfigs?.Count ?? 0} quality gates, " +
+                             $"{bundle.ReviewerConfigs?.Count ?? 0} reviewers, " +
+                             $"{bundle.Projects?.Count ?? 0} projects, " +
+                             $"{bundle.JobTemplates?.Count ?? 0} templates";
+            await OnShowStatus.InvokeAsync((_resultMessage, false));
+            await OnImportCompleted.InvokeAsync();
+        }
+        catch (JsonException ex)
+        {
+            _resultSuccess = false;
+            _resultMessage = $"Invalid JSON: {ex.Message}";
+            await OnShowStatus.InvokeAsync((_resultMessage, true));
+        }
+        catch (Exception ex)
+        {
+            _resultSuccess = false;
+            _resultMessage = $"Import failed: {ex.Message}";
+            await OnShowStatus.InvokeAsync((_resultMessage, true));
+        }
+        finally
+        {
+            _loading = false;
+            _selectedFile = null;
+            StateHasChanged();
+        }
+    }
+}

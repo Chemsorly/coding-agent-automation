@@ -23,7 +23,7 @@ public partial class AgentCoding : IDisposable
     [Inject] private OrchestratorRunService RunService { get; set; } = default!;
     [Inject] private AgentRegistryService Registry { get; set; } = default!;
     [Inject] private JobDispatcherService Dispatcher { get; set; } = default!;
-    [Inject] private IJobDispatcher JobDispatcher { get; set; } = default!;
+    [Inject] private IWorkDistributor WorkDistributor { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
     [Inject] private IJSRuntime JS { get; set; } = default!;
     [CascadingParameter] private MainLayout? Layout { get; set; }
@@ -57,6 +57,7 @@ public partial class AgentCoding : IDisposable
     private bool _drawerOpen;
     private PipelineJobTemplate? _drawerTemplate;
     private bool _drawerDispatching;
+    private HashSet<(string IssueIdentifier, string IssueProviderConfigId)> _activeIssues = new();
 
     // PR Drawer UI State
     private bool _prDrawerOpen;
@@ -249,6 +250,7 @@ public partial class AgentCoding : IDisposable
         var template = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
         if (template == null) return;
         _drawerTemplate = template; _drawerOpen = true;
+        await RefreshActiveIssuesAsync();
         // TODO: Loading indicator won't render — PageService sets DrawerLoading=true internally but no StateHasChanged() is called before the await, so the UI never shows the spinner. Same issue in OpenPrDrawer and OpenEpicDrawer.
         var error = await PageService.LoadDrawerIssuesAsync(template, 1);
         if (error != null) _errorMessage = error;
@@ -307,6 +309,7 @@ public partial class AgentCoding : IDisposable
         _prDrawerTemplate = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
         if (_prDrawerTemplate == null) return;
         _prDrawerOpen = true;
+        await RefreshActiveIssuesAsync();
         var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, 1);
         if (error != null) _errorMessage = error;
     }
@@ -355,6 +358,7 @@ public partial class AgentCoding : IDisposable
         _epicDrawerTemplate = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
         if (_epicDrawerTemplate == null) return;
         _epicDrawerOpen = true;
+        await RefreshActiveIssuesAsync();
         var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate);
         if (error != null) _errorMessage = error;
     }
@@ -378,6 +382,22 @@ public partial class AgentCoding : IDisposable
     // ── Helpers ──
 
     private PipelineProject? GetParentProject(string templateId) => PageService.GetParentProject(templateId);
+
+    /// <summary>
+    /// Refreshes the cached set of active issue identifiers from <see cref="IWorkDistributor"/>.
+    /// Called when drawers are opened to provide synchronous IsBeingProcessed checks.
+    /// </summary>
+    private async Task RefreshActiveIssuesAsync()
+    {
+        _activeIssues = await WorkDistributor.GetActiveIssueIdentifiersAsync(CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Synchronous check against the preloaded active issues set.
+    /// Used by drawer component <c>IsBeingProcessed</c> parameter (Func&lt;string, bool&gt;).
+    /// </summary>
+    private bool IsIssueActive(string issueIdentifier, string issueProviderConfigId)
+        => _activeIssues.Contains((issueIdentifier, issueProviderConfigId));
 
     private async Task ClearRecentlyToggledAfterDelay(string templateId)
     {

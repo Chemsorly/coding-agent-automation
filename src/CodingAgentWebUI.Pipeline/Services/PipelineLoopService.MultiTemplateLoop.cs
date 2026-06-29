@@ -148,7 +148,7 @@ public sealed partial class PipelineLoopService
             // Step 5: Fair dispatch
             await DispatchFairRoundRobinAsync(
                 snapshot.PollableTemplates, snapshot.FlattenedTemplates, snapshot.Config,
-                snapshot.MaxRunsPerCycle,
+                snapshot.MaxRunsPerCycle, snapshot.ActiveIssueIdentifiers,
                 issueQueues, prQueues, decompositionQueues, projectLevelDecompositionQueues,
                 stoppingToken, ct);
 
@@ -175,7 +175,8 @@ public sealed partial class PipelineLoopService
         TimeSpan PollInterval,
         int MaxRunsPerCycle,
         int MaxConsecutiveFailures,
-        int MaxPagesToFetch);
+        int MaxPagesToFetch,
+        HashSet<(string IssueIdentifier, string IssueProviderConfigId)> ActiveIssueIdentifiers);
 
     /// <summary>
     /// Step 1–2: Reads config snapshot, loads projects, flattens templates, filters rate-limited,
@@ -244,9 +245,46 @@ public sealed partial class PipelineLoopService
             }
         }
 
+        // Step 2b: Batch-load active issue identifiers for O(1) dedup checks per issue
+        // Replaces per-issue IsIssueDistributedAsync calls in the dispatch loop
+        HashSet<(string IssueIdentifier, string IssueProviderConfigId)> activeIssueIdentifiers;
+        if (_workDistributor is not null)
+        {
+            try
+            {
+                activeIssueIdentifiers = await _workDistributor.GetActiveIssueIdentifiersAsync(ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to load active issue identifiers — proceeding with empty dedup set (may cause duplicate dispatch attempts)");
+                activeIssueIdentifiers = new HashSet<(string, string)>();
+            }
+        }
+        else
+        {
+            activeIssueIdentifiers = new HashSet<(string, string)>();
+        }
+
+        // Detect and remediate stuck work items (SignalR mode: Dispatched > 5min → Failed)
+        if (_workDistributor is not null)
+        {
+            try
+            {
+                var stuckCount = await _workDistributor.ReconcileStuckItemsAsync(ct);
+                if (stuckCount > 0)
+                    _logger.Information("Reconciled {StuckCount} stuck work items at cycle start", stuckCount);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to reconcile stuck work items at cycle start");
+            }
+        }
+
         return new CycleSnapshot(
             config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
-            templateLookup.AsReadOnly(), pollInterval, maxRunsPerCycle, maxConsecutiveFailures, maxPagesToFetch);
+            templateLookup.AsReadOnly(), pollInterval, maxRunsPerCycle, maxConsecutiveFailures, maxPagesToFetch,
+            activeIssueIdentifiers);
     }
 
     /// <summary>
@@ -567,6 +605,7 @@ public sealed partial class PipelineLoopService
         IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> flattenedTemplates,
         PipelineConfiguration config,
         int maxRunsPerCycle,
+        HashSet<(string IssueIdentifier, string IssueProviderConfigId)> activeIssueIdentifiers,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
         Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
@@ -645,7 +684,7 @@ public sealed partial class PipelineLoopService
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier, template.IssueProviderId))
+                        if (activeIssueIdentifiers.Contains((candidate.Identifier, template.IssueProviderId)))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
@@ -685,14 +724,49 @@ public sealed partial class PipelineLoopService
                     _logger.Information("Dispatching issue {Issue} with project '{ProjectName}' (id={ProjectId}, template={TemplateId})",
                         issue.Identifier, dispatchProject?.Name ?? "NULL", dispatchProject?.Id ?? "NULL", template.Id);
 
-                    var dispatched = await _jobDispatcher!.TryDispatchAsync(
-                        issue.Identifier,
-                        template.IssueProviderId, template.RepoProviderId,
-                        template.BrainProviderId, template.PipelineProviderId,
-                        initiatedBy: "loop",
-                        stopToken,
-                        issueTitle: issue.Title,
-                        project: dispatchProject);
+                    bool dispatched;
+                    if (_dispatchOrchestration is not null)
+                    {
+                        // DB mode: full orchestration → build JobDistributionRequest → distribute
+                        var request = await _dispatchOrchestration.PrepareDistributionRequestAsync(
+                            issue.Identifier,
+                            template.IssueProviderId, template.RepoProviderId,
+                            template.BrainProviderId, template.PipelineProviderId,
+                            "loop", dispatchProject ?? new PipelineProject { Id = "", Name = "Unknown" },
+                            ct: stopToken);
+                        if (request is not null)
+                        {
+                            var result = await _workDistributor!.DistributeAsync(request, stopToken);
+                            dispatched = result.Success;
+                            if (!dispatched)
+                                await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
+                        }
+                        else
+                        {
+                            dispatched = false;
+                        }
+                    }
+                    else
+                    {
+                        // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
+                        var minimalRequest = new JobDistributionRequest
+                        {
+                            IssueIdentifier = issue.Identifier,
+                            IssueProviderConfigId = template.IssueProviderId,
+                            RepoProviderConfigId = template.RepoProviderId,
+                            BrainProviderConfigId = template.BrainProviderId,
+                            PipelineProviderConfigId = template.PipelineProviderId,
+                            InitiatedBy = "loop",
+                            TaskType = WorkItemTaskType.Implementation,
+                            AgentSelector = "",
+                            TimeoutSeconds = 0,
+                            ProjectId = dispatchProject?.Id,
+                            ProjectName = dispatchProject?.Name,
+                            IssueDetail = new IssueDetail { Identifier = issue.Identifier, Title = issue.Title ?? "", Description = "", Labels = [] }
+                        };
+                        var result = await _workDistributor!.DistributeAsync(minimalRequest, stopToken);
+                        dispatched = result.Success;
+                    }
 
                     if (dispatched)
                         _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
@@ -737,7 +811,7 @@ public sealed partial class PipelineLoopService
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Identifier, template.IssueProviderId))
+                        if (activeIssueIdentifiers.Contains((candidate.Identifier, template.IssueProviderId)))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
@@ -753,8 +827,11 @@ public sealed partial class PipelineLoopService
                     lock (_lock) { StatusMessage = $"🔄 Dispatching PR #{pr.Identifier} review from '{template.Name}'"; }
                     NotifyChange();
 
-                    var dispatched = await _jobDispatcher!.TryDispatchReviewAsync(
-                        new ReviewDispatchRequest
+                    bool dispatched;
+                    if (_dispatchOrchestration is not null)
+                    {
+                        // DB mode: full orchestration → build JobDistributionRequest → distribute
+                        var reviewDispatchReq = new ReviewDispatchRequest
                         {
                             PrIdentifier = pr.Identifier,
                             PrBranchName = pr.BranchName,
@@ -767,9 +844,46 @@ public sealed partial class PipelineLoopService
                             RepoProviderId = template.RepoProviderId,
                             BrainProviderId = template.BrainProviderId,
                             InitiatedBy = "loop"
-                        },
-                        stopToken,
-                        project: templateProjectLookup[template.Id]);
+                        };
+                        var request = await _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
+                            reviewDispatchReq,
+                            templateProjectLookup[template.Id],
+                            stopToken);
+                        if (request is not null)
+                        {
+                            var result = await _workDistributor!.DistributeAsync(request, stopToken);
+                            dispatched = result.Success;
+                            if (!dispatched)
+                                await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
+                        }
+                        else
+                        {
+                            dispatched = false;
+                        }
+                    }
+                    else
+                    {
+                        // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
+                        var minimalRequest = new JobDistributionRequest
+                        {
+                            IssueIdentifier = pr.Identifier,
+                            IssueProviderConfigId = template.IssueProviderId,
+                            RepoProviderConfigId = template.RepoProviderId,
+                            BrainProviderConfigId = template.BrainProviderId,
+                            InitiatedBy = "loop",
+                            TaskType = WorkItemTaskType.Review,
+                            AgentSelector = "",
+                            TimeoutSeconds = 0,
+                            RunType = PipelineRunType.Review,
+                            IssueDetail = new IssueDetail { Identifier = pr.Identifier, Title = pr.Title ?? "", Description = "", Labels = [] },
+                            LinkedPullRequest = new LinkedPullRequest { Url = pr.Url ?? "", BranchName = pr.BranchName ?? "", IsDraft = false, Number = 0 },
+                            ReviewPrTargetBranch = pr.TargetBranch,
+                            ReviewPrDescription = pr.Description,
+                            ReviewPrAuthor = pr.Author
+                        };
+                        var result = await _workDistributor!.DistributeAsync(minimalRequest, stopToken);
+                        dispatched = result.Success;
+                    }
 
                     if (dispatched)
                         _logger.Information("Dispatched PR #{PrIdentifier} review from template '{Template}'",
@@ -814,7 +928,7 @@ public sealed partial class PipelineLoopService
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier, template.IssueProviderId))
+                        if (activeIssueIdentifiers.Contains((candidate.Issue.Identifier, template.IssueProviderId)))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
@@ -833,16 +947,51 @@ public sealed partial class PipelineLoopService
                     lock (_lock) { StatusMessage = $"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'"; }
                     NotifyChange();
 
-                    var dispatched = await _jobDispatcher!.TryDispatchDecompositionAsync(
-                        epicItem.Issue.Identifier,
-                        epicItem.Issue.Title,
-                        epicItem.Phase,
-                        template.IssueProviderId,
-                        template.RepoProviderId,
-                        template.BrainProviderId,
-                        initiatedBy: "loop",
-                        stopToken,
-                        project: templateProjectLookup[template.Id]);
+                    bool dispatched;
+                    if (_dispatchOrchestration is not null)
+                    {
+                        // DB mode: full orchestration → build JobDistributionRequest → distribute
+                        var request = await _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
+                            epicItem.Issue.Identifier,
+                            epicItem.Issue.Title ?? "",
+                            epicItem.Phase,
+                            template.IssueProviderId,
+                            template.RepoProviderId,
+                            template.BrainProviderId,
+                            "loop",
+                            templateProjectLookup[template.Id],
+                            ct: stopToken);
+                        if (request is not null)
+                        {
+                            var result = await _workDistributor!.DistributeAsync(request, stopToken);
+                            dispatched = result.Success;
+                            if (!dispatched)
+                                await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
+                        }
+                        else
+                        {
+                            dispatched = false;
+                        }
+                    }
+                    else
+                    {
+                        // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
+                        var minimalRequest = new JobDistributionRequest
+                        {
+                            IssueIdentifier = epicItem.Issue.Identifier,
+                            IssueProviderConfigId = template.IssueProviderId,
+                            RepoProviderConfigId = template.RepoProviderId,
+                            BrainProviderConfigId = template.BrainProviderId,
+                            InitiatedBy = "loop",
+                            TaskType = WorkItemTaskType.Decomposition,
+                            AgentSelector = "",
+                            TimeoutSeconds = 0,
+                            RunType = epicItem.Phase,
+                            IssueDetail = new IssueDetail { Identifier = epicItem.Issue.Identifier, Title = epicItem.Issue.Title ?? "", Description = "", Labels = [] }
+                        };
+                        var result = await _workDistributor!.DistributeAsync(minimalRequest, stopToken);
+                        dispatched = result.Success;
+                    }
 
                     if (dispatched)
                     {
@@ -886,7 +1035,7 @@ public sealed partial class PipelineLoopService
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
                         }
-                        if (_jobDispatcher!.IsIssueBeingProcessedOrQueued(candidate.Issue.Identifier, candidate.Template.IssueProviderId))
+                        if (activeIssueIdentifiers.Contains((candidate.Issue.Identifier, candidate.Template.IssueProviderId)))
                         {
                             PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision", PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                             continue;
@@ -900,17 +1049,50 @@ public sealed partial class PipelineLoopService
 
                         try
                         {
-                            var dispatched = await _jobDispatcher!.TryDispatchDecompositionAsync(
-                                candidate.Issue.Identifier,
-                                candidate.Issue.Title,
-                                candidate.Phase,
-                                candidate.Template.IssueProviderId,
-                                candidate.Template.RepoProviderId,
-                                candidate.Template.BrainProviderId,
-                                initiatedBy: "loop",
-                                stoppingToken,
-                                decompositionSource: "project-level",
-                                project: templateProjectLookup.GetValueOrDefault(candidate.Template.Id));
+                            bool dispatched;
+                            if (_dispatchOrchestration is not null)
+                            {
+                                var request = await _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
+                                    candidate.Issue.Identifier,
+                                    candidate.Issue.Title ?? "",
+                                    candidate.Phase,
+                                    candidate.Template.IssueProviderId,
+                                    candidate.Template.RepoProviderId,
+                                    candidate.Template.BrainProviderId,
+                                    "loop",
+                                    templateProjectLookup.GetValueOrDefault(candidate.Template.Id)
+                                        ?? new PipelineProject { Id = "", Name = "Unknown" },
+                                    decompositionSource: "project-level",
+                                    ct: stoppingToken);
+                                if (request is not null)
+                                {
+                                    var result = await _workDistributor!.DistributeAsync(request, stoppingToken);
+                                    dispatched = result.Success;
+                                }
+                                else
+                                {
+                                    dispatched = false;
+                                }
+                            }
+                            else
+                            {
+                                var minimalRequest = new JobDistributionRequest
+                                {
+                                    IssueIdentifier = candidate.Issue.Identifier,
+                                    IssueProviderConfigId = candidate.Template.IssueProviderId,
+                                    RepoProviderConfigId = candidate.Template.RepoProviderId,
+                                    BrainProviderConfigId = candidate.Template.BrainProviderId,
+                                    InitiatedBy = "loop",
+                                    TaskType = WorkItemTaskType.Decomposition,
+                                    AgentSelector = "",
+                                    TimeoutSeconds = 0,
+                                    RunType = candidate.Phase,
+                                    DecompositionSource = "project-level",
+                                    IssueDetail = new IssueDetail { Identifier = candidate.Issue.Identifier, Title = candidate.Issue.Title ?? "", Description = "", Labels = [] }
+                                };
+                                var result = await _workDistributor!.DistributeAsync(minimalRequest, stoppingToken);
+                                dispatched = result.Success;
+                            }
 
                             if (dispatched)
                             {

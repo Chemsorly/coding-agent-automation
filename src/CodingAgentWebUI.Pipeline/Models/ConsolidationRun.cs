@@ -37,8 +37,8 @@ public sealed class ConsolidationRun
     /// <summary>Template display name, or "Global" for harness suggestions.</summary>
     public string? TemplateName { get; init; }
 
-    public required DateTime StartedAtUtc { get; init; }
-    public DateTime? CompletedAtUtc { get; set; }
+    public required DateTimeOffset StartedAtUtc { get; init; }
+    public DateTimeOffset? CompletedAtUtc { get; set; }
     public ConsolidationRunStatus Status { get; set; }
     public string? Summary { get; set; }
 

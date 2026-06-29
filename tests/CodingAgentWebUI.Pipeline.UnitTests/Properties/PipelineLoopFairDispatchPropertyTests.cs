@@ -204,20 +204,17 @@ public class PipelineLoopFairDispatchPropertyTests
             });
 
         var dispatchedProviderIds = new List<string>();
-        var mockDispatcher = new Mock<IJobDispatcher>();
-        mockDispatcher.Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>(),
-                It.IsAny<PipelineProject?>()))
-            .Returns<string, string, string, string?, string?, string, CancellationToken, string?, PipelineProject?>((_, ip, _, _, _, _, _, _, _) =>
+        var mockDispatcher = new Mock<IWorkDistributor>();
+        mockDispatcher.Setup(d => d.DistributeAsync(
+                It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<JobDistributionRequest, CancellationToken>((request, _) =>
             {
-                if (ip == failingProviderId)
+                if (request.IssueProviderConfigId == failingProviderId)
                     throw new InvalidOperationException("Simulated dispatch failure");
-                lock (dispatchedProviderIds) { dispatchedProviderIds.Add(ip); }
-                return Task.FromResult(true);
+                lock (dispatchedProviderIds) { dispatchedProviderIds.Add(request.IssueProviderConfigId); }
+                return Task.FromResult(new DistributionResult(true, null, null));
             });
-        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
+        mockDispatcher.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new HashSet<(string, string)>());
 
         var svc = CreateService(mockStore, mockFactory, mockDispatcher.Object);
         using var cts = new CancellationTokenSource();
@@ -372,7 +369,7 @@ public class PipelineLoopFairDispatchPropertyTests
             }).DistinctBy(c => c.Id).ToList());
     }
 
-    private static PipelineLoopService CreateService(Mock<IConfigurationStore> mockStore, Mock<IProviderFactory> mockFactory, IJobDispatcher? dispatcher = null)
+    private static PipelineLoopService CreateService(Mock<IConfigurationStore> mockStore, Mock<IProviderFactory> mockFactory, IWorkDistributor? distributor = null)
     {
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockValidator = new Mock<IQualityGateValidator>();
@@ -384,7 +381,7 @@ public class PipelineLoopFairDispatchPropertyTests
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
-        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object, dispatcher);
+        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object, distributor);
     }
 
     // ══════════════════════════════════════════════════════════════════════

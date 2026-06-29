@@ -2,6 +2,7 @@ using Moq;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Health;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -14,8 +15,9 @@ public class AgentCodingPageServiceTests
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<IJobDispatcher> _mockJobDispatcher;
+    private readonly Mock<IWorkDistributor> _mockWorkDistributor;
     private readonly Mock<IDependencyChecker> _mockDependencyChecker;
+    private readonly Mock<IDispatchOrchestrationService> _mockDispatchOrchestration;
     private readonly PipelineLoopService _loopService;
     private readonly AgentCodingPageService _service;
 
@@ -24,7 +26,7 @@ public class AgentCodingPageServiceTests
         _mockConfigStore = new Mock<IConfigurationStore>();
         _mockProjectStore = new Mock<IProjectStore>();
         _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockJobDispatcher = new Mock<IJobDispatcher>();
+        _mockWorkDistributor = new Mock<IWorkDistributor>();
         _mockDependencyChecker = new Mock<IDependencyChecker>();
 
         var mockLogger = new Mock<Serilog.ILogger>();
@@ -46,9 +48,12 @@ public class AgentCodingPageServiceTests
             orchestration, _mockProviderFactory.Object, _mockConfigStore.Object,
             _mockConfigStore.Object, _mockConfigStore.Object, mockLogger.Object);
 
+        var mockAgentRegistry = new AgentRegistryService(mockLogger.Object);
+        _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
         _service = new AgentCodingPageService(
-            _loopService, _mockJobDispatcher.Object, _mockConfigStore.Object,
-            _mockProjectStore.Object, _mockProviderFactory.Object, _mockDependencyChecker.Object);
+            _loopService, _mockWorkDistributor.Object, mockAgentRegistry, _mockConfigStore.Object,
+            _mockProjectStore.Object, _mockProviderFactory.Object, _mockDependencyChecker.Object,
+            _mockDispatchOrchestration.Object);
     }
 
     private static ProviderConfig MakeProvider(string id, ProviderKind kind = ProviderKind.Issue) =>
@@ -191,15 +196,77 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task DispatchIssueAsync_ReturnsError_WhenNoAgents()
     {
+        // In DB mode with IDispatchOrchestrationService injected, dispatch goes through
+        // PrepareDistributionRequestAsync which builds a complete request with ProviderConfigs.
         var template = MakeTemplate();
         _service.IssueProviders.Add(MakeProvider("ip-1"));
         _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
-        _mockJobDispatcher.Setup(d => d.HasRegisteredAgents).Returns(false);
+
+        _mockDependencyChecker.Setup(d => d.CheckAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IIssueProvider>(),
+            It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        // Setup orchestration to return a full request with ProviderConfigs populated
+        var fullRequest = new JobDistributionRequest
+        {
+            IssueIdentifier = "42",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "manual",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet,kiro",
+            TimeoutSeconds = 7200,
+            ProviderConfigs = new List<ProviderConfig>
+            {
+                new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" },
+                new() { Id = "ap-1", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "Agent" }
+            }
+        };
+        _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
+            "42", "ip-1", "rp-1", null, null, "manual",
+            It.IsAny<PipelineProject>(),
+            It.IsAny<WorkItemTaskType>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(fullRequest);
+
+        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(true, "work-item-1", null));
+
+        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
+
+        Assert.True(success);
+
+        // Verify that distribute was called with the ORCHESTRATED request (has ProviderConfigs)
+        _mockWorkDistributor.Verify(w => w.DistributeAsync(
+            It.Is<JobDistributionRequest>(r => r.ProviderConfigs != null && r.ProviderConfigs.Count == 2),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchIssueAsync_ReturnsError_WhenOrchestrationFails()
+    {
+        var template = MakeTemplate();
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
+
+        _mockDependencyChecker.Setup(d => d.CheckAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IIssueProvider>(),
+            It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        // Orchestration returns null (config not found, etc.)
+        _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
+            It.IsAny<PipelineProject>(),
+            It.IsAny<WorkItemTaskType>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((JobDistributionRequest?)null);
 
         var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
 
         Assert.False(success);
-        Assert.Contains("no agents", error);
+        Assert.Contains("orchestration preparation failed", error);
+        _mockWorkDistributor.Verify(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -365,5 +432,102 @@ public class AgentCodingPageServiceTests
         // First issue result stored, second one failed — partial results preserved
         Assert.Single(_service.DrawerReadiness);
         Assert.True(_service.DrawerReadiness["1"].IsReady);
+    }
+
+    [Fact]
+    public async Task DispatchPrReviewAsync_DbMode_UsesOrchestration()
+    {
+        // DispatchPrReviewAsync must route through IDispatchOrchestrationService in DB mode,
+        // otherwise the agent receives no ProviderConfigs and no RunId → token refresh fails.
+        var template = MakeTemplate();
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
+
+        var fullRequest = new JobDistributionRequest
+        {
+            IssueIdentifier = "pr-5",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "manual",
+            TaskType = WorkItemTaskType.Review,
+            AgentSelector = "dotnet,kiro",
+            TimeoutSeconds = 7200,
+            RunId = Guid.NewGuid().ToString(),
+            ProviderConfigs = new List<ProviderConfig>
+            {
+                new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" }
+            }
+        };
+
+        _mockDispatchOrchestration.Setup(d => d.PrepareReviewDistributionRequestAsync(
+            It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(fullRequest);
+
+        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(true, "work-1", null));
+
+        var pr = new PullRequestSummary { Identifier = "5", Title = "PR", BranchName = "feat/x", TargetBranch = "main", Url = "http://x", Number = 5, Description = "", Labels = [], IsDraft = false };
+        var (success, _, _) = await _service.DispatchPrReviewAsync(pr, template);
+
+        Assert.True(success);
+
+        // Verify orchestration was used (not direct minimal request)
+        _mockDispatchOrchestration.Verify(d => d.PrepareReviewDistributionRequestAsync(
+            It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Verify distributor received the orchestrated request with ProviderConfigs
+        _mockWorkDistributor.Verify(w => w.DistributeAsync(
+            It.Is<JobDistributionRequest>(r => r.ProviderConfigs != null && r.ProviderConfigs.Count > 0),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DispatchDecompositionAsync_DbMode_UsesOrchestration()
+    {
+        // DispatchDecompositionAsync must route through IDispatchOrchestrationService in DB mode.
+        var template = MakeTemplate();
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
+
+        var fullRequest = new JobDistributionRequest
+        {
+            IssueIdentifier = "epic-1",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "manual",
+            TaskType = WorkItemTaskType.Decomposition,
+            AgentSelector = "dotnet,kiro",
+            TimeoutSeconds = 900,
+            RunId = Guid.NewGuid().ToString(),
+            ProviderConfigs = new List<ProviderConfig>
+            {
+                new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" }
+            }
+        };
+
+        _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(),
+            It.IsAny<PipelineProject>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(fullRequest);
+
+        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(true, "work-1", null));
+
+        var issue = new IssueSummary { Identifier = "epic-1", Title = "Epic", Labels = new[] { "agent:epic" } };
+        var (success, _, _) = await _service.DispatchDecompositionAsync(issue, template);
+
+        Assert.True(success);
+
+        // Verify orchestration was used
+        _mockDispatchOrchestration.Verify(d => d.PrepareDecompositionDistributionRequestAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(),
+            It.IsAny<PipelineProject>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Verify distributor received the orchestrated request with ProviderConfigs
+        _mockWorkDistributor.Verify(w => w.DistributeAsync(
+            It.Is<JobDistributionRequest>(r => r.ProviderConfigs != null && r.ProviderConfigs.Count > 0),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 }

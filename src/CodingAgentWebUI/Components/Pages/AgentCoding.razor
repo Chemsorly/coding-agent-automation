@@ -202,16 +202,16 @@
 <!-- Dispatch Drawers -->
 <IssueDispatchDrawer IsOpen="_drawerOpen" Template="_drawerTemplate"
     Issues="_drawerIssues" IsLoading="_drawerLoading" HasMore="_drawerHasMore" Page="_drawerPage"
-    IsDispatching="_drawerDispatching" IsBeingProcessed="@(id => JobDispatcher.IsIssueBeingProcessedOrQueued(id, _drawerTemplate?.IssueProviderId ?? ""))"
+    IsDispatching="_drawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _drawerTemplate?.IssueProviderId ?? ""))"
     Readiness="_drawerReadiness"
     OnClose="CloseDrawer" OnNextPage="DrawerNextPage" OnPrevPage="DrawerPrevPage" OnDispatch="DispatchFromDrawer" />
 
 <PrDispatchDrawer IsOpen="_prDrawerOpen" Template="_prDrawerTemplate"
     PullRequests="_prDrawerPrs" IsLoading="_prDrawerLoading" HasMore="_prDrawerHasMore" Page="_prDrawerPage"
-    IsDispatching="_prDrawerDispatching" IsBeingProcessed="@(id => JobDispatcher.IsIssueBeingProcessedOrQueued(id, _prDrawerTemplate?.IssueProviderId ?? ""))"
+    IsDispatching="_prDrawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _prDrawerTemplate?.IssueProviderId ?? ""))"
     OnClose="ClosePrDrawer" OnNextPage="PrDrawerNextPage" OnPrevPage="PrDrawerPrevPage" OnDispatch="DispatchPrReviewFromDrawer" />
 
 <EpicDispatchDrawer IsOpen="_epicDrawerOpen" Template="_epicDrawerTemplate"
     Issues="_epicDrawerIssues" IsLoading="_epicDrawerLoading" IsDispatching="_epicDrawerDispatching"
-    IsBeingProcessed="@(id => JobDispatcher.IsIssueBeingProcessedOrQueued(id, _epicDrawerTemplate?.IssueProviderId ?? ""))"
+    IsBeingProcessed="@(id => IsIssueActive(id, _epicDrawerTemplate?.IssueProviderId ?? ""))"
     OnClose="CloseEpicDrawer" OnDispatch="DispatchDecompositionFromDrawer" />

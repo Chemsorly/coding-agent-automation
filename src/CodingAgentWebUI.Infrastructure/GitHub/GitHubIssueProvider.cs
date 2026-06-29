@@ -286,8 +286,9 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             {
                 // Label already exists — skip
             }
-            catch (Exception) when (!ct.IsCancellationRequested)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
+                Log.Warning(ex, "Failed to create agent label {LabelName} on {Owner}/{Repo}", name, Owner, Repo);
                 allSucceeded = false;
             }
         }

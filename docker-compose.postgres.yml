@@ -1,0 +1,57 @@
+# =============================================================================
+# PostgreSQL + Redis Override for Local Development
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml up
+#
+# Adds Postgres (persistence) and Redis (SignalR backplane) to the orchestrator.
+# WorkDistribution mode defaults to SignalR (hybrid: DB persistence + SignalR delivery).
+# Redis is optional for single-instance but included here for testing the
+# multi-replica backplane code path.
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: caa
+      POSTGRES_PASSWORD: caa_dev_password
+      POSTGRES_DB: coding_agent_automation
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./config/postgres:/var/lib/postgresql/18/docker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U caa -d coding_agent_automation"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - coding-agent-net
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    networks:
+      - coding-agent-net
+
+  orchestrator:
+    environment:
+      - Database__ConnectionString=Host=postgres;Port=5432;Database=coding_agent_automation;Username=caa;Password=caa_dev_password;Include Error Detail=true;SSL Mode=Disable
+      - Database__MigrateOnStartup=true
+      - SignalR__Redis__ConnectionString=redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy

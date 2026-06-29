@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
+using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
@@ -5,6 +7,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using Microsoft.Extensions.Logging;
 
 namespace CodingAgentWebUI.Hubs;
 
@@ -21,6 +24,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
+    private readonly WorkItemTransitionService? _workItemTransition;
+    private readonly ILogger<AgentHubFacade> _logger;
 
     public AgentHubFacade(
         AgentRegistryService registry,
@@ -29,7 +34,9 @@ public sealed class AgentHubFacade : IAgentHubFacade
         JobQueueDrainService drainService,
         IPipelineRunHistoryService historyService,
         IConfigurationStore configStore,
-        IProviderFactory providerFactory)
+        IProviderFactory providerFactory,
+        ILogger<AgentHubFacade> logger,
+        WorkItemTransitionService? workItemTransition = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(runService);
@@ -38,6 +45,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         ArgumentNullException.ThrowIfNull(historyService);
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
+        ArgumentNullException.ThrowIfNull(logger);
 
         _registry = registry;
         _runService = runService;
@@ -46,6 +54,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _historyService = historyService;
         _configStore = configStore;
         _providerFactory = providerFactory;
+        _logger = logger;
+        _workItemTransition = workItemTransition;
     }
 
     // ── Registry operations ─────────────────────────────────────────────
@@ -79,6 +89,86 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public PipelineRun? GetRun(string jobId)
         => _runService.GetRun(jobId);
+
+    /// <inheritdoc />
+    public async Task TransitionWorkItemAsync(string jobId, WorkItemStatus status, CancellationToken ct)
+    {
+        if (_workItemTransition is null || !Guid.TryParse(jobId, out var workItemId))
+            return;
+
+        // Single retry with longer backoff — acts as a safety net above the Polly pipeline
+        // in WorkItemTransitionService (which handles transient DB errors with 5 retries).
+        // This outer retry only fires if the entire Polly pipeline fails or the circuit breaks.
+        // If all retries fail, ReconciliationService will eventually mark it Failed
+        // (which may be incorrect if the agent actually succeeded).
+        const int maxAttempts = 2;
+        for (int attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            try
+            {
+                var result = await _workItemTransition.TransitionAsync(workItemId, status, item =>
+                {
+                    item.CompletedAt = DateTimeOffset.UtcNow;
+                }, ct);
+
+                if (result)
+                {
+                    _logger.LogInformation(
+                        "WorkItem {WorkItemId} transitioned to {Status}",
+                        workItemId, status);
+                    return;
+                }
+
+                // Transition rejected — likely Dispatched → Succeeded/Cancelled (skipped Running).
+                // Attempt two-step: Dispatched → Running → terminal status.
+                if (status is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled)
+                {
+                    _logger.LogWarning(
+                        "WorkItem {WorkItemId} direct transition to {Status} rejected, attempting two-step via Running",
+                        workItemId, status);
+
+                    var intermediateResult = await _workItemTransition.TransitionAsync(
+                        workItemId, WorkItemStatus.Running, ct: ct);
+
+                    if (intermediateResult)
+                    {
+                        var finalResult = await _workItemTransition.TransitionAsync(workItemId, status, item =>
+                        {
+                            item.CompletedAt = DateTimeOffset.UtcNow;
+                        }, ct);
+
+                        if (finalResult)
+                        {
+                            _logger.LogInformation(
+                                "WorkItem {WorkItemId} two-step transition to {Status} succeeded (via Running)",
+                                workItemId, status);
+                            return;
+                        }
+                    }
+                }
+
+                // If we get here, transition was rejected for a non-recoverable reason
+                // (e.g., already terminal). Log and exit — not an error.
+                _logger.LogWarning(
+                    "WorkItem {WorkItemId} transition to {Status} rejected (may already be terminal)",
+                    workItemId, status);
+                return;
+            }
+            catch (Exception ex) when (attempt < maxAttempts - 1
+                && ex is not Polly.CircuitBreaker.BrokenCircuitException)
+            {
+                _logger.LogWarning(ex,
+                    "WorkItem {WorkItemId} transition to {Status} failed on attempt {Attempt}, retrying",
+                    workItemId, status, attempt + 1);
+                // Wait 2s before final retry — gives brief recovery window after Polly exhaustion
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+            }
+        }
+
+        _logger.LogError(
+            "WorkItem {WorkItemId} transition to {Status} failed after all retry attempts",
+            workItemId, status);
+    }
 
     /// <inheritdoc />
     public void AddRun(PipelineRun run)

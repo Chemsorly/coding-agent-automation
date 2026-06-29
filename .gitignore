@@ -78,3 +78,6 @@ config/github-app-credentials.json
 # Core dumps
 core
 **/core
+
+# Local Postgres data (docker-compose bind mount)
+config/postgres/

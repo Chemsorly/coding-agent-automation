@@ -518,12 +518,10 @@ public sealed class AgentWorkerService : BackgroundService
 
         var exitCode = result.ExitCode;
 
-        // Send the response text to the UI (HTTP response body contains the final answer)
-        foreach (var line in result.OutputLines)
-        {
-            if (!string.IsNullOrWhiteSpace(line))
-                await outputBatcher.AddLineAsync(line);
-        }
+        // NOTE: Do NOT re-emit result.OutputLines here. The onOutputLine callback
+        // already delivered content to the batcher during ExecuteAsync — either via
+        // SSE streaming (message.part.updated) or via the HTTP response fallback
+        // (when SSE didn't emit). Re-iterating OutputLines causes duplicate display.
 
         string? error = exitCode != ExitCodes.Success
             ? string.Join("\n", result.OutputLines.TakeLast(3))

@@ -110,9 +110,9 @@ public class ConsolidationRunArbitraries
             from hasTemplateName in Gen.Elements(true, false)
             from templateName in Gen.Elements(TemplateNamePool)
             from startedAt in Gen.Elements(
-                new DateTime(2025, 1, 15, 10, 0, 0, DateTimeKind.Utc),
-                new DateTime(2025, 6, 20, 14, 30, 0, DateTimeKind.Utc),
-                new DateTime(2026, 3, 5, 8, 45, 0, DateTimeKind.Utc))
+                new DateTimeOffset(2025, 1, 15, 10, 0, 0, TimeSpan.Zero),
+                new DateTimeOffset(2025, 6, 20, 14, 30, 0, TimeSpan.Zero),
+                new DateTimeOffset(2026, 3, 5, 8, 45, 0, TimeSpan.Zero))
             from hasCompleted in Gen.Elements(true, false)
             from status in Gen.Elements(
                 ConsolidationRunStatus.Running,

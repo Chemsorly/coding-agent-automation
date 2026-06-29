@@ -23,4 +23,5 @@ public static class SettingsNodes
     public const string ReviewerConfigs = "reviewer-configs";
     public const string Projects = "projects";
     public const string ProjectDetail = "project-detail";
+    public const string ConfigImportExport = "config-import-export";
 }

@@ -100,8 +100,8 @@ public class DecompositionTemplatePropertyTests
         mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
             .Returns(new Mock<IRepositoryProvider>().Object);
 
-        var mockDispatcher = new Mock<IJobDispatcher>();
-        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
+        var mockDispatcher = new Mock<IWorkDistributor>();
+        mockDispatcher.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new HashSet<(string, string)>());
 
         var svc = CreateService(mockStore, mockFactory, mockDispatcher.Object);
         using var cts = new CancellationTokenSource();
@@ -210,8 +210,8 @@ public class DecompositionTemplatePropertyTests
         mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
             .Returns(new Mock<IRepositoryProvider>().Object);
 
-        var mockDispatcher = new Mock<IJobDispatcher>();
-        mockDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
+        var mockDispatcher = new Mock<IWorkDistributor>();
+        mockDispatcher.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new HashSet<(string, string)>());
 
         var svc = CreateService(mockStore, mockFactory, mockDispatcher.Object);
         using var cts = new CancellationTokenSource();
@@ -239,7 +239,7 @@ public class DecompositionTemplatePropertyTests
     private static PipelineLoopService CreateService(
         Mock<IConfigurationStore> mockStore,
         Mock<IProviderFactory> mockFactory,
-        IJobDispatcher? dispatcher = null)
+        IWorkDistributor? distributor = null)
     {
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockValidator = new Mock<IQualityGateValidator>();
@@ -251,6 +251,6 @@ public class DecompositionTemplatePropertyTests
             brainUpdateService: new Mock<IBrainUpdateService>().Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
-        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object, dispatcher);
+        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object, distributor);
     }
 }

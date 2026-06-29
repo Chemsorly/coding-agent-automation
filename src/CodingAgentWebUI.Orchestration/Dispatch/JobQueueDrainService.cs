@@ -47,7 +47,7 @@ public sealed class JobQueueDrainService : BackgroundService
     /// </summary>
     internal static readonly TimeSpan DefaultDrainInterval = TimeSpan.FromSeconds(10);
 
-    public JobQueueDrainService(
+    internal JobQueueDrainService(
         JobDispatcherService dispatcher,
         AgentRegistryService registry,
         IJobDispatcher jobDispatcher,

@@ -6,6 +6,7 @@
     <title>Coding Agent</title>
     <base href="/" />
     <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="CodingAgentWebUI.styles.css" />
     <HeadOutlet />
 </head>
 <body>
@@ -57,6 +58,18 @@
                 document.removeEventListener('keydown', window.__globalKeyHandler);
                 window.__globalKeyHandler = null;
             }
+        };
+        window.downloadFileFromStream = async function (fileName, streamRef) {
+            var buffer = await streamRef.arrayBuffer();
+            var blob = new Blob([buffer], { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
         };
     </script>
 </body>

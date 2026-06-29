@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -64,6 +65,13 @@ public interface IAgentHubFacade
     /// Gets a specific run by its RunId.
     /// </summary>
     PipelineRun? GetRun(string jobId);
+
+    /// <summary>
+    /// Transitions the WorkItem row in Postgres to the given terminal status.
+    /// Called from ReportJobCompleted to ensure DB state matches in-memory state.
+    /// No-op if no DB-backed work distribution is configured.
+    /// </summary>
+    Task TransitionWorkItemAsync(string jobId, WorkItemStatus status, CancellationToken ct);
 
     /// <summary>
     /// Adds a pipeline run to the active runs collection.

@@ -20,6 +20,7 @@ namespace CodingAgentWebUI.UnitTests.Components;
 public class AgentMonitoringComponentTests : BunitContext
 {
     private readonly PipelineOrchestrationService _pipelineService;
+    private readonly Mock<IActiveRunQueryService> _mockActiveRunQuery = new();
 
     public AgentMonitoringComponentTests()
     {
@@ -47,6 +48,9 @@ public class AgentMonitoringComponentTests : BunitContext
 
         var registry = new AgentRegistryService(mockLogger.Object);
 
+        _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ActiveRunSummary>());
+
         Services.AddSingleton(_pipelineService);
         Services.AddSingleton(registry);
         Services.AddSingleton(new JobDispatcherService(registry, mockLogger.Object));
@@ -59,6 +63,8 @@ public class AgentMonitoringComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<ILabelSwapper>());
         Services.AddSingleton(Mock.Of<IConsolidationService>(s =>
             s.GetRunHistoryAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ConsolidationRun>>(Array.Empty<ConsolidationRun>())));
+        Services.AddSingleton<IActiveRunQueryService>(_mockActiveRunQuery.Object);
+        Services.AddSingleton(Mock.Of<IWorkDistributor>());
     }
 
     [Fact]
@@ -99,7 +105,7 @@ public class AgentMonitoringComponentTests : BunitContext
     public void ActiveRunsTable_DisplaysFullIssueTitle_WithoutTruncation()
     {
         var longTitle = "[ARC-07b] State machine property tests for pipeline step transitions";
-        SetActiveRun(CreateRun(longTitle));
+        SetActiveRunSummary(CreateRunSummary(longTitle));
 
         var cut = Render<AgentMonitoring>();
 
@@ -110,7 +116,7 @@ public class AgentMonitoringComponentTests : BunitContext
     [Fact]
     public void ActiveRunsTable_HasTitleAttributes_ForTooltips()
     {
-        SetActiveRun(CreateRun("Test Title"));
+        SetActiveRunSummary(CreateRunSummary("Test Title"));
 
         var cut = Render<AgentMonitoring>();
 
@@ -125,7 +131,7 @@ public class AgentMonitoringComponentTests : BunitContext
     [Fact]
     public void ActiveRunsTable_HasSevenColumns()
     {
-        SetActiveRun(CreateRun("Title"));
+        SetActiveRunSummary(CreateRunSummary("Title"));
 
         var cut = Render<AgentMonitoring>();
 
@@ -136,8 +142,8 @@ public class AgentMonitoringComponentTests : BunitContext
     [Fact]
     public void ActiveRunsTable_RunIdCell_HasTitleWithFullId()
     {
-        var run = CreateRun("Title");
-        SetActiveRun(run);
+        var summary = CreateRunSummary("Title");
+        SetActiveRunSummary(summary);
 
         var cut = Render<AgentMonitoring>();
 
@@ -145,7 +151,7 @@ public class AgentMonitoringComponentTests : BunitContext
         Assert.NotEmpty(monoTds);
 
         // The first mono td should have the full run ID as title
-        Assert.Equal(run.RunId, monoTds[0].GetAttribute("title"));
+        Assert.Equal(summary.RunId, monoTds[0].GetAttribute("title"));
     }
 
     [Fact]
@@ -236,6 +242,24 @@ public class AgentMonitoringComponentTests : BunitContext
     {
         var prop = typeof(PipelineOrchestrationService).GetProperty("ActiveRun")!;
         prop.SetValue(_pipelineService, run);
+    }
+
+    private static ActiveRunSummary CreateRunSummary(string issueTitle) => new()
+    {
+        RunId = "abcd1234-5678-9012-3456-789012345678",
+        IssueIdentifier = "194",
+        IssueTitle = issueTitle,
+        RunType = PipelineRunType.Implementation,
+        AgentId = null,
+        StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+        ProjectName = null,
+        CurrentStep = PipelineStep.GeneratingCode
+    };
+
+    private void SetActiveRunSummary(ActiveRunSummary summary)
+    {
+        _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { summary });
     }
 
     [Fact]

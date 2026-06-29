@@ -16,13 +16,42 @@ using OpenTelemetry.Trace;
 using Serilog;
 using Serilog.Enrichers.Span;
 
+// ── Determine startup mode from CLI args ──
+var workItemId = args
+    .FirstOrDefault(a => a.StartsWith(AgentDefaults.CliWorkItemIdPrefix, StringComparison.OrdinalIgnoreCase))
+    ?.Substring(AgentDefaults.CliWorkItemIdPrefix.Length);
+var isK8sMode = workItemId is not null;
+
+// ── Read API key: from file (K8s mode) or env var (SignalR mode) ──
+string agentApiKey;
+var apiKeyFilePath = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKeyFile);
+if (!string.IsNullOrEmpty(apiKeyFilePath))
+{
+    // K8s mode: read from mounted Secret file
+    agentApiKey = (await File.ReadAllTextAsync(apiKeyFilePath)).Trim();
+}
+else
+{
+    agentApiKey = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKey)
+        ?? throw new InvalidOperationException(
+            $"Neither {AgentDefaults.EnvAgentApiKeyFile} nor {AgentDefaults.EnvAgentApiKey} is set. " +
+            "Provide --work-item-id={{id}} with AGENT_API_KEY_FILE, or AGENT_API_KEY for SignalR mode.");
+}
+
 // ── Read required environment variables early ──
 var orchestratorUrl = Environment.GetEnvironmentVariable(AgentDefaults.EnvOrchestratorUrl)
     ?? throw new InvalidOperationException("ORCHESTRATOR_URL environment variable is required");
-var agentApiKey = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentApiKey)
-    ?? throw new InvalidOperationException("AGENT_API_KEY environment variable is required");
 var agentId = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentId)
     ?? Environment.MachineName;
+
+// ── Validate startup mode (fail within 10s if neither mode can be determined) ──
+if (!isK8sMode && string.IsNullOrEmpty(orchestratorUrl))
+{
+    // Neither --work-item-id nor SignalR env vars: fail fast
+    throw new InvalidOperationException(
+        "Agent startup mode cannot be determined. Provide --work-item-id={id} for K8s mode, " +
+        "or set ORCHESTRATOR_URL + AGENT_API_KEY for SignalR mode.");
+}
 
 // ── Configure Serilog ──
 var logLevel = Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel)?.ToLowerInvariant() switch
@@ -50,8 +79,8 @@ Log.Logger = new LoggerConfiguration()
 
 try
 {
-    Log.Information("Agent Worker starting (AgentId={AgentId}, OrchestratorUrl={OrchestratorUrl})",
-        agentId, orchestratorUrl);
+    Log.Information("Agent Worker starting (AgentId={AgentId}, OrchestratorUrl={OrchestratorUrl}, Mode={Mode})",
+        agentId, orchestratorUrl, isK8sMode ? "K8s" : "SignalR");
 
     var builder = WebApplication.CreateBuilder(args);
 
@@ -148,18 +177,45 @@ try
         sp.GetRequiredService<IHttpClientFactory>(),
         Log.Logger));
 
-    // ── Agent worker service (BackgroundService) ──
-    builder.Services.AddSingleton(sp => new AgentWorkerService(
-        sp.GetRequiredService<HubConnectionManager>(),
-        sp.GetRequiredService<HubConnectionManagerFactory>(),
-        sp.GetRequiredService<LocalPipelineExecutor>(),
-        sp.GetRequiredService<LocalConsolidationExecutor>(),
-        sp.GetRequiredService<IKiroCliOrchestrator>(),
-        sp.GetRequiredService<IHttpClientFactory>(),
-        sp.GetRequiredService<AgentIdentity>(),
-        sp.GetRequiredService<IHostApplicationLifetime>(),
-        Log.Logger));
-    builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
+    // ── Agent worker service (mode-conditional) ──
+    if (isK8sMode)
+    {
+        // K8s mode: register WorkItemHttpClient and WorkItemAgentService
+        builder.Services.AddHttpClient<WorkItemHttpClient>(client =>
+        {
+            client.BaseAddress = new Uri(orchestratorUrl.TrimEnd('/'));
+            client.DefaultRequestHeaders.Authorization =
+                new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
+            client.Timeout = TimeSpan.FromSeconds(90); // Per-request timeout (retries handle longer waits)
+        });
+
+        builder.Services.AddSingleton(sp => new WorkItemAgentService(
+            workItemId!,
+            sp.GetRequiredService<WorkItemHttpClient>(),
+            sp.GetRequiredService<HubConnectionManager>(),
+            sp.GetRequiredService<HubConnectionManagerFactory>(),
+            sp.GetRequiredService<LocalPipelineExecutor>(),
+            sp.GetRequiredService<LocalConsolidationExecutor>(),
+            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<IHostApplicationLifetime>(),
+            Log.Logger));
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkItemAgentService>());
+    }
+    else
+    {
+        // SignalR mode: register AgentWorkerService (existing behavior)
+        builder.Services.AddSingleton(sp => new AgentWorkerService(
+            sp.GetRequiredService<HubConnectionManager>(),
+            sp.GetRequiredService<HubConnectionManagerFactory>(),
+            sp.GetRequiredService<LocalPipelineExecutor>(),
+            sp.GetRequiredService<LocalConsolidationExecutor>(),
+            sp.GetRequiredService<IKiroCliOrchestrator>(),
+            sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<IHostApplicationLifetime>(),
+            Log.Logger));
+        builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
+    }
 
     var app = builder.Build();
 
@@ -168,6 +224,17 @@ try
 
     // Mark startup complete once the host is listening
     app.Lifetime.ApplicationStarted.Register(HealthEndpoints.MarkStarted);
+
+    // ── SIGTERM handler for K8s mode ──
+    if (isK8sMode)
+    {
+        app.Lifetime.ApplicationStopping.Register(() =>
+        {
+            Log.Information("SIGTERM received, cancelling pipeline for work item {WorkItemId}", workItemId);
+            var workItemService = app.Services.GetService<WorkItemAgentService>();
+            workItemService?.CancelPipeline();
+        });
+    }
 
     await app.RunAsync();
 }

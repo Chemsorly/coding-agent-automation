@@ -22,14 +22,14 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     private readonly string? _model;
     private volatile string? _currentSessionId;
     private volatile string? _currentSessionWorkspacePath;
-    private volatile bool _isExecuting;
     private volatile bool _sseEmittedAssistantContent;
     private long _lastOutputTimeTicks; // Interlocked access for DateTime
+    private int _activeExecutionCount; // Tracks concurrent executions for correct IsExecuting
     private volatile string? _sessionStatus; // "idle", "busy", "retry"
     private volatile string? _sessionStatusMessage; // Error/retry message from session.status event
     private volatile string? _allSessionsSummary; // Cached summary from polling GET /session/status
     private CancellationTokenSource? _sessionStatusPollCts; // Controls the background polling loop
-    private readonly Dictionary<string, (long Input, long Output, long Reasoning, long CacheRead, long CacheWrite, double Cost)> _lastSessionTokens = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long Input, long Output, long Reasoning, long CacheRead, long CacheWrite, double Cost)> _lastSessionTokens = new();
 
     public AgentProviderType ProviderType => AgentProviderType.OpenCode;
 
@@ -70,7 +70,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     {
         return new AgentHealthStatus
         {
-            IsExecuting = _isExecuting,
+            IsExecuting = Interlocked.CompareExchange(ref _activeExecutionCount, 0, 0) > 0,
             ProcessId = null,
             IsProcessAlive = null,
             LastOutputTime = LastOutputTime,
@@ -171,16 +171,28 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     public async Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
     {
-        _isExecuting = true;
-        _sseEmittedAssistantContent = false;
+        Interlocked.Increment(ref _activeExecutionCount);
         _sessionStatus = null;
         _sessionStatusMessage = null;
         _allSessionsSummary = null;
         LastOutputTime = DateTime.UtcNow; // Reset so stall monitor measures from this call's start
 
-        // Start background session-status polling (provides observability into subagent retries)
-        _sessionStatusPollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var pollTask = PollAllSessionStatusesAsync(_sessionStatusPollCts.Token);
+        // For isolated (non-resume) calls, use a local flag so concurrent calls don't
+        // interfere with each other's SSE dedup logic. Shared calls use the instance field.
+        var isIsolatedCall = !request.UseResume && string.IsNullOrEmpty(request.ResumeSessionId);
+        var localSseEmitted = false;
+
+        // Only reset shared flag for non-isolated calls
+        if (!isIsolatedCall)
+            _sseEmittedAssistantContent = false;
+
+        // For isolated calls, use a local CTS to avoid the overwrite race where concurrent
+        // calls clobber each other's _sessionStatusPollCts. For shared calls, use the field
+        // (serial execution guarantees no race).
+        var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        if (!isIsolatedCall)
+            _sessionStatusPollCts = pollCts;
+        var pollTask = PollAllSessionStatusesAsync(pollCts.Token);
 
         try
         {
@@ -195,11 +207,17 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 };
             }
 
+            // For isolated calls, determine workspace path locally (not from shared field)
+            var workspacePath = isIsolatedCall
+                ? Path.GetFullPath(request.WorkspacePath)
+                : _currentSessionWorkspacePath;
+
             // 2. Timeout enforcement
             var sseCts = new CancellationTokenSource();
 
             // 3. Start SSE reader (always — needed for permission auto-approval)
-            var sseTask = ConnectAndProcessSseAsync(sessionId, onOutputLine, sseCts.Token);
+            var sseTask = ConnectAndProcessSseAsync(sessionId, onOutputLine, sseCts.Token,
+                workspacePath, sseEmitted => { if (isIsolatedCall) localSseEmitted = true; else _sseEmittedAssistantContent = true; });
 
             // 4. Send message (synchronous — blocks until agent finishes)
             AgentResult result;
@@ -209,7 +227,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                     request.Timeout, ct,
                     async linkedCt =>
                     {
-                        using var client = CreateDirectoryClient();
+                        using var client = workspacePath is not null
+                            ? CreateDirectoryClientForPath(workspacePath)
+                            : CreateDirectoryClient();
                         var messageRequest = new SendMessageRequest
                         {
                             Parts = [new MessagePart { Type = "text", Text = request.Prompt }],
@@ -262,7 +282,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                         // lines — emitting the HTTP response too would duplicate the content.
                         // The HTTP response fallback ensures output still appears when SSE
                         // fails to connect or drops before streaming any assistant text.
-                        if (onOutputLine is not null && !_sseEmittedAssistantContent)
+                        var sseAlreadyEmitted = isIsolatedCall ? localSseEmitted : _sseEmittedAssistantContent;
+                        if (onOutputLine is not null && !sseAlreadyEmitted)
                         {
                             foreach (var line in outputLines)
                             {
@@ -279,7 +300,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                     },
                     async () =>
                     {
-                        await AbortBestEffortAsync(sessionId);
+                        await AbortBestEffortAsync(sessionId, workspacePath);
                         return new AgentResult
                         {
                             ExitCode = ExitCodes.Timeout,
@@ -289,8 +310,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
-                await AbortBestEffortAsync(sessionId);
-                _ = await CaptureSessionTokenDeltaAsync(sessionId);
+                await AbortBestEffortAsync(sessionId, workspacePath);
+                _ = await CaptureSessionTokenDeltaAsync(sessionId, workspacePath);
                 throw; // finally block handles SSE cleanup
             }
             catch (OperationCanceledException ex)
@@ -328,7 +349,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             }
 
             // Capture token usage delta on all paths (success, timeout, error)
-            var (usage, cost) = await CaptureSessionTokenDeltaAsync(sessionId);
+            var (usage, cost) = await CaptureSessionTokenDeltaAsync(sessionId, workspacePath);
             return new AgentResult
             {
                 ExitCode = result.ExitCode,
@@ -339,12 +360,13 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         }
         finally
         {
-            _isExecuting = false;
-            // Stop session-status polling
-            try { _sessionStatusPollCts?.Cancel(); } catch { }
+            Interlocked.Decrement(ref _activeExecutionCount);
+            // Stop polling — use local CTS (avoids the overwrite race)
+            try { pollCts.Cancel(); } catch { }
             try { await pollTask.ConfigureAwait(false); } catch { }
-            _sessionStatusPollCts?.Dispose();
-            _sessionStatusPollCts = null;
+            pollCts.Dispose();
+            if (!isIsolatedCall)
+                _sessionStatusPollCts = null;
         }
     }
 
@@ -495,6 +517,17 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         return client;
     }
 
+    /// <summary>
+    /// Creates an HttpClient with the x-opencode-directory header set to an explicit path.
+    /// Used by isolated (parallel) calls that must not read shared <see cref="_currentSessionWorkspacePath"/>.
+    /// </summary>
+    private HttpClient CreateDirectoryClientForPath(string absoluteWorkspacePath)
+    {
+        var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+        client.DefaultRequestHeaders.Add("x-opencode-directory", absoluteWorkspacePath);
+        return client;
+    }
+
     private async Task<string?> ResolveSessionIdAsync(AgentRequest request, CancellationToken ct)
     {
         // ResumeSessionId takes precedence
@@ -508,20 +541,75 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         if (request.UseResume && _currentSessionId is not null)
             return _currentSessionId;
 
-        // UseResume=false → discard old session to force creation of a new one
+        // UseResume=false → isolated call. Create a new session WITHOUT touching shared
+        // _currentSessionId. This enables safe parallel execution: each concurrent call
+        // gets its own session ID returned directly, avoiding the race where multiple
+        // threads overwrite/read the shared field and end up sharing a session.
         if (!request.UseResume)
-            _currentSessionId = null;
+        {
+            var sessionId = await CreateIsolatedSessionAsync(request.WorkspacePath, ct);
+            if (sessionId is not null)
+            {
+                // Update shared state so subsequent UseResume=true calls can find this session.
+                // This write is safe: parallel callers don't read _currentSessionId (they use
+                // the local return value), and sequential callers (UseResume=true) only run
+                // after all parallel calls complete.
+                _currentSessionId = sessionId;
+                _currentSessionWorkspacePath = Path.GetFullPath(request.WorkspacePath);
+            }
+            return sessionId;
+        }
 
-        // Create new session (or no existing session when UseResume=true)
+        // Fallback: UseResume=true but no existing session — create one (shared path)
         await EnsureSessionAsync(request.WorkspacePath, ct);
         return _currentSessionId;
     }
 
-    private async Task AbortBestEffortAsync(string sessionId)
+    /// <summary>
+    /// Creates a new session and returns the ID without writing to shared instance fields.
+    /// Used for isolated (non-resume) calls to enable safe parallel execution.
+    /// </summary>
+    private async Task<string?> CreateIsolatedSessionAsync(string workspacePath, CancellationToken ct)
     {
         try
         {
-            using var client = CreateDirectoryClient();
+            var absolutePath = Path.GetFullPath(workspacePath);
+            var title = Path.GetFileName(absolutePath) ?? absolutePath;
+
+            using var client = CreateDirectoryClientForPath(absolutePath);
+            var request = new CreateSessionRequest { Title = title, Path = absolutePath };
+
+            var response = await client.PostAsJsonAsync("/session", request, OpenCodeJson.JsonOptions, ct);
+            response.EnsureSuccessStatusCode();
+
+            var result = await response.Content.ReadFromJsonAsync<CreateSessionResponse>(OpenCodeJson.JsonOptions, ct);
+            if (result is not null)
+            {
+                _logger.Debug("Created isolated session {SessionId} for workspace {WorkspacePath}",
+                    result.Id, absolutePath);
+                return result.Id;
+            }
+
+            return null;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // Real cancellation — propagate
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to create isolated session for workspace {WorkspacePath}", workspacePath);
+            return null;
+        }
+    }
+
+    private async Task AbortBestEffortAsync(string sessionId, string? workspacePath = null)
+    {
+        try
+        {
+            using var client = workspacePath is not null
+                ? CreateDirectoryClientForPath(workspacePath)
+                : CreateDirectoryClient();
             await client.PostAsync($"/session/{sessionId}/abort", null);
         }
         catch (Exception ex)
@@ -613,11 +701,13 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     /// logs it, and returns the delta as (TokenUsage?, decimal? Cost).
     /// Best-effort — failures return (null, null).
     /// </summary>
-    private async Task<(TokenUsage? Usage, decimal? Cost)> CaptureSessionTokenDeltaAsync(string sessionId)
+    private async Task<(TokenUsage? Usage, decimal? Cost)> CaptureSessionTokenDeltaAsync(string sessionId, string? workspacePath = null)
     {
         try
         {
-            using var client = CreateDirectoryClient();
+            using var client = workspacePath is not null
+                ? CreateDirectoryClientForPath(workspacePath)
+                : CreateDirectoryClient();
             var response = await client.GetAsync($"/session/{sessionId}", CancellationToken.None);
             if (!response.IsSuccessStatusCode) return (null, null);
 
@@ -682,9 +772,12 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     /// Routes events to the onOutputLine callback and auto-approves permission requests.
     /// Logs a warning on unexpected disconnect; does not reconnect.
     /// </summary>
-    internal async Task ConnectAndProcessSseAsync(string sessionId, Action<string>? onOutputLine, CancellationToken ct)
+    internal async Task ConnectAndProcessSseAsync(string sessionId, Action<string>? onOutputLine, CancellationToken ct,
+        string? workspacePath = null, Action<bool>? onSseEmitted = null)
     {
-        using var client = CreateDirectoryClient();
+        using var client = workspacePath is not null
+            ? CreateDirectoryClientForPath(workspacePath)
+            : CreateDirectoryClient();
 
         try
         {
@@ -744,7 +837,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 {
                     case "message.part.updated":
                         LastOutputTime = DateTime.UtcNow;
-                        _sseEmittedAssistantContent = true;
+                        onSseEmitted?.Invoke(true);
                         onOutputLine?.Invoke(StripAnsiEscapes($"[assistant] {sseEvent.Part?.Text}"));
                         break;
 
@@ -760,7 +853,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
                     case "permission.updated":
                         LastOutputTime = DateTime.UtcNow;
-                        await AutoApprovePermissionAsync(sessionId, sseEvent.PermissionId, ct);
+                        await AutoApprovePermissionAsync(sessionId, sseEvent.PermissionId, ct, workspacePath);
                         break;
 
                     case "session.idle":
@@ -813,7 +906,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     /// Auto-approves a permission request by calling POST /session/:id/permissions/:permissionId.
     /// Best-effort — logs warning on failure without rethrowing.
     /// </summary>
-    private async Task AutoApprovePermissionAsync(string sessionId, string? permissionId, CancellationToken ct)
+    private async Task AutoApprovePermissionAsync(string sessionId, string? permissionId, CancellationToken ct, string? workspacePath = null)
     {
         if (string.IsNullOrEmpty(permissionId))
             return;
@@ -821,7 +914,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         try
         {
             _logger.Debug("POST /session/{SessionId}/permissions/{PermissionId} (auto-approve)", sessionId, permissionId);
-            using var client = CreateDirectoryClient();
+            using var client = workspacePath is not null
+                ? CreateDirectoryClientForPath(workspacePath)
+                : CreateDirectoryClient();
             var body = new PermissionResponse { Response = "allow", Remember = true };
             await client.PostAsJsonAsync($"/session/{sessionId}/permissions/{permissionId}", body, OpenCodeJson.JsonOptions, ct);
         }
