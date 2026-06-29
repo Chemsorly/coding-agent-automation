@@ -468,8 +468,8 @@ public static class ConsolidationPromptBuilder
         return BuildAdversarialReviewPrompt(
             "Brain Consolidation Review",
             "brain consolidation changes",
-            "the diff summary file",
-            $"Read the diff summary file at `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}` from the workspace.",
+            "the diff summary file and the actual `.brain/` files in the workspace",
+            $"Read the diff summary file at `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}` from the workspace. **Also spot-check the `.brain/` files directly** to verify claims — cross-reference at least 3 changes against the actual file state.",
             AgentWorkspacePaths.BrainConsolidationReviewFilePath,
             [
                 "Incorrectly removed valuable entries that should have been kept",
@@ -477,6 +477,7 @@ public static class ConsolidationPromptBuilder
                 "Contradictions resolved by keeping the wrong version",
                 "Inaccurate factual updates",
                 "New contradictions introduced by the consolidation itself",
+                "**Unverifiable claims** — diff entries that are vague, lack quotes, or cannot be confirmed by reading the actual `.brain/` files. Flag [WARNING] if the diff reads like a generic summary rather than a specific changelog",
             ],
             "the consolidation changes",
             "consolidation changes",
@@ -660,13 +661,16 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine($"Produce a summary of all changes at `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}`.");
         sb.AppendLine();
-        sb.AppendLine("Include the following in your summary:");
-        sb.AppendLine("- Files created, modified, or deleted");
-        sb.AppendLine("- Entries merged (before/after)");
-        sb.AppendLine("- Contradictions resolved (which version was kept)");
-        sb.AppendLine("- Factual updates (with sources)");
+        sb.AppendLine("For each change, provide concrete evidence:");
+        sb.AppendLine("- **Merges:** Quote the original entries (first 2–3 lines each) and the merged result");
+        sb.AppendLine("- **Prunes:** Quote what was removed (first 2–3 lines) and cite why (uncited, stale, redundant)");
+        sb.AppendLine("- **Factual updates:** State the old claim, the new claim, and the verification source (URL or tool used)");
+        sb.AppendLine("- **Files created/deleted:** Full path and one-line purpose");
+        sb.AppendLine("- **SKILL.md regenerations:** List which project SKILL.md files were regenerated");
         sb.AppendLine();
-        sb.AppendLine("This summary will be reviewed by an independent agent — be thorough and specific.");
+        sb.AppendLine("Do NOT summarize vaguely (e.g., \"cleaned up several entries\"). Every modification must be individually accounted for.");
+        sb.AppendLine();
+        sb.AppendLine("This summary will be reviewed by an independent agent who will spot-check the actual `.brain/` files — be thorough and specific.");
         sb.AppendLine();
         sb.AppendLine("Do NOT make additional modifications to `.brain/` files in this step.");
 
