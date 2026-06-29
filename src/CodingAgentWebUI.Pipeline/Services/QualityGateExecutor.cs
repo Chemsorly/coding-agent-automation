@@ -77,7 +77,14 @@ internal partial class QualityGateExecutor : IQualityGateExecutor
             sb.AppendLine($"- External CI: {(report.ExternalCi.Passed ? "PASSED" : "FAILED")} ({report.ExternalCi.Details})");
         sb.AppendLine();
         sb.AppendLine($"Diagnostic output has been written to `{AgentWorkspacePaths.QualityGatesOutputDirectory}/`.");
-        sb.Append("List the files there and read the relevant ones to diagnose and fix the failures.");
+        sb.AppendLine("List the files there and read the relevant ones.");
+        sb.AppendLine();
+        sb.AppendLine("Before fixing, reflect:");
+        sb.AppendLine("1. **What specific code change caused this failure?** (identify the exact lines)");
+        sb.AppendLine("2. **Why did you make that change?** (what was the intent)");
+        sb.AppendLine("3. **What is the minimal fix** that addresses the failure without reverting the intended behavior?");
+        sb.AppendLine();
+        sb.Append("Apply the targeted fix, then verify by running the failing command again.");
         return sb.ToString();
     }
 }

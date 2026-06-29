@@ -386,7 +386,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine("Each suggestion MUST be:");
         sb.AppendLine("- **Concrete and actionable** — specify exactly what to change (e.g., \"Add file X to the initial context provided to the agent\" not \"Provide more context\")");
-        sb.AppendLine("- **Grounded in evidence** — reference specific feedback entries or patterns that motivate the suggestion");
+        sb.AppendLine("- **Grounded in evidence** — reference at least 3 specific feedback entries (by their category or stuckReason text) that motivate the suggestion");
         sb.AppendLine("- **Scoped to one change** — each suggestion addresses one improvement, not a bundle of changes");
         sb.AppendLine();
         sb.AppendLine("Do NOT produce abstract recommendations like \"improve error handling\" or \"add more tests\".");
