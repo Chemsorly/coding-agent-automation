@@ -618,6 +618,150 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Loop_SkipsIssuesAlreadyInActiveIssueIdentifiers()
+    {
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "already-active", Title = "Active Issue", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 1) },
+                    new() { Identifier = "new-issue", Title = "New Issue", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 2) }
+                },
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+            });
+
+        var dispatchedRequests = new List<JobDistributionRequest>();
+        var mockDistributor = new Mock<IWorkDistributor>();
+        mockDistributor.Setup(d => d.DistributeAsync(
+                It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((req, _) => dispatchedRequests.Add(req))
+            .ReturnsAsync(new DistributionResult(true, null, null));
+
+        // "already-active" is in the active set — should be SKIPPED
+        mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<(string, string)> { ("already-active", "ip-1") });
+
+        var svc = CreateService(mockDistributor.Object);
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        await svc.StartLoopAsync();
+
+        // Wait for dispatch to happen
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.ProcessedCount < 1 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        svc.StopLoop();
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+
+        // Only "new-issue" should have been dispatched — "already-active" was deduped
+        Assert.True(dispatchedRequests.Count >= 1,
+            $"Expected at least 1 dispatch, got {dispatchedRequests.Count}");
+        Assert.DoesNotContain(dispatchedRequests,
+            r => r.IssueIdentifier == "already-active");
+    }
+
+    [Fact]
+    public async Task Loop_DispatchesAllIssuesWhenActiveSetIsEmpty()
+    {
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "issue-1", Title = "First", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 1) },
+                    new() { Identifier = "issue-2", Title = "Second", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 2) }
+                },
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+            });
+
+        var dispatchedIdentifiers = new List<string>();
+        var mockDistributor = new Mock<IWorkDistributor>();
+        mockDistributor.Setup(d => d.DistributeAsync(
+                It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((req, _) => dispatchedIdentifiers.Add(req.IssueIdentifier))
+            .ReturnsAsync(new DistributionResult(true, null, null));
+
+        // Empty active set — no dedup, all issues should proceed
+        mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HashSet<(string, string)>());
+
+        var svc = CreateService(mockDistributor.Object);
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        await svc.StartLoopAsync();
+
+        // Wait for both issues to be dispatched
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (dispatchedIdentifiers.Count < 2 && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        svc.StopLoop();
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+
+        Assert.Contains("issue-1", dispatchedIdentifiers);
+        Assert.Contains("issue-2", dispatchedIdentifiers);
+    }
+
+    [Fact]
+    public async Task Loop_WhenGetActiveIssueIdentifiersThrows_ContinuesWithEmptySet()
+    {
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary>
+                {
+                    new() { Identifier = "issue-x", Title = "Issue X", Labels = new[] { "agent:next" }, CreatedAt = new DateTime(2026, 1, 1) }
+                },
+                Page = 1, PageSize = PipelineConstants.DefaultPageSize, HasMore = false
+            });
+
+        var mockDistributor = new Mock<IWorkDistributor>();
+        mockDistributor.Setup(d => d.DistributeAsync(
+                It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(true, null, null));
+
+        // GetActiveIssueIdentifiersAsync throws — should not crash the loop
+        mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB connection lost"));
+
+        var svc = CreateService(mockDistributor.Object);
+        using var cts = new CancellationTokenSource();
+
+        await svc.StartAsync(cts.Token);
+        await svc.StartLoopAsync();
+
+        // The loop should still run (maybe with error, maybe succeeds with empty dedup set)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.StatusMessage == "🔄 Loop starting…" && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
+        // Loop should still be active (didn't crash)
+        Assert.True(svc.IsLoopActive);
+
+        svc.StopLoop();
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (svc.IsLoopActive && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+        cts.Cancel();
+        try { await svc.StopAsync(CancellationToken.None); } catch { }
+    }
+
+    [Fact]
     public void InitiatedBy_DefaultsToManual()
     {
         var run = new PipelineRun

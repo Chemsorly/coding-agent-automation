@@ -247,9 +247,24 @@ public sealed partial class PipelineLoopService
 
         // Step 2b: Batch-load active issue identifiers for O(1) dedup checks per issue
         // Replaces per-issue IsIssueDistributedAsync calls in the dispatch loop
-        var activeIssueIdentifiers = _workDistributor is not null
-            ? await _workDistributor.GetActiveIssueIdentifiersAsync(ct)
-            : new HashSet<(string, string)>();
+        HashSet<(string IssueIdentifier, string IssueProviderConfigId)> activeIssueIdentifiers;
+        if (_workDistributor is not null)
+        {
+            try
+            {
+                activeIssueIdentifiers = await _workDistributor.GetActiveIssueIdentifiersAsync(ct);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to load active issue identifiers — proceeding with empty dedup set (may cause duplicate dispatch attempts)");
+                activeIssueIdentifiers = new HashSet<(string, string)>();
+            }
+        }
+        else
+        {
+            activeIssueIdentifiers = new HashSet<(string, string)>();
+        }
 
         // Detect and remediate stuck work items (SignalR mode: Dispatched > 5min → Failed)
         if (_workDistributor is not null)
