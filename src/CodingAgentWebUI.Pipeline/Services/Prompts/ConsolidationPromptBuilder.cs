@@ -180,6 +180,9 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("You are performing a holistic analysis of the codebase to identify refactoring opportunities.");
         sb.AppendLine("Explore the repository structure, read key files, and identify areas where incremental changes have created global incoherence.");
         sb.AppendLine();
+        sb.AppendLine("**Design principles to enforce:** KISS (keep it simple), DRY (don't repeat yourself), and reducing cognitive load.");
+        sb.AppendLine("When in doubt, prefer removing abstractions over adding them. Simpler code with fewer indirections is better than \"clean\" code with many layers.");
+        sb.AppendLine();
 
         // What to look for
         sb.AppendLine("## What to Look For");
@@ -195,6 +198,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("7. **Obvious bugs** — High-confidence correctness issues: null dereference risks, off-by-one errors, unreachable code paths, resource leaks (opened but never disposed), logic errors (conditions always true/false), race conditions in shared state. Only flag issues where you have strong evidence the code is wrong, not merely suboptimal");
         sb.AppendLine("8. **Stale documentation & misleading comments** — XML doc comments describing behavior the code no longer exhibits; README sections referencing removed features; comments explaining \"why\" that reference conditions no longer true; parameter descriptions that don't match actual parameters");
         sb.AppendLine("9. **Primitive obsession** — String or int parameters representing domain concepts (emails, URLs, IDs, file paths) without validation or type safety; magic numbers/strings without named constants; repeated validation logic for the same concept scattered across multiple call sites");
+        sb.AppendLine("10. **Over-engineering & unnecessary abstraction** — Interfaces with only one implementation that add indirection without value; wrapper classes that pass-through without adding logic; configuration options nobody uses; builder/factory patterns where a constructor would suffice; layers of indirection that increase cognitive load without enabling extension points actually used in the codebase");
         sb.AppendLine();
 
         // How to explore
@@ -261,7 +265,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- **estimatedEffort** — `small` (<5 files, mechanical changes), `medium` (5-15 files with logic changes), or `large` (15-30 files or architectural changes).");
         sb.AppendLine("- **riskLevel** — `low` (rename/move), `medium` (extract/restructure), or `high` (interface changes affecting consumers).");
         sb.AppendLine("- **technique** — Named refactoring pattern if applicable (e.g., Extract Method, Strangler Fig, Branch by Abstraction, Inline Class, Move Method).");
-        sb.AppendLine("- **category** — `refactoring` (structural improvements, default if omitted), `bug` (correctness issues), `documentation` (stale/misleading docs or comments), or `dead-code` (unused artifacts to remove).");
+        sb.AppendLine("- **category** — `refactoring` (structural improvements, default if omitted), `simplification` (removing unnecessary abstractions/complexity), `bug` (correctness issues), `documentation` (stale/misleading docs or comments), or `dead-code` (unused artifacts to remove).");
         sb.AppendLine();
 
         // Constraints
@@ -286,6 +290,20 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Prefer proposals that are mechanical and low-risk (file moves, renames, extractions) over sweeping architectural changes");
         sb.AppendLine("- Do NOT propose changes that require coordinated modifications across serialization boundaries (e.g., JSON schema + MessagePack wire format + all consumers simultaneously)");
         sb.AppendLine("- If a large refactoring is warranted, propose only the smallest first step that delivers value independently");
+        sb.AppendLine();
+
+        // Exploration depth requirements
+        sb.AppendLine("## Exploration Depth Requirements");
+        sb.AppendLine();
+        sb.AppendLine("Before producing proposals, you MUST:");
+        sb.AppendLine();
+        sb.AppendLine("- Read at least **20 source files** (not just listing/grepping — actually read content and understand the code)");
+        sb.AppendLine("- For each proposal, cite **specific line numbers or code snippets** as evidence");
+        sb.AppendLine("- Cross-reference **at least 2 files** per proposal (showing the pattern repeats, the dependency exists, or the inconsistency spans multiple locations)");
+        sb.AppendLine();
+        sb.AppendLine("Include a `## Files Analyzed` section in a separate file at `.agent/refactoring-analysis.md` listing every file you read with a one-line note on what you found (or \"no issues\"). This demonstrates thoroughness and helps the reviewer verify your claims.");
+        sb.AppendLine();
+        sb.AppendLine("The reviewer WILL reject proposals that lack specific evidence. Vague descriptions like \"this file is complex\" without citing which methods, what the complexity is, or how it manifests are insufficient.");
 
         return sb.ToString();
     }
@@ -424,7 +442,7 @@ public static class ConsolidationPromptBuilder
             "Refactoring Proposals Review",
             "refactoring proposals",
             "the proposals file and the actual codebase",
-            $"Read the proposals file at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` from the workspace.",
+            $"Read the proposals file at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` and the analysis report at `.agent/refactoring-analysis.md` from the workspace.",
             AgentWorkspacePaths.RefactoringReviewFilePath,
             [
                 "Non-existent `affectedFiles` paths — verify the referenced files actually exist in the repository",
@@ -432,6 +450,8 @@ public static class ConsolidationPromptBuilder
                 "Bundled concerns that should be separate proposals",
                 "Abstract rationales lacking concrete code references",
                 "**Scope exceeding single-agent capacity** — proposals touching more than ~30 files (source + test), spanning multiple serialization boundaries, or requiring coordinated breaking changes across projects should be flagged as [CRITICAL] with a suggestion to split into smaller phases",
+                "**Insufficient evidence depth** — proposals citing only file paths without line numbers, code snippets, or cross-references between files. A proposal that says \"File X is complex\" without citing which methods or what makes them complex should be flagged [WARNING]",
+                "**Shallow exploration** — if `.agent/refactoring-analysis.md` is missing or lists fewer than 15 files, flag as [CRITICAL] because the analysis is superficial and likely missed significant opportunities",
             ],
             "each proposal",
             "proposals",
