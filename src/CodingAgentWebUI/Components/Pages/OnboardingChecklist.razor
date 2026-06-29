@@ -1,6 +1,6 @@
 @inject Microsoft.JSInterop.IJSRuntime JS
 
-@if (!_dismissed && !AllComplete)
+@if (_initialized && !_dismissed && !AllComplete)
 {
     <section class="onboarding-checklist">
         <div class="onboarding-header">
@@ -38,6 +38,7 @@
 }
 
 @code {
+    private bool _initialized;
     private bool _dismissed;
 
     [Parameter, EditorRequired] public bool HasIssueProvider { get; set; }
@@ -61,10 +62,12 @@
                 if (val == "true")
                 {
                     _dismissed = true;
-                    StateHasChanged();
                 }
             }
             catch { /* JS interop not available */ }
+
+            _initialized = true;
+            StateHasChanged();
         }
     }
 
