@@ -43,7 +43,6 @@ services:
     stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-1:/home/ubuntu/.local/share/kiro-cli
-      - ~/.aws:/home/ubuntu/.aws:ro
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-1
@@ -74,7 +73,6 @@ services:
     stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-2:/home/ubuntu/.local/share/kiro-cli
-      - ~/.aws:/home/ubuntu/.aws:ro
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-2
@@ -105,7 +103,6 @@ services:
     stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-3:/home/ubuntu/.local/share/kiro-cli
-      - ~/.aws:/home/ubuntu/.aws:ro
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-python
@@ -136,7 +133,6 @@ services:
     stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-4:/home/ubuntu/.local/share/kiro-cli
-      - ~/.aws:/home/ubuntu/.aws:ro
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-java

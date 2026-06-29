@@ -77,6 +77,12 @@ public sealed class HubConnectionManager : IAsyncDisposable
     public event Func<ConsolidationJobMessage, Task>? OnAssignConsolidationJob;
 
     /// <summary>
+    /// Fired when the orchestrator requests a forced disconnection of this agent.
+    /// After subscribers are notified, the connection is stopped automatically.
+    /// </summary>
+    public event Func<Task>? OnForceDisconnect;
+
+    /// <summary>
     /// Fired when the SignalR connection enters the terminal Closed state.
     /// Subscribers can use this to trigger a fresh reconnection from scratch.
     /// The exception parameter is non-null if the closure was due to an error.
@@ -197,6 +203,30 @@ public sealed class HubConnectionManager : IAsyncDisposable
                 message.JobId, message.Type);
             if (OnAssignConsolidationJob is not null)
                 await OnAssignConsolidationJob(message);
+        });
+
+        _connection.On("ForceDisconnect", async () =>
+        {
+            _logger.Warning("Received ForceDisconnect from orchestrator, stopping connection");
+            if (OnForceDisconnect is not null)
+            {
+                try
+                {
+                    await OnForceDisconnect();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "OnForceDisconnect handler failed");
+                }
+            }
+            try
+            {
+                await _connection.StopAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to stop connection after ForceDisconnect");
+            }
         });
     }
 

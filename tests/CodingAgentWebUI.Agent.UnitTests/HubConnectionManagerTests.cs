@@ -203,6 +203,19 @@ public class HubConnectionManagerTests : IAsyncDisposable
     // ── DeriveKey tests ─────────────────────────────────────────────────
 
     [Fact]
+    public void OnForceDisconnect_Event_IsSubscribable()
+    {
+        var manager = CreateManager("http://localhost", "agent-1", "api-key");
+        var invoked = false;
+
+        manager.OnForceDisconnect += () => { invoked = true; return Task.CompletedTask; };
+
+        // The event should be subscribable without error.
+        // Actual invocation requires a live SignalR connection (covered by E2E tests).
+        invoked.Should().BeFalse("event should not fire until ForceDisconnect message is received");
+    }
+
+    [Fact]
     public void DeriveKey_NonEmptyAgentId_ReturnsHmacHex()
     {
         var key = HubConnectionManager.DeriveKey("master-secret", "agent-1");
