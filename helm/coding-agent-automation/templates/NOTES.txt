@@ -35,7 +35,7 @@ Migrations: Applied via Helm hook Job (production mode)
 
 ── Database ──────────────────────────────────────────────────────────────────
 
-{{- if .Values.database.subchart.enabled }}
+{{- if and .Values.database.subchart .Values.database.subchart.enabled }}
 PostgreSQL deployed as subchart:
   Host: {{ include "coding-agent-automation.fullname" . }}-postgresql:5432
   Database: {{ .Values.database.subchart.auth.database }}
