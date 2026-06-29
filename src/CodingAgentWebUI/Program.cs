@@ -98,6 +98,10 @@ var pipelineConfig = await configStore.LoadPipelineConfigAsync(CancellationToken
 
 // Domain service registrations (extracted into focused extension methods)
 var dbConnectionString = builder.Configuration.GetValue<string>("Database:ConnectionString");
+builder.Services.AddSingleton(new CodingAgentWebUI.Services.FeatureFlags
+{
+    IsDatabaseMode = !string.IsNullOrEmpty(dbConnectionString)
+});
 if (string.IsNullOrEmpty(dbConnectionString))
 {
     // Legacy mode: JSON-based config store

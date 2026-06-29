@@ -1,6 +1,8 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Services
 @inject IProjectStore ProjectStore
+@inject FeatureFlags Features
 
 <div class="settings-tree">
     <div class="tree-group">
@@ -128,6 +130,8 @@
         }
     </div>
 
+    @if (Features.IsDatabaseMode)
+    {
     <div class="tree-group">
         <div class="tree-group-header" @onclick="ToggleDataManagement" aria-expanded="@_dataManagementExpanded.ToString().ToLower()">
             <span class="tree-chevron"><Icon Name="@(_dataManagementExpanded ? "chevron-down" : "chevron-right")" /></span>
@@ -143,6 +147,7 @@
             </div>
         }
     </div>
+    }
 </div>
 
 @code {

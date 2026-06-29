@@ -18,6 +18,7 @@
 @inject IProviderFactory ProviderFactory
 @inject ModelFetchService ModelFetchService
 @inject NotificationService NotificationService
+@inject FeatureFlags Features
 
 <div class="settings-page">
     <header class="settings-header">
@@ -142,9 +143,21 @@
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.ConfigImportExport:
-                    <ConfigImportExportSection
-                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
-                        OnImportCompleted="LoadAllData" />
+                    @if (Features.IsDatabaseMode)
+                    {
+                        <ConfigImportExportSection
+                            OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
+                            OnImportCompleted="LoadAllData" />
+                    }
+                    else
+                    {
+                        <div class="section-content">
+                            <h2>Data Management</h2>
+                            <p class="section-description">
+                                Import/Export is only available in database mode. Configure <code>Database:ConnectionString</code> to enable PostgreSQL persistence.
+                            </p>
+                        </div>
+                    }
                     break;
             }
         </div>
