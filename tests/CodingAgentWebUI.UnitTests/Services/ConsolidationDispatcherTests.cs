@@ -73,7 +73,8 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             queueService,
             Mock.Of<IPipelineRunHistoryService>(),
             _mockLogger.Object,
-            runsDir ?? _tempDir);
+            runStore: null,
+            consolidationRunsDirectory: runsDir ?? _tempDir);
     }
 
     private void RegisterIdleAgent(string agentId = "agent-1", string connectionId = "conn-1", string[]? labels = null)
