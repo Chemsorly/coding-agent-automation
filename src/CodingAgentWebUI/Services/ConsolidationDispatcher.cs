@@ -27,8 +27,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly ConsolidationQueueService _queueService;
     private readonly IPipelineRunHistoryService _runHistoryService;
     private readonly ILogger _logger;
-    private readonly IConsolidationRunStore? _runStore;
-    private readonly string _consolidationRunsDirectory;
+    private readonly IConsolidationRunStore _runStore;
 
     public ConsolidationDispatcher(
         AgentRegistryService registry,
@@ -41,8 +40,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         ConsolidationQueueService queueService,
         IPipelineRunHistoryService runHistoryService,
         ILogger logger,
-        IConsolidationRunStore? runStore = null,
-        string consolidationRunsDirectory = PipelineConstants.ConsolidationRunsDirectory)
+        IConsolidationRunStore runStore)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(jobDispatcher);
@@ -54,6 +52,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         ArgumentNullException.ThrowIfNull(queueService);
         ArgumentNullException.ThrowIfNull(runHistoryService);
         ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(runStore);
 
         _registry = registry;
         _jobDispatcher = jobDispatcher;
@@ -66,7 +65,6 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         _runHistoryService = runHistoryService;
         _logger = logger;
         _runStore = runStore;
-        _consolidationRunsDirectory = consolidationRunsDirectory;
     }
 
     /// <inheritdoc />
@@ -240,32 +238,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     private async Task<ConsolidationRun?> LoadRunAsync(string runId, CancellationToken ct)
     {
-        if (_runStore is not null)
-        {
-            var allRuns = await _runStore.LoadAllRunsAsync(ct);
-            return allRuns.FirstOrDefault(r => r.RunId == runId);
-        }
-
-        var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
-        if (!File.Exists(filePath))
-            return null;
-
-        try
-        {
-            var json = await File.ReadAllTextAsync(filePath, ct);
-            return System.Text.Json.JsonSerializer.Deserialize<ConsolidationRun>(json, Pipeline.PipelineJsonOptions.Default);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (System.Text.Json.JsonException ex)
-        {
-            _logger.Warning(ex, "Consolidation run file {RunId} is malformed, skipping", runId);
-            return null;
-        }
-        catch (IOException ex)
-        {
-            _logger.Warning(ex, "Failed to read consolidation run file {RunId}", runId);
-            return null;
-        }
+        return await _runStore.GetByIdAsync(runId, ct);
     }
 
     /// <summary>
@@ -421,48 +394,11 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         string? templateId,
         CancellationToken ct)
     {
-        if (_runStore is not null)
-        {
-            var allRuns = await _runStore.LoadAllRunsAsync(ct);
-            return allRuns
-                .Where(r => r.Type == type && r.TemplateId == templateId
-                    && r.Status == ConsolidationRunStatus.Succeeded && r.CompletedAtUtc.HasValue)
-                .Max(r => r.CompletedAtUtc);
-        }
-
-        if (!Directory.Exists(_consolidationRunsDirectory))
-            return null;
-
-        DateTimeOffset? latest = null;
-        foreach (var file in Directory.GetFiles(_consolidationRunsDirectory, "*.json"))
-        {
-            try
-            {
-                var json = await File.ReadAllTextAsync(file, ct);
-                var historicRun = System.Text.Json.JsonSerializer.Deserialize<ConsolidationRun>(json, Pipeline.PipelineJsonOptions.Default);
-
-                if (historicRun is not null
-                    && historicRun.Type == type
-                    && historicRun.TemplateId == templateId
-                    && historicRun.Status == ConsolidationRunStatus.Succeeded
-                    && historicRun.CompletedAtUtc.HasValue)
-                {
-                    if (latest is null || historicRun.CompletedAtUtc.Value > latest.Value)
-                        latest = historicRun.CompletedAtUtc.Value;
-                }
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (System.Text.Json.JsonException ex)
-            {
-                _logger.Warning(ex, "Consolidation run file {File} is malformed, skipping", file);
-            }
-            catch (IOException ex)
-            {
-                _logger.Warning(ex, "Failed to read consolidation run file {File}", file);
-            }
-        }
-
-        return latest;
+        var allRuns = await _runStore.LoadAllRunsAsync(ct);
+        return allRuns
+            .Where(r => r.Type == type && r.TemplateId == templateId
+                && r.Status == ConsolidationRunStatus.Succeeded && r.CompletedAtUtc.HasValue)
+            .Max(r => r.CompletedAtUtc);
     }
 
     /// <summary>

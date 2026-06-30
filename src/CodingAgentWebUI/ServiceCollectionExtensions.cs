@@ -147,7 +147,8 @@ public static class ServiceCollectionExtensions
         // Loop state persistence: auto-resumes loop after pod restart if previously active
         services.AddSingleton(sp => new LoopStatePersistenceService(
             sp.GetRequiredService<PipelineLoopService>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetRequiredService<ILoopStateStore>()));
         services.AddHostedService(sp => sp.GetRequiredService<LoopStatePersistenceService>());
 
         services.AddTransient<IssueDescriptionParser>();
@@ -291,15 +292,16 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ConsolidationQueueService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             Log.Logger,
-            sp.GetService<IConsolidationRunStore>()));
+            sp.GetRequiredService<IConsolidationRunStore>()));
 
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             Log.Logger,
             pipelineConfig,
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IConsolidationDispatcher>(),
-            sp.GetService<IConsolidationRunStore>()));
+            sp.GetRequiredService<IConsolidationRunStore>(),
+            sp.GetRequiredService<IHarnessSuggestionStore>(),
+            sp.GetRequiredService<IConsolidationDispatcher>()));
 
         services.AddSingleton<ConsolidationBadgeService>();
 

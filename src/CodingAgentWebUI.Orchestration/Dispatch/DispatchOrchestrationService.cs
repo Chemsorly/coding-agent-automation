@@ -197,9 +197,18 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     {
         var profiles = await _resolution.ConfigStore.LoadAgentProfilesAsync(ct);
 
-        // Find the first profile whose match labels are a subset of required labels
-        var profile = profiles.FirstOrDefault(p =>
-            p.MatchLabels.All(ml => requiredLabels.Contains(ml)));
+        // Find the best profile whose match labels COVER all required labels.
+        // Profile.MatchLabels = "agent must have these labels for this profile to apply."
+        // Any agent matched by such a profile has at least those labels,
+        // so if requiredLabels ⊆ profile.MatchLabels, the agent can satisfy the job.
+        var profile = profiles
+            .Where(p => p.Enabled)
+            .Where(p => requiredLabels.All(rl =>
+                p.MatchLabels.Contains(rl, StringComparer.OrdinalIgnoreCase)))
+            .OrderByDescending(p => p.MatchLabels.Count)
+            .ThenByDescending(p => p.Priority)
+            .ThenBy(p => p.Id, StringComparer.Ordinal)
+            .FirstOrDefault();
 
         if (profile is null)
         {

@@ -89,8 +89,8 @@ public sealed class ConsolidationServiceTests : IDisposable
         _config,
         _mockProjectStore.Object,
         _mockRunHistory.Object,
-        consolidationRunsDirectory: _runsDir,
-        harnessSuggestionsPath: _suggestionsPath);
+        new FileSystemConsolidationRunStore(_runsDir),
+        new FileSystemHarnessSuggestionStore(_suggestionsPath));
 
     #region TriggerAsync — creates run and persists
 
@@ -523,15 +523,14 @@ public sealed class ConsolidationServiceTests : IDisposable
             _config,
             _mockProjectStore.Object,
             _mockRunHistory.Object,
-            consolidationRunsDirectory: blockerDir,
-            harnessSuggestionsPath: _suggestionsPath);
+            new FileSystemConsolidationRunStore(blockerDir),
+            new FileSystemHarnessSuggestionStore(_suggestionsPath));
 
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
 
-        // PersistRunAsync swallows the exception, so TriggerAsync still returns the run
-        // (this verifies the current behavior — the persist failure is non-fatal in the current code)
-        run.Should().NotBeNull();
+        // PersistRunAsync now throws on failure → TriggerAsync catches, rolls back, returns null
+        run.Should().BeNull();
     }
 
     [Fact]
@@ -556,9 +555,9 @@ public sealed class ConsolidationServiceTests : IDisposable
             _config,
             _mockProjectStore.Object,
             _mockRunHistory.Object,
-            mockDispatcher.Object,
-            consolidationRunsDirectory: _runsDir,
-            harnessSuggestionsPath: _suggestionsPath);
+            new FileSystemConsolidationRunStore(_runsDir),
+            new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            mockDispatcher.Object);
 
         // First trigger — dispatch fails → rollback removes from _runningRuns
         var first = await sut.TriggerAsync(
@@ -603,9 +602,9 @@ public sealed class ConsolidationServiceTests : IDisposable
             _config,
             _mockProjectStore.Object,
             _mockRunHistory.Object,
-            mockDispatcher.Object,
-            consolidationRunsDirectory: _runsDir,
-            harnessSuggestionsPath: _suggestionsPath);
+            new FileSystemConsolidationRunStore(_runsDir),
+            new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            mockDispatcher.Object);
 
         // TriggerAsync catches the exception, rolls back, and returns null
         var result = await sut.TriggerAsync(

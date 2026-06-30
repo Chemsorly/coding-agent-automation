@@ -54,6 +54,15 @@ public static class WorkDistributionRegistration
                 Log.Logger));
             services.AddSingleton<IActiveRunQueryService>(sp => new InMemoryActiveRunQueryService(
                 sp.GetRequiredService<OrchestratorRunService>()));
+            services.AddSingleton<IConsolidationRunStore>(sp =>
+                new Pipeline.Services.FileSystemConsolidationRunStore(
+                    Pipeline.Models.PipelineConstants.ConsolidationRunsDirectory));
+            services.AddSingleton<ILoopStateStore>(sp =>
+                new Pipeline.Services.FileSystemLoopStateStore(
+                    Path.Combine(Pipeline.Models.PipelineConstants.ConfigBaseDirectory, "loop-state.json")));
+            services.AddSingleton<IHarnessSuggestionStore>(sp =>
+                new Pipeline.Services.FileSystemHarnessSuggestionStore(
+                    Pipeline.Models.PipelineConstants.HarnessSuggestionsPath));
             services.AddDistributedLockProvider(null);
             Log.Information("WorkDistribution: Legacy mode (no database). Using JsonConfigurationStore + LegacyWorkDistributor");
             return services;
@@ -137,6 +146,14 @@ public static class WorkDistributionRegistration
         // ── Consolidation run persistence (DB-backed) ───────────────────────
         services.AddSingleton<IConsolidationRunStore>(sp =>
             new PostgresConsolidationRunStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
+
+        // ── Loop state persistence (DB-backed) ──────────────────────────────
+        services.AddSingleton<ILoopStateStore>(sp =>
+            new PostgresLoopStateStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
+
+        // ── Harness suggestions persistence (DB-backed) ─────────────────────
+        services.AddSingleton<IHarnessSuggestionStore>(sp =>
+            new PostgresHarnessSuggestionStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
         // ── Polly resilience pipelines ──────────────────────────────────────
         RegisterResiliencePipelines(services);

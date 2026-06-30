@@ -1,5 +1,4 @@
-using System.Text.Json;
-using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.Extensions.Hosting;
 
@@ -22,7 +21,7 @@ public sealed class LoopStatePersistenceService : IHostedLifecycleService, IDisp
 {
     private readonly PipelineLoopService _loopService;
     private readonly Serilog.ILogger _logger;
-    private readonly string _stateFilePath;
+    private readonly ILoopStateStore _stateStore;
     private readonly TimeSpan _startupDelay;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
@@ -37,12 +36,12 @@ public sealed class LoopStatePersistenceService : IHostedLifecycleService, IDisp
     public LoopStatePersistenceService(
         PipelineLoopService loopService,
         Serilog.ILogger logger,
-        string? stateFilePath = null,
+        ILoopStateStore stateStore,
         TimeSpan? startupDelay = null)
     {
         _loopService = loopService;
         _logger = logger;
-        _stateFilePath = stateFilePath ?? Path.Combine(PipelineConstants.ConfigBaseDirectory, "loop-state.json");
+        _stateStore = stateStore;
         _startupDelay = startupDelay ?? ResolveStartupDelay();
     }
 
@@ -101,14 +100,14 @@ public sealed class LoopStatePersistenceService : IHostedLifecycleService, IDisp
             await _writeLock.WaitAsync();
             try
             {
-                var state = new LoopStateFile
+                var state = new LoopState
                 {
                     IsActive = _loopService.IsLoopActive,
                     StartedAt = _loopService.IsLoopActive ? DateTimeOffset.UtcNow : null,
                     StoppedAt = !_loopService.IsLoopActive ? DateTimeOffset.UtcNow : null
                 };
 
-                await WriteStateAtomicAsync(state);
+                await _stateStore.WriteAsync(state, CancellationToken.None);
             }
             finally
             {
@@ -117,7 +116,7 @@ public sealed class LoopStatePersistenceService : IHostedLifecycleService, IDisp
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to persist loop state to {Path}", _stateFilePath);
+            _logger.Warning(ex, "Failed to persist loop state");
         }
     }
 
@@ -159,62 +158,18 @@ public sealed class LoopStatePersistenceService : IHostedLifecycleService, IDisp
         }
     }
 
-    // ── File I/O ────────────────────────────────────────────────────────
+    // ── Store delegation ───────────────────────────────────────────────
 
-    private async Task<LoopStateFile?> ReadStateAsync()
+    private async Task<LoopState?> ReadStateAsync()
     {
         try
         {
-            if (!File.Exists(_stateFilePath))
-                return null;
-
-            var json = await File.ReadAllTextAsync(_stateFilePath);
-            var state = JsonSerializer.Deserialize<LoopStateFile>(json, LoopStateJsonOptions);
-
-            if (state is null)
-            {
-                _logger.Warning("Loop state file at {Path} deserialized to null — deleting corrupt file", _stateFilePath);
-                TryDeleteFile();
-                return null;
-            }
-
-            return state;
-        }
-        catch (JsonException ex)
-        {
-            _logger.Warning(ex, "Loop state file at {Path} contains invalid JSON — deleting corrupt file", _stateFilePath);
-            TryDeleteFile();
-            return null;
+            return await _stateStore.ReadAsync(CancellationToken.None);
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to read loop state file at {Path}", _stateFilePath);
+            _logger.Warning(ex, "Failed to read loop state");
             return null;
-        }
-    }
-
-    private async Task WriteStateAtomicAsync(LoopStateFile state)
-    {
-        var directory = Path.GetDirectoryName(_stateFilePath);
-        if (!string.IsNullOrEmpty(directory))
-            Directory.CreateDirectory(directory);
-
-        var tempPath = _stateFilePath + ".tmp";
-        var json = JsonSerializer.Serialize(state, LoopStateJsonOptions);
-        await File.WriteAllTextAsync(tempPath, json);
-        File.Move(tempPath, _stateFilePath, overwrite: true);
-    }
-
-    private void TryDeleteFile()
-    {
-        try
-        {
-            if (File.Exists(_stateFilePath))
-                File.Delete(_stateFilePath);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to delete corrupt loop state file at {Path}", _stateFilePath);
         }
     }
 
@@ -243,20 +198,5 @@ public sealed class LoopStatePersistenceService : IHostedLifecycleService, IDisp
     {
         _resumeCts?.Dispose();
         _writeLock.Dispose();
-    }
-
-    // ── JSON model ──────────────────────────────────────────────────────
-
-    private static readonly JsonSerializerOptions LoopStateJsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true
-    };
-
-    internal sealed class LoopStateFile
-    {
-        public bool IsActive { get; set; }
-        public DateTimeOffset? StartedAt { get; set; }
-        public DateTimeOffset? StoppedAt { get; set; }
     }
 }
