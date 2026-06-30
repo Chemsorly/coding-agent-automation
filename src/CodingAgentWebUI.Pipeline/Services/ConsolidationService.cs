@@ -324,19 +324,31 @@ public sealed class ConsolidationService : IConsolidationService
             return;
         }
 
-        var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
-        if (!File.Exists(filePath))
-        {
-            _logger.Warning("Cannot update consolidation run {RunId}: file not found", runId);
-            return;
-        }
-
         try
         {
-            var run = await LoadAsync<ConsolidationRun>(filePath, ct);
+            ConsolidationRun? run;
+
+            if (_runStore is not null)
+            {
+                // DB mode: load from store
+                var allRuns = await _runStore.LoadAllRunsAsync(ct);
+                run = allRuns.FirstOrDefault(r => r.RunId == runId);
+            }
+            else
+            {
+                // File mode: load from disk
+                var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
+                if (!File.Exists(filePath))
+                {
+                    _logger.Warning("Cannot update consolidation run {RunId}: file not found", runId);
+                    return;
+                }
+                run = await LoadAsync<ConsolidationRun>(filePath, ct);
+            }
+
             if (run is null)
             {
-                _logger.Warning("Cannot update consolidation run {RunId}: deserialization returned null", runId);
+                _logger.Warning("Cannot update consolidation run {RunId}: not found", runId);
                 return;
             }
 
@@ -706,9 +718,17 @@ public sealed class ConsolidationService : IConsolidationService
     {
         try
         {
-            var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
-            if (File.Exists(filePath))
-                File.Delete(filePath);
+            if (_runStore is not null)
+            {
+                // Fire-and-forget async delete in DB mode (caller is in a failure/cleanup path)
+                _ = _runStore.DeleteRunAsync(runId, CancellationToken.None);
+            }
+            else
+            {
+                var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
+                if (File.Exists(filePath))
+                    File.Delete(filePath);
+            }
             _runHistoryCache = null;
         }
         catch (Exception ex)
