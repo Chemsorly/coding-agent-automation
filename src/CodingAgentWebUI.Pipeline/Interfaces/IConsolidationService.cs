@@ -92,4 +92,10 @@ public interface IConsolidationService
     /// Fired when any consolidation run changes state (created, completed, or failed).
     /// </summary>
     event Action? OnChange;
+
+    /// <summary>
+    /// Returns true if the specified run ID is currently tracked as an active (Running or Queued) consolidation run.
+    /// Used by HeartbeatMonitor to avoid resetting agents working on consolidation jobs.
+    /// </summary>
+    bool IsRunActive(string runId);
 }

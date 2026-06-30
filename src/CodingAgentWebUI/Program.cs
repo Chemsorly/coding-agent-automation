@@ -176,6 +176,9 @@ builder.Host.UseSerilog((ctx, lc) => lc
     .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
     // EF Core SQL command logging — controlled separately via DB_LOG_LEVEL env var
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", dbLogLevel)
+    // Suppress noisy Npgsql connection open/close logging (Verbose/Trace only)
+    .MinimumLevel.Override("Npgsql", Serilog.Events.LogEventLevel.Warning)
+    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .Enrich.WithSpan()
     .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)

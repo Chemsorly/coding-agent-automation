@@ -20,6 +20,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     private readonly JobDispatcherService _dispatcher;
     private readonly ILabelSwapper _labelSwapper;
     private readonly IConfigurationStore _configStore;
+    private readonly IConsolidationService? _consolidationService;
     private readonly ILogger _logger;
 
     public HeartbeatMonitorService(
@@ -29,7 +30,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
         JobDispatcherService dispatcher,
         ILabelSwapper labelSwapper,
         IConfigurationStore configStore,
-        ILogger logger)
+        ILogger logger,
+        IConsolidationService? consolidationService = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(runService);
@@ -45,6 +47,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         _dispatcher = dispatcher;
         _labelSwapper = labelSwapper;
         _configStore = configStore;
+        _consolidationService = consolidationService;
         _logger = logger;
     }
 
@@ -201,6 +204,10 @@ public sealed class HeartbeatMonitorService : BackgroundService
                     }
                     else if (run is null)
                     {
+                        // Check if this is a consolidation run — those are tracked separately
+                        if (_consolidationService?.IsRunActive(agent.ActiveJobId) == true)
+                            continue;
+
                         _logger.Warning(
                             "Agent {AgentId} is Busy with ActiveJobId {JobId} but run not found — resetting to Idle",
                             agent.AgentId, agent.ActiveJobId);

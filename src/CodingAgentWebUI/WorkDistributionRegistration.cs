@@ -134,6 +134,10 @@ public static class WorkDistributionRegistration
         services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
         services.AddSingleton<IProjectStore>(sp => sp.GetRequiredService<IConfigurationStore>());
 
+        // ── Consolidation run persistence (DB-backed) ───────────────────────
+        services.AddSingleton<IConsolidationRunStore>(sp =>
+            new PostgresConsolidationRunStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
+
         // ── Polly resilience pipelines ──────────────────────────────────────
         RegisterResiliencePipelines(services);
 

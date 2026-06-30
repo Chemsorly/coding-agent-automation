@@ -18,6 +18,7 @@ public sealed class ConsolidationService : IConsolidationService
     private readonly IProjectStore _projectStore;
     private readonly IPipelineRunHistoryService _runHistoryService;
     private readonly IConsolidationDispatcher? _dispatcher;
+    private readonly IConsolidationRunStore? _runStore;
     private readonly string _consolidationRunsDirectory;
     private readonly string _harnessSuggestionsPath;
 
@@ -34,12 +35,19 @@ public sealed class ConsolidationService : IConsolidationService
     /// <inheritdoc />
     public event Action? OnChange;
 
+    /// <inheritdoc />
+    public bool IsRunActive(string runId)
+    {
+        return _runningRuns.Values.Any(r => r.RunId == runId);
+    }
+
     public ConsolidationService(
         ILogger logger,
         PipelineConfiguration config,
         IProjectStore projectStore,
         IPipelineRunHistoryService runHistoryService,
         IConsolidationDispatcher? dispatcher = null,
+        IConsolidationRunStore? runStore = null,
         string consolidationRunsDirectory = PipelineConstants.ConsolidationRunsDirectory,
         string harnessSuggestionsPath = PipelineConstants.HarnessSuggestionsPath)
     {
@@ -53,6 +61,7 @@ public sealed class ConsolidationService : IConsolidationService
         _projectStore = projectStore;
         _runHistoryService = runHistoryService;
         _dispatcher = dispatcher;
+        _runStore = runStore;
         _consolidationRunsDirectory = consolidationRunsDirectory;
         _harnessSuggestionsPath = harnessSuggestionsPath;
     }
@@ -60,6 +69,22 @@ public sealed class ConsolidationService : IConsolidationService
     /// <inheritdoc />
     public async Task CleanupOrphanedRunsAsync(CancellationToken ct)
     {
+        if (_runStore is not null)
+        {
+            // DB mode: load all runs from DB, mark Running ones as Failed
+            var allRuns = await _runStore.LoadAllRunsAsync(ct);
+            foreach (var run in allRuns.Where(r => r.Status == ConsolidationRunStatus.Running))
+            {
+                run.Status = ConsolidationRunStatus.Failed;
+                run.Summary = "Orphaned: application restarted before completion";
+                run.CompletedAtUtc = DateTimeOffset.UtcNow;
+                await _runStore.SaveRunAsync(run, ct);
+                _logger.Information("Marked orphaned consolidation run {RunId} ({Type}) as Failed", run.RunId, run.Type);
+            }
+            _runHistoryCache = null;
+            return;
+        }
+
         if (!Directory.Exists(_consolidationRunsDirectory))
             return;
 
@@ -232,23 +257,32 @@ public sealed class ConsolidationService : IConsolidationService
         if (_runHistoryCache is not null)
             return _runHistoryCache;
 
-        var runs = new List<ConsolidationRun>();
+        IReadOnlyList<ConsolidationRun> runs;
 
-        if (!Directory.Exists(_consolidationRunsDirectory))
-            return runs;
-
-        foreach (var file in Directory.GetFiles(_consolidationRunsDirectory, "*.json"))
+        if (_runStore is not null)
         {
-            try
+            runs = await _runStore.LoadAllRunsAsync(ct);
+        }
+        else
+        {
+            var fileRuns = new List<ConsolidationRun>();
+            if (Directory.Exists(_consolidationRunsDirectory))
             {
-                var run = await LoadAsync<ConsolidationRun>(file, ct);
-                if (run is not null)
-                    runs.Add(run);
+                foreach (var file in Directory.GetFiles(_consolidationRunsDirectory, "*.json"))
+                {
+                    try
+                    {
+                        var run = await LoadAsync<ConsolidationRun>(file, ct);
+                        if (run is not null)
+                            fileRuns.Add(run);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Failed to load consolidation run from {File}", file);
+                    }
+                }
             }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to load consolidation run from {File}", file);
-            }
+            runs = fileRuns;
         }
 
         var result = runs
@@ -346,13 +380,21 @@ public sealed class ConsolidationService : IConsolidationService
         if (!Guid.TryParse(runId, out _))
             return false;
 
-        var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
-        if (!File.Exists(filePath))
-            return false;
-
         try
         {
-            var run = await LoadAsync<ConsolidationRun>(filePath, ct);
+            ConsolidationRun? run;
+            if (_runStore is not null)
+            {
+                var allRuns = await _runStore.LoadAllRunsAsync(ct);
+                run = allRuns.FirstOrDefault(r => r.RunId == runId);
+            }
+            else
+            {
+                var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
+                if (!File.Exists(filePath)) return false;
+                run = await LoadAsync<ConsolidationRun>(filePath, ct);
+            }
+
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return false;
 
@@ -365,7 +407,6 @@ public sealed class ConsolidationService : IConsolidationService
             var key = (run.Type, run.TemplateId);
             _runningRuns.TryRemove(key, out _);
 
-            // Notify dispatcher to remove from queue and mark as cancelled for race handling
             _dispatcher?.NotifyRunCancelled(runId);
 
             _logger.Information("Consolidation run {RunId} cancelled", runId);
@@ -387,13 +428,21 @@ public sealed class ConsolidationService : IConsolidationService
         if (!Guid.TryParse(runId, out _))
             return;
 
-        var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
-        if (!File.Exists(filePath))
-            return;
-
         try
         {
-            var run = await LoadAsync<ConsolidationRun>(filePath, ct);
+            ConsolidationRun? run;
+            if (_runStore is not null)
+            {
+                var allRuns = await _runStore.LoadAllRunsAsync(ct);
+                run = allRuns.FirstOrDefault(r => r.RunId == runId);
+            }
+            else
+            {
+                var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
+                if (!File.Exists(filePath)) return;
+                run = await LoadAsync<ConsolidationRun>(filePath, ct);
+            }
+
             if (run is null || run.Status != ConsolidationRunStatus.Queued)
                 return;
 
@@ -414,32 +463,42 @@ public sealed class ConsolidationService : IConsolidationService
     {
         var queuedRuns = new List<ConsolidationRun>();
 
-        if (!Directory.Exists(_consolidationRunsDirectory))
-            return queuedRuns;
-
-        foreach (var file in Directory.GetFiles(_consolidationRunsDirectory, "*.json"))
+        IReadOnlyList<ConsolidationRun> allRuns;
+        if (_runStore is not null)
         {
-            try
+            allRuns = await _runStore.LoadAllRunsAsync(ct);
+        }
+        else
+        {
+            if (!Directory.Exists(_consolidationRunsDirectory))
+                return queuedRuns;
+
+            var fileRuns = new List<ConsolidationRun>();
+            foreach (var file in Directory.GetFiles(_consolidationRunsDirectory, "*.json"))
             {
-                var run = await LoadAsync<ConsolidationRun>(file, ct);
-                if (run is null) continue;
-
-                if (run.Status == ConsolidationRunStatus.Queued)
+                try
                 {
-                    // Re-add to concurrency tracker
-                    var key = (run.Type, run.TemplateId);
-                    _runningRuns.TryAdd(key, run);
-                    queuedRuns.Add(run);
-
-                    _logger.Information(
-                        "Rehydrated queued consolidation run {RunId} ({Type}) for re-enqueuing",
-                        run.RunId, run.Type);
+                    var run = await LoadAsync<ConsolidationRun>(file, ct);
+                    if (run is not null)
+                        fileRuns.Add(run);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to process consolidation run file {File} during rehydration", file);
                 }
             }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to process consolidation run file {File} during rehydration", file);
-            }
+            allRuns = fileRuns;
+        }
+
+        foreach (var run in allRuns.Where(r => r.Status == ConsolidationRunStatus.Queued))
+        {
+            var key = (run.Type, run.TemplateId);
+            _runningRuns.TryAdd(key, run);
+            queuedRuns.Add(run);
+
+            _logger.Information(
+                "Rehydrated queued consolidation run {RunId} ({Type}) for re-enqueuing",
+                run.RunId, run.Type);
         }
 
         return queuedRuns;
@@ -592,9 +651,16 @@ public sealed class ConsolidationService : IConsolidationService
     {
         try
         {
-            var filePath = Path.Combine(_consolidationRunsDirectory, $"{run.RunId}.json");
-            var json = JsonSerializer.Serialize(run, PipelineJsonOptions.Default);
-            await AtomicFileWriter.WriteAsync(filePath, json, ct);
+            if (_runStore is not null)
+            {
+                await _runStore.SaveRunAsync(run, ct);
+            }
+            else
+            {
+                var filePath = Path.Combine(_consolidationRunsDirectory, $"{run.RunId}.json");
+                var json = JsonSerializer.Serialize(run, PipelineJsonOptions.Default);
+                await AtomicFileWriter.WriteAsync(filePath, json, ct);
+            }
             _runHistoryCache = null;
         }
         catch (Exception ex)
@@ -612,12 +678,18 @@ public sealed class ConsolidationService : IConsolidationService
 
         try
         {
-            var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
-            if (File.Exists(filePath))
+            if (_runStore is not null)
             {
-                // Use async file deletion pattern: open with DeleteOnClose
-                await using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Delete,
-                    bufferSize: 1, FileOptions.DeleteOnClose | FileOptions.Asynchronous);
+                await _runStore.DeleteRunAsync(runId, CancellationToken.None);
+            }
+            else
+            {
+                var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
+                if (File.Exists(filePath))
+                {
+                    await using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Delete,
+                        bufferSize: 1, FileOptions.DeleteOnClose | FileOptions.Asynchronous);
+                }
             }
             _runHistoryCache = null;
         }

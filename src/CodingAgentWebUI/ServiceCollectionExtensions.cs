@@ -290,14 +290,16 @@ public static class ServiceCollectionExtensions
             pipelineConfig,
             sp.GetRequiredService<ConsolidationQueueService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetService<IConsolidationRunStore>()));
 
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             Log.Logger,
             pipelineConfig,
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IConsolidationDispatcher>()));
+            sp.GetRequiredService<IConsolidationDispatcher>(),
+            sp.GetService<IConsolidationRunStore>()));
 
         services.AddSingleton<ConsolidationBadgeService>();
 

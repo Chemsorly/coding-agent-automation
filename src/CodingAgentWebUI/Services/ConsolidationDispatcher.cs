@@ -27,6 +27,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly ConsolidationQueueService _queueService;
     private readonly IPipelineRunHistoryService _runHistoryService;
     private readonly ILogger _logger;
+    private readonly IConsolidationRunStore? _runStore;
     private readonly string _consolidationRunsDirectory;
 
     public ConsolidationDispatcher(
@@ -40,6 +41,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         ConsolidationQueueService queueService,
         IPipelineRunHistoryService runHistoryService,
         ILogger logger,
+        IConsolidationRunStore? runStore = null,
         string consolidationRunsDirectory = PipelineConstants.ConsolidationRunsDirectory)
     {
         ArgumentNullException.ThrowIfNull(registry);
@@ -63,6 +65,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         _queueService = queueService;
         _runHistoryService = runHistoryService;
         _logger = logger;
+        _runStore = runStore;
         _consolidationRunsDirectory = consolidationRunsDirectory;
     }
 
@@ -237,6 +240,12 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     private async Task<ConsolidationRun?> LoadRunAsync(string runId, CancellationToken ct)
     {
+        if (_runStore is not null)
+        {
+            var allRuns = await _runStore.LoadAllRunsAsync(ct);
+            return allRuns.FirstOrDefault(r => r.RunId == runId);
+        }
+
         var filePath = Path.Combine(_consolidationRunsDirectory, $"{runId}.json");
         if (!File.Exists(filePath))
             return null;
@@ -412,6 +421,15 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         string? templateId,
         CancellationToken ct)
     {
+        if (_runStore is not null)
+        {
+            var allRuns = await _runStore.LoadAllRunsAsync(ct);
+            return allRuns
+                .Where(r => r.Type == type && r.TemplateId == templateId
+                    && r.Status == ConsolidationRunStatus.Succeeded && r.CompletedAtUtc.HasValue)
+                .Max(r => r.CompletedAtUtc);
+        }
+
         if (!Directory.Exists(_consolidationRunsDirectory))
             return null;
 
