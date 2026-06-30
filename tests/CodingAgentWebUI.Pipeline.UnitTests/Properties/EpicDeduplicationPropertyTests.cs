@@ -72,15 +72,16 @@ public class EpicDeduplicationPropertyTests
             registry,
             runService,
             orchestration,
-            tokenVending,
-            mockProviderFactory.Object,
-            mockLabelSwapper.Object,
-            new DispatchResolutionService(
-                new ProfileResolver(),
-                new QualityGateResolver(),
-                new ReviewerResolver(),
-                mockConfigStore.Object,
-                mockLogger.Object),
+            new DispatchInfrastructure(
+                tokenVending,
+                mockProviderFactory.Object,
+                mockLabelSwapper.Object,
+                new DispatchResolutionService(
+                    new ProfileResolver(),
+                    new QualityGateResolver(),
+                    new ReviewerResolver(),
+                    mockConfigStore.Object,
+                    mockLogger.Object)),
             mockAgentComm.Object,
             new ShutdownSignal(),
             mockLogger.Object);        return (dispatcher, runService, jobService, new List<IDisposable> { orchestration });

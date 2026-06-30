@@ -51,8 +51,9 @@ public class AgentMonitoringComponentTests : BunitContext
         _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ActiveRunSummary>());
 
-        Services.AddSingleton(_pipelineService);
         Services.AddSingleton(registry);
+        Services.AddSingleton<IAgentRegistryService>(registry);
+        Services.AddSingleton(_pipelineService);
         Services.AddSingleton(new JobDispatcherService(registry, mockLogger.Object));
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton(mockStore.Object);

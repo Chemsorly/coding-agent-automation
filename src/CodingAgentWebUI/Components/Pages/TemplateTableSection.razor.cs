@@ -43,7 +43,7 @@ public partial class TemplateTableSection
     [Parameter] public EventCallback OnRemoveTemplate { get; set; }
     [Parameter] public EventCallback OnCancelDelete { get; set; }
 
-    [Inject] private AgentRegistryService Registry { get; set; } = default!;
+    [Inject] private IAgentRegistryService Registry { get; set; } = default!;
 
     private string? _moveMenuTemplateId;
     private string? _expandedPreviewTemplateId;

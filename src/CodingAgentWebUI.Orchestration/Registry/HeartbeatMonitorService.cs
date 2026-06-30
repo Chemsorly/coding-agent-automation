@@ -14,8 +14,8 @@ namespace CodingAgentWebUI.Orchestration.Registry;
 /// </summary>
 public sealed class HeartbeatMonitorService : BackgroundService
 {
-    private readonly AgentRegistryService _registry;
-    private readonly OrchestratorRunService _runService;
+    private readonly IAgentRegistryService _registry;
+    private readonly IOrchestratorRunService _runService;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly JobDispatcherService _dispatcher;
     private readonly ILabelSwapper _labelSwapper;
@@ -24,8 +24,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
     private readonly ILogger _logger;
 
     public HeartbeatMonitorService(
-        AgentRegistryService registry,
-        OrchestratorRunService runService,
+        IAgentRegistryService registry,
+        IOrchestratorRunService runService,
         IPipelineRunHistoryService historyService,
         JobDispatcherService dispatcher,
         ILabelSwapper labelSwapper,

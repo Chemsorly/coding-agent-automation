@@ -54,6 +54,7 @@ public class AgentChatComponentTests : BunitContext
 
         Services.AddSingleton(_pipelineService);
         Services.AddSingleton(_registry);
+        Services.AddSingleton<IAgentRegistryService>(_registry);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);

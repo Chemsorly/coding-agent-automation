@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Coordinates between <see cref="JobDispatcherService"/>, <see cref="AgentRegistryService"/>,
-/// <see cref="PipelineOrchestrationService"/>, and the <c>AgentHub</c>
+/// <see cref="IDispatchRunCreator"/>, and the <c>AgentHub</c>
 /// to dispatch pipeline jobs to remote agents.
 /// </summary>
 /// <remarks>
@@ -31,26 +31,20 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         string? ExistingAnalysis,
         bool ForceRefreshAnalysis);
     private readonly JobDispatcherService _dispatcher;
-    private readonly AgentRegistryService _registry;
-    private readonly OrchestratorRunService _runService;
-    private readonly Pipeline.Services.PipelineOrchestrationService _orchestration;
-    private readonly ITokenVendingService _tokenVending;
-    private readonly IProviderFactory _providerFactory;
-    private readonly ILabelSwapper _labelSwapper;
-    private readonly DispatchResolutionService _resolution;
+    private readonly IAgentRegistryService _registry;
+    private readonly IOrchestratorRunService _runService;
+    private readonly IDispatchRunCreator _orchestration;
+    private readonly DispatchInfrastructure _infra;
     private readonly IAgentCommunication _agentComm;
     private readonly IShutdownSignal _shutdownSignal;
     private readonly ILogger _logger;
 
     public AgentJobDispatcher(
         JobDispatcherService dispatcher,
-        AgentRegistryService registry,
-        OrchestratorRunService runService,
-        Pipeline.Services.PipelineOrchestrationService orchestration,
-        ITokenVendingService tokenVending,
-        IProviderFactory providerFactory,
-        ILabelSwapper labelSwapper,
-        DispatchResolutionService resolution,
+        IAgentRegistryService registry,
+        IOrchestratorRunService runService,
+        IDispatchRunCreator orchestration,
+        DispatchInfrastructure infra,
         IAgentCommunication agentComm,
         IShutdownSignal shutdownSignal,
         ILogger logger)
@@ -59,10 +53,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(runService);
         ArgumentNullException.ThrowIfNull(orchestration);
-        ArgumentNullException.ThrowIfNull(tokenVending);
-        ArgumentNullException.ThrowIfNull(providerFactory);
-        ArgumentNullException.ThrowIfNull(labelSwapper);
-        ArgumentNullException.ThrowIfNull(resolution);
+        ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(agentComm);
         ArgumentNullException.ThrowIfNull(shutdownSignal);
         ArgumentNullException.ThrowIfNull(logger);
@@ -71,10 +62,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         _registry = registry;
         _runService = runService;
         _orchestration = orchestration;
-        _tokenVending = tokenVending;
-        _providerFactory = providerFactory;
-        _labelSwapper = labelSwapper;
-        _resolution = resolution;
+        _infra = infra;
         _agentComm = agentComm;
         _shutdownSignal = shutdownSignal;
         _logger = logger;

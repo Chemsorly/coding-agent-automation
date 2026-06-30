@@ -31,7 +31,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 public sealed class JobQueueDrainService : BackgroundService
 {
     private readonly JobDispatcherService _dispatcher;
-    private readonly AgentRegistryService _registry;
+    private readonly IAgentRegistryService _registry;
     private readonly IJobDispatcher _jobDispatcher;
     private readonly IConfigurationStore _configStore;
     private readonly ConsolidationQueueService _consolidationQueue;
@@ -49,7 +49,7 @@ public sealed class JobQueueDrainService : BackgroundService
 
     internal JobQueueDrainService(
         JobDispatcherService dispatcher,
-        AgentRegistryService registry,
+        IAgentRegistryService registry,
         IJobDispatcher jobDispatcher,
         IConfigurationStore configStore,
         ConsolidationQueueService consolidationQueue,

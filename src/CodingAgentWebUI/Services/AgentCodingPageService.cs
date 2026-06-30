@@ -17,7 +17,7 @@ public class AgentCodingPageService
 {
     private readonly PipelineLoopService _loopService;
     private readonly IWorkDistributor _workDistributor;
-    private readonly AgentRegistryService _agentRegistry;
+    private readonly IAgentRegistryService _agentRegistry;
     private readonly IConfigurationStore _configStore;
     private readonly IProjectStore _projectStore;
     private readonly IProviderFactory _providerFactory;
@@ -27,7 +27,7 @@ public class AgentCodingPageService
     public AgentCodingPageService(
         PipelineLoopService loopService,
         IWorkDistributor workDistributor,
-        AgentRegistryService agentRegistry,
+        IAgentRegistryService agentRegistry,
         IConfigurationStore configStore,
         IProjectStore projectStore,
         IProviderFactory providerFactory,

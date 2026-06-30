@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Hubs;
 /// </summary>
 public sealed class AgentHubFacade : IAgentHubFacade
 {
-    private readonly AgentRegistryService _registry;
+    private readonly IAgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
     private readonly JobDispatcherService _dispatcher;
     private readonly JobQueueDrainService _drainService;
@@ -28,7 +28,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly ILogger<AgentHubFacade> _logger;
 
     public AgentHubFacade(
-        AgentRegistryService registry,
+        IAgentRegistryService registry,
         OrchestratorRunService runService,
         JobDispatcherService dispatcher,
         JobQueueDrainService drainService,

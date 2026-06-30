@@ -53,7 +53,7 @@ public static class WorkDistributionRegistration
                 sp.GetRequiredService<IOrchestratorRunService>(),
                 Log.Logger));
             services.AddSingleton<IActiveRunQueryService>(sp => new InMemoryActiveRunQueryService(
-                sp.GetRequiredService<OrchestratorRunService>()));
+                sp.GetRequiredService<IOrchestratorRunService>()));
             services.AddSingleton<IConsolidationRunStore>(sp =>
                 new Pipeline.Services.FileSystemConsolidationRunStore(
                     Pipeline.Models.PipelineConstants.ConsolidationRunsDirectory));
@@ -121,12 +121,9 @@ public static class WorkDistributionRegistration
 
         // ── DispatchOrchestrationService (DB modes only — null in Legacy mode) ──
         services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
-            sp.GetRequiredService<DispatchResolutionService>(),
-            sp.GetRequiredService<PipelineOrchestrationService>(),
-            sp.GetRequiredService<ITokenVendingService>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<OrchestratorRunService>(),
+            sp.GetRequiredService<DispatchInfrastructure>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
             Log.Logger));
 
         // ── PostgresConfigurationStore (replaces JsonConfigurationStore) ─────

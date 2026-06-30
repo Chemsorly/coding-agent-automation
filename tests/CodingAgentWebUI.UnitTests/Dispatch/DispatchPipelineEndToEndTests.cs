@@ -156,9 +156,12 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             _runService);
 
         return new DispatchOrchestrationService(
-            new DispatchResolutionService(new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(), _mockConfigStore.Object, _mockLogger.Object),
-            orchestration, _mockTokenVending.Object, _mockProviderFactory.Object,
-            _mockLabelSwapper.Object, _runService, _mockLogger.Object);
+            new DispatchInfrastructure(
+                _mockTokenVending.Object, _mockProviderFactory.Object,
+                _mockLabelSwapper.Object,
+                new DispatchResolutionService(new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(), _mockConfigStore.Object, _mockLogger.Object)),
+            orchestration,
+            _runService, _mockLogger.Object);
     }
 
     private SignalRWorkDistributor CreateDistributor()

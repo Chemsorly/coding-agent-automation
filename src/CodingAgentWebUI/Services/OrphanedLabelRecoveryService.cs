@@ -15,7 +15,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 {
     private static readonly TimeSpan GracePeriod = TimeSpan.FromSeconds(60);
 
-    private readonly OrchestratorRunService _runService;
+    private readonly IOrchestratorRunService _runService;
     private readonly IProjectStore _projectStore;
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IProviderFactory _providerFactory;
@@ -23,7 +23,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     private readonly ILogger _logger;
 
     public OrphanedLabelRecoveryService(
-        OrchestratorRunService runService,
+        IOrchestratorRunService runService,
         IProjectStore projectStore,
         IProviderConfigStore providerConfigStore,
         IProviderFactory providerFactory,

@@ -130,7 +130,7 @@ builder.Services.AddSignalR()
 
 // SignalR — hub filter for agent authorization
 builder.Services.AddSingleton<IHubFilter>(sp => new AgentAuthorizationFilter(
-    sp.GetRequiredService<AgentRegistryService>(),
+    sp.GetRequiredService<IAgentRegistryService>(),
     Serilog.Log.Logger));
 
 // Agent API key authentication — NOT set as default scheme to avoid interfering with Blazor UI.
@@ -250,7 +250,7 @@ if (!string.IsNullOrEmpty(dbConnectionString))
 
 // Register observable gauges for dispatch queue and agent concurrency metrics
 var dispatcher = app.Services.GetRequiredService<JobDispatcherService>();
-var agentRegistry = app.Services.GetRequiredService<AgentRegistryService>();
+var agentRegistry = app.Services.GetRequiredService<IAgentRegistryService>();
 _ = PipelineTelemetry.Meter.CreateObservableGauge("dispatch.queue.depth",
     () => dispatcher.QueueLength, "{item}", "Jobs waiting for available agent");
 _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.jobs.active",

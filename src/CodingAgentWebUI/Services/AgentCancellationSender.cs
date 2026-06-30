@@ -14,12 +14,12 @@ namespace CodingAgentWebUI.Services;
 /// </summary>
 internal sealed class AgentCancellationSender : IAgentCancellationSender
 {
-    private readonly AgentRegistryService _registry;
+    private readonly IAgentRegistryService _registry;
     private readonly IAgentCommunication _agentComm;
     private readonly ILogger _logger;
 
     public AgentCancellationSender(
-        AgentRegistryService registry,
+        IAgentRegistryService registry,
         IAgentCommunication agentComm,
         ILogger logger)
     {

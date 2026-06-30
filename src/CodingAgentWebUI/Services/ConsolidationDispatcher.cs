@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Services;
 /// </summary>
 public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 {
-    private readonly AgentRegistryService _registry;
+    private readonly IAgentRegistryService _registry;
     private readonly JobDispatcherService _jobDispatcher;
     private readonly IAgentCommunication _agentComm;
     private readonly IConfigurationStore _configStore;
@@ -30,7 +30,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly IConsolidationRunStore _runStore;
 
     public ConsolidationDispatcher(
-        AgentRegistryService registry,
+        IAgentRegistryService registry,
         JobDispatcherService jobDispatcher,
         IAgentCommunication agentComm,
         IConfigurationStore configStore,

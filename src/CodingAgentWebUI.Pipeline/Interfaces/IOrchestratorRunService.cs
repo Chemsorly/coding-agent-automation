@@ -27,6 +27,13 @@ public interface IOrchestratorRunService
     /// <summary>Removes a pipeline run from the active runs collection.</summary>
     PipelineRun? RemoveRun(string runId);
 
+    /// <summary>
+    /// Atomically replaces an existing run with a new instance (same RunId).
+    /// Used by dispatch to update a run with additional metadata without
+    /// creating a gap where IsIssueBeingProcessed returns false.
+    /// </summary>
+    void ReplaceRun(PipelineRun run);
+
     /// <summary>Gets or creates the per-run <see cref="OutputRingBuffer"/> for the specified run.</summary>
     OutputRingBuffer GetOutputBuffer(string runId);
 

@@ -54,6 +54,7 @@ public class FeedbackSectionComponentTests : BunitContext
 
         Services.AddSingleton(pipelineService);
         Services.AddSingleton(registry);
+        Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(new JobDispatcherService(registry, mockLogger.Object));
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton(_mockStore.Object);
