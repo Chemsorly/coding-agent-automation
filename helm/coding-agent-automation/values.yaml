@@ -197,12 +197,8 @@ database:
   # Npgsql SSL mode: Disable, Prefer, Require, VerifyCA, VerifyFull.
   # Defaults to Require in production if not set. Use "Disable" for in-cluster Postgres without TLS.
   sslMode: ""
-  # Apply EF Core migrations on orchestrator startup (dev/single-instance mode).
-  # In production multi-replica mode, set to false and use migrationJob instead.
+  # Apply EF Core migrations on orchestrator startup. Uses distributed lock for multi-replica safety.
   migrateOnStartup: true
-  # Pre-install/pre-upgrade Helm hook Job that runs EF Core migrations before new pods roll out.
-  migrationJob:
-    enabled: true
 
 # ── Work Distribution ────────────────────────────────────────────────────────
 
