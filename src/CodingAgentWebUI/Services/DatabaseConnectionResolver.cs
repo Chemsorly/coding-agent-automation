@@ -11,7 +11,8 @@ public static class DatabaseConnectionResolver
 {
     /// <summary>
     /// Builds a connection string from <c>Database:Host</c>, <c>Database:Port</c>,
-    /// <c>Database:Username</c>, <c>Database:Password</c>, and <c>Database:Name</c>.
+    /// <c>Database:Username</c>, <c>Database:Password</c>, <c>Database:Name</c>,
+    /// and optionally <c>Database:SslMode</c>.
     /// Returns null if <c>Database:Host</c> is not configured.
     /// </summary>
     public static string? Resolve(IConfiguration configuration)
@@ -28,6 +29,13 @@ public static class DatabaseConnectionResolver
             Password = configuration.GetValue<string>("Database:Password") ?? "",
             Database = configuration.GetValue<string>("Database:Name") ?? "coding_agent_automation"
         };
+
+        // Allow explicit SslMode override via config (e.g. Disable for in-cluster Postgres without TLS)
+        var sslModeStr = configuration.GetValue<string>("Database:SslMode");
+        if (!string.IsNullOrEmpty(sslModeStr) && Enum.TryParse<SslMode>(sslModeStr, ignoreCase: true, out var sslMode))
+        {
+            builder.SslMode = sslMode;
+        }
 
         return builder.ConnectionString;
     }

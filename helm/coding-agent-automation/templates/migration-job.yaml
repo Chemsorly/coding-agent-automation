@@ -58,6 +58,10 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.database.auth.existingSecret }}
                   key: {{ .Values.database.auth.keys.password | default "POSTGRES_PASSWORD" }}
+            {{- if .Values.database.sslMode }}
+            - name: Database__SslMode
+              value: {{ .Values.database.sslMode | quote }}
+            {{- end }}
           resources:
             requests:
               cpu: 100m

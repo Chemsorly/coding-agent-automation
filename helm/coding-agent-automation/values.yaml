@@ -194,6 +194,9 @@ database:
       username: POSTGRES_USER
       password: POSTGRES_PASSWORD
       database: POSTGRES_DB
+  # Npgsql SSL mode: Disable, Prefer, Require, VerifyCA, VerifyFull.
+  # Defaults to Require in production if not set. Use "Disable" for in-cluster Postgres without TLS.
+  sslMode: ""
   # Apply EF Core migrations on orchestrator startup (dev/single-instance mode).
   # In production multi-replica mode, set to false and use migrationJob instead.
   migrateOnStartup: true
