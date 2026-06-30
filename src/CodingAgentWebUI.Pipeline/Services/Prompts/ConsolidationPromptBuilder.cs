@@ -180,6 +180,9 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("You are performing a holistic analysis of the codebase to identify refactoring opportunities.");
         sb.AppendLine("Explore the repository structure, read key files, and identify areas where incremental changes have created global incoherence.");
         sb.AppendLine();
+        sb.AppendLine("**Design principles to enforce:** KISS (keep it simple), DRY (don't repeat yourself), and reducing cognitive load.");
+        sb.AppendLine("When in doubt, prefer removing abstractions over adding them. Simpler code with fewer indirections is better than \"clean\" code with many layers.");
+        sb.AppendLine();
 
         // What to look for
         sb.AppendLine("## What to Look For");
@@ -195,6 +198,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("7. **Obvious bugs** — High-confidence correctness issues: null dereference risks, off-by-one errors, unreachable code paths, resource leaks (opened but never disposed), logic errors (conditions always true/false), race conditions in shared state. Only flag issues where you have strong evidence the code is wrong, not merely suboptimal");
         sb.AppendLine("8. **Stale documentation & misleading comments** — XML doc comments describing behavior the code no longer exhibits; README sections referencing removed features; comments explaining \"why\" that reference conditions no longer true; parameter descriptions that don't match actual parameters");
         sb.AppendLine("9. **Primitive obsession** — String or int parameters representing domain concepts (emails, URLs, IDs, file paths) without validation or type safety; magic numbers/strings without named constants; repeated validation logic for the same concept scattered across multiple call sites");
+        sb.AppendLine("10. **Over-engineering & unnecessary abstraction** — Interfaces with only one implementation that add indirection without value; wrapper classes that pass-through without adding logic; configuration options nobody uses; builder/factory patterns where a constructor would suffice; layers of indirection that increase cognitive load without enabling extension points actually used in the codebase");
         sb.AppendLine();
 
         // How to explore
@@ -261,7 +265,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- **estimatedEffort** — `small` (<5 files, mechanical changes), `medium` (5-15 files with logic changes), or `large` (15-30 files or architectural changes).");
         sb.AppendLine("- **riskLevel** — `low` (rename/move), `medium` (extract/restructure), or `high` (interface changes affecting consumers).");
         sb.AppendLine("- **technique** — Named refactoring pattern if applicable (e.g., Extract Method, Strangler Fig, Branch by Abstraction, Inline Class, Move Method).");
-        sb.AppendLine("- **category** — `refactoring` (structural improvements, default if omitted), `bug` (correctness issues), `documentation` (stale/misleading docs or comments), or `dead-code` (unused artifacts to remove).");
+        sb.AppendLine("- **category** — `refactoring` (structural improvements, default if omitted), `simplification` (removing unnecessary abstractions/complexity), `bug` (correctness issues), `documentation` (stale/misleading docs or comments), or `dead-code` (unused artifacts to remove).");
         sb.AppendLine();
 
         // Constraints
@@ -286,6 +290,20 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine("- Prefer proposals that are mechanical and low-risk (file moves, renames, extractions) over sweeping architectural changes");
         sb.AppendLine("- Do NOT propose changes that require coordinated modifications across serialization boundaries (e.g., JSON schema + MessagePack wire format + all consumers simultaneously)");
         sb.AppendLine("- If a large refactoring is warranted, propose only the smallest first step that delivers value independently");
+        sb.AppendLine();
+
+        // Exploration depth requirements
+        sb.AppendLine("## Exploration Depth Requirements");
+        sb.AppendLine();
+        sb.AppendLine("Before producing proposals, you MUST:");
+        sb.AppendLine();
+        sb.AppendLine("- Read at least **20 source files** (not just listing/grepping — actually read content and understand the code)");
+        sb.AppendLine("- For each proposal, cite **specific line numbers or code snippets** as evidence");
+        sb.AppendLine("- Cross-reference **at least 2 files** per proposal (showing the pattern repeats, the dependency exists, or the inconsistency spans multiple locations)");
+        sb.AppendLine();
+        sb.AppendLine("Include a `## Files Analyzed` section in a separate file at `.agent/refactoring-analysis.md` listing every file you read with a one-line note on what you found (or \"no issues\"). This demonstrates thoroughness and helps the reviewer verify your claims.");
+        sb.AppendLine();
+        sb.AppendLine("The reviewer WILL reject proposals that lack specific evidence. Vague descriptions like \"this file is complex\" without citing which methods, what the complexity is, or how it manifests are insufficient.");
 
         return sb.ToString();
     }
@@ -368,7 +386,7 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine("Each suggestion MUST be:");
         sb.AppendLine("- **Concrete and actionable** — specify exactly what to change (e.g., \"Add file X to the initial context provided to the agent\" not \"Provide more context\")");
-        sb.AppendLine("- **Grounded in evidence** — reference specific feedback entries or patterns that motivate the suggestion");
+        sb.AppendLine("- **Grounded in evidence** — reference at least 3 specific feedback entries (by their category or stuckReason text) that motivate the suggestion");
         sb.AppendLine("- **Scoped to one change** — each suggestion addresses one improvement, not a bundle of changes");
         sb.AppendLine();
         sb.AppendLine("Do NOT produce abstract recommendations like \"improve error handling\" or \"add more tests\".");
@@ -424,7 +442,7 @@ public static class ConsolidationPromptBuilder
             "Refactoring Proposals Review",
             "refactoring proposals",
             "the proposals file and the actual codebase",
-            $"Read the proposals file at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` from the workspace.",
+            $"Read the proposals file at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` and the analysis report at `.agent/refactoring-analysis.md` from the workspace.",
             AgentWorkspacePaths.RefactoringReviewFilePath,
             [
                 "Non-existent `affectedFiles` paths — verify the referenced files actually exist in the repository",
@@ -432,6 +450,8 @@ public static class ConsolidationPromptBuilder
                 "Bundled concerns that should be separate proposals",
                 "Abstract rationales lacking concrete code references",
                 "**Scope exceeding single-agent capacity** — proposals touching more than ~30 files (source + test), spanning multiple serialization boundaries, or requiring coordinated breaking changes across projects should be flagged as [CRITICAL] with a suggestion to split into smaller phases",
+                "**Insufficient evidence depth** — proposals citing only file paths without line numbers, code snippets, or cross-references between files. A proposal that says \"File X is complex\" without citing which methods or what makes them complex should be flagged [WARNING]",
+                "**Shallow exploration** — if `.agent/refactoring-analysis.md` is missing or lists fewer than 15 files, flag as [CRITICAL] because the analysis is superficial and likely missed significant opportunities",
             ],
             "each proposal",
             "proposals",
@@ -448,8 +468,8 @@ public static class ConsolidationPromptBuilder
         return BuildAdversarialReviewPrompt(
             "Brain Consolidation Review",
             "brain consolidation changes",
-            "the diff summary file",
-            $"Read the diff summary file at `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}` from the workspace.",
+            "the diff summary file and the actual `.brain/` files in the workspace",
+            $"Read the diff summary file at `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}` from the workspace. **Also spot-check the `.brain/` files directly** to verify claims — cross-reference at least 3 changes against the actual file state.",
             AgentWorkspacePaths.BrainConsolidationReviewFilePath,
             [
                 "Incorrectly removed valuable entries that should have been kept",
@@ -457,6 +477,7 @@ public static class ConsolidationPromptBuilder
                 "Contradictions resolved by keeping the wrong version",
                 "Inaccurate factual updates",
                 "New contradictions introduced by the consolidation itself",
+                "**Unverifiable claims** — diff entries that are vague, lack quotes, or cannot be confirmed by reading the actual `.brain/` files. Flag [WARNING] if the diff reads like a generic summary rather than a specific changelog",
             ],
             "the consolidation changes",
             "consolidation changes",
@@ -640,13 +661,16 @@ public static class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine($"Produce a summary of all changes at `{AgentWorkspacePaths.BrainConsolidationDiffFilePath}`.");
         sb.AppendLine();
-        sb.AppendLine("Include the following in your summary:");
-        sb.AppendLine("- Files created, modified, or deleted");
-        sb.AppendLine("- Entries merged (before/after)");
-        sb.AppendLine("- Contradictions resolved (which version was kept)");
-        sb.AppendLine("- Factual updates (with sources)");
+        sb.AppendLine("For each change, provide concrete evidence:");
+        sb.AppendLine("- **Merges:** Quote the original entries (first 2–3 lines each) and the merged result");
+        sb.AppendLine("- **Prunes:** Quote what was removed (first 2–3 lines) and cite why (uncited, stale, redundant)");
+        sb.AppendLine("- **Factual updates:** State the old claim, the new claim, and the verification source (URL or tool used)");
+        sb.AppendLine("- **Files created/deleted:** Full path and one-line purpose");
+        sb.AppendLine("- **SKILL.md regenerations:** List which project SKILL.md files were regenerated");
         sb.AppendLine();
-        sb.AppendLine("This summary will be reviewed by an independent agent — be thorough and specific.");
+        sb.AppendLine("Do NOT summarize vaguely (e.g., \"cleaned up several entries\"). Every modification must be individually accounted for.");
+        sb.AppendLine();
+        sb.AppendLine("This summary will be reviewed by an independent agent who will spot-check the actual `.brain/` files — be thorough and specific.");
         sb.AppendLine();
         sb.AppendLine("Do NOT make additional modifications to `.brain/` files in this step.");
 

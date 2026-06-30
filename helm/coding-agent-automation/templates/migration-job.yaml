@@ -39,20 +39,25 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["dotnet", "CodingAgentWebUI.dll", "migrate"]
           env:
-            - name: Database__ConnectionString
-              {{- if .Values.database.auth.existingSecret }}
+            - name: Database__Host
+              value: {{ required "database.host is required when database.enabled=true" .Values.database.host | quote }}
+            - name: Database__Port
+              value: {{ .Values.database.port | default 5432 | quote }}
+            - name: Database__Name
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "database.auth.existingSecret is required when database.enabled=true" .Values.database.auth.existingSecret }}
+                  key: {{ .Values.database.auth.keys.database | default "POSTGRES_DB" }}
+            - name: Database__Username
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.database.auth.existingSecret }}
-                  key: connection-string
-              {{- else if .Values.database.connectionString }}
-              value: {{ .Values.database.connectionString | quote }}
-              {{- else }}
+                  key: {{ .Values.database.auth.keys.username | default "POSTGRES_USER" }}
+            - name: Database__Password
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "coding-agent-automation.fullname" . }}-db
-                  key: connection-string
-              {{- end }}
+                  name: {{ .Values.database.auth.existingSecret }}
+                  key: {{ .Values.database.auth.keys.password | default "POSTGRES_PASSWORD" }}
           resources:
             requests:
               cpu: 100m

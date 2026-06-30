@@ -25,7 +25,7 @@ namespace CodingAgentWebUI;
 
 /// <summary>
 /// Registers work distribution services based on deployment mode:
-/// - No Database:ConnectionString → Legacy mode (JSON + in-memory)
+/// - No Database:Host → Legacy mode (JSON + in-memory)
 /// - DB + SignalR mode → PostgresConfigurationStore + SignalRWorkDistributor
 /// - DB + Kubernetes mode → full K8s services with DispatchService + ReconciliationService
 /// </summary>
@@ -39,7 +39,7 @@ public static class WorkDistributionRegistration
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = configuration.GetValue<string>("Database:ConnectionString");
+        var connectionString = Services.DatabaseConnectionResolver.Resolve(configuration);
         var mode = configuration.GetValue<string>("WorkDistribution:Mode") ?? "SignalR";
 
         if (string.IsNullOrEmpty(connectionString))
@@ -164,7 +164,7 @@ public static class WorkDistributionRegistration
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        var connectionString = configuration.GetValue<string>("Database:ConnectionString");
+        var connectionString = Services.DatabaseConnectionResolver.Resolve(configuration);
         if (string.IsNullOrEmpty(connectionString))
             return services; // No DB — no additional instrumentation needed
 

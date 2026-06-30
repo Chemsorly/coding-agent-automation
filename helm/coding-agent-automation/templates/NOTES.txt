@@ -35,18 +35,9 @@ Migrations: Applied via Helm hook Job (production mode)
 
 ── Database ──────────────────────────────────────────────────────────────────
 
-{{- if and .Values.database.subchart .Values.database.subchart.enabled }}
-PostgreSQL deployed as subchart:
-  Host: {{ include "coding-agent-automation.fullname" . }}-postgresql:5432
-  Database: {{ .Values.database.subchart.auth.database }}
-{{- else }}
-External PostgreSQL configured via:
-{{- if .Values.database.auth.existingSecret }}
-  Secret: {{ .Values.database.auth.existingSecret }} (key: connection-string)
-{{- else }}
-  Connection string in values or {{ include "coding-agent-automation.fullname" . }}-db Secret
-{{- end }}
-{{- end }}
+External PostgreSQL:
+  Secret: {{ .Values.database.auth.existingSecret }} (keys: {{ .Values.database.auth.keys.username }}, {{ .Values.database.auth.keys.password }}, {{ .Values.database.auth.keys.database }})
+  Host: {{ .Values.database.host }}:{{ .Values.database.port | default 5432 }}
 
 ── Migrations ────────────────────────────────────────────────────────────────
 

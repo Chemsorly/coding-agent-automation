@@ -14,8 +14,8 @@ The pipeline supports three dispatch modes, selected automatically based on conf
 
 | Mode | Trigger | Description |
 |------|---------|-------------|
-| **Legacy** | No `Database__ConnectionString` set | In-memory state + direct SignalR push. `AgentJobDispatcher` creates the PipelineRun and sends `JobAssignmentMessage` in one atomic operation. |
-| **DB+SignalR** | `Database__ConnectionString` set, no K8s | `DispatchOrchestrationService` prepares the request (creates PipelineRun, resolves providers, vends tokens), then `SignalRWorkDistributor` persists a WorkItem row and pushes via SignalR. |
+| **Legacy** | No `Database__Host` set | In-memory state + direct SignalR push. `AgentJobDispatcher` creates the PipelineRun and sends `JobAssignmentMessage` in one atomic operation. |
+| **DB+SignalR** | `Database__Host` set, no K8s | `DispatchOrchestrationService` prepares the request (creates PipelineRun, resolves providers, vends tokens), then `SignalRWorkDistributor` persists a WorkItem row and pushes via SignalR. |
 | **DB+Kubernetes** | `workDistribution.mode=Kubernetes` | Same orchestration, but `KubernetesWorkDistributor` creates a WorkItem row and a K8s Job picks it up. |
 
 In DB+SignalR mode, the dispatch chain ensures a single ID flows end-to-end:

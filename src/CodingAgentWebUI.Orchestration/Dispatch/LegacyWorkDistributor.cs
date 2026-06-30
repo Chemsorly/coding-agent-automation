@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// No-DB mode adapter: satisfies <see cref="IWorkDistributor"/> by delegating to the
 /// existing <see cref="AgentJobDispatcher"/> (in-memory queue + SignalR push).
 /// Does NOT insert WorkItem rows — operates purely in-memory, identical to current behavior.
-/// Registered when <c>Database:ConnectionString</c> is not configured.
+/// Registered when <c>Database:Host</c> is not configured.
 /// </summary>
 public sealed class LegacyWorkDistributor : IWorkDistributor
 {

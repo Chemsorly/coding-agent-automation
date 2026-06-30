@@ -16,7 +16,8 @@ public static class DefaultPrompts
         "- Missing input validation on public API boundaries\n" +
         "- Edge cases not covered by the implementation\n" +
         "- Resources not properly released (file handles, connections, streams)\n" +
-        "- Error handling gaps (swallowed exceptions, missing cleanup on failure)\n\n" +
+        "- Error handling gaps (swallowed exceptions, missing cleanup on failure)\n" +
+        "- **Cross-boundary impacts** — trace each change through its callers and consumers. The most critical bugs appear at boundaries between components (authorization logic, API contracts, state machine transitions, serialization boundaries)\n\n" +
         "DO NOT FLAG:\n" +
         "- Style preferences or naming conventions\n" +
         "- Missing XML documentation comments\n" +
@@ -42,7 +43,8 @@ public static class DefaultPrompts
         "- Off-by-one errors in loops and collections\n" +
         "- Race conditions in async code\n" +
         "- Missing input validation on public API boundaries\n" +
-        "- Edge cases not covered by the implementation\n\n" +
+        "- Edge cases not covered by the implementation\n" +
+        "- **Cross-boundary impacts** — trace each change through its callers and consumers. The most critical bugs appear at component boundaries (API contracts, state transitions, serialization)\n\n" +
         "DO NOT FLAG:\n" +
         "- Style preferences or naming conventions\n" +
         "- Missing XML documentation comments\n" +
@@ -155,7 +157,16 @@ public static class DefaultPrompts
         "1. **Planned Approach** — What files need to change and how. Be specific about the strategy.\n" +
         "2. **Affected Components** — Which files, classes, or modules will be touched.\n" +
         "3. **Test Coverage** — What existing tests cover the affected code, and what new tests will be needed.\n" +
-        "4. **Risks & Considerations** — Breaking changes, edge cases, backward compatibility, or anything that needs special attention.";
+        "4. **Risks & Considerations** — Breaking changes, edge cases, backward compatibility, or anything that needs special attention.\n\n" +
+        "## What a BAD Analysis Looks Like\n\n" +
+        "Do NOT produce output like this:\n" +
+        "- \"The code should be refactored to improve maintainability\" (no specifics)\n" +
+        "- \"Several files may need changes\" (which files?)\n" +
+        "- \"Tests should be added\" (which tests? what behavior do they verify?)\n" +
+        "- Listing file paths without explaining WHAT changes each file needs\n" +
+        "- Restating the issue description instead of analyzing the codebase\n\n" +
+        "Every claim must reference a specific file, class, or method you actually read. " +
+        "If you haven't read the code, don't speculate about it.";
 
     public const string AnalysisReview =
         "You are reviewing an analysis plan produced by another agent. You have no prior context about " +
@@ -196,7 +207,12 @@ public static class DefaultPrompts
         "Follow this approach:\n" +
         "1. **Understand** — Read the analysis and the issue. Explore relevant files before making changes.\n" +
         "2. **Implement** — Make focused, minimal changes. Fix root causes, not symptoms. Maintain the existing code style and conventions.\n" +
-        "3. **Verify** — Run the project's build, linter, and tests. If a command fails, fix the issue and re-run to confirm.\n\n" +
+        "3. **Verify** — Run the project's build, linter, and tests. If a command fails:\n" +
+        "   a. Read the error output carefully\n" +
+        "   b. Identify the root cause (not just the symptom)\n" +
+        "   c. Determine what specific change caused the failure\n" +
+        "   d. Apply a targeted fix that addresses the root cause without reverting intended behavior\n" +
+        "   e. Re-run to confirm the fix works\n\n" +
         "Keep working until the implementation is complete. If something fails, diagnose and fix it rather than stopping.";
 
     public const string AcceptanceCriteriaCompliance =

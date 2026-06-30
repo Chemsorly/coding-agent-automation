@@ -180,13 +180,20 @@ serviceAccount:
 database:
   # Enable PostgreSQL-backed persistence. When false, system uses JSON file store (current behavior).
   enabled: false
-  # Direct connection string for external managed Postgres (RDS, CloudSQL).
-  # Operators deploy PostgreSQL independently and provide the connection string here.
-  connectionString: ""
-  # Reference a pre-created K8s Secret containing key "connection-string".
-  # Recommended for production over plaintext connectionString.
+  # PostgreSQL host (service DNS name or IP). Required when enabled=true.
+  host: ""
+  # PostgreSQL port.
+  port: 5432
+  # Kubernetes Secret containing database credentials.
+  # Must contain keys for username, password, and database name (defaults to standard Postgres env var names).
   auth:
+    # Name of an existing K8s Secret with database credentials. Required when enabled=true.
     existingSecret: ""
+    # Key names within the Secret (defaults match standard Postgres container env vars).
+    keys:
+      username: POSTGRES_USER
+      password: POSTGRES_PASSWORD
+      database: POSTGRES_DB
   # Apply EF Core migrations on orchestrator startup (dev/single-instance mode).
   # In production multi-replica mode, set to false and use migrationJob instead.
   migrateOnStartup: true
