@@ -1,0 +1,52 @@
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Orchestration.Registry
+@using CodingAgentWebUI.Orchestration
+
+<div class="health-card">
+    <div class="health-card-item">
+        <span class="health-card-value @(ConnectedCount > 0 ? "health-ok" : "health-warn")">@ConnectedCount</span>
+        <span class="health-card-label">Connected</span>
+    </div>
+    <div class="health-card-divider"></div>
+    <div class="health-card-item">
+        <span class="health-card-value health-busy">@BusyCount</span>
+        <span class="health-card-label">Busy</span>
+    </div>
+    <div class="health-card-divider"></div>
+    <div class="health-card-item">
+        <span class="health-card-value">@IdleCount</span>
+        <span class="health-card-label">Idle</span>
+    </div>
+    <div class="health-card-divider"></div>
+    <div class="health-card-item">
+        <span class="health-card-value @(QueueLength > 0 ? "health-busy" : "")">@QueueLength</span>
+        <span class="health-card-label">Queued</span>
+    </div>
+    @if (ActiveRuns > 0)
+    {
+        <div class="health-card-divider"></div>
+        <div class="health-card-item">
+            <span class="health-card-value health-ok">@ActiveRuns</span>
+            <span class="health-card-label">Running</span>
+        </div>
+    }
+    @if (DisconnectedCount > 0)
+    {
+        <div class="health-card-divider"></div>
+        <div class="health-card-item">
+            <span class="health-card-value health-error">@DisconnectedCount</span>
+            <span class="health-card-label">Lost</span>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<AgentEntry> Agents { get; set; } = [];
+    [Parameter] public int QueueLength { get; set; }
+    [Parameter] public int ActiveRuns { get; set; }
+
+    private int ConnectedCount => Agents.Count(a => a.Status != AgentStatus.Disconnected);
+    private int BusyCount => Agents.Count(a => a.Status == AgentStatus.Busy);
+    private int IdleCount => Agents.Count(a => a.Status == AgentStatus.Idle);
+    private int DisconnectedCount => Agents.Count(a => a.Status == AgentStatus.Disconnected);
+}

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,10 +7,10 @@
     <base href="/" />
     <link rel="stylesheet" href="css/app.css" />
     <link rel="stylesheet" href="CodingAgentWebUI.styles.css" />
-    <HeadOutlet />
+    <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 <body>
-    <Routes />
+    <Routes @rendermode="InteractiveServer" />
 
     <script src="_framework/blazor.web.js"></script>
     <script>
@@ -40,6 +40,18 @@
         window.localStorageSet = function (key, value) {
             localStorage.setItem(key, value);
         };
+        window.getTheme = function () {
+            return localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        };
+        window.setTheme = function (theme) {
+            localStorage.setItem('theme', theme);
+            document.documentElement.setAttribute('data-theme', theme);
+        };
+        // Apply stored theme immediately to avoid flash
+        (function() {
+            var t = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+            document.documentElement.setAttribute('data-theme', t);
+        })();
         window.registerGlobalKeyboardHandler = function (dotNetRef) {
             window.__globalKeyHandler = function (e) {
                 var tag = document.activeElement ? document.activeElement.tagName : '';

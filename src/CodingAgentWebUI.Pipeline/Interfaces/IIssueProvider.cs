@@ -73,6 +73,13 @@ public interface IIssueProvider : IAsyncDisposable
     Task<bool> EnsureAgentLabelsAsync(CancellationToken ct);
 
     /// <summary>
+    /// Lists all repository labels (name only). Used to populate label filter UIs.
+    /// Returns an empty list by default so existing implementations don't break.
+    /// </summary>
+    Task<IReadOnlyList<string>> ListRepositoryLabelsAsync(CancellationToken ct)
+        => Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
+
+    /// <summary>
     /// Validates that the provider is correctly configured and can communicate with its
     /// backing service. Called at pipeline start before any work begins.
     /// </summary>

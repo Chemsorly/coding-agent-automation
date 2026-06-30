@@ -28,10 +28,10 @@ public sealed class RequiresActiveJobAttribute : Attribute;
 /// </summary>
 public sealed class AgentAuthorizationFilter : IHubFilter
 {
-    private readonly AgentRegistryService _registry;
+    private readonly IAgentRegistryService _registry;
     private readonly ILogger _logger;
 
-    public AgentAuthorizationFilter(AgentRegistryService registry, ILogger logger)
+    public AgentAuthorizationFilter(IAgentRegistryService registry, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(logger);

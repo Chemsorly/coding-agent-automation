@@ -78,11 +78,12 @@ public class DispatchOrchestrationServiceTests
         PipelineOrchestrationService orchestration)
     {
         return new DispatchOrchestrationService(
-            _resolution,
+            new DispatchInfrastructure(
+                _mockTokenVending.Object,
+                _mockProviderFactory.Object,
+                _mockLabelSwapper.Object,
+                _resolution),
             orchestration,
-            _mockTokenVending.Object,
-            _mockProviderFactory.Object,
-            _mockLabelSwapper.Object,
             _runService,
             _mockLogger.Object);
     }
@@ -804,9 +805,11 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             runService: _runService);
 
         _service = new DispatchOrchestrationService(
-            resolution, orchestration,
-            mockTokenVending.Object, mockProviderFactory.Object,
-            _mockLabelSwapper.Object, _runService, _mockLogger.Object);
+            new DispatchInfrastructure(
+                mockTokenVending.Object, mockProviderFactory.Object,
+                _mockLabelSwapper.Object, resolution),
+            orchestration,
+            _runService, _mockLogger.Object);
     }
 
     [Fact]

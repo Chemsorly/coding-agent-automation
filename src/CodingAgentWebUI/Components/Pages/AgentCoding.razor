@@ -1,10 +1,10 @@
 @page "/agent-coding"
-@rendermode InteractiveServer
 @implements IDisposable
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Orchestration
 @using CodingAgentWebUI.Orchestration.Dispatch
+@using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
 
 <div class="agent-coding-page">
@@ -204,14 +204,20 @@
     Issues="_drawerIssues" IsLoading="_drawerLoading" HasMore="_drawerHasMore" Page="_drawerPage"
     IsDispatching="_drawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _drawerTemplate?.IssueProviderId ?? ""))"
     Readiness="_drawerReadiness"
+    AvailableLabels="_drawerLabels" SelectedLabels="_drawerSelectedLabels"
+    OnToggleLabel="DrawerToggleLabel" OnClearLabels="DrawerClearLabels"
     OnClose="CloseDrawer" OnNextPage="DrawerNextPage" OnPrevPage="DrawerPrevPage" OnDispatch="DispatchFromDrawer" />
 
 <PrDispatchDrawer IsOpen="_prDrawerOpen" Template="_prDrawerTemplate"
     PullRequests="_prDrawerPrs" IsLoading="_prDrawerLoading" HasMore="_prDrawerHasMore" Page="_prDrawerPage"
     IsDispatching="_prDrawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _prDrawerTemplate?.IssueProviderId ?? ""))"
+    AvailableLabels="_prDrawerLabels" SelectedLabels="_prDrawerSelectedLabels"
+    OnToggleLabel="PrDrawerToggleLabel" OnClearLabels="PrDrawerClearLabels"
     OnClose="ClosePrDrawer" OnNextPage="PrDrawerNextPage" OnPrevPage="PrDrawerPrevPage" OnDispatch="DispatchPrReviewFromDrawer" />
 
 <EpicDispatchDrawer IsOpen="_epicDrawerOpen" Template="_epicDrawerTemplate"
-    Issues="_epicDrawerIssues" IsLoading="_epicDrawerLoading" IsDispatching="_epicDrawerDispatching"
-    IsBeingProcessed="@(id => IsIssueActive(id, _epicDrawerTemplate?.IssueProviderId ?? ""))"
-    OnClose="CloseEpicDrawer" OnDispatch="DispatchDecompositionFromDrawer" />
+    Issues="_epicDrawerIssues" IsLoading="_epicDrawerLoading" HasMore="_epicDrawerHasMore" Page="_epicDrawerPage"
+    IsDispatching="_epicDrawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _epicDrawerTemplate?.IssueProviderId ?? ""))"
+    AvailableLabels="_epicDrawerLabels" SelectedLabels="_epicDrawerSelectedLabels"
+    OnToggleLabel="EpicDrawerToggleLabel" OnClearLabels="EpicDrawerClearLabels"
+    OnClose="CloseEpicDrawer" OnNextPage="EpicDrawerNextPage" OnPrevPage="EpicDrawerPrevPage" OnDispatch="DispatchDecompositionFromDrawer" />

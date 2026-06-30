@@ -165,8 +165,8 @@ public sealed partial class AgentJobDispatcher
             return false;
         }
 
-        var config = await _resolution.ConfigStore.LoadPipelineConfigAsync(ct);
-        var repoConfig = await _resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+        var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+        var repoConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
         var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
 
         var agent = _dispatcher.SelectAgent(requiredLabels);

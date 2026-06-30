@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </summary>
 public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributorAgentResolver
 {
-    private readonly AgentRegistryService _registry;
+    private readonly IAgentRegistryService _registry;
     private readonly JobDispatcherService _dispatcher;
 
     /// <summary>Tracks the last resolved agent ID for revert on failure (legacy, not thread-safe).</summary>
@@ -21,7 +21,7 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     public string? LastResolvedAgentId => _lastResolvedAgentId;
 
     public SignalRWorkDistributorAgentResolver(
-        AgentRegistryService registry,
+        IAgentRegistryService registry,
         JobDispatcherService dispatcher)
     {
         ArgumentNullException.ThrowIfNull(registry);

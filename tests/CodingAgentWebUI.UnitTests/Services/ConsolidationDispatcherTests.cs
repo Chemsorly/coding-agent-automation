@@ -6,6 +6,7 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
@@ -73,8 +74,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
             queueService,
             Mock.Of<IPipelineRunHistoryService>(),
             _mockLogger.Object,
-            runStore: null,
-            consolidationRunsDirectory: runsDir ?? _tempDir);
+            new FileSystemConsolidationRunStore(runsDir ?? _tempDir));
     }
 
     private void RegisterIdleAgent(string agentId = "agent-1", string connectionId = "conn-1", string[]? labels = null)
@@ -94,7 +94,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     public void Ctor_NullRegistry_Throws()
     {
         var qs = new ConsolidationQueueService(_mockLogger.Object);
-        var act = () => new ConsolidationDispatcher(null!, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(null!, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -102,7 +102,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     public void Ctor_NullDispatcher_Throws()
     {
         var qs = new ConsolidationQueueService(_mockLogger.Object);
-        var act = () => new ConsolidationDispatcher(_registry, null!, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, null!, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -110,7 +110,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     public void Ctor_NullAgentComm_Throws()
     {
         var qs = new ConsolidationQueueService(_mockLogger.Object);
-        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, null!, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, null!, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -118,7 +118,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     public void Ctor_NullConfigStore_Throws()
     {
         var qs = new ConsolidationQueueService(_mockLogger.Object);
-        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, null!, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, null!, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -126,7 +126,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     public void Ctor_NullProjectStore_Throws()
     {
         var qs = new ConsolidationQueueService(_mockLogger.Object);
-        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, null!, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, null!, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -134,7 +134,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     public void Ctor_NullTokenVending_Throws()
     {
         var qs = new ConsolidationQueueService(_mockLogger.Object);
-        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, null!, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, null!, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -142,7 +142,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     public void Ctor_NullConfig_Throws()
     {
         var qs = new ConsolidationQueueService(_mockLogger.Object);
-        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, null!, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, null!, qs, Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -150,7 +150,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     public void Ctor_NullLogger_Throws()
     {
         var qs = new ConsolidationQueueService(_mockLogger.Object);
-        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), null!);
+        var act = () => new ConsolidationDispatcher(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, qs, Mock.Of<IPipelineRunHistoryService>(), null!, Mock.Of<IConsolidationRunStore>());
         act.Should().Throw<ArgumentNullException>();
     }
 

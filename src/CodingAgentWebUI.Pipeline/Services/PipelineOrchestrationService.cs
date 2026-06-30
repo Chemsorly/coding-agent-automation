@@ -20,7 +20,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 // RemoveAllAgentLabels, and CreatePullRequest. A separate facade would add indirection
 // without meaningful simplification. Revisit if pipeline steps accumulate more
 // provider-operation parameters beyond what IPipelineCallbacks covers.
-public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrchestrationShutdownAction
+public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrchestrationShutdownAction, IDispatchRunCreator
 {
     private readonly PipelineRunLifecycleService _lifecycle;
     private readonly IConfigurationStore _configStore;

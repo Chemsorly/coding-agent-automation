@@ -56,6 +56,20 @@ public sealed class PostgresConsolidationRunStore : IConsolidationRunStore
         return runs;
     }
 
+    public async Task<ConsolidationRun?> GetByIdAsync(string runId, CancellationToken ct)
+    {
+        if (!Guid.TryParse(runId, out var id)) return null;
+
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var entity = await db.ConsolidationRuns.AsNoTracking()
+            .FirstOrDefaultAsync(e => e.Id == id, ct);
+
+        if (entity is null || string.IsNullOrEmpty(entity.Data))
+            return null;
+
+        return JsonSerializer.Deserialize<ConsolidationRun>(entity.Data, PipelineJsonOptions.Default);
+    }
+
     public async Task DeleteRunAsync(string runId, CancellationToken ct)
     {
         if (!Guid.TryParse(runId, out var id)) return;

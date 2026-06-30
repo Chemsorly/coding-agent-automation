@@ -96,5 +96,12 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     public Task<bool> HasAgentLabelsAsync(CancellationToken ct) => Task.FromResult(true);
     public Task<bool> EnsureAgentLabelsAsync(CancellationToken ct) => Task.FromResult(true);
     public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;
+
+    public Task<IReadOnlyList<string>> ListRepositoryLabelsAsync(CancellationToken ct)
+    {
+        var labels = Issues.SelectMany(i => i.Labels).Distinct().OrderBy(l => l).ToList();
+        return Task.FromResult<IReadOnlyList<string>>(labels);
+    }
+
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }

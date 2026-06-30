@@ -10,9 +10,9 @@ namespace CodingAgentWebUI.Orchestration;
 /// </summary>
 public sealed class InMemoryActiveRunQueryService : IActiveRunQueryService
 {
-    private readonly OrchestratorRunService _runService;
+    private readonly IOrchestratorRunService _runService;
 
-    public InMemoryActiveRunQueryService(OrchestratorRunService runService)
+    public InMemoryActiveRunQueryService(IOrchestratorRunService runService)
     {
         _runService = runService ?? throw new ArgumentNullException(nameof(runService));
     }

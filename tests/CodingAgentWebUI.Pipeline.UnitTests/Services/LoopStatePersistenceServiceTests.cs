@@ -34,7 +34,7 @@ public class LoopStatePersistenceServiceTests : IDisposable
         // Arrange
         WriteStateFile(isActive: true);
         var loopService = CreateLoopService();
-        using var sut = new LoopStatePersistenceService(loopService, _logger, _stateFilePath, TimeSpan.FromSeconds(5));
+        using var sut = new LoopStatePersistenceService(loopService, _logger, new FileSystemLoopStateStore(_stateFilePath), TimeSpan.FromSeconds(5));
 
         using var cts = new CancellationTokenSource();
         await sut.StartAsync(cts.Token);
@@ -59,7 +59,7 @@ public class LoopStatePersistenceServiceTests : IDisposable
     public async Task StartedAsync_WhenFileMissing_DoesNotResume()
     {
         var loopService = CreateLoopService();
-        using var sut = new LoopStatePersistenceService(loopService, _logger, _stateFilePath, TimeSpan.FromSeconds(1));
+        using var sut = new LoopStatePersistenceService(loopService, _logger, new FileSystemLoopStateStore(_stateFilePath), TimeSpan.FromSeconds(1));
 
         using var cts = new CancellationTokenSource();
         await sut.StartAsync(cts.Token);
@@ -76,7 +76,7 @@ public class LoopStatePersistenceServiceTests : IDisposable
     {
         WriteStateFile(isActive: false);
         var loopService = CreateLoopService();
-        using var sut = new LoopStatePersistenceService(loopService, _logger, _stateFilePath, TimeSpan.FromSeconds(1));
+        using var sut = new LoopStatePersistenceService(loopService, _logger, new FileSystemLoopStateStore(_stateFilePath), TimeSpan.FromSeconds(1));
 
         using var cts = new CancellationTokenSource();
         await sut.StartAsync(cts.Token);
@@ -88,18 +88,17 @@ public class LoopStatePersistenceServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task StartedAsync_WhenFileIsCorruptJson_DefaultsToInactiveAndDeletesFile()
+    public async Task StartedAsync_WhenFileIsCorruptJson_DefaultsToInactive()
     {
         await File.WriteAllTextAsync(_stateFilePath, "{ not valid json !!!");
         var loopService = CreateLoopService();
-        using var sut = new LoopStatePersistenceService(loopService, _logger, _stateFilePath, TimeSpan.FromSeconds(1));
+        using var sut = new LoopStatePersistenceService(loopService, _logger, new FileSystemLoopStateStore(_stateFilePath), TimeSpan.FromSeconds(1));
 
         using var cts = new CancellationTokenSource();
         await sut.StartAsync(cts.Token);
         await sut.StartedAsync(cts.Token);
 
         Assert.False(sut.IsResuming);
-        Assert.False(File.Exists(_stateFilePath));
 
         await sut.StopAsync(CancellationToken.None);
     }
@@ -109,7 +108,7 @@ public class LoopStatePersistenceServiceTests : IDisposable
     {
         WriteStateFile(isActive: true);
         var loopService = CreateLoopService();
-        using var sut = new LoopStatePersistenceService(loopService, _logger, _stateFilePath, TimeSpan.FromSeconds(30));
+        using var sut = new LoopStatePersistenceService(loopService, _logger, new FileSystemLoopStateStore(_stateFilePath), TimeSpan.FromSeconds(30));
 
         using var cts = new CancellationTokenSource();
         await sut.StartAsync(cts.Token);

@@ -75,7 +75,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(sp => new PipelineRunLifecycleService(
             sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<OrchestratorRunService>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
             Log.Logger));
         services.AddSingleton<Pipeline.Interfaces.ILifecycleShutdownAction>(sp =>
             sp.GetRequiredService<PipelineRunLifecycleService>());
@@ -92,7 +92,7 @@ public static class ServiceCollectionExtensions
             Log.Logger,
             sp.GetRequiredService<IBrainUpdateService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<OrchestratorRunService>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<PipelineRunLifecycleService>(),
             sp.GetRequiredService<IQualityGateValidator>(),
             sp.GetRequiredService<ILabelSwapper>(),
@@ -103,6 +103,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<Pipeline.Interfaces.IJobDeduplicationGuard>(),
             sp.GetRequiredService<Pipeline.Interfaces.IAgentCancellationSender>()));
         services.AddSingleton<Pipeline.Interfaces.IOrchestrationShutdownAction>(sp =>
+            sp.GetRequiredService<PipelineOrchestrationService>());
+        services.AddSingleton<Pipeline.Interfaces.IDispatchRunCreator>(sp =>
             sp.GetRequiredService<PipelineOrchestrationService>());
 
         // Shutdown signal: cooperative flag to prevent dispatch-during-shutdown races
@@ -124,7 +126,7 @@ public static class ServiceCollectionExtensions
             Log.Logger));
 
         services.AddHostedService(sp => new OrphanedLabelRecoveryService(
-            sp.GetRequiredService<OrchestratorRunService>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<IProviderConfigStore>(),
             sp.GetRequiredService<IProviderFactory>(),
@@ -133,7 +135,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IDependencyChecker>(sp => new DependencyChecker(Log.Logger));
         services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
-            sp.GetRequiredService<PipelineOrchestrationService>(),
+            sp.GetRequiredService<IDispatchRunCreator>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<IPipelineConfigStore>(),
             sp.GetRequiredService<IProviderConfigStore>(),
@@ -147,7 +149,8 @@ public static class ServiceCollectionExtensions
         // Loop state persistence: auto-resumes loop after pod restart if previously active
         services.AddSingleton(sp => new LoopStatePersistenceService(
             sp.GetRequiredService<PipelineLoopService>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetRequiredService<ILoopStateStore>()));
         services.AddHostedService(sp => sp.GetRequiredService<LoopStatePersistenceService>());
 
         services.AddTransient<IssueDescriptionParser>();
@@ -165,8 +168,9 @@ public static class ServiceCollectionExtensions
         string? workDistributionMode = null)
     {
         services.AddSingleton(sp => new AgentRegistryService(Log.Logger));
+        services.AddSingleton<IAgentRegistryService>(sp => sp.GetRequiredService<AgentRegistryService>());
         services.AddSingleton(sp => new JobDispatcherService(
-            sp.GetRequiredService<AgentRegistryService>(),
+            sp.GetRequiredService<IAgentRegistryService>(),
             Log.Logger));
         services.AddSingleton<Pipeline.Interfaces.IJobDeduplicationGuard>(sp =>
             sp.GetRequiredService<JobDispatcherService>());
@@ -190,8 +194,8 @@ public static class ServiceCollectionExtensions
         if (!isKubernetesMode)
         {
             services.AddHostedService(sp => new HeartbeatMonitorService(
-                sp.GetRequiredService<AgentRegistryService>(),
-                sp.GetRequiredService<OrchestratorRunService>(),
+                sp.GetRequiredService<IAgentRegistryService>(),
+                sp.GetRequiredService<IOrchestratorRunService>(),
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
                 sp.GetRequiredService<JobDispatcherService>(),
                 sp.GetRequiredService<ILabelSwapper>(),
@@ -204,7 +208,7 @@ public static class ServiceCollectionExtensions
         // In DB modes (SignalR/K8s), work distribution via IWorkDistributor — in-memory queue unused.
         services.AddSingleton(sp => new JobQueueDrainService(
             sp.GetRequiredService<JobDispatcherService>(),
-            sp.GetRequiredService<AgentRegistryService>(),
+            sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IJobDispatcher>(),
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<ConsolidationQueueService>(),
@@ -229,11 +233,17 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IConfigurationStore>(),
             Log.Logger));
 
+        services.AddSingleton(sp => new DispatchInfrastructure(
+            sp.GetRequiredService<ITokenVendingService>(),
+            sp.GetRequiredService<IProviderFactory>(),
+            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<DispatchResolutionService>()));
+
         services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
             sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));
 
         services.AddSingleton<Pipeline.Interfaces.IAgentCancellationSender>(sp => new AgentCancellationSender(
-            sp.GetRequiredService<AgentRegistryService>(),
+            sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IAgentCommunication>(),
             Log.Logger));
 
@@ -246,13 +256,10 @@ public static class ServiceCollectionExtensions
         // Consumed by JobQueueDrainService and LegacyWorkDistributor within the same assembly scope.
         services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
             sp.GetRequiredService<JobDispatcherService>(),
-            sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<OrchestratorRunService>(),
-            sp.GetRequiredService<PipelineOrchestrationService>(),
-            sp.GetRequiredService<ITokenVendingService>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<DispatchResolutionService>(),
+            sp.GetRequiredService<IAgentRegistryService>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
+            sp.GetRequiredService<DispatchInfrastructure>(),
             sp.GetRequiredService<IAgentCommunication>(),
             sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
             Log.Logger));
@@ -291,15 +298,16 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ConsolidationQueueService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             Log.Logger,
-            sp.GetService<IConsolidationRunStore>()));
+            sp.GetRequiredService<IConsolidationRunStore>()));
 
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             Log.Logger,
             pipelineConfig,
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IConsolidationDispatcher>(),
-            sp.GetService<IConsolidationRunStore>()));
+            sp.GetRequiredService<IConsolidationRunStore>(),
+            sp.GetRequiredService<IHarnessSuggestionStore>(),
+            sp.GetRequiredService<IConsolidationDispatcher>()));
 
         services.AddSingleton<ConsolidationBadgeService>();
 

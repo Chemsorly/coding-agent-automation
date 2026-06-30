@@ -19,36 +19,24 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </remarks>
 public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 {
-    private readonly DispatchResolutionService _resolution;
-    private readonly PipelineOrchestrationService _orchestration;
-    private readonly ITokenVendingService _tokenVending;
-    private readonly IProviderFactory _providerFactory;
-    private readonly ILabelSwapper _labelSwapper;
-    private readonly OrchestratorRunService _runService;
+    private readonly DispatchInfrastructure _infra;
+    private readonly IDispatchRunCreator _orchestration;
+    private readonly IOrchestratorRunService _runService;
     private readonly ILogger _logger;
 
     public DispatchOrchestrationService(
-        DispatchResolutionService resolution,
-        PipelineOrchestrationService orchestration,
-        ITokenVendingService tokenVending,
-        IProviderFactory providerFactory,
-        ILabelSwapper labelSwapper,
-        OrchestratorRunService runService,
+        DispatchInfrastructure infra,
+        IDispatchRunCreator orchestration,
+        IOrchestratorRunService runService,
         ILogger logger)
     {
-        ArgumentNullException.ThrowIfNull(resolution);
+        ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(orchestration);
-        ArgumentNullException.ThrowIfNull(tokenVending);
-        ArgumentNullException.ThrowIfNull(providerFactory);
-        ArgumentNullException.ThrowIfNull(labelSwapper);
         ArgumentNullException.ThrowIfNull(runService);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _resolution = resolution;
+        _infra = infra;
         _orchestration = orchestration;
-        _tokenVending = tokenVending;
-        _providerFactory = providerFactory;
-        _labelSwapper = labelSwapper;
         _runService = runService;
         _logger = logger;
     }
@@ -119,10 +107,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var agentProviderId = profile.AgentProviderConfigId;
 
         // Resolve quality gate configurations
-        var resolvedQgcs = await _resolution.ResolveQualityGatesAsync(requiredLabels, ct);
+        var resolvedQgcs = await _infra.Resolution.ResolveQualityGatesAsync(requiredLabels, ct);
 
         // Resolve reviewer configurations
-        var resolvedReviewerConfigs = await _resolution.ResolveReviewersAsync(requiredLabels, ct);
+        var resolvedReviewerConfigs = await _infra.Resolution.ResolveReviewersAsync(requiredLabels, ct);
 
         // Create the dispatched run via PipelineOrchestrationService
         var run = await _orchestration.CreateDispatchedRunAsync(
@@ -195,11 +183,20 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private async Task<AgentProfile?> ResolveProfileByLabelsAsync(
         IReadOnlyList<string> requiredLabels, CancellationToken ct)
     {
-        var profiles = await _resolution.ConfigStore.LoadAgentProfilesAsync(ct);
+        var profiles = await _infra.Resolution.ConfigStore.LoadAgentProfilesAsync(ct);
 
-        // Find the first profile whose match labels are a subset of required labels
-        var profile = profiles.FirstOrDefault(p =>
-            p.MatchLabels.All(ml => requiredLabels.Contains(ml)));
+        // Find the best profile whose match labels COVER all required labels.
+        // Profile.MatchLabels = "agent must have these labels for this profile to apply."
+        // Any agent matched by such a profile has at least those labels,
+        // so if requiredLabels ⊆ profile.MatchLabels, the agent can satisfy the job.
+        var profile = profiles
+            .Where(p => p.Enabled)
+            .Where(p => requiredLabels.All(rl =>
+                p.MatchLabels.Contains(rl, StringComparer.OrdinalIgnoreCase)))
+            .OrderByDescending(p => p.MatchLabels.Count)
+            .ThenByDescending(p => p.Priority)
+            .ThenBy(p => p.Id, StringComparer.Ordinal)
+            .FirstOrDefault();
 
         if (profile is null)
         {
@@ -219,7 +216,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private async Task<IssueContext?> PrepareIssueContextAsync(
         string issueIdentifier, string issueProviderId, CancellationToken ct)
     {
-        var issueConfig = await _resolution.ConfigStore
+        var issueConfig = await _infra.Resolution.ConfigStore
             .GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
         if (issueConfig is null)
             return null;
@@ -227,7 +224,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IssueDetail issueDetail;
         ParsedIssue parsedIssue;
         IReadOnlyList<IssueComment> issueComments;
-        await using (var issueProvider = _providerFactory.CreateIssueProvider(issueConfig))
+        await using (var issueProvider = _infra.ProviderFactory.CreateIssueProvider(issueConfig))
         {
             issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
             parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
@@ -241,7 +238,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         _logger.Information(
             "Orchestration: swapping label to agent:in-progress for issue {IssueIdentifier} (provider={ProviderId})",
             issueIdentifier, issueProviderId);
-        await _labelSwapper.SwapLabelAsync(
+        await _infra.LabelSwapper.SwapLabelAsync(
             issueProviderId, issueIdentifier, AgentLabels.InProgress, ct);
 
         // Detect existing analysis and rework state from comments
@@ -279,7 +276,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var rawConfigs = await BuildAgentProviderConfigsAsync(
             repoProviderId, agentProviderId, brainProviderId,
             pipelineProviderId, ct);
-        return await _tokenVending.PrepareAgentConfigsAsync(
+        return await _infra.TokenVending.PrepareAgentConfigsAsync(
             rawConfigs, repoProviderId, ct);
     }
 
@@ -295,7 +292,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         CancellationToken ct)
     {
         var configs = new List<ProviderConfig>();
-        var store = _resolution.ConfigStore;
+        var store = _infra.Resolution.ConfigStore;
 
         var repoConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = await ProviderConfigResolver.ResolveAsync(
@@ -337,9 +334,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
-        var config = await _resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+        var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
         config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-        var templates = await _resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+        var templates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
         return ApplyTemplateOverrides(
             config, repoProviderId, brainProviderId, providerConfigs, templates);
     }
@@ -472,9 +469,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private async Task<IReadOnlyList<string>> ResolveRequiredLabelsInternalAsync(
         string repoProviderId, CancellationToken ct)
     {
-        var repoConfig = await _resolution.ConfigStore
+        var repoConfig = await _infra.Resolution.ConfigStore
             .GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
-        var pipelineConfig = await _resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+        var pipelineConfig = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
         return LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
 
@@ -528,7 +525,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             // Revert label from agent:in-progress back to agent:next
             _logger.Warning("Reverting failed distribution for issue {IssueIdentifier}: swapping label back to agent:next",
                 request.IssueIdentifier);
-            await _labelSwapper.SwapLabelAsync(
+            await _infra.LabelSwapper.SwapLabelAsync(
                 request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.Next, ct);
         }
         catch (Exception ex)

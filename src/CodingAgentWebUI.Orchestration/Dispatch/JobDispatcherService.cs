@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </summary>
 public sealed class JobDispatcherService : IJobDeduplicationGuard
 {
-    private readonly AgentRegistryService _registry;
+    private readonly IAgentRegistryService _registry;
 
     private readonly ConcurrentQueue<PendingJob> _jobQueue = new();
 
@@ -27,7 +27,7 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
 
     private readonly object _selectionLock = new();
 
-    public JobDispatcherService(AgentRegistryService registry, ILogger logger)
+    public JobDispatcherService(IAgentRegistryService registry, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(logger);

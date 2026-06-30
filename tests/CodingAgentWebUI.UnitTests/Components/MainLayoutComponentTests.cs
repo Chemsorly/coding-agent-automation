@@ -45,7 +45,7 @@ public class MainLayoutComponentTests : BunitContext
     public void Sidebar_RendersToggleButton()
     {
         var cut = Render<MainLayout>();
-        var toggle = cut.Find(".sidebar-toggle");
+        var toggle = cut.Find(".sidebar-collapse-toggle");
         Assert.NotNull(toggle);
         Assert.Equal("«", toggle.TextContent);
     }
@@ -57,7 +57,7 @@ public class MainLayoutComponentTests : BunitContext
         var nav = cut.Find("nav.sidebar");
         Assert.DoesNotContain("collapsed", nav.ClassList);
 
-        cut.Find(".sidebar-toggle").Click();
+        cut.Find(".sidebar-collapse-toggle").Click();
 
         nav = cut.Find("nav.sidebar");
         Assert.Contains("collapsed", nav.ClassList);
@@ -67,12 +67,12 @@ public class MainLayoutComponentTests : BunitContext
     public void Sidebar_CollapseToggle_ChangesAriaExpanded()
     {
         var cut = Render<MainLayout>();
-        var toggle = cut.Find(".sidebar-toggle");
+        var toggle = cut.Find(".sidebar-collapse-toggle");
         Assert.Equal("true", toggle.GetAttribute("aria-expanded"));
 
         toggle.Click();
 
-        toggle = cut.Find(".sidebar-toggle");
+        toggle = cut.Find(".sidebar-collapse-toggle");
         Assert.Equal("false", toggle.GetAttribute("aria-expanded"));
     }
 
@@ -132,7 +132,7 @@ public class MainLayoutComponentTests : BunitContext
             .ReturnsAsync((string?)null);
 
         var cut = Render<MainLayout>();
-        cut.Find(".sidebar-toggle").Click();
+        cut.Find(".sidebar-collapse-toggle").Click();
 
         _jsMock.Verify(js => js.InvokeAsync<IJSVoidResult>("setSidebarCollapsed",
             It.Is<object[]>(args => args.Length > 0 && (string)args[0] == "true")), Times.Once);

@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 public sealed partial class PipelineLoopService : BackgroundService
 {
-    private readonly PipelineOrchestrationService _orchestration;
+    private readonly IDispatchRunCreator _orchestration;
     private readonly IProviderFactory _providerFactory;
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IProviderConfigStore _providerConfigStore;
@@ -89,7 +89,7 @@ public sealed partial class PipelineLoopService : BackgroundService
     public IReadOnlyList<string> ValidationErrors => _validationErrors;
 
     public PipelineLoopService(
-        PipelineOrchestrationService orchestration,
+        IDispatchRunCreator orchestration,
         IProviderFactory providerFactory,
         IPipelineConfigStore pipelineConfigStore,
         IProviderConfigStore providerConfigStore,

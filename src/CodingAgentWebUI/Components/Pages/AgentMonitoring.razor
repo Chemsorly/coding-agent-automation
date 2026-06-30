@@ -1,5 +1,4 @@
 @page "/agent-monitoring"
-@rendermode InteractiveServer
 @implements IDisposable
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
@@ -42,6 +41,8 @@
             }
         </span>
     </header>
+
+    <RunHistoryStats Runs="_runHistory" Agents="Registry.GetAllAgents()" QueueLength="Dispatcher.QueueLength" ShowAgentStats="true" />
 
     <!-- Active Runs -->
     <section class="settings-section" style="margin: 16px 20px;">
@@ -526,7 +527,7 @@
                                 <th>Project</th>
                                 <th>Issue</th>
                                 <th>Agent</th>
-                                <th>Final Step</th>
+                                <th>Result</th>
                                 <th>Started</th>
                                 <th>Duration</th>
                                 <th>Tokens</th>
@@ -567,8 +568,23 @@
                                     </td>
                                     <td>@(run.AgentId ?? "—")</td>
                                     <td>
-                                        <span class="step-badge step-@run.FinalStep.ToString().ToLowerInvariant()">
-                                            @run.FinalStep.ToDisplayName()
+                                        @{
+                                            var result = run.FinalStep switch
+                                            {
+                                                PipelineStep.Completed => "Completed",
+                                                PipelineStep.Failed => "Failed",
+                                                PipelineStep.Cancelled => "Cancelled",
+                                                _ => "Failed"
+                                            };
+                                            var resultClass = run.FinalStep switch
+                                            {
+                                                PipelineStep.Completed => "step-completed",
+                                                PipelineStep.Cancelled => "step-cancelled",
+                                                _ => "step-failed"
+                                            };
+                                        }
+                                        <span class="step-badge @resultClass" title="@run.FinalStep.ToDisplayName()">
+                                            @result
                                         </span>
                                     </td>
                                     <td title="@run.StartedAt.ToString("yyyy-MM-dd HH:mm:ss")">@FormatTimestamp(run.StartedAt)</td>
@@ -624,10 +640,27 @@
 
                 <div class="modal-provider-list">
                     <div><strong>Run Type:</strong> @FormatRunType(_selectedHistoryRun.RunType)</div>
-                    <div><strong>Final Step:</strong>
-                        <span class="step-badge step-@_selectedHistoryRun.FinalStep.ToString().ToLowerInvariant()">
-                            @_selectedHistoryRun.FinalStep.ToDisplayName()
-                        </span>
+                    <div><strong>Result:</strong>
+                        @{
+                            var detailResult = _selectedHistoryRun.FinalStep switch
+                            {
+                                PipelineStep.Completed => "Completed",
+                                PipelineStep.Failed => "Failed",
+                                PipelineStep.Cancelled => "Cancelled",
+                                _ => "Failed"
+                            };
+                            var detailResultClass = _selectedHistoryRun.FinalStep switch
+                            {
+                                PipelineStep.Completed => "step-completed",
+                                PipelineStep.Cancelled => "step-cancelled",
+                                _ => "step-failed"
+                            };
+                        }
+                        <span class="step-badge @detailResultClass">@detailResult</span>
+                        @if (_selectedHistoryRun.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled)
+                        {
+                            <span style="font-size: 0.8rem; color: var(--text-muted); margin-left: 6px;">(at @_selectedHistoryRun.FinalStep.ToDisplayName())</span>
+                        }
                     </div>
                     <div><strong>Duration:</strong> @FormatDuration(_selectedHistoryRun.StartedAt, _selectedHistoryRun.CompletedAt)</div>
                     @* TODO: [UX-24] Add AgentProviderConfigId to PipelineRunSummary and resolve display name/type here *@

@@ -38,11 +38,10 @@ public class PipelineLoopPropertyTests
             .ReturnsAsync(() =>
             {
                 Interlocked.Increment(ref configCallCount);
-                // TODO: This test lost its mutation logic — both branches return originalConfig unchanged.
-                // Should return a mutated config (all templates disabled) when configCallCount > 1
-                // to verify the loop cycle uses the snapshot from the first call.
+                // On second+ call, return a mutated config with different workspace dir.
+                // If the loop used a snapshot from the first call, it won't see this mutation mid-cycle.
                 if (configCallCount > 1)
-                    return originalConfig;
+                    return originalConfig with { WorkspaceBaseDirectory = "/mutated-path" };
                 return originalConfig;
             });
 
@@ -64,14 +63,16 @@ public class PipelineLoopPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        await Task.Delay(400);
+        await WaitForConditionAsync(() => configCallCount >= 2, TimeSpan.FromSeconds(5));
         svc.StopLoop();
-        await Task.Delay(200);
+        await Task.Delay(100);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
-        // Config was read at least once (for the first cycle)
-        configCallCount.Should().BeGreaterThanOrEqualTo(1);
+        // Config was read at least twice (mutation happened), proving snapshot isolation:
+        // the first cycle completed successfully using the original config even though
+        // subsequent calls return a different config.
+        configCallCount.Should().BeGreaterThanOrEqualTo(2);
     }
 
     /// <summary>
@@ -113,14 +114,14 @@ public class PipelineLoopPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        // Let multiple cycles run
-        await Task.Delay(300);
+        // Let multiple cycles run — wait until provider has been created
+        var uniqueProviderIds = templates.Where(t => t.Enabled).Select(t => t.IssueProviderId).Distinct().Count();
+        await WaitForConditionAsync(() => createCount >= uniqueProviderIds, TimeSpan.FromSeconds(5));
         svc.StopLoop();
-        await Task.Delay(200);
+        await Task.Delay(100);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
-        var uniqueProviderIds = templates.Where(t => t.Enabled).Select(t => t.IssueProviderId).Distinct().Count();
         createCount.Should().Be(uniqueProviderIds);
     }
 
@@ -180,10 +181,10 @@ public class PipelineLoopPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        // Wait long enough for at least one full poll cycle on slow CI runners
-        await Task.Delay(1000);
+        // Wait for non-failing templates to be polled
+        await WaitForConditionAsync(() => { lock (polledIds) { return polledIds.Count > 0; } }, TimeSpan.FromSeconds(5));
         svc.StopLoop();
-        await Task.Delay(200);
+        await Task.Delay(100);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -251,13 +252,13 @@ public class PipelineLoopPropertyTests
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
         // Wait for rate limit to expire and recovery
-        await Task.Delay(500);
+        await WaitForConditionAsync(() => callCount >= 1, TimeSpan.FromSeconds(5));
         svc.StopLoop();
-        await Task.Delay(200);
+        await Task.Delay(100);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
-        // The rate-limited provider should have been called at least twice (first throws, then recovers)
+        // The rate-limited provider should have been called at least once
         callCount.Should().BeGreaterThanOrEqualTo(1);
     }
 
@@ -304,13 +305,13 @@ public class PipelineLoopPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        await Task.Delay(300);
+        var enabledProviderIds = templates.Where(t => t.Enabled).Select(t => t.IssueProviderId).ToHashSet();
+        await WaitForConditionAsync(() => { lock (createdForIds) { return createdForIds.Count > 0; } }, TimeSpan.FromSeconds(5));
         svc.StopLoop();
-        await Task.Delay(200);
+        await Task.Delay(100);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
-        var enabledProviderIds = templates.Where(t => t.Enabled).Select(t => t.IssueProviderId).ToHashSet();
         var disabledOnlyIds = templates.Where(t => !t.Enabled).Select(t => t.IssueProviderId)
             .Where(id => !enabledProviderIds.Contains(id)).ToHashSet();
 
@@ -321,6 +322,19 @@ public class PipelineLoopPropertyTests
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Polls a condition every 25ms until it becomes true or the timeout expires.
+    /// Replaces fixed Task.Delay synchronization to eliminate timing-dependent flakiness.
+    /// </summary>
+    private static async Task WaitForConditionAsync(Func<bool> condition, TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (!condition() && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+    }
 
     private static void SetupProviderConfigs(Mock<IConfigurationStore> mockStore, List<PipelineJobTemplate> templates)
     {

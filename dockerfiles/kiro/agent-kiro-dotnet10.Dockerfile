@@ -56,7 +56,7 @@ RUN mkdir -p /home/ubuntu/.local/bin /home/ubuntu/.kiro && \
 # Install Kiro CLI as non-root user
 USER ubuntu
 ENV PATH="/home/ubuntu/.local/bin:${PATH}"
-ARG KIRO_CLI_VERSION=2.6.0
+ARG KIRO_CLI_VERSION=2.10.0
 RUN KIRO_ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "aarch64" || echo "x86_64") && \
     curl --proto '=https' --tlsv1.2 -sSf \
         "https://desktop-release.q.us-east-1.amazonaws.com/${KIRO_CLI_VERSION}/kirocli-${KIRO_ARCH}-linux.zip" \

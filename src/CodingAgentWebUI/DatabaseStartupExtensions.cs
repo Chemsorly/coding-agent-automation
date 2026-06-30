@@ -47,6 +47,7 @@ public static class DatabaseStartupExtensions
     /// Runs database startup initialization: connection retry, migration/verification.
     /// Must be called after Build() but before Run() — blocks until DB is ready.
     /// Only executes in DB mode (connection string configured).
+    /// Skips initialization when <c>Database:SkipStartupInit</c> is true (for integration tests).
     /// </summary>
     public static async Task InitializeDatabaseAsync(this WebApplication app)
     {
@@ -54,12 +55,20 @@ public static class DatabaseStartupExtensions
         if (string.IsNullOrEmpty(connectionString))
             return; // Legacy mode — nothing to initialize
 
+        if (app.Configuration.GetValue<bool>("Database:SkipStartupInit"))
+        {
+            Log.Warning("Database:SkipStartupInit is true — skipping database initialization. " +
+                        "This should only be used in integration test environments");
+            return; // Test mode — skip DB initialization
+        }
+
         var dbFactory = app.Services.GetRequiredService<IDbContextFactory<PipelineDbContext>>();
         var lockProvider = app.Services.GetRequiredService<IDistributedLockProvider>();
         var configuration = app.Services.GetRequiredService<IConfiguration>();
+        var probe = app.Services.GetService<IDatabaseProbe>();
 
         var startupService = new DatabaseStartupService(
-            dbFactory, lockProvider, configuration, Log.Logger);
+            dbFactory, lockProvider, configuration, Log.Logger, probe);
 
         await startupService.InitializeAsync(CancellationToken.None);
     }

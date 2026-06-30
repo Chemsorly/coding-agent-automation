@@ -79,8 +79,8 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
         _config,
         _mockProjectStore.Object,
         _mockRunHistory.Object,
-        consolidationRunsDirectory: _runsDir,
-        harnessSuggestionsPath: _suggestionsPath);
+        new FileSystemConsolidationRunStore(_runsDir),
+        new FileSystemHarnessSuggestionStore(_suggestionsPath));
 
     // ── Workspace uses separate directory from pipeline ───────────────────
 

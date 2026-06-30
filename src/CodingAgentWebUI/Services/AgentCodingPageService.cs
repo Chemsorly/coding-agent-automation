@@ -17,7 +17,7 @@ public class AgentCodingPageService
 {
     private readonly PipelineLoopService _loopService;
     private readonly IWorkDistributor _workDistributor;
-    private readonly AgentRegistryService _agentRegistry;
+    private readonly IAgentRegistryService _agentRegistry;
     private readonly IConfigurationStore _configStore;
     private readonly IProjectStore _projectStore;
     private readonly IProviderFactory _providerFactory;
@@ -27,7 +27,7 @@ public class AgentCodingPageService
     public AgentCodingPageService(
         PipelineLoopService loopService,
         IWorkDistributor workDistributor,
-        AgentRegistryService agentRegistry,
+        IAgentRegistryService agentRegistry,
         IConfigurationStore configStore,
         IProjectStore projectStore,
         IProviderFactory providerFactory,
@@ -64,14 +64,22 @@ public class AgentCodingPageService
     public bool DrawerHasMore { get; private set; }
     public bool DrawerLoading { get; private set; }
     public Dictionary<string, DependencyCheckResult> DrawerReadiness { get; private set; } = new();
+    public List<string> DrawerLabels { get; private set; } = new();
+    public List<string> DrawerSelectedLabels { get; private set; } = new();
 
     public List<PullRequestSummary> PrDrawerPrs { get; private set; } = new();
     public int PrDrawerPage { get; private set; } = 1;
     public bool PrDrawerHasMore { get; private set; }
     public bool PrDrawerLoading { get; private set; }
+    public List<string> PrDrawerLabels { get; private set; } = new();
+    public List<string> PrDrawerSelectedLabels { get; private set; } = new();
 
     public List<IssueSummary> EpicDrawerIssues { get; private set; } = new();
+    public int EpicDrawerPage { get; private set; } = 1;
+    public bool EpicDrawerHasMore { get; private set; }
     public bool EpicDrawerLoading { get; private set; }
+    public List<string> EpicDrawerLabels { get; private set; } = new();
+    public List<string> EpicDrawerSelectedLabels { get; private set; } = new();
 
     // ── Initialization ──
 
@@ -240,7 +248,8 @@ public class AgentCodingPageService
             var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
             if (providerConfig == null) { DrawerLoading = false; return "Issue provider not found for this template."; }
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var result = await provider.ListOpenIssuesAsync(page, 25, CancellationToken.None);
+            var labels = DrawerSelectedLabels.Count > 0 ? DrawerSelectedLabels : null;
+            var result = await provider.ListOpenIssuesAsync(page, 15, labels, CancellationToken.None);
             DrawerIssues = result.Items.ToList(); DrawerHasMore = result.HasMore;
             return null;
         }
@@ -248,7 +257,35 @@ public class AgentCodingPageService
         finally { DrawerLoading = false; }
     }
 
-    public void ClearDrawerIssues() { DrawerIssues.Clear(); DrawerPage = 1; DrawerHasMore = false; DrawerReadiness.Clear(); }
+    public async Task<string?> LoadDrawerLabelsAsync(PipelineJobTemplate template)
+    {
+        try
+        {
+            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
+            if (providerConfig == null) return null; // non-fatal, just no label filter
+            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
+            var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
+            DrawerLabels = labels.ToList();
+            return null;
+        }
+        catch
+        {
+            DrawerLabels.Clear();
+            return null; // non-fatal
+        }
+    }
+
+    public void ToggleDrawerLabel(string label)
+    {
+        if (DrawerSelectedLabels.Contains(label))
+            DrawerSelectedLabels.Remove(label);
+        else
+            DrawerSelectedLabels.Add(label);
+    }
+
+    public void ClearDrawerLabelFilter() => DrawerSelectedLabels.Clear();
+
+    public void ClearDrawerIssues() { DrawerIssues.Clear(); DrawerPage = 1; DrawerHasMore = false; DrawerReadiness.Clear(); DrawerSelectedLabels.Clear(); }
 
     /// <summary>
     /// Checks dependency readiness for all current drawer issues asynchronously.
@@ -358,13 +395,36 @@ public class AgentCodingPageService
             var repoConfig = RepoProviders.FirstOrDefault(p => p.Id == template.RepoProviderId);
             if (repoConfig == null) { PrDrawerPrs = new(); PrDrawerLoading = false; return null; }
             await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
-            var result = await repoProvider.ListOpenPullRequestsAsync(page, 30, null, CancellationToken.None);
+            var labels = PrDrawerSelectedLabels.Count > 0 ? PrDrawerSelectedLabels : null;
+            var result = await repoProvider.ListOpenPullRequestsAsync(page, 15, labels, CancellationToken.None);
             PrDrawerPrs = result.Items.ToList(); PrDrawerHasMore = result.HasMore;
             return null;
         }
         catch (Exception ex) { PrDrawerPrs = new(); return $"Failed to load pull requests: {ex.Message}"; }
         finally { PrDrawerLoading = false; }
     }
+
+    public async Task<string?> LoadPrDrawerLabelsAsync(PipelineJobTemplate template)
+    {
+        try
+        {
+            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
+            if (providerConfig == null) return null;
+            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
+            var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
+            PrDrawerLabels = labels.ToList();
+            return null;
+        }
+        catch { PrDrawerLabels.Clear(); return null; }
+    }
+
+    public void TogglePrDrawerLabel(string label)
+    {
+        if (PrDrawerSelectedLabels.Contains(label)) PrDrawerSelectedLabels.Remove(label);
+        else PrDrawerSelectedLabels.Add(label);
+    }
+
+    public void ClearPrDrawerLabelFilter() { PrDrawerPrs.Clear(); PrDrawerPage = 1; PrDrawerHasMore = false; PrDrawerSelectedLabels.Clear(); }
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchPrReviewAsync(
         PullRequestSummary pr, PipelineJobTemplate template)
@@ -441,9 +501,10 @@ public class AgentCodingPageService
 
     // ── Epic Drawer ──
 
-    public async Task<string?> LoadEpicDrawerIssuesAsync(PipelineJobTemplate template)
+    public async Task<string?> LoadEpicDrawerIssuesAsync(PipelineJobTemplate template, int page = 1)
     {
         EpicDrawerLoading = true;
+        EpicDrawerPage = page;
         try
         {
             var parentProject = GetParentProject(template.Id);
@@ -451,16 +512,57 @@ public class AgentCodingPageService
             var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == epicProviderId);
             if (providerConfig == null) { EpicDrawerLoading = false; return "Epic issue provider not found."; }
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var epicResult = await provider.ListOpenIssuesAsync(1, 50, new[] { "agent:epic" }, CancellationToken.None);
-            var approvedResult = await provider.ListOpenIssuesAsync(1, 50, new[] { "agent:epic-approved" }, CancellationToken.None);
-            EpicDrawerIssues = epicResult.Items.Concat(approvedResult.Items).ToList();
+
+            // Build label filter: always include epic markers + any user-selected labels
+            var epicLabels = new List<string> { "agent:epic" };
+            if (EpicDrawerSelectedLabels.Count > 0)
+                epicLabels.AddRange(EpicDrawerSelectedLabels);
+
+            var approvedLabels = new List<string> { "agent:epic-approved" };
+            if (EpicDrawerSelectedLabels.Count > 0)
+                approvedLabels.AddRange(EpicDrawerSelectedLabels);
+
+            var epicResult = await provider.ListOpenIssuesAsync(page, 8, epicLabels, CancellationToken.None);
+            var approvedResult = await provider.ListOpenIssuesAsync(page, 8, approvedLabels, CancellationToken.None);
+
+            // Deduplicate: issues with both agent:epic and agent:epic-approved appear in both queries
+            EpicDrawerIssues = epicResult.Items.Concat(approvedResult.Items)
+                .GroupBy(i => i.Identifier)
+                .Select(g => g.First())
+                .ToList();
+            EpicDrawerHasMore = epicResult.HasMore || approvedResult.HasMore;
             return null;
         }
         catch (Exception ex) { EpicDrawerIssues.Clear(); return $"Failed to load epics: {ex.Message}"; }
         finally { EpicDrawerLoading = false; }
     }
 
-    public void ClearEpicDrawerIssues() => EpicDrawerIssues.Clear();
+    public async Task<string?> LoadEpicDrawerLabelsAsync(PipelineJobTemplate template)
+    {
+        try
+        {
+            var parentProject = GetParentProject(template.Id);
+            var epicProviderId = !string.IsNullOrEmpty(parentProject?.EpicIssueProviderId) ? parentProject.EpicIssueProviderId : template.IssueProviderId;
+            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == epicProviderId);
+            if (providerConfig == null) return null;
+            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
+            var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
+            // Exclude the epic markers themselves from the filter UI
+            EpicDrawerLabels = labels.Where(l => !l.StartsWith("agent:epic", StringComparison.OrdinalIgnoreCase)).ToList();
+            return null;
+        }
+        catch { EpicDrawerLabels.Clear(); return null; }
+    }
+
+    public void ToggleEpicDrawerLabel(string label)
+    {
+        if (EpicDrawerSelectedLabels.Contains(label)) EpicDrawerSelectedLabels.Remove(label);
+        else EpicDrawerSelectedLabels.Add(label);
+    }
+
+    public void ClearEpicDrawerLabelFilter() => EpicDrawerSelectedLabels.Clear();
+
+    public void ClearEpicDrawerIssues() { EpicDrawerIssues.Clear(); EpicDrawerPage = 1; EpicDrawerHasMore = false; EpicDrawerSelectedLabels.Clear(); }
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchDecompositionAsync(
         IssueSummary issue, PipelineJobTemplate template)

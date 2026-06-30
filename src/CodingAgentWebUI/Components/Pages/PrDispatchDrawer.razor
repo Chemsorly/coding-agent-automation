@@ -26,6 +26,30 @@
                        placeholder="Filter by number or title..." style="width: 100%; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 0.82rem;" />
             </div>
 
+            @if (AvailableLabels.Count > 0)
+            {
+                <div class="drawer-label-filter" style="padding: 0 0 8px;">
+                    <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Labels:</span>
+                        @if (SelectedLabels.Count > 0)
+                        {
+                            <button class="btn-link" style="font-size: 0.72rem; padding: 0; color: var(--accent);" @onclick="ClearLabels">Clear</button>
+                        }
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 4px; max-height: 72px; overflow-y: auto;">
+                        @foreach (var label in AvailableLabels)
+                        {
+                            var isActive = SelectedLabels.Contains(label);
+                            <button class="sidebar-label @UiFormatters.GetLabelClass(label) @(isActive ? "label-active" : "label-inactive")"
+                                    style="cursor: pointer; font-size: 0.72rem; padding: 2px 6px; border: 1px solid @(isActive ? "var(--accent)" : "transparent"); opacity: @(isActive ? "1" : "0.7");"
+                                    @onclick="() => ToggleLabel(label)">
+                                @label
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+
             @if (PullRequests.Count == 0)
             {
                 <div class="monitoring-empty">No open pull requests found.</div>
@@ -33,7 +57,7 @@
             else
             {
                 <div class="agent-history-list" tabindex="0" @onkeydown="HandleKeyDown" @onkeydown:preventDefault="ShouldPreventDefault"
-                     style="max-height: calc(100vh - 320px); overflow-y: auto;">
+                     style="max-height: calc(100vh - 380px); overflow-y: auto;">
                     @{ var idx = 0; }
                     @foreach (var pr in FilteredItems)
                     {
@@ -119,9 +143,12 @@
     [Parameter, EditorRequired] public int Page { get; set; }
     [Parameter] public EventCallback OnNextPage { get; set; }
     [Parameter] public EventCallback OnPrevPage { get; set; }
+    [Parameter] public IReadOnlyList<string> AvailableLabels { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> SelectedLabels { get; set; } = [];
+    [Parameter] public EventCallback<string> OnToggleLabel { get; set; }
+    [Parameter] public EventCallback OnClearLabels { get; set; }
 
-    // TODO: ShouldPreventDefault unconditionally blocks all keydown defaults (including Tab), creating a keyboard trap. Should be conditional based on the key pressed.
-    private bool ShouldPreventDefault => true;
+    private bool ShouldPreventDefault => false;
 
     protected override void OnParametersSet()
     {
@@ -146,4 +173,6 @@
 
     private async Task NextPage() => await OnNextPage.InvokeAsync();
     private async Task PrevPage() => await OnPrevPage.InvokeAsync();
+    private async Task ToggleLabel(string label) => await OnToggleLabel.InvokeAsync(label);
+    private async Task ClearLabels() => await OnClearLabels.InvokeAsync();
 }

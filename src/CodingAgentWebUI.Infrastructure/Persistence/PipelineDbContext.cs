@@ -25,6 +25,7 @@ public class PipelineDbContext : DbContext
     public DbSet<ReviewerConfigEntity> ReviewerConfigs => Set<ReviewerConfigEntity>();
     public DbSet<ConsolidationRunEntity> ConsolidationRuns => Set<ConsolidationRunEntity>();
     public DbSet<PipelineConfigEntity> PipelineConfig => Set<PipelineConfigEntity>();
+    public DbSet<KeyValueEntity> KeyValueStore => Set<KeyValueEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -108,6 +109,13 @@ public class PipelineDbContext : DbContext
             e.HasKey(p => p.Id);
             e.Property(p => p.RowVersion).IsRowVersion();
             e.Property(p => p.Configuration).HasColumnType("jsonb");
+        });
+
+        modelBuilder.Entity<KeyValueEntity>(e =>
+        {
+            e.HasKey(kv => kv.Key);
+            e.Property(kv => kv.RowVersion).IsRowVersion();
+            e.Property(kv => kv.Value).HasColumnType("jsonb");
         });
     }
 }

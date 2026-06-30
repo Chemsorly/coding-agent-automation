@@ -31,17 +31,17 @@ public sealed partial class AgentJobDispatcher
             project = EnsureProject(project, issueIdentifier, "issue");
 
             // Resolve profile for this agent
-            var profile = await _resolution.ResolveProfileAsync(agent, ct);
+            var profile = await _infra.Resolution.ResolveProfileAsync(agent, ct);
             if (profile is null)
                 return false;
 
             var agentProviderId = profile.AgentProviderConfigId;
 
             // Resolve quality gate configurations for this job
-            var resolvedQgcs = await _resolution.ResolveQualityGatesAsync(requiredLabels, ct);
+            var resolvedQgcs = await _infra.Resolution.ResolveQualityGatesAsync(requiredLabels, ct);
 
             // Resolve reviewer configurations for this job
-            var resolvedReviewerConfigs = await _resolution.ResolveReviewersAsync(requiredLabels, ct);
+            var resolvedReviewerConfigs = await _infra.Resolution.ResolveReviewersAsync(requiredLabels, ct);
 
             // Create the dispatched run via PipelineOrchestrationService
             var run = await _orchestration.CreateDispatchedRunAsync(
@@ -152,14 +152,14 @@ public sealed partial class AgentJobDispatcher
             project = EnsureProject(project, request.PrIdentifier, "PR");
 
             // Resolve profile for this agent
-            var profile = await _resolution.ResolveProfileAsync(agent, ct);
+            var profile = await _infra.Resolution.ResolveProfileAsync(agent, ct);
             if (profile is null)
                 return false;
 
             var agentProviderId = profile.AgentProviderConfigId;
 
             // Resolve reviewer configurations for this job (quality gates not needed for reviews)
-            var resolvedReviewerConfigs = await _resolution.ResolveReviewersAsync(requiredLabels, ct);
+            var resolvedReviewerConfigs = await _infra.Resolution.ResolveReviewersAsync(requiredLabels, ct);
 
             // Create the dispatched run via PipelineOrchestrationService
             var run = await _orchestration.CreateDispatchedRunAsync(
@@ -230,7 +230,7 @@ public sealed partial class AgentJobDispatcher
             // CloneRepositoryStep skips the swap for agent-dispatched runs (AgentId is set).
             _logger.Information("Dispatch (review): swapping label to agent:in-progress for PR {PrIdentifier} (provider={ProviderId})",
                 request.PrIdentifier, request.RepoProviderId);
-            await _labelSwapper.SwapLabelAsync(
+            await _infra.LabelSwapper.SwapLabelAsync(
                 request.RepoProviderId, request.PrIdentifier, AgentLabels.InProgress, LabelTargetKind.PullRequest, ct);
 
             // Build a synthetic IssueDetail and ParsedIssue from PR metadata for the job assignment
@@ -319,7 +319,7 @@ public sealed partial class AgentJobDispatcher
             project = EnsureProject(project, epicIdentifier, "epic");
 
             // Resolve profile for this agent
-            var profile = await _resolution.ResolveProfileAsync(agent, ct);
+            var profile = await _infra.Resolution.ResolveProfileAsync(agent, ct);
             if (profile is null)
                 return false;
 
@@ -338,7 +338,7 @@ public sealed partial class AgentJobDispatcher
             }
 
             // Load config early — needed for WorkspaceBaseDirectory before settings override
-            var config = await _resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+            var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
             var runId = run.RunId;
             var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, "decomposition", runId);
 
@@ -384,9 +384,9 @@ public sealed partial class AgentJobDispatcher
             DecompositionProjectContext? projectContext = null;
             if (!string.IsNullOrEmpty(project.EpicIssueProviderId))
             {
-                var repoProviderConfigs = await _resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+                var repoProviderConfigs = await _infra.Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
                 var repoConfigLookup = repoProviderConfigs.ToDictionary(c => c.Id);
-                var templateLookup = (await _resolution.ConfigStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
+                var templateLookup = (await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
 
                 var repositories = new List<RepositoryTarget>();
                 foreach (var templateId in project.TemplateIds)
@@ -431,7 +431,7 @@ public sealed partial class AgentJobDispatcher
 
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
             config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-            var templates = await _resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+            var templates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
             config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
 
             var message = new JobAssignmentMessage
@@ -469,7 +469,7 @@ public sealed partial class AgentJobDispatcher
             // in-progress, preventing the loop from re-dispatching it on the next cycle.
             _logger.Information("Dispatch (decomposition): swapping label to agent:in-progress for epic {EpicIdentifier} (provider={ProviderId})",
                 epicIdentifier, issueProviderId);
-            await _labelSwapper.SwapLabelAsync(issueProviderId, epicIdentifier, AgentLabels.InProgress, ct);
+            await _infra.LabelSwapper.SwapLabelAsync(issueProviderId, epicIdentifier, AgentLabels.InProgress, ct);
 
             await AssignAndSendAsync(agent, run.RunId, message, ct);
 
@@ -531,9 +531,9 @@ public sealed partial class AgentJobDispatcher
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
-        var config = await _resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+        var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
         config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-        var templates = await _resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+        var templates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
         return ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
     }
 
@@ -574,9 +574,9 @@ public sealed partial class AgentJobDispatcher
         _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
         if (targetKind.HasValue)
-            await _labelSwapper.SwapLabelAsync(providerConfigId, identifier, revertLabel, targetKind.Value, CancellationToken.None);
+            await _infra.LabelSwapper.SwapLabelAsync(providerConfigId, identifier, revertLabel, targetKind.Value, CancellationToken.None);
         else
-            await _labelSwapper.SwapLabelAsync(providerConfigId, identifier, revertLabel, CancellationToken.None);
+            await _infra.LabelSwapper.SwapLabelAsync(providerConfigId, identifier, revertLabel, CancellationToken.None);
     }
 
     /// <summary>
@@ -596,7 +596,7 @@ public sealed partial class AgentJobDispatcher
         try
         {
             // Resolve repository provider to extract linked issues
-            var repoConfig = await _resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+            var repoConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
             if (repoConfig == null)
             {
                 _logger.Warning("Repo provider config '{ConfigId}' not found for linked issue extraction", repoProviderId);
@@ -604,7 +604,7 @@ public sealed partial class AgentJobDispatcher
             }
 
             IReadOnlyList<string> linkedIssueIds;
-            await using (var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig))
+            await using (var repoProvider = _infra.ProviderFactory.CreateRepositoryProvider(repoConfig))
             {
                 if (!int.TryParse(prIdentifier, out var prNum))
                 {
@@ -622,14 +622,14 @@ public sealed partial class AgentJobDispatcher
             }
 
             // Resolve issue provider to fetch issue details
-            var issueConfig = await _resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
+            var issueConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
             if (issueConfig == null)
             {
                 _logger.Warning("Issue provider config '{ConfigId}' not found for linked issue pre-fetch", issueProviderId);
                 return linkedIssueContexts.AsReadOnly();
             }
 
-            await using (var issueProvider = _providerFactory.CreateIssueProvider(issueConfig))
+            await using (var issueProvider = _infra.ProviderFactory.CreateIssueProvider(issueConfig))
             {
                 foreach (var issueId in linkedIssueIds)
                 {
@@ -669,14 +669,14 @@ public sealed partial class AgentJobDispatcher
         string issueProviderId,
         CancellationToken ct)
     {
-        var issueConfig = await _resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
+        var issueConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
         if (issueConfig == null)
             return null;
 
         IssueDetail issueDetail;
         ParsedIssue parsedIssue;
         IReadOnlyList<IssueComment> issueComments;
-        await using (var issueProvider = _providerFactory.CreateIssueProvider(issueConfig))
+        await using (var issueProvider = _infra.ProviderFactory.CreateIssueProvider(issueConfig))
         {
             issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
             parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
@@ -690,7 +690,7 @@ public sealed partial class AgentJobDispatcher
         // Swap label to agent:in-progress before dispatch (REQ-7.2)
         _logger.Information("Dispatch: swapping label to agent:in-progress for issue {IssueIdentifier} (provider={ProviderId})",
             issueIdentifier, issueProviderId);
-        await _labelSwapper.SwapLabelAsync(issueProviderId, issueIdentifier, AgentLabels.InProgress, ct);
+        await _infra.LabelSwapper.SwapLabelAsync(issueProviderId, issueIdentifier, AgentLabels.InProgress, ct);
 
         // Detect existing analysis and rework state from comments
         string? existingAnalysis = null;
@@ -722,7 +722,7 @@ public sealed partial class AgentJobDispatcher
     {
         var rawConfigs = await BuildAgentProviderConfigsAsync(
             repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct, additionalRepoProviderIds);
-        return await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
+        return await _infra.TokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
     }
 
     /// <summary>
@@ -736,7 +736,7 @@ public sealed partial class AgentJobDispatcher
         IEnumerable<string>? additionalRepoProviderIds = null)
     {
         var configs = new List<ProviderConfig>();
-        var store = _resolution.ConfigStore;
+        var store = _infra.Resolution.ConfigStore;
 
         var repoConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = await ProviderConfigResolver.ResolveAsync(

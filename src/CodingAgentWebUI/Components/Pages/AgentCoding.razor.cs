@@ -21,7 +21,7 @@ public partial class AgentCoding : IDisposable
     [Inject] private PipelineOrchestrationService PipelineService { get; set; } = default!;
     [Inject] private PipelineLoopService LoopService { get; set; } = default!;
     [Inject] private OrchestratorRunService RunService { get; set; } = default!;
-    [Inject] private AgentRegistryService Registry { get; set; } = default!;
+    [Inject] private IAgentRegistryService Registry { get; set; } = default!;
     [Inject] private JobDispatcherService Dispatcher { get; set; } = default!;
     [Inject] private IWorkDistributor WorkDistributor { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
@@ -87,12 +87,20 @@ public partial class AgentCoding : IDisposable
     private int _drawerPage => PageService.DrawerPage;
     private bool _drawerHasMore => PageService.DrawerHasMore;
     private Dictionary<string, Pipeline.Models.DependencyCheckResult> _drawerReadiness => PageService.DrawerReadiness;
+    private List<string> _drawerLabels => PageService.DrawerLabels;
+    private List<string> _drawerSelectedLabels => PageService.DrawerSelectedLabels;
     private List<PullRequestSummary> _prDrawerPrs => PageService.PrDrawerPrs;
     private bool _prDrawerLoading => PageService.PrDrawerLoading;
     private int _prDrawerPage => PageService.PrDrawerPage;
     private bool _prDrawerHasMore => PageService.PrDrawerHasMore;
+    private List<string> _prDrawerLabels => PageService.PrDrawerLabels;
+    private List<string> _prDrawerSelectedLabels => PageService.PrDrawerSelectedLabels;
     private List<IssueSummary> _epicDrawerIssues => PageService.EpicDrawerIssues;
     private bool _epicDrawerLoading => PageService.EpicDrawerLoading;
+    private int _epicDrawerPage => PageService.EpicDrawerPage;
+    private bool _epicDrawerHasMore => PageService.EpicDrawerHasMore;
+    private List<string> _epicDrawerLabels => PageService.EpicDrawerLabels;
+    private List<string> _epicDrawerSelectedLabels => PageService.EpicDrawerSelectedLabels;
 
     private void OnTemplateChanged(ChangeEventArgs e) =>
         _manualDispatchTemplateId = e.Value?.ToString() ?? "";
@@ -251,8 +259,10 @@ public partial class AgentCoding : IDisposable
         if (template == null) return;
         _drawerTemplate = template; _drawerOpen = true;
         await RefreshActiveIssuesAsync();
-        // TODO: Loading indicator won't render — PageService sets DrawerLoading=true internally but no StateHasChanged() is called before the await, so the UI never shows the spinner. Same issue in OpenPrDrawer and OpenEpicDrawer.
+        StateHasChanged(); // flush loading spinner before async fetches
+        var labelsTask = PageService.LoadDrawerLabelsAsync(template);
         var error = await PageService.LoadDrawerIssuesAsync(template, 1);
+        await labelsTask; // ensure labels are loaded before render
         if (error != null) _errorMessage = error;
         else _ = CheckDrawerDependenciesInBackground(template);
     }
@@ -277,6 +287,24 @@ public partial class AgentCoding : IDisposable
             if (error != null) _errorMessage = error;
             else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
         }
+    }
+
+    private async Task DrawerToggleLabel(string label)
+    {
+        if (_drawerTemplate == null) return;
+        PageService.ToggleDrawerLabel(label);
+        var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, 1);
+        if (error != null) _errorMessage = error;
+        else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
+    }
+
+    private async Task DrawerClearLabels()
+    {
+        if (_drawerTemplate == null) return;
+        PageService.ClearDrawerLabelFilter();
+        var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, 1);
+        if (error != null) _errorMessage = error;
+        else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
     }
 
     // TODO: Add CancellationTokenSource cancelled on drawer close/page change to prevent stale writes and ObjectDisposedException.
@@ -310,11 +338,14 @@ public partial class AgentCoding : IDisposable
         if (_prDrawerTemplate == null) return;
         _prDrawerOpen = true;
         await RefreshActiveIssuesAsync();
+        StateHasChanged(); // flush loading spinner before async fetches
+        var labelsTask = PageService.LoadPrDrawerLabelsAsync(_prDrawerTemplate);
         var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, 1);
+        await labelsTask;
         if (error != null) _errorMessage = error;
     }
 
-    private void ClosePrDrawer() => _prDrawerOpen = false;
+    private void ClosePrDrawer() { _prDrawerOpen = false; PageService.ClearPrDrawerLabelFilter(); }
 
     // TODO: Behavioral change — original PrDrawerNextPage always incremented page unconditionally; now guarded by null check on template.
     private async Task PrDrawerNextPage()
@@ -334,6 +365,22 @@ public partial class AgentCoding : IDisposable
             var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, _prDrawerPage - 1);
             if (error != null) _errorMessage = error;
         }
+    }
+
+    private async Task PrDrawerToggleLabel(string label)
+    {
+        if (_prDrawerTemplate == null) return;
+        PageService.TogglePrDrawerLabel(label);
+        var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, 1);
+        if (error != null) _errorMessage = error;
+    }
+
+    private async Task PrDrawerClearLabels()
+    {
+        if (_prDrawerTemplate == null) return;
+        PageService.ClearPrDrawerLabelFilter();
+        var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, 1);
+        if (error != null) _errorMessage = error;
     }
 
     private async Task DispatchPrReviewFromDrawer(PullRequestSummary pr)
@@ -359,11 +406,48 @@ public partial class AgentCoding : IDisposable
         if (_epicDrawerTemplate == null) return;
         _epicDrawerOpen = true;
         await RefreshActiveIssuesAsync();
-        var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate);
+        StateHasChanged(); // flush loading spinner before async fetches
+        var labelsTask = PageService.LoadEpicDrawerLabelsAsync(_epicDrawerTemplate);
+        var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, 1);
+        await labelsTask;
         if (error != null) _errorMessage = error;
     }
 
     private void CloseEpicDrawer() { _epicDrawerOpen = false; _epicDrawerTemplate = null; PageService.ClearEpicDrawerIssues(); }
+
+    private async Task EpicDrawerNextPage()
+    {
+        if (_epicDrawerHasMore && _epicDrawerTemplate != null)
+        {
+            var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, _epicDrawerPage + 1);
+            if (error != null) _errorMessage = error;
+        }
+    }
+
+    private async Task EpicDrawerPrevPage()
+    {
+        if (_epicDrawerPage > 1 && _epicDrawerTemplate != null)
+        {
+            var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, _epicDrawerPage - 1);
+            if (error != null) _errorMessage = error;
+        }
+    }
+
+    private async Task EpicDrawerToggleLabel(string label)
+    {
+        if (_epicDrawerTemplate == null) return;
+        PageService.ToggleEpicDrawerLabel(label);
+        var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, 1);
+        if (error != null) _errorMessage = error;
+    }
+
+    private async Task EpicDrawerClearLabels()
+    {
+        if (_epicDrawerTemplate == null) return;
+        PageService.ClearEpicDrawerLabelFilter();
+        var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, 1);
+        if (error != null) _errorMessage = error;
+    }
 
     private async Task DispatchDecompositionFromDrawer(IssueSummary issue)
     {
