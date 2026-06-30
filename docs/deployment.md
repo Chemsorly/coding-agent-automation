@@ -84,7 +84,6 @@ After first start, import your pipeline configuration via **Settings → Data Ma
 | Mount | Container Path | Purpose |
 |-------|---------------|---------|
 | Agent CLI auth | `/home/ubuntu/.local/share/kiro-cli` | Agent CLI login tokens |
-| SSO cache | `/home/ubuntu/.aws` | SSO cache for agent CLI auth (mounted read-only) |
 
 ### Agent Containers (OpenCode)
 

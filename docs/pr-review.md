@@ -144,7 +144,7 @@ Both Kiro CLI and OpenCode providers support parallel execution. When conditions
 
 ### Output Isolation
 
-Each agent writes findings to a separate file: `.agent/review-findings-{agentName}.txt`. Pre-computed diff artifacts (`.agent/diff-stat.txt`, `.agent/full-diff.patch`) are shared read-only across all agents.
+Each agent writes findings to a separate file: `.agent/review-findings-{agentName}.md`. Pre-computed diff artifacts (`.agent/diff-stat.txt`, `.agent/full-diff.txt`) are shared read-only across all agents.
 
 ### Failure Isolation
 
