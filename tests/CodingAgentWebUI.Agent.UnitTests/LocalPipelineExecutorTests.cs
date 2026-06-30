@@ -619,6 +619,124 @@ public class LocalPipelineExecutorTests : IDisposable
         await connection.DisposeAsync();
     }
 
+    // ── ExecuteAsync — Provider Creation Failure Cleanup ────────────────
+    // TODO: Add test for brain provider disposal when pipeline provider creation fails after brain provider is created.
+    // TODO: Add test verifying all providers are disposed when ValidateAsync throws after successful creation.
+
+    [Fact]
+    public async Task ExecuteAsync_AgentProviderCreationThrows_DisposesRepoProvider()
+    {
+        // Arrange — mock factory returns a trackable repo provider, then throws on agent creation.
+        // The fix ensures repoProvider.DisposeAsync is called before the exception propagates.
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var mockFactory = new Mock<IProviderFactory>();
+        mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+        mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>()))
+            .Throws(new NotSupportedException("Unsupported agent type"));
+
+        var executor = new LocalPipelineExecutor(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+            _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentIdentity("test-agent"));
+        executor.ProviderFactoryOverride = mockFactory.Object;
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-creation-failure",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs =
+            [
+                new ProviderConfig { Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "Mock", DisplayName = "Repo", Settings = new Dictionary<string, string>() },
+                new ProviderConfig { Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "Mock", DisplayName = "Agent", Settings = new Dictionary<string, string>() }
+            ],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        var connection = CreateDisconnectedHubConnection();
+        var batcher = new OutputBatcher();
+
+        // Act
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+
+        // Assert — exception propagates AND repoProvider was disposed
+        await act.Should().ThrowAsync<NotSupportedException>();
+        mockRepoProvider.Verify(p => p.DisposeAsync(), Times.Once());
+
+        await batcher.DisposeAsync();
+        await connection.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_PipelineProviderCreationThrows_DisposesRepoAndAgentProviders()
+    {
+        // Arrange — mock factory returns trackable repo and agent providers,
+        // then throws on pipeline provider creation. The fix ensures both are disposed.
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var mockAgentProvider = new Mock<IAgentProvider>();
+        mockAgentProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var mockFactory = new Mock<IProviderFactory>();
+        mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+        mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockAgentProvider.Object);
+        mockFactory.Setup(f => f.CreatePipelineProviderAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new NotSupportedException("Unsupported pipeline type"));
+
+        var executor = new LocalPipelineExecutor(
+            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
+            _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentIdentity("test-agent"));
+        executor.ProviderFactoryOverride = mockFactory.Object;
+
+        var job = new JobAssignmentMessage
+        {
+            JobId = "test-job-pipeline-failure",
+            IssueIdentifier = "owner/repo#1",
+            IssueDetail = new IssueDetail { Identifier = "owner/repo#1", Title = "Test", Description = "", Labels = [] },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            RepoProviderConfigId = "repo-1",
+            AgentProviderConfigId = "agent-1",
+            PipelineProviderConfigId = "pipeline-1",
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs =
+            [
+                new ProviderConfig { Id = "repo-1", Kind = ProviderKind.Repository, ProviderType = "Mock", DisplayName = "Repo", Settings = new Dictionary<string, string>() },
+                new ProviderConfig { Id = "agent-1", Kind = ProviderKind.Agent, ProviderType = "Mock", DisplayName = "Agent", Settings = new Dictionary<string, string>() },
+                new ProviderConfig { Id = "pipeline-1", Kind = ProviderKind.Pipeline, ProviderType = "Mock", DisplayName = "Pipeline", Settings = new Dictionary<string, string>() }
+            ],
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            InitiatedBy = "test-user"
+        };
+
+        var connection = CreateDisconnectedHubConnection();
+        var batcher = new OutputBatcher();
+
+        // Act
+        var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
+
+        // Assert — exception propagates AND both providers were disposed
+        await act.Should().ThrowAsync<NotSupportedException>();
+        mockRepoProvider.Verify(p => p.DisposeAsync(), Times.Once());
+        mockAgentProvider.Verify(p => p.DisposeAsync(), Times.Once());
+
+        await batcher.DisposeAsync();
+        await connection.DisposeAsync();
+    }
+
     // ── ExecuteAsync — Cancellation ─────────────────────────────────────
 
     [Fact]
