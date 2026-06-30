@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using Microsoft.EntityFrameworkCore;
 
 namespace CodingAgentWebUI.Services;
@@ -38,13 +39,14 @@ public sealed class DatabaseStartupService
     }
 
     /// <summary>
-    /// Validates DB connectivity and applies/verifies migrations.
+    /// Validates DB connectivity, applies/verifies migrations, and imports JSON config if DB is empty.
     /// Throws on unrecoverable failure (caller should prevent app startup).
     /// </summary>
     public async Task InitializeAsync(CancellationToken ct)
     {
         await WaitForDatabaseConnectionAsync(ct);
         await HandleMigrationsAsync(ct);
+        await ImportJsonConfigIfNeededAsync(ct);
     }
 
     /// <summary>
@@ -137,6 +139,22 @@ public sealed class DatabaseStartupService
             }
 
             _logger.Information("Database schema verification passed — no pending migrations");
+        }
+    }
+
+    /// <summary>
+    /// If the database is empty (no PipelineConfig row), imports configuration from JSON files.
+    /// This enables seamless transition from Legacy (JSON) mode to DB mode.
+    /// </summary>
+    internal async Task ImportJsonConfigIfNeededAsync(CancellationToken ct, string? configBasePath = null)
+    {
+        var migrationService = new ConfigMigrationService(_dbFactory, _lockProvider,
+            configBasePath ?? CodingAgentWebUI.Pipeline.Models.PipelineConstants.ConfigBaseDirectory);
+        var migrated = await migrationService.MigrateIfNeededAsync(ct);
+
+        if (migrated)
+        {
+            _logger.Information("JSON config imported into database successfully");
         }
     }
 }
