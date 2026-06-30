@@ -2,7 +2,6 @@ using LibGit2Sharp;
 using Polly;
 using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using Serilog;
 using Signature = LibGit2Sharp.Signature;
 using Repository = LibGit2Sharp.Repository;
@@ -168,7 +167,7 @@ internal static class RepositoryGitOperations
             var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
             foreach (var change in indexChanges)
             {
-                if (PipelineFormatting.IsPathBlacklisted(change.Path, hardcodedBlacklist))
+                if (PathBlacklistHelper.IsPathBlacklisted(change.Path, hardcodedBlacklist))
                 {
                     Commands.Unstage(repo, change.Path);
                     unstaged.Add(change.Path.Replace('\\', '/'));
@@ -183,7 +182,7 @@ internal static class RepositoryGitOperations
             foreach (var change in indexChanges)
             {
                 var normalized = change.Path.Replace('\\', '/');
-                if (!unstaged.Contains(normalized) && PipelineFormatting.IsPathBlacklisted(change.Path, blacklistedPaths))
+                if (!unstaged.Contains(normalized) && PathBlacklistHelper.IsPathBlacklisted(change.Path, blacklistedPaths))
                 {
                     Commands.Unstage(repo, change.Path);
                     unstaged.Add(normalized);

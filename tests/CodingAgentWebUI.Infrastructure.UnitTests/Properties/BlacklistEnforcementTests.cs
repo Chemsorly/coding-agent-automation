@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 
@@ -37,7 +38,7 @@ public class BlacklistEnforcementTests
         run.BlacklistedFilesDetected.Should().BeEmpty();
     }
 
-    // --- Blacklist path matching logic (tested via PipelineFormatting.IsPathBlacklisted) ---
+    // --- Blacklist path matching logic (tested via PathBlacklistHelper.IsPathBlacklisted) ---
 
     [Theory]
     [InlineData(".github/workflows/ci.yml", ".github", true)]
@@ -52,7 +53,7 @@ public class BlacklistEnforcementTests
     [InlineData(".agent", ".agent", true)]              // Exact match
     public void IsPathBlacklisted_MatchesPrefixCorrectly(string filePath, string prefix, bool expected)
     {
-        var result = PipelineFormatting.IsPathBlacklisted(filePath, new[] { prefix });
+        var result = PathBlacklistHelper.IsPathBlacklisted(filePath, new[] { prefix });
         result.Should().Be(expected);
     }
 
@@ -62,7 +63,7 @@ public class BlacklistEnforcementTests
     [InlineData(".Agent/Steering/Rule.md", ".agent")]
     public void IsPathBlacklisted_IsCaseInsensitive(string filePath, string prefix)
     {
-        PipelineFormatting.IsPathBlacklisted(filePath, new[] { prefix }).Should().BeTrue();
+        PathBlacklistHelper.IsPathBlacklisted(filePath, new[] { prefix }).Should().BeTrue();
     }
 
     [Theory]
@@ -70,28 +71,28 @@ public class BlacklistEnforcementTests
     [InlineData(".agent\\settings\\mcp.json", ".agent")]
     public void IsPathBlacklisted_NormalizesBackslashes(string filePath, string prefix)
     {
-        PipelineFormatting.IsPathBlacklisted(filePath, new[] { prefix }).Should().BeTrue();
+        PathBlacklistHelper.IsPathBlacklisted(filePath, new[] { prefix }).Should().BeTrue();
     }
 
     [Fact]
     public void IsPathBlacklisted_WithMultiplePrefixes_MatchesAny()
     {
         var prefixes = new[] { ".agent", ".github" };
-        PipelineFormatting.IsPathBlacklisted(".agent/foo", prefixes).Should().BeTrue();
-        PipelineFormatting.IsPathBlacklisted(".github/bar", prefixes).Should().BeTrue();
-        PipelineFormatting.IsPathBlacklisted("src/main.cs", prefixes).Should().BeFalse();
+        PathBlacklistHelper.IsPathBlacklisted(".agent/foo", prefixes).Should().BeTrue();
+        PathBlacklistHelper.IsPathBlacklisted(".github/bar", prefixes).Should().BeTrue();
+        PathBlacklistHelper.IsPathBlacklisted("src/main.cs", prefixes).Should().BeFalse();
     }
 
     [Fact]
     public void IsPathBlacklisted_WithEmptyPrefixes_ReturnsFalse()
     {
-        PipelineFormatting.IsPathBlacklisted(".agent/foo", Array.Empty<string>()).Should().BeFalse();
+        PathBlacklistHelper.IsPathBlacklisted(".agent/foo", Array.Empty<string>()).Should().BeFalse();
     }
 
     [Fact]
     public void IsPathBlacklisted_WithTrailingSlashOnPrefix_StillMatches()
     {
-        PipelineFormatting.IsPathBlacklisted(".github/workflows/ci.yml", new[] { ".github/" })
+        PathBlacklistHelper.IsPathBlacklisted(".github/workflows/ci.yml", new[] { ".github/" })
             .Should().BeTrue();
     }
 

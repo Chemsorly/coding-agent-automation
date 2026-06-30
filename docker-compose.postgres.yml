@@ -52,6 +52,7 @@ services:
       - Database__Name=coding_agent_automation
       - Database__Username=caa
       - Database__Password=caa_dev_password
+      - Database__SslMode=Disable
       - Database__MigrateOnStartup=true
       - SignalR__Redis__ConnectionString=redis:6379
     depends_on:
