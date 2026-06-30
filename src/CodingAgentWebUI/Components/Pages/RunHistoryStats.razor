@@ -1,0 +1,99 @@
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Orchestration.Registry
+
+<div class="run-stats-card">
+    @if (Agents.Count > 0 || ShowAgentStats)
+    {
+        <div class="run-stats-item">
+            <span class="run-stats-value @(ConnectedCount > 0 ? "health-ok" : "health-warn")">@ConnectedCount</span>
+            <span class="run-stats-label">Connected</span>
+        </div>
+        <div class="run-stats-divider"></div>
+        <div class="run-stats-item">
+            <span class="run-stats-value health-busy">@BusyCount</span>
+            <span class="run-stats-label">Busy</span>
+        </div>
+        <div class="run-stats-divider"></div>
+        <div class="run-stats-item">
+            <span class="run-stats-value">@IdleCount</span>
+            <span class="run-stats-label">Idle</span>
+        </div>
+        <div class="run-stats-divider"></div>
+        <div class="run-stats-item">
+            <span class="run-stats-value @(QueueLength > 0 ? "health-busy" : "")">@QueueLength</span>
+            <span class="run-stats-label">Queued</span>
+        </div>
+        @if (Runs.Count > 0)
+        {
+            <div class="run-stats-divider" style="margin: 0 6px;"></div>
+        }
+    }
+    @if (Runs.Count > 0)
+    {
+        <div class="run-stats-item">
+            <span class="run-stats-value">@Runs.Count</span>
+            <span class="run-stats-label">Total Runs</span>
+        </div>
+        <div class="run-stats-divider"></div>
+        <div class="run-stats-item">
+            <span class="run-stats-value health-ok">@SuccessCount</span>
+            <span class="run-stats-label">Succeeded</span>
+        </div>
+        <div class="run-stats-divider"></div>
+        <div class="run-stats-item">
+            <span class="run-stats-value health-error">@FailedCount</span>
+            <span class="run-stats-label">Failed</span>
+        </div>
+        <div class="run-stats-divider"></div>
+        <div class="run-stats-item">
+            <span class="run-stats-value" style="color: var(--accent);">@SuccessRate%</span>
+            <span class="run-stats-label">Success Rate</span>
+        </div>
+        <div class="run-stats-divider"></div>
+        <div class="run-stats-item">
+            <span class="run-stats-value">@AvgDuration</span>
+            <span class="run-stats-label">Avg Duration</span>
+        </div>
+        @if (PrCount > 0)
+        {
+            <div class="run-stats-divider"></div>
+            <div class="run-stats-item">
+                <span class="run-stats-value health-ok">@PrCount</span>
+                <span class="run-stats-label">PRs Created</span>
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<PipelineRunSummary> Runs { get; set; } = [];
+    [Parameter] public IReadOnlyList<AgentEntry> Agents { get; set; } = [];
+    [Parameter] public int QueueLength { get; set; }
+    [Parameter] public bool ShowAgentStats { get; set; }
+
+    private int ConnectedCount => Agents.Count(a => a.Status != AgentStatus.Disconnected);
+    private int BusyCount => Agents.Count(a => a.Status == AgentStatus.Busy);
+    private int IdleCount => Agents.Count(a => a.Status == AgentStatus.Idle);
+
+    private int SuccessCount => Runs.Count(r => r.FinalStep == PipelineStep.Completed);
+    private int FailedCount => Runs.Count(r => r.FinalStep != PipelineStep.Completed);
+    private int PrCount => Runs.Count(r => !string.IsNullOrEmpty(r.PullRequestUrl));
+
+    private int SuccessRate => Runs.Count > 0
+        ? (int)Math.Round(100.0 * SuccessCount / Runs.Count)
+        : 0;
+
+    private string AvgDuration
+    {
+        get
+        {
+            var completed = Runs
+                .Where(r => r.CompletedAtOffset.HasValue)
+                .Select(r => (r.CompletedAtOffset!.Value - r.StartedAtOffset).TotalMinutes)
+                .ToList();
+            if (completed.Count == 0) return "-";
+            var avg = completed.Average();
+            return avg < 60 ? $"{avg:F0}m" : $"{avg / 60:F1}h";
+        }
+    }
+}

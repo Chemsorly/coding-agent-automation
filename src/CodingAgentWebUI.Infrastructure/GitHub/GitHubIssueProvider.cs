@@ -237,6 +237,15 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ListRepositoryLabelsAsync(CancellationToken ct)
+    {
+        var repoLabels = await ExecuteWithResilienceAsync(
+            client => client.Issue.Labels.GetAllForRepository(Owner, Repo),
+            "ListRepositoryLabels", ct);
+        return repoLabels.Select(l => l.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <inheritdoc />
     public async Task<bool> HasAgentLabelsAsync(CancellationToken ct)
     {
         var repoLabels = await ExecuteWithResilienceAsync(

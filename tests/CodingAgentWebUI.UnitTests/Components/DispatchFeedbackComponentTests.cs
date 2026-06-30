@@ -113,7 +113,7 @@ public class DispatchFeedbackComponentTests : BunitContext
                 new() { Id = "t-2", Name = "Python Repo", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = false }
             });
 
-        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = new List<IssueSummary>
@@ -122,7 +122,7 @@ public class DispatchFeedbackComponentTests : BunitContext
                     new() { Identifier = "43", Title = "Bug Fix", Labels = new[] { "bug" } }
                 },
                 Page = 1,
-                PageSize = 25,
+                PageSize = 15,
                 HasMore = false
             });
 

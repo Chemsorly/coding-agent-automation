@@ -51,10 +51,17 @@
             <span class="sidebar-icon">ℹ️</span>
             <span class="sidebar-label">About</span>
         </NavLink>
-        <button class="sidebar-toggle" @onclick="ToggleCollapse"
-                aria-expanded="@(_collapsed ? "false" : "true")" aria-label="@(_collapsed ? "Expand sidebar" : "Collapse sidebar")">
-            @(_collapsed ? "»" : "«")
-        </button>
+        <div class="sidebar-bottom-actions">
+            <button class="sidebar-toggle sidebar-theme-toggle" @onclick="ToggleTheme"
+                    aria-label="@(_theme == "dark" ? "Switch to light theme" : "Switch to dark theme")"
+                    title="@(_theme == "dark" ? "Light mode" : "Dark mode")">
+                @(_theme == "dark" ? "☀️" : "🌙")
+            </button>
+            <button class="sidebar-toggle sidebar-collapse-toggle" @onclick="ToggleCollapse"
+                    aria-expanded="@(_collapsed ? "false" : "true")" aria-label="@(_collapsed ? "Expand sidebar" : "Collapse sidebar")">
+                @(_collapsed ? "»" : "«")
+            </button>
+        </div>
     </nav>
     <main class="main-content">
         <CascadingValue Value="this" IsFixed="true">
@@ -71,6 +78,7 @@
     private bool _collapsed;
     private bool _overlayOpen;
     private bool _jsReady;
+    private string _theme = "dark";
 
     public event Action? OnEscapePressed;
 
@@ -96,6 +104,12 @@
                 if (stored == "true")
                 {
                     _collapsed = true;
+                    StateHasChanged();
+                }
+                var theme = await JS.InvokeAsync<string>("getTheme");
+                if (!string.IsNullOrEmpty(theme))
+                {
+                    _theme = theme;
                     StateHasChanged();
                 }
             }
@@ -129,6 +143,17 @@
         if (_jsReady)
         {
             try { await JS.InvokeVoidAsync("setSidebarCollapsed", _collapsed ? "true" : "false"); }
+            catch (JSDisconnectedException) { }
+            catch (ObjectDisposedException) { }
+        }
+    }
+
+    private async Task ToggleTheme()
+    {
+        _theme = _theme == "dark" ? "light" : "dark";
+        if (_jsReady)
+        {
+            try { await JS.InvokeVoidAsync("setTheme", _theme); }
             catch (JSDisconnectedException) { }
             catch (ObjectDisposedException) { }
         }

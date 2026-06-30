@@ -26,6 +26,30 @@
                        placeholder="Filter by number or title..." style="width: 100%; padding: 6px 10px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text); font-size: 0.82rem;" />
             </div>
 
+            @if (AvailableLabels.Count > 0)
+            {
+                <div class="drawer-label-filter" style="padding: 0 0 8px;">
+                    <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 4px;">
+                        <span style="font-size: 0.75rem; color: var(--text-muted);">Labels:</span>
+                        @if (SelectedLabels.Count > 0)
+                        {
+                            <button class="btn-link" style="font-size: 0.72rem; padding: 0; color: var(--accent);" @onclick="ClearLabels">Clear</button>
+                        }
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 4px; max-height: 72px; overflow-y: auto;">
+                        @foreach (var label in AvailableLabels)
+                        {
+                            var isActive = SelectedLabels.Contains(label);
+                            <button class="sidebar-label @UiFormatters.GetLabelClass(label) @(isActive ? "label-active" : "label-inactive")"
+                                    style="cursor: pointer; font-size: 0.72rem; padding: 2px 6px; border: 1px solid @(isActive ? "var(--accent)" : "transparent"); opacity: @(isActive ? "1" : "0.7");"
+                                    @onclick="() => ToggleLabel(label)">
+                                @label
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+
             @if (Issues.Count == 0)
             {
                 <div class="monitoring-empty">No open issues found.</div>
@@ -33,13 +57,13 @@
             else
             {
                 <div class="agent-history-list" tabindex="0" @onkeydown="HandleKeyDown" @onkeydown:preventDefault="ShouldPreventDefault"
-                     style="max-height: calc(100vh - 320px); overflow-y: auto;">
+                     style="max-height: calc(100vh - 380px); overflow-y: auto;">
                     @{ var idx = 0; }
                     @foreach (var issue in FilteredItems)
                     {
                         var isProcessing = IsBeingProcessed(issue.Identifier);
                         var readiness = Readiness.GetValueOrDefault(issue.Identifier);
-                        // TODO: Guard against inconsistent DependencyCheckResult where IsReady=false but BlockedBy is empty — would render "🚫 Blocked by " with no issue numbers.
+                        // TODO: Guard against inconsistent DependencyCheckResult where IsReady=false but BlockedBy is empty — would render "blocked by" with no issue numbers.
                         var isBlocked = readiness is { IsReady: false };
                         var currentIdx = idx;
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(isBlocked ? "drawer-issue-blocked" : "") @(SelectedItem?.Identifier == issue.Identifier ? "drawer-issue-selected" : "") @GetHighlightClass(currentIdx)"
@@ -50,15 +74,15 @@
                                 <span class="drawer-issue-number">#@issue.Identifier</span>
                                 @if (isProcessing)
                                 {
-                                    <span class="badge-default" style="background: var(--accent); color: white;">⏳ Queued</span>
+                                    <span class="badge-default" style="background: var(--accent); color: white;">Queued</span>
                                 }
                                 else if (isBlocked)
                                 {
-                                    <span class="badge-default drawer-badge-blocked" title="Blocked by @(string.Join(", ", readiness!.BlockedBy.Select(n => $"#{n}")))">🚫 Blocked by @(string.Join(", ", readiness.BlockedBy.Select(n => $"#{n}")))</span>
+                                    <span class="badge-default drawer-badge-blocked" title="Blocked by @(string.Join(", ", readiness!.BlockedBy.Select(n => $"#{n}")))">Blocked by @(string.Join(", ", readiness.BlockedBy.Select(n => $"#{n}")))</span>
                                 }
                                 else if (readiness is { IsReady: true })
                                 {
-                                    <span class="badge-default drawer-badge-ready">✅ Ready</span>
+                                    <span class="badge-default drawer-badge-ready">Ready</span>
                                 }
                             </div>
                             <div class="drawer-issue-title">@issue.Title</div>
@@ -108,7 +132,7 @@
                     @if (selectedBlocked)
                     {
                         <p style="font-size: 0.78rem; color: var(--danger, #ef4444); margin: 0 0 8px;">
-                            🚫 Blocked by @(string.Join(", ", selectedReadiness!.BlockedBy.Select(n => $"#{n}")))
+                            Blocked by @(string.Join(", ", selectedReadiness!.BlockedBy.Select(n => $"#{n}")))
                         </p>
                     }
                     <button class="btn-save" @onclick="DispatchSelected"
@@ -130,9 +154,13 @@
     [Parameter] public EventCallback OnNextPage { get; set; }
     [Parameter] public EventCallback OnPrevPage { get; set; }
     [Parameter] public Dictionary<string, DependencyCheckResult> Readiness { get; set; } = new();
+    [Parameter] public IReadOnlyList<string> AvailableLabels { get; set; } = [];
+    [Parameter] public IReadOnlyList<string> SelectedLabels { get; set; } = [];
+    [Parameter] public EventCallback<string> OnToggleLabel { get; set; }
+    [Parameter] public EventCallback OnClearLabels { get; set; }
 
-    // TODO: ShouldPreventDefault unconditionally blocks all keydown defaults (including Tab), creating a keyboard trap. Should be conditional based on the key pressed.
-    private bool ShouldPreventDefault => true;
+    // Prevent default only disrupts scroll on arrow keys; keeping false avoids keyboard traps (Tab works normally)
+    private bool ShouldPreventDefault => false;
 
     protected override void OnParametersSet()
     {
@@ -148,6 +176,8 @@
 
     private async Task NextPage() => await OnNextPage.InvokeAsync();
     private async Task PrevPage() => await OnPrevPage.InvokeAsync();
+    private async Task ToggleLabel(string label) => await OnToggleLabel.InvokeAsync(label);
+    private async Task ClearLabels() => await OnClearLabels.InvokeAsync();
 
     /// <summary>
     /// Extracts a plain-text preview from the issue body, stripping markdown headings and trimming.

@@ -287,8 +287,8 @@ public class AgentCodingPageServiceTests
         var template = MakeTemplate();
         _service.IssueProviders.Add(MakeProvider("ip-1"));
         var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 25, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary> { MakeIssue("1") }, HasMore = true, Page = 1, PageSize = 25 });
+        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 15, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary> { Items = new List<IssueSummary> { MakeIssue("1") }, HasMore = true, Page = 1, PageSize = 15 });
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(mockIssueProvider.Object);
 
@@ -328,7 +328,7 @@ public class AgentCodingPageServiceTests
         _service.IssueProviders.Add(MakeProvider("ip-1"));
 
         var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 25, It.IsAny<CancellationToken>()))
+        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 15, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = new List<IssueSummary>
@@ -336,7 +336,7 @@ public class AgentCodingPageServiceTests
                     new() { Identifier = "10", Title = "Issue 10", Labels = [], Description = "Blocked by #5" },
                     new() { Identifier = "11", Title = "Issue 11", Labels = [], Description = "No deps here" }
                 },
-                HasMore = false, Page = 1, PageSize = 25
+                HasMore = false, Page = 1, PageSize = 15
             });
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(mockIssueProvider.Object);
@@ -375,7 +375,7 @@ public class AgentCodingPageServiceTests
         _service.IssueProviders.Add(MakeProvider("ip-1"));
 
         var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 25, It.IsAny<CancellationToken>()))
+        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 15, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = new List<IssueSummary>
@@ -383,7 +383,7 @@ public class AgentCodingPageServiceTests
                     new() { Identifier = "1", Title = "A", Labels = [] },
                     new() { Identifier = "2", Title = "B", Labels = [] }
                 },
-                HasMore = false, Page = 1, PageSize = 25
+                HasMore = false, Page = 1, PageSize = 15
             });
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(mockIssueProvider.Object);
@@ -405,7 +405,7 @@ public class AgentCodingPageServiceTests
         _service.IssueProviders.Add(MakeProvider("ip-1"));
 
         var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 25, It.IsAny<CancellationToken>()))
+        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 15, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PagedResult<IssueSummary>
             {
                 Items = new List<IssueSummary>
@@ -413,7 +413,7 @@ public class AgentCodingPageServiceTests
                     new() { Identifier = "1", Title = "A", Labels = [] },
                     new() { Identifier = "2", Title = "B", Labels = [] }
                 },
-                HasMore = false, Page = 1, PageSize = 25
+                HasMore = false, Page = 1, PageSize = 15
             });
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(mockIssueProvider.Object);
@@ -529,5 +529,116 @@ public class AgentCodingPageServiceTests
         _mockWorkDistributor.Verify(w => w.DistributeAsync(
             It.Is<JobDistributionRequest>(r => r.ProviderConfigs != null && r.ProviderConfigs.Count > 0),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    // ── Bug fix regression tests ──
+
+    [Fact]
+    public async Task LoadDrawerLabelsAsync_PopulatesDrawerLabels_WhenProviderReturnsLabels()
+    {
+        // Regression: fire-and-forget label load must populate DrawerLabels so UI can render them.
+        var template = MakeTemplate();
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.ListRepositoryLabelsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<string> { "bug", "enhancement", "agent:next" });
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var error = await _service.LoadDrawerLabelsAsync(template);
+
+        Assert.Null(error);
+        Assert.Equal(3, _service.DrawerLabels.Count);
+        Assert.Contains("bug", _service.DrawerLabels);
+        Assert.Contains("enhancement", _service.DrawerLabels);
+    }
+
+    [Fact]
+    public async Task LoadEpicDrawerIssuesAsync_DeduplicatesIssuesWithBothEpicLabels()
+    {
+        // Regression: issues with both agent:epic AND agent:epic-approved appear in both
+        // API queries. The result must be deduplicated by Identifier.
+        var template = MakeTemplate();
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+
+        var duplicateIssue = new IssueSummary
+        {
+            Identifier = "100", Title = "Shared Epic",
+            Labels = new[] { "agent:epic", "agent:epic-approved" }
+        };
+        var epicOnlyIssue = new IssueSummary
+        {
+            Identifier = "101", Title = "Analysis Epic",
+            Labels = new[] { "agent:epic" }
+        };
+        var approvedOnlyIssue = new IssueSummary
+        {
+            Identifier = "102", Title = "Approved Epic",
+            Labels = new[] { "agent:epic-approved" }
+        };
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        // First call (agent:epic labels) returns the duplicate + epic-only
+        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 8,
+                It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains("agent:epic")),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary> { duplicateIssue, epicOnlyIssue },
+                HasMore = false, Page = 1, PageSize = 8
+            });
+        // Second call (agent:epic-approved labels) returns the duplicate + approved-only
+        mockIssueProvider.Setup(p => p.ListOpenIssuesAsync(1, 8,
+                It.Is<IReadOnlyList<string>?>(l => l != null && l.Contains("agent:epic-approved")),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new List<IssueSummary> { duplicateIssue, approvedOnlyIssue },
+                HasMore = false, Page = 1, PageSize = 8
+            });
+        _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var error = await _service.LoadEpicDrawerIssuesAsync(template, 1);
+
+        Assert.Null(error);
+        // Should have 3 unique issues, NOT 4 (duplicate counted once)
+        Assert.Equal(3, _service.EpicDrawerIssues.Count);
+        Assert.Equal(1, _service.EpicDrawerIssues.Count(i => i.Identifier == "100"));
+    }
+
+    [Fact]
+    public async Task LoadPrDrawerPageAsync_ClearsPrState_WhenCalledAfterPreviousLoad()
+    {
+        // Regression: ClosePrDrawer must clear PrDrawerPrs, PrDrawerPage, PrDrawerHasMore
+        // so stale data doesn't flash on next open.
+        var template = MakeTemplate();
+        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
+
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.ListOpenPullRequestsAsync(1, 15, It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PullRequestSummary>
+            {
+                Items = new List<PullRequestSummary>
+                {
+                    new() { Identifier = "10", Title = "PR 10", BranchName = "feat/a", TargetBranch = "main", Url = "http://x", Number = 10, Description = "", Labels = [], IsDraft = false }
+                },
+                HasMore = true, Page = 1, PageSize = 15
+            });
+        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+
+        // Load PRs
+        await _service.LoadPrDrawerPageAsync(template, 1);
+        Assert.Single(_service.PrDrawerPrs);
+        Assert.True(_service.PrDrawerHasMore);
+
+        // Simulate close — this should clear all PR state
+        _service.ClearPrDrawerLabelFilter();
+        // Currently only clears labels, NOT the PR list — this assertion should FAIL before the fix
+        Assert.Empty(_service.PrDrawerPrs);
+        Assert.Equal(1, _service.PrDrawerPage);
+        Assert.False(_service.PrDrawerHasMore);
     }
 }

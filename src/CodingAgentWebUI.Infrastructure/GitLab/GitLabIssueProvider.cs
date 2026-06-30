@@ -322,6 +322,15 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
+    public async Task<IReadOnlyList<string>> ListRepositoryLabelsAsync(CancellationToken ct)
+    {
+        var projectLabels = await ExecuteWithResilienceAsync(
+            client => Task.Run(() => client.Labels.ForProject(ProjectId).ToList(), ct),
+            "ListRepositoryLabels", ct);
+        return projectLabels.Select(l => l.Name).OrderBy(n => n, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    /// <inheritdoc />
     public async Task<bool> HasAgentLabelsAsync(CancellationToken ct)
     {
         var projectLabels = await ExecuteWithResilienceAsync(
