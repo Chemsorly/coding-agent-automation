@@ -114,7 +114,7 @@
                                             else if (hasError)
                                             {
                                                 <span class="monitoring-status monitoring-status-disconnected" title="@status.LastError">
-                                                    ⚠ @status.ConsecutiveFailures fail(s)
+                                                    <Icon Name="alert-triangle" Size="14" /> @status.ConsecutiveFailures fail(s)
                                                 </span>
                                             }
                                             else if (status.LastPollTime.HasValue)

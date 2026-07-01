@@ -18,8 +18,7 @@
         <select @bind="Form.ProjectId">
             @foreach (var p in Projects)
             {
-                @* TODO: Replace 🧩 emoji with Icon component — <option> only allows text content so a different approach is needed *@
-                <option value="@p.Id">@p.Name @(!string.IsNullOrEmpty(p.EpicIssueProviderId) ? "🧩" : "")</option>
+                <option value="@p.Id">@p.Name @(!string.IsNullOrEmpty(p.EpicIssueProviderId) ? "[Epic]" : "")</option>
             }
         </select>
     </div>
