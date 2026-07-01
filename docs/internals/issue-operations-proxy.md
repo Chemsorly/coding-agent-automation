@@ -11,9 +11,13 @@ Agents do NOT receive `IIssueProvider` credentials directly. All issue operation
 | Operation | Agent Method | Hub Method |
 |-----------|-------------|------------|
 | Create issue | `CreateIssueAsync` | `RequestCreateIssue` |
+| Create issue (cross-provider) | `CreateIssueForProviderAsync` | `RequestCreateIssueForProvider` |
 | List open issues | `ListOpenIssuesAsync` | `RequestListOpenIssues` |
 | Get issue details | `GetIssueAsync` | `RequestGetIssue` |
 | List comments | `ListCommentsAsync` | `RequestListComments` |
 | Update comment | `UpdateCommentAsync` | `RequestUpdateComment` |
+| Post comment | `PostCommentAsync` | `RequestPostComment` |
+| Change labels | `ChangeLabelAsync` | `RequestLabelChange` |
+| Refresh token | `RefreshTokenAsync` | `RequestTokenRefresh` |
 
 This keeps the agent's credential surface minimal — private keys and tokens never leave the orchestrator container.

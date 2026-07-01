@@ -16,7 +16,7 @@ graph TB
     end
     
     subgraph Agents["Agent Containers"]
-        A1[Kiro Agent .NET]
+        A1[Kiro Agent .NET ×2]
         A2[Kiro Agent Python]
         A3[Kiro Agent Java]
         A4[OpenCode Agent .NET]
@@ -68,6 +68,7 @@ After first start, import your pipeline configuration via **Settings → Data Ma
 | `Database__Username` | PostgreSQL username |
 | `Database__Password` | PostgreSQL password |
 | `Database__Name` | PostgreSQL database name |
+| `Database__SslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull` (default: `Disable` in local overlay) |
 | `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`) |
 | `SignalR__Redis__ConnectionString` | Redis connection string for SignalR backplane (optional for single instance) |
 
@@ -182,11 +183,20 @@ The chart deploys:
 | `database.port` | PostgreSQL port (default: `5432`) |
 | `database.auth.existingSecret` | K8s Secret containing database credentials (keys: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) |
 | `database.migrateOnStartup` | Apply EF Core migrations on orchestrator startup (default: `true`) |
-| `database.migrationJob.enabled` | Pre-install/pre-upgrade Helm hook Job for migrations (default: `true`) |
+| `database.sslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. Defaults to `Require` in production if not set. Use `Disable` for in-cluster Postgres without TLS |
 | `workDistribution.mode` | Dispatch mode: `SignalR` (default, docker-compose compatible) or `Kubernetes` (K8s Job dispatch) |
+| `workDistribution.dispatch.intervalSeconds` | Seconds between dispatch cycles in Kubernetes mode (default: `10`) |
+| `workDistribution.dispatch.rateLimitPerSecond` | Max dispatches per second in Kubernetes mode (default: `10`) |
+| `workDistribution.reconciliation.intervalSeconds` | Seconds between reconciliation cycles in Kubernetes mode (default: `30`) |
+| `workDistribution.reconciliation.timeoutEnforcementEnabled` | Whether to enforce agent timeouts via reconciliation (default: `true`) |
+| `workDistribution.reconciliation.staleRetentionDays` | Days to retain stale work items before cleanup (default: `7`) |
 | `workDistribution.imageMapping` | Map of sorted agent labels → container image for K8s Job dispatch |
 | `workDistribution.jobResources` | Resource requests/limits for spawned agent Jobs |
 | `workDistribution.maxConcurrentPods` | Max concurrent pods per agent selector group |
+| `workDistribution.scheduling.priorityClassName` | PriorityClass for spawned agent Job pods |
+| `workDistribution.scheduling.nodeSelector` | Node selector for spawned agent Job pods |
+| `workDistribution.scheduling.tolerations` | Tolerations for spawned agent Job pods |
+| `workDistribution.scheduling.topologySpreadConstraints` | Topology spread constraints for spawned agent Job pods |
 | `credentialPools.kiro` | List of PVC names for kiro agent credential data (DispatchService claims one per Job) |
 | `signalr.redis.enabled` | Enable Redis backplane for multi-replica orchestrator SignalR (default: `false`) |
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |

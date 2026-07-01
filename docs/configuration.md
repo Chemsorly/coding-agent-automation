@@ -16,7 +16,6 @@ Projects can override most general settings on a per-project basis using a nulla
 | `maxAnalysisRetries` | 2 | Max retry attempts for the analysis phase (assessment file missing, malformed JSON, or analysis too short) |
 | `issuePageSize` | 25 | Number of issues fetched per page when polling the issue provider |
 | `agentTimeout` | 00:30:00 | Maximum time for a single agent invocation |
-| `codeReview.enabled` | true | Enable multi-agent code review |
 | `codeReview.maxIterations` | 2 | Max review → fix cycles |
 | `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion (CI runs automatically when a Pipeline Provider is configured on the job template) |
 | `externalCiPollInterval` | 00:00:30 | How often to poll external CI for status updates |
@@ -98,10 +97,11 @@ These environment variables are used by the Docker containers:
 |----------|-------------|
 | `Database__Host` | PostgreSQL hostname. When set, the orchestrator uses Postgres instead of JSON files for all configuration and work item persistence. |
 | `Database__Port` | PostgreSQL port (default: `5432`) |
-| `Database__Username` | PostgreSQL username (default: `postgres`) |
+| `Database__Username` | PostgreSQL username |
 | `Database__Password` | PostgreSQL password |
 | `Database__Name` | PostgreSQL database name (default: `coding_agent_automation`) |
-| `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`). Disable if using the Helm migration job. |
+| `Database__SslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. Defaults to `Require` in production if not explicitly set. Use `Disable` for local/in-cluster Postgres without TLS. |
+| `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`). Disable if running migrations externally. |
 
 ### Config Import/Export
 
@@ -124,6 +124,7 @@ API endpoints:
 | `LOG_LEVEL` | Serilog log level (default: `Information`) — also applies to the orchestrator |
 | `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` | Seconds to wait before resuming the pipeline loop after pod restart (default: 90, range: 0–600). Prevents dispatching to agents mid-termination during rolling updates. |
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15). Used for zero-downtime rolling updates. |
+| `DB_LOG_LEVEL` | EF Core SQL command log level (default: `Warning`). Set to `Information` or `Debug` for SQL query diagnostics. |
 
 ### Agent Containers
 
@@ -133,7 +134,10 @@ API endpoints:
 | `AGENT_ID` | Unique identifier for this agent instance (falls back to machine hostname if unset) |
 | `AGENT_LABELS` | Comma-separated labels for routing (e.g., `kiro,dotnet,dotnet10`) |
 | `AGENT_API_KEY` | Must match the orchestrator's key |
+| `AGENT_API_KEY_FILE` | File path containing the API key (K8s Secret mount alternative to `AGENT_API_KEY` env var) |
 | `AGENT_PROVIDER_TYPE` | Agent backend type: `KiroCli` (default) or `OpenCode` |
+| `KIRO_CLI_PATH` | Override path for the Kiro CLI executable (default: `/home/ubuntu/.local/bin/kiro-cli`) |
+| `OPENCODE_BASE_URL` | Override base URL for the OpenCode HTTP API (default: `http://127.0.0.1:4096`) |
 | `OPENCODE_CONFIG_CONTENT` | JSON configuration for OpenCode agents (injected as environment variable, not needed for Kiro agents) |
 | `OPENCODE_SERVER_PASSWORD` | Password for OpenCode server authentication (required for OpenCode agents) |
 | `ANTHROPIC_API_KEY` | Anthropic API key for LLM access (required for OpenCode agents using Claude) |
