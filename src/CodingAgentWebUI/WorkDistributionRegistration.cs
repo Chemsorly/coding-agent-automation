@@ -20,6 +20,7 @@ using Polly.CircuitBreaker;
 using Polly.Registry;
 using Polly.Retry;
 using Serilog;
+using StackExchange.Redis;
 
 namespace CodingAgentWebUI;
 
@@ -340,12 +341,32 @@ public static class WorkDistributionRegistration
 
         // Replace the default AddSignalR() registration with Redis backplane.
         // Note: AddSignalR() is already called in Program.cs. AddStackExchangeRedis extends it.
-        services.AddSignalR().AddStackExchangeRedis(redisConnectionString, options =>
+        services.AddSignalR().AddStackExchangeRedis(options =>
         {
-            options.Configuration.ChannelPrefix = StackExchange.Redis.RedisChannel.Literal("caa");
+            var config = ConfigurationOptions.Parse(redisConnectionString);
+            config.ChannelPrefix = RedisChannel.Literal("caa");
+            config.AbortOnConnectFail = false;
+            config.ConnectRetry = 5;
+            config.ReconnectRetryPolicy = new ExponentialRetry(5000, 55000);
+
+            options.Configuration = config;
+
+            options.ConnectionFactory = async (writer) =>
+            {
+                // With AbortOnConnectFail=false, ConnectAsync returns immediately with a
+                // disconnected multiplexer that retries in the background. This ensures
+                // startup never crashes due to Redis unavailability.
+                var connection = await ConnectionMultiplexer.ConnectAsync(config, writer);
+                connection.ConnectionFailed += (_, e) =>
+                    Log.Warning("Redis backplane connection failed: {FailureType} — {Exception}",
+                        e.FailureType, e.Exception?.Message);
+                connection.ConnectionRestored += (_, e) =>
+                    Log.Information("Redis backplane connection restored: {EndPoint}", e.EndPoint);
+                return connection;
+            };
         });
 
-        Log.Information("WorkDistribution: SignalR Redis backplane configured");
+        Log.Information("WorkDistribution: SignalR Redis backplane configured with AbortOnConnectFail=false");
     }
 
     /// <summary>
