@@ -749,21 +749,9 @@ public sealed partial class PipelineLoopService
                     else
                     {
                         // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
-                        var minimalRequest = new JobDistributionRequest
-                        {
-                            IssueIdentifier = issue.Identifier,
-                            IssueProviderConfigId = template.IssueProviderId,
-                            RepoProviderConfigId = template.RepoProviderId,
-                            BrainProviderConfigId = template.BrainProviderId,
-                            PipelineProviderConfigId = template.PipelineProviderId,
-                            InitiatedBy = "loop",
-                            TaskType = WorkItemTaskType.Implementation,
-                            AgentSelector = "",
-                            TimeoutSeconds = 0,
-                            ProjectId = dispatchProject?.Id,
-                            ProjectName = dispatchProject?.Name,
-                            IssueDetail = new IssueDetail { Identifier = issue.Identifier, Title = issue.Title ?? "", Description = "", Labels = [] }
-                        };
+                        var minimalRequest = JobDistributionRequest.FromTemplate(
+                            template, issue, initiatedBy: "loop",
+                            projectId: dispatchProject?.Id, projectName: dispatchProject?.Name);
                         var result = await _workDistributor!.DistributeAsync(minimalRequest, stopToken);
                         dispatched = result.Success;
                     }
@@ -864,23 +852,8 @@ public sealed partial class PipelineLoopService
                     else
                     {
                         // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
-                        var minimalRequest = new JobDistributionRequest
-                        {
-                            IssueIdentifier = pr.Identifier,
-                            IssueProviderConfigId = template.IssueProviderId,
-                            RepoProviderConfigId = template.RepoProviderId,
-                            BrainProviderConfigId = template.BrainProviderId,
-                            InitiatedBy = "loop",
-                            TaskType = WorkItemTaskType.Review,
-                            AgentSelector = "",
-                            TimeoutSeconds = 0,
-                            RunType = PipelineRunType.Review,
-                            IssueDetail = new IssueDetail { Identifier = pr.Identifier, Title = pr.Title ?? "", Description = "", Labels = [] },
-                            LinkedPullRequest = new LinkedPullRequest { Url = pr.Url ?? "", BranchName = pr.BranchName ?? "", IsDraft = false, Number = 0 },
-                            ReviewPrTargetBranch = pr.TargetBranch,
-                            ReviewPrDescription = pr.Description,
-                            ReviewPrAuthor = pr.Author
-                        };
+                        var minimalRequest = JobDistributionRequest.FromTemplate(
+                            template, pr, initiatedBy: "loop", useFullPrMetadata: false);
                         var result = await _workDistributor!.DistributeAsync(minimalRequest, stopToken);
                         dispatched = result.Success;
                     }
@@ -976,19 +949,8 @@ public sealed partial class PipelineLoopService
                     else
                     {
                         // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
-                        var minimalRequest = new JobDistributionRequest
-                        {
-                            IssueIdentifier = epicItem.Issue.Identifier,
-                            IssueProviderConfigId = template.IssueProviderId,
-                            RepoProviderConfigId = template.RepoProviderId,
-                            BrainProviderConfigId = template.BrainProviderId,
-                            InitiatedBy = "loop",
-                            TaskType = WorkItemTaskType.Decomposition,
-                            AgentSelector = "",
-                            TimeoutSeconds = 0,
-                            RunType = epicItem.Phase,
-                            IssueDetail = new IssueDetail { Identifier = epicItem.Issue.Identifier, Title = epicItem.Issue.Title ?? "", Description = "", Labels = [] }
-                        };
+                        var minimalRequest = JobDistributionRequest.FromTemplate(
+                            template, epicItem.Issue, epicItem.Phase, initiatedBy: "loop");
                         var result = await _workDistributor!.DistributeAsync(minimalRequest, stopToken);
                         dispatched = result.Success;
                     }
@@ -1076,20 +1038,9 @@ public sealed partial class PipelineLoopService
                             }
                             else
                             {
-                                var minimalRequest = new JobDistributionRequest
-                                {
-                                    IssueIdentifier = candidate.Issue.Identifier,
-                                    IssueProviderConfigId = candidate.Template.IssueProviderId,
-                                    RepoProviderConfigId = candidate.Template.RepoProviderId,
-                                    BrainProviderConfigId = candidate.Template.BrainProviderId,
-                                    InitiatedBy = "loop",
-                                    TaskType = WorkItemTaskType.Decomposition,
-                                    AgentSelector = "",
-                                    TimeoutSeconds = 0,
-                                    RunType = candidate.Phase,
-                                    DecompositionSource = "project-level",
-                                    IssueDetail = new IssueDetail { Identifier = candidate.Issue.Identifier, Title = candidate.Issue.Title ?? "", Description = "", Labels = [] }
-                                };
+                                var minimalRequest = JobDistributionRequest.FromTemplate(
+                                    candidate.Template, candidate.Issue, candidate.Phase,
+                                    initiatedBy: "loop", decompositionSource: "project-level");
                                 var result = await _workDistributor!.DistributeAsync(minimalRequest, stoppingToken);
                                 dispatched = result.Success;
                             }
