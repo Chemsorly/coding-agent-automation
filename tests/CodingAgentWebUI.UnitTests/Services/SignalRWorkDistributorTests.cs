@@ -88,7 +88,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     }
 
     [Fact]
-    public async Task DistributeAsync_NoConnectedAgent_MarksWorkItemFailed()
+    public async Task DistributeAsync_NoConnectedAgent_QueuesWorkItemAsPending()
     {
         // Arrange
         var request = CreateMinimalRequest();
@@ -97,17 +97,17 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         // Act
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
 
-        // Assert
-        result.Success.Should().BeFalse();
+        // Assert — queued successfully (will be drained when agent becomes idle)
+        result.Success.Should().BeTrue();
         result.WorkItemId.Should().NotBeNullOrEmpty();
-        result.ErrorMessage.Should().Contain("No connected agent");
+        result.ErrorMessage.Should().Contain("Queued");
 
-        // Verify DB row is Failed
+        // Verify DB row is Pending (not Failed)
         await using var db = new InMemoryPipelineDbContext(_dbOptions);
         var workItem = await db.WorkItems.FindAsync(Guid.Parse(result.WorkItemId!));
         workItem.Should().NotBeNull();
-        workItem!.Status.Should().Be(WorkItemStatus.Failed);
-        workItem.ErrorMessage.Should().Contain("No connected agent");
+        workItem!.Status.Should().Be(WorkItemStatus.Pending);
+        workItem.DispatchedAt.Should().BeNull();
     }
 
     [Fact]

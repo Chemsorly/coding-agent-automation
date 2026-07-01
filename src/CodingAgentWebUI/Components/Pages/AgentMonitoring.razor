@@ -16,6 +16,7 @@
 @inject PipelineOrchestrationService PipelineService
 @inject IConfigurationStore ConfigStore
 @inject IConsolidationService ConsolidationService
+@inject IPendingWorkQuery PendingWorkQuery
 @inject IWorkDistributor WorkDistributor
 @inject ConsolidationQueueService ConsolidationQueue
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
@@ -42,7 +43,7 @@
         </span>
     </header>
 
-    <RunHistoryStats Runs="_runHistory" Agents="Registry.GetAllAgents()" QueueLength="Dispatcher.QueueLength" ShowAgentStats="true" />
+    <RunHistoryStats Runs="_runHistory" Agents="Registry.GetAllAgents()" QueueLength="_queuedJobs.Count" ShowAgentStats="true" />
 
     <!-- Active Runs -->
     <section class="settings-section" style="margin: 16px 20px;">
@@ -503,10 +504,10 @@
             <span class="monitoring-toggle-icon">@(_historyExpanded ? "▾" : "▸")</span>
         </div>
         <div style="margin: 8px 0;">
-            <a href="/api/export/runs.json" download class="btn-cancel" style="text-decoration: none; display: inline-block; font-size: 0.8rem; padding: 4px 12px;">
+            <a href="api/export/runs.json" download class="btn-cancel" style="text-decoration: none; display: inline-block; font-size: 0.8rem; padding: 4px 12px;">
                 <Icon Name="download" Size="14" /> Export All (JSON)
             </a>
-            <a href="/api/export/runs.json?feedbackOnly=true" download class="btn-cancel" style="text-decoration: none; display: inline-block; font-size: 0.8rem; padding: 4px 12px; margin-left: 8px;">
+            <a href="api/export/runs.json?feedbackOnly=true" download class="btn-cancel" style="text-decoration: none; display: inline-block; font-size: 0.8rem; padding: 4px 12px; margin-left: 8px;">
                 <Icon Name="download" Size="14" /> Feedback Only (JSON)
             </a>
         </div>
@@ -846,8 +847,8 @@
     {
         _activeRuns = await ActiveRunQuery.GetActiveRunsAsync();
         _agents = Registry.GetAllAgents();
-        _queuedJobs = Dispatcher.GetQueuedJobs();
         _runHistory = PipelineService.GetRunHistory();
+        _queuedJobs = await PendingWorkQuery.GetPendingJobsAsync();
 
         if (includeConsolidation)
             await RefreshConsolidationAsync();

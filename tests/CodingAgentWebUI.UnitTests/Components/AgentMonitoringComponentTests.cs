@@ -66,6 +66,8 @@ public class AgentMonitoringComponentTests : BunitContext
             s.GetRunHistoryAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ConsolidationRun>>(Array.Empty<ConsolidationRun>())));
         Services.AddSingleton<IActiveRunQueryService>(_mockActiveRunQuery.Object);
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
+        Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
+            Services.BuildServiceProvider().GetRequiredService<JobDispatcherService>()));
     }
 
     [Fact]

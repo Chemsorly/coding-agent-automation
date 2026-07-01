@@ -11,15 +11,15 @@
         <ol class="onboarding-steps">
             <li class="@(HasIssueProvider ? "step-complete" : "")">
                 @if (HasIssueProvider) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }
-                <a href="/settings?section=providers-issue">Create an Issue Provider</a>
+                <a href="settings?section=providers-issue">Create an Issue Provider</a>
             </li>
             <li class="@(HasRepoProvider ? "step-complete" : "")">
                 @if (HasRepoProvider) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }
-                <a href="/settings?section=providers-repository">Create a Repository Provider</a>
+                <a href="settings?section=providers-repository">Create a Repository Provider</a>
             </li>
             <li class="@(HasProject ? "step-complete" : "")">
                 @if (HasProject) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }
-                <a href="/settings?section=projects">Create a Project</a>
+                <a href="settings?section=projects">Create a Project</a>
             </li>
             <li class="@(HasTemplate ? "step-complete" : "")">
                 @if (HasTemplate) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }
@@ -27,7 +27,7 @@
             </li>
             <li class="@(HasAgent ? "step-complete" : "")">
                 @if (HasAgent) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }
-                <a href="/agent-monitoring">Register an Agent</a>
+                <a href="agent-monitoring">Register an Agent</a>
             </li>
             <li class="@(IsLoopActive ? "step-complete" : "")">
                 @if (IsLoopActive) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }

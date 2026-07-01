@@ -25,6 +25,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly IConfigurationStore _configStore;
     private readonly IProviderFactory _providerFactory;
     private readonly WorkItemTransitionService? _workItemTransition;
+    private readonly PendingWorkItemDrainService? _pendingDrainService;
     private readonly ILogger<AgentHubFacade> _logger;
 
     public AgentHubFacade(
@@ -36,7 +37,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
         ILogger<AgentHubFacade> logger,
-        WorkItemTransitionService? workItemTransition = null)
+        WorkItemTransitionService? workItemTransition = null,
+        PendingWorkItemDrainService? pendingDrainService = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(runService);
@@ -56,6 +58,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _providerFactory = providerFactory;
         _logger = logger;
         _workItemTransition = workItemTransition;
+        _pendingDrainService = pendingDrainService;
     }
 
     // ── Registry operations ─────────────────────────────────────────────
@@ -194,7 +197,10 @@ public sealed class AgentHubFacade : IAgentHubFacade
 
     /// <inheritdoc />
     public void Signal()
-        => _drainService.Signal();
+    {
+        _drainService.Signal();
+        _pendingDrainService?.Signal();
+    }
 
     // ── History ─────────────────────────────────────────────────────────
 

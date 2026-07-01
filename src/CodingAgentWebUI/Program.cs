@@ -251,8 +251,9 @@ if (!string.IsNullOrEmpty(dbConnectionString))
 // Register observable gauges for dispatch queue and agent concurrency metrics
 var dispatcher = app.Services.GetRequiredService<JobDispatcherService>();
 var agentRegistry = app.Services.GetRequiredService<IAgentRegistryService>();
+var pendingWorkQuery = app.Services.GetRequiredService<IPendingWorkQuery>();
 _ = PipelineTelemetry.Meter.CreateObservableGauge("dispatch.queue.depth",
-    () => dispatcher.QueueLength, "{item}", "Jobs waiting for available agent");
+    () => pendingWorkQuery.PendingCount, "{item}", "Jobs waiting for available agent");
 _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.jobs.active",
     () => agentRegistry.GetBusyAgentCount(), "{job}", "Currently executing agent jobs");
 _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
@@ -260,6 +261,8 @@ _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
 
 // Graceful shutdown is handled by ShutdownService (IHostedLifecycleService)
 // — async, with 15s timeout, non-blocking (Req 12)
+
+
 
 // Kubernetes-style health probes — anonymous, no auth required
 app.MapGet("/healthz", async (CancellationToken ct) =>
@@ -286,8 +289,8 @@ app.MapGet("/readyz", (HttpContext httpContext) =>
 })
     .AllowAnonymous();
 
-// Redirect root "/" to the main page
-app.MapGet("/", () => Results.Redirect("/agent-coding"))
+// Redirect root "/" to the main page (relative redirect — works behind any reverse proxy)
+app.MapGet("/", () => Results.Redirect("agent-coding"))
     .AllowAnonymous();
 
 // Export run history as JSON download

@@ -88,10 +88,10 @@ public class OnboardingChecklistComponentTests : BunitContext
             .Add(s => s.OnAddTemplate, EventCallback.Empty));
 
         var links = cut.FindAll("a[href]");
-        Assert.Contains(links, l => l.GetAttribute("href") == "/settings?section=providers-issue");
-        Assert.Contains(links, l => l.GetAttribute("href") == "/settings?section=providers-repository");
-        Assert.Contains(links, l => l.GetAttribute("href") == "/settings?section=projects");
-        Assert.Contains(links, l => l.GetAttribute("href") == "/agent-monitoring");
+        Assert.Contains(links, l => l.GetAttribute("href") == "settings?section=providers-issue");
+        Assert.Contains(links, l => l.GetAttribute("href") == "settings?section=providers-repository");
+        Assert.Contains(links, l => l.GetAttribute("href") == "settings?section=projects");
+        Assert.Contains(links, l => l.GetAttribute("href") == "agent-monitoring");
     }
 
     [Fact]

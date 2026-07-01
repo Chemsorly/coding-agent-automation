@@ -79,6 +79,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
 
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            builder.UseSetting("Database:Host", "");
             builder.ConfigureServices(services =>
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
@@ -97,6 +98,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                 ReplaceService<IReviewerConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderFactory>(services, _mockProviderFactory.Object);
                 ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
+                MockConsolidationService(services);
             });
         });
 
@@ -179,6 +181,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
 
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            builder.UseSetting("Database:Host", "");
             builder.ConfigureServices(services =>
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
@@ -196,6 +199,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                 ReplaceService<IReviewerConfigStore>(services, configStore.Object);
                 ReplaceService<IProviderFactory>(services, providerFactory.Object);
                 ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
+                MockConsolidationService(services);
             });
         });
 
@@ -233,6 +237,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
 
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            builder.UseSetting("Database:Host", "");
             builder.ConfigureServices(services =>
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
@@ -250,6 +255,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                 ReplaceService<IReviewerConfigStore>(services, _mockConfigStore.Object);
                 ReplaceService<IProviderFactory>(services, _mockProviderFactory.Object);
                 ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
+                MockConsolidationService(services);
             });
         });
 
@@ -314,6 +320,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
 
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
+            builder.UseSetting("Database:Host", "");
             builder.ConfigureServices(services =>
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
@@ -331,6 +338,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
                 ReplaceService<IReviewerConfigStore>(services, configStore.Object);
                 ReplaceService<IProviderFactory>(services, providerFactory.Object);
                 ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
+                MockConsolidationService(services);
             });
         });
 
@@ -364,5 +372,18 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         if (descriptor is not null)
             services.Remove(descriptor);
         services.AddSingleton(implementation);
+    }
+
+    /// <summary>
+    /// Adds IConsolidationService mock to prevent Program.cs startup from hitting PostgreSQL.
+    /// </summary>
+    private static void MockConsolidationService(IServiceCollection services)
+    {
+        var mock = new Mock<IConsolidationService>();
+        mock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        mock.Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ConsolidationRun>());
+        ReplaceService<IConsolidationService>(services, mock.Object);
     }
 }

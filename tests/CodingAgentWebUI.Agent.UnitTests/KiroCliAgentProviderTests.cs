@@ -140,20 +140,28 @@ public class KiroCliAgentProviderTests
         // The shared orchestrator should NOT be called.
         // The ephemeral orchestrator may fail (no kiro-cli installed in test env) — that's fine,
         // we're only verifying the routing decision (shared mock must NOT be invoked).
-        var request = new AgentRequest { Prompt = "test prompt", WorkspacePath = "/workspace" };
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"kiro-ephemeral-test-{Guid.NewGuid():N}");
         try
         {
-            await _provider.ExecuteAsync(request, CancellationToken.None);
-        }
-        catch (InvalidOperationException)
-        {
-            // Expected in CI: ephemeral orchestrator can't find kiro-cli binary
-        }
+            var request = new AgentRequest { Prompt = "test prompt", WorkspacePath = tempWorkspace };
+            try
+            {
+                await _provider.ExecuteAsync(request, CancellationToken.None);
+            }
+            catch (InvalidOperationException)
+            {
+                // Expected in CI: ephemeral orchestrator can't find kiro-cli binary
+            }
 
-        // Ephemeral orchestrator runs independently — shared mock not invoked
-        _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
-            It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Never);
+            // Ephemeral orchestrator runs independently — shared mock not invoked
+            _mockOrchestrator.Verify(o => o.ExecutePromptAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool>(),
+                It.IsAny<CancellationToken>(), It.IsAny<Func<string, Task>?>(), It.IsAny<string?>()), Times.Never);
+        }
+        finally
+        {
+            try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, recursive: true); } catch { }
+        }
     }
 
     [Fact]

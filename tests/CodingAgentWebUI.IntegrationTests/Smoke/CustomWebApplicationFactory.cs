@@ -1,5 +1,6 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,6 +18,11 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 {
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
+        // Force legacy mode by clearing any Database:Host config from the environment.
+        // Without this, the app may detect a DB connection string from environment
+        // variables or appsettings and enter database mode, causing pages to query PostgreSQL.
+        builder.UseSetting("Database:Host", "");
+
         builder.ConfigureServices(services =>
         {
             // Reduce shutdown timeout to prevent test host hangs
@@ -26,6 +32,12 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             // JobQueueDrainService) — they are not needed for integration tests and their
             // background loops can prevent the test host from shutting down cleanly.
             services.RemoveAll<IHostedService>();
+
+            // Remove DatabaseReadinessMonitor singleton — it's registered as both
+            // a singleton and a hosted service. RemoveAll<IHostedService> removes the
+            // background loop, but the singleton remains and /healthz resolves it
+            // to probe PostgreSQL. Remove it so /healthz skips the DB check.
+            services.RemoveAll<DatabaseReadinessMonitor>();
 
             // Replace IConfigurationStore with a mock returning defaults
             var configStore = CreateConfigurationStoreMock();
@@ -41,6 +53,16 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
 
             // Replace IQualityGateValidator with a mock (prevents real dotnet build/test)
             ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
+
+            // Replace IConsolidationService — Program.cs calls CleanupOrphanedRunsAsync
+            // and RehydrateQueuedRunsAsync during startup, which hit the database directly
+            // (not via a hosted service), so RemoveAll<IHostedService> doesn't prevent it.
+            var consolidationMock = new Mock<IConsolidationService>();
+            consolidationMock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            consolidationMock.Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ConsolidationRun>());
+            ReplaceService<IConsolidationService>(services, consolidationMock.Object);
         });
     }
 
