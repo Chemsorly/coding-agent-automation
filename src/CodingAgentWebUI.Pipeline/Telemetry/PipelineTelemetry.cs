@@ -22,7 +22,11 @@ public static class PipelineTelemetry
     public static readonly Counter<long> JobsCompleted = Meter.CreateCounter<long>("pipeline.jobs.completed");
     public static readonly Counter<long> JobsFailed = Meter.CreateCounter<long>("pipeline.jobs.failed");
     public static readonly Histogram<double> JobDuration = Meter.CreateHistogram<double>(
-        "pipeline.jobs.duration", "s", "Duration of pipeline jobs in seconds");
+        "pipeline.jobs.duration", "s", "Duration of pipeline jobs in seconds",
+        advice: new InstrumentAdvice<double>
+        {
+            HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200]
+        });
 
     public static readonly Counter<long> SubIssuesCreated = Meter.CreateCounter<long>("pipeline.decomposition.sub_issues.created");
     public static readonly Counter<long> SubIssuesFailed = Meter.CreateCounter<long>("pipeline.decomposition.sub_issues.failed");
@@ -48,7 +52,11 @@ public static class PipelineTelemetry
         "quality_gate.external_ci.duration", "s", "Time waiting for external CI");
 
     public static readonly Histogram<double> QueueWaitTime = Meter.CreateHistogram<double>(
-        "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue");
+        "dispatch.queue.wait_time", "s", "Time a job spent waiting in the dispatch queue",
+        advice: new InstrumentAdvice<double>
+        {
+            HistogramBucketBoundaries = [5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600]
+        });
 
     public static readonly Counter<long> ConsolidationJobsExpired = Meter.CreateCounter<long>(
         "consolidation.jobs.expired", "{job}", "Consolidation jobs expired from queue");

@@ -115,7 +115,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // Create the dispatched run via PipelineOrchestrationService
         var run = await _orchestration.CreateDispatchedRunAsync(
             issueProviderId, repoProviderId, issueIdentifier,
-            agentProviderId, "pending", ct,
+            agentProviderId, null, ct,
             brainProviderId, pipelineProviderId, initiatedBy);
 
         if (run is null)
