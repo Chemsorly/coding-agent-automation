@@ -120,6 +120,13 @@ public interface IRepositoryProvider : IAsyncDisposable
             $"{GetType().Name} does not support UpdatePullRequestAsync.");
 
     /// <summary>
+    /// Fetches the current body of a pull request. Returns null if unsupported by the provider.
+    /// Used to avoid stale-state overwrites when appending to PR bodies.
+    /// </summary>
+    Task<string?> GetPullRequestBodyAsync(int pullRequestNumber, CancellationToken ct)
+        => Task.FromResult<string?>(null);
+
+    /// <summary>
     /// Lists open pull requests with optional label filtering.
     /// When labels is null or empty, returns all open PRs.
     /// </summary>

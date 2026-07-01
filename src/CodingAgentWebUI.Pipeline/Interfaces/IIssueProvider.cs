@@ -36,7 +36,11 @@ public interface IIssueProvider : IAsyncDisposable
         => ListOpenIssuesAsync(page, pageSize, labels: null, ct);
 
     Task<IReadOnlyList<IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct);
-    Task PostCommentAsync(string identifier, string body, CancellationToken ct);
+
+    /// <summary>
+    /// Posts a comment on the issue and returns the comment's HTML URL (or null if unavailable).
+    /// </summary>
+    Task<string?> PostCommentAsync(string identifier, string body, CancellationToken ct);
     Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct);
 
     /// <summary>

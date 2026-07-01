@@ -60,7 +60,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
         _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockIssueOps.Setup(o => o.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync((string?)null);
     }
 
     public void Dispose()

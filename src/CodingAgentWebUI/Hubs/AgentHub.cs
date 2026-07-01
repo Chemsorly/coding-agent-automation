@@ -334,8 +334,9 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
     /// <summary>
     /// Posts a comment on the issue using the issue provider from the run's config.
+    /// Returns the comment URL if available.
     /// </summary>
-    private async Task PostCommentViaIssueProviderAsync(PipelineRun run, string body)
+    private async Task<string?> PostCommentViaIssueProviderAsync(PipelineRun run, string body)
     {
         try
         {
@@ -343,15 +344,18 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
             if (issueConfig is null)
             {
                 _logger.Warning("Issue provider config '{ConfigId}' not found for run {RunId}", run.IssueProviderConfigId, run.RunId);
-                return;
+                return null;
             }
 
             await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
-            await issueProvider.PostCommentAsync(run.IssueIdentifier, body, CancellationToken.None);
+            // Validate initializes provider state (e.g., GitLab PathWithNamespace) needed for URL construction
+            await issueProvider.ValidateAsync(CancellationToken.None);
+            return await issueProvider.PostCommentAsync(run.IssueIdentifier, body, CancellationToken.None);
         }
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to post comment on issue {IssueIdentifier} for run {RunId}", run.IssueIdentifier, run.RunId);
+            return null;
         }
     }
 
@@ -363,6 +367,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
     /// <summary>
     /// Posts issue-level feedback as a comment on the GitHub issue if present.
+    /// If a PR exists, appends a link to the feedback comment in the PR body.
     /// Non-fatal: logs warning on failure and continues.
     /// </summary>
     private async Task PostIssueFeedbackCommentAsync(PipelineRun run)
@@ -373,14 +378,72 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
             if (comment is null)
                 return;
 
-            await PostCommentViaIssueProviderAsync(run, comment);
+            var commentUrl = await PostCommentViaIssueProviderAsync(run, comment);
             _logger.Information("Posted issue feedback comment for run {RunId} on issue {IssueIdentifier}",
                 run.RunId, run.IssueIdentifier);
+
+            // Append feedback link to PR body if we have both a URL and a PR
+            if (commentUrl is not null && !string.IsNullOrEmpty(run.PullRequestNumber))
+            {
+                await AppendFeedbackLinkToPrBodyAsync(run, commentUrl);
+            }
         }
         catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to post issue feedback comment for run {RunId} on issue {IssueIdentifier}",
                 run.RunId, run.IssueIdentifier);
+        }
+    }
+
+    /// <summary>
+    /// Appends a feedback comment link section to the existing PR body.
+    /// Fetches current body from provider to avoid stale-state overwrites.
+    /// Idempotent: skips if feedback section already present.
+    /// Non-fatal: logs warning on failure.
+    /// </summary>
+    private async Task AppendFeedbackLinkToPrBodyAsync(PipelineRun run, string commentUrl)
+    {
+        try
+        {
+            // Idempotency guard: don't append twice if retried
+            if (run.PullRequestBody?.Contains("## Agent Feedback") == true)
+            {
+                _logger.Debug("Feedback link already present in PR body for run {RunId}, skipping", run.RunId);
+                return;
+            }
+
+            var repoConfig = await _facade.GetProviderConfigByIdAsync(run.RepoProviderConfigId, ProviderKind.Repository, CancellationToken.None);
+            if (repoConfig is null)
+            {
+                _logger.Warning("Repo provider config '{ConfigId}' not found for run {RunId}, skipping feedback link", run.RepoProviderConfigId, run.RunId);
+                return;
+            }
+
+            if (!int.TryParse(run.PullRequestNumber, out var prNumber))
+                return;
+
+            await using var repoProvider = _facade.CreateRepositoryProvider(repoConfig);
+
+            // Fetch current body from provider to avoid overwriting external edits
+            var currentBody = await repoProvider.GetPullRequestBodyAsync(prNumber, CancellationToken.None)
+                              ?? run.PullRequestBody
+                              ?? "";
+
+            // Double-check idempotency against remote body (may have been appended by a prior attempt)
+            if (currentBody.Contains("## Agent Feedback"))
+                return;
+
+            var feedbackSection = $"\n\n## Agent Feedback\n⚠️ Agent posted feedback on the issue [here]({commentUrl}). Read before merging.";
+            var newBody = currentBody + feedbackSection;
+
+            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, false, CancellationToken.None);
+            run.PullRequestBody = newBody;
+
+            _logger.Information("Appended feedback link to PR #{PrNumber} for run {RunId}", run.PullRequestNumber, run.RunId);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to append feedback link to PR #{PrNumber} for run {RunId}", run.PullRequestNumber, run.RunId);
         }
     }
 }

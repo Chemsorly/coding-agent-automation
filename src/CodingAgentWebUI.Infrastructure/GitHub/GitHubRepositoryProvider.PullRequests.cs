@@ -168,6 +168,22 @@ public partial class GitHubRepositoryProvider
         }
     }
 
+    public async Task<string?> GetPullRequestBodyAsync(int pullRequestNumber, CancellationToken ct)
+    {
+        try
+        {
+            var pr = await ExecuteWithResilienceAsync(
+                client => client.PullRequest.Get(Owner, Repo, pullRequestNumber),
+                "GetPullRequestBody", ct);
+            return pr?.Body;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.Debug(ex, "Failed to fetch PR #{PrNumber} body, falling back to in-memory state", pullRequestNumber);
+            return null;
+        }
+    }
+
     /// <inheritdoc />
     public async Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct)
     {

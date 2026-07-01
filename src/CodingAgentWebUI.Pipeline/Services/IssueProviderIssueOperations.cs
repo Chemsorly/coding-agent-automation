@@ -18,7 +18,7 @@ internal sealed class IssueProviderIssueOperations : IAgentIssueOperations
         _logger = logger;
     }
 
-    public Task PostCommentAsync(string issueIdentifier, string body, CancellationToken ct)
+    public Task<string?> PostCommentAsync(string issueIdentifier, string body, CancellationToken ct)
         => _issueProvider.PostCommentAsync(issueIdentifier, body, ct);
 
     public async Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct)
