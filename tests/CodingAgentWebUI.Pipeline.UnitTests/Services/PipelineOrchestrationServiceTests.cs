@@ -3493,15 +3493,12 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
-            new AgentPhaseExecutor(_mockLogger.Object),
-            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
-            _mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
-            historyService: mockHistoryService.Object,
-            runService: mockRunService.Object,
-            lifecycle: lifecycle,
-            labelSwapper: new Orchestration.LabelSwapper(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object),
-            agentCancellation: mockCancellation.Object);
+            TestOrchestrationFactory.CreateDefaultExecutionFacade(_mockLogger.Object),
+            TestOrchestrationFactory.CreateDefaultCompletionFacade(_mockLogger.Object, mockHistoryService.Object),
+            new PipelineCancellationFacade(null, mockCancellation.Object),
+            lifecycle,
+            new TestOrchestrationFactory.NoOpLabelSwapper(),
+            _mockLogger.Object);
 
         // Act
         await service.CancelActiveAgentRunsAsync();
@@ -3546,15 +3543,12 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
-            new AgentPhaseExecutor(_mockLogger.Object),
-            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
-            _mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
-            historyService: mockHistoryService.Object,
-            runService: mockRunService.Object,
-            lifecycle: lifecycle,
-            labelSwapper: new Orchestration.LabelSwapper(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object),
-            agentCancellation: mockCancellation.Object);
+            TestOrchestrationFactory.CreateDefaultExecutionFacade(_mockLogger.Object),
+            TestOrchestrationFactory.CreateDefaultCompletionFacade(_mockLogger.Object, mockHistoryService.Object),
+            new PipelineCancellationFacade(null, mockCancellation.Object),
+            lifecycle,
+            new TestOrchestrationFactory.NoOpLabelSwapper(),
+            _mockLogger.Object);
 
         // Act — should not throw despite cancellation sender failure
         await service.CancelActiveAgentRunsAsync();
@@ -3592,14 +3586,12 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
-            new AgentPhaseExecutor(_mockLogger.Object),
-            new QualityGateExecutor(_mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
-            _mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
-            historyService: mockHistoryService.Object,
-            runService: mockRunService.Object,
-            lifecycle: lifecycle,
-            labelSwapper: new Orchestration.LabelSwapper(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object));
+            TestOrchestrationFactory.CreateDefaultExecutionFacade(_mockLogger.Object),
+            TestOrchestrationFactory.CreateDefaultCompletionFacade(_mockLogger.Object, mockHistoryService.Object),
+            new PipelineCancellationFacade(null, null),
+            lifecycle,
+            new Orchestration.LabelSwapper(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object),
+            _mockLogger.Object);
 
         await service.CancelActiveAgentRunsAsync();
 

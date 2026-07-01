@@ -8,6 +8,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.TestUtilities;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -56,20 +57,18 @@ public class AgentJobDispatcherTests : IDisposable
 
     private AgentJobDispatcher CreateDispatcher()
     {
-        var mockQualityGateValidator = new Mock<IQualityGateValidator>();
-        var mockBrainUpdateService = new Mock<IBrainUpdateService>();
         var issueParser = new IssueDescriptionParser();
 
-        var orchestration = new PipelineOrchestrationService(
-            _mockConfigStore.Object,
-            _mockProviderFactory.Object,
-            issueParser,
-            new AgentPhaseExecutor(_mockLogger.Object),
-            new QualityGateExecutor(mockQualityGateValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
-            _mockLogger.Object,
-            mockBrainUpdateService.Object,
-            _mockHistoryService.Object,
-            _runService);
+        var orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockConfigStore.Object,
+            providerFactory: _mockProviderFactory.Object,
+            executionFacade: new PipelineExecutionFacade(
+                new AgentPhaseExecutor(_mockLogger.Object),
+                new QualityGateExecutor(new Mock<IQualityGateValidator>().Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
+                new Mock<IQualityGateValidator>().Object,
+                Mock.Of<IBrainSyncService>()),
+            historyService: _mockHistoryService.Object,
+            runService: _runService);
         _orchestrationInstances.Add(orchestration);
 
         return new AgentJobDispatcher(

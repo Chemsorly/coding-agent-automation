@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.TestUtilities;
 using FsCheck;
 using FsCheck.Xunit;
 using Moq;
@@ -536,14 +537,10 @@ public class PipelineLoopDispatchPropertyTests
     private static PipelineLoopService CreateService(Mock<IConfigurationStore> mockStore, Mock<IProviderFactory> mockFactory, IWorkDistributor? distributor = null)
     {
         var mockLogger = new Mock<Serilog.ILogger>();
-        var mockValidator = new Mock<IQualityGateValidator>();
-        var orchestration = new PipelineOrchestrationService(
-            mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
-            new AgentPhaseExecutor(mockLogger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), new CiLogWriter(mockLogger.Object), new FeedbackService(mockLogger.Object), mockLogger.Object),
-            mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
-            historyService: new Mock<IPipelineRunHistoryService>().Object);
+        var orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: mockStore.Object,
+            providerFactory: mockFactory.Object,
+            logger: mockLogger.Object);
 
         return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object, distributor);
     }

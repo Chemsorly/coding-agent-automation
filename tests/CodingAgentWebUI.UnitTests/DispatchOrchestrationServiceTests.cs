@@ -5,6 +5,7 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.TestUtilities;
 using Moq;
 using ILogger = Serilog.ILogger;
 // ReSharper disable InconsistentNaming
@@ -92,7 +93,6 @@ public class DispatchOrchestrationServiceTests
     {
         var mockAgentExec = new Mock<IAgentPhaseExecutor>();
         var mockQgExec = new Mock<IQualityGateExecutor>();
-        var mockBrainUpdate = new Mock<IBrainUpdateService>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
 
         // Setup provider factory to return dummy providers
@@ -102,16 +102,10 @@ public class DispatchOrchestrationServiceTests
             .Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
             .Returns(mockRepoProvider.Object);
 
-        return new PipelineOrchestrationService(
-            _mockConfigStore.Object,
-            _mockProviderFactory.Object,
-            new IssueDescriptionParser(),
-            mockAgentExec.Object,
-            mockQgExec.Object,
-            _mockLogger.Object,
-            brainUpdateService: mockBrainUpdate.Object,
-            historyService: mockHistoryService.Object,
-            runService: _runService);
+        return TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockConfigStore.Object,
+            providerFactory: _mockProviderFactory.Object,
+            lifecycle: new PipelineRunLifecycleService(mockHistoryService.Object, _runService, _mockLogger.Object));
     }
 
     private void SetupStandardMocks()
@@ -794,15 +788,10 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             new ReviewerResolver(),
             mockConfigStore.Object,
             _mockLogger.Object);
-        var orchestration = new PipelineOrchestrationService(
-            mockConfigStore.Object, mockProviderFactory.Object,
-            new IssueDescriptionParser(),
-            new Mock<IAgentPhaseExecutor>().Object,
-            new Mock<IQualityGateExecutor>().Object,
-            _mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
-            historyService: new Mock<IPipelineRunHistoryService>().Object,
-            runService: _runService);
+        var orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: mockConfigStore.Object,
+            providerFactory: mockProviderFactory.Object,
+            lifecycle: new PipelineRunLifecycleService(new Mock<IPipelineRunHistoryService>().Object, _runService, _mockLogger.Object));
 
         _service = new DispatchOrchestrationService(
             new DispatchInfrastructure(

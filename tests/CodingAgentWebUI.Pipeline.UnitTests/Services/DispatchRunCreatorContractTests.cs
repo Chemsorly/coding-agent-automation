@@ -61,19 +61,10 @@ public class DispatchRunCreatorContractTests : IDisposable
         // (mock can't track AddRun→IsIssueBeingProcessed correlation)
         var realRunService = new OrchestratorRunService(_mockLogger.Object);
 
-        _service = new PipelineOrchestrationService(
-            _mockConfigStore.Object,
-            _mockFactory.Object,
-            new IssueDescriptionParser(),
-            new AgentPhaseExecutor(_mockLogger.Object),
-            new QualityGateExecutor(
-                new Mock<IQualityGateValidator>().Object,
-                new PullRequestOrchestrator(_mockLogger.Object),
-                new CiLogWriter(_mockLogger.Object),
-                new FeedbackService(_mockLogger.Object),
-                _mockLogger.Object),
-            _mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+        _service = TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockConfigStore.Object,
+            providerFactory: _mockFactory.Object,
+            logger: _mockLogger.Object,
             historyService: mockHistoryService.Object,
             runService: realRunService);
     }

@@ -83,25 +83,32 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IBrainSyncService>(sp => new BrainSyncService(
             sp.GetRequiredService<IBrainUpdateService>(), Log.Logger));
 
+        services.AddSingleton<Pipeline.Interfaces.IPipelineExecutionFacade>(sp => new PipelineExecutionFacade(
+            sp.GetRequiredService<IAgentPhaseExecutor>(),
+            sp.GetRequiredService<IQualityGateExecutor>(),
+            sp.GetRequiredService<IQualityGateValidator>(),
+            sp.GetRequiredService<IBrainSyncService>()));
+
+        services.AddSingleton<Pipeline.Interfaces.IPipelineCompletionFacade>(sp => new PipelineCompletionFacade(
+            sp.GetRequiredService<PullRequestOrchestrator>(),
+            sp.GetRequiredService<PullRequestFinalizationService>(),
+            sp.GetRequiredService<FeedbackService>(),
+            sp.GetRequiredService<IPipelineRunHistoryService>()));
+
+        services.AddSingleton<Pipeline.Interfaces.IPipelineCancellationFacade>(sp => new PipelineCancellationFacade(
+            sp.GetRequiredService<Pipeline.Interfaces.IJobDeduplicationGuard>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IAgentCancellationSender>()));
+
         services.AddSingleton(sp => new PipelineOrchestrationService(
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<IssueDescriptionParser>(),
-            sp.GetRequiredService<IAgentPhaseExecutor>(),
-            sp.GetRequiredService<IQualityGateExecutor>(),
-            Log.Logger,
-            sp.GetRequiredService<IBrainUpdateService>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IPipelineExecutionFacade>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IPipelineCompletionFacade>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IPipelineCancellationFacade>(),
             sp.GetRequiredService<PipelineRunLifecycleService>(),
-            sp.GetRequiredService<IQualityGateValidator>(),
             sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<FeedbackService>(),
-            sp.GetRequiredService<PullRequestOrchestrator>(),
-            sp.GetRequiredService<PullRequestFinalizationService>(),
-            sp.GetRequiredService<IBrainSyncService>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IJobDeduplicationGuard>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IAgentCancellationSender>()));
+            Log.Logger));
         services.AddSingleton<Pipeline.Interfaces.IOrchestrationShutdownAction>(sp =>
             sp.GetRequiredService<PipelineOrchestrationService>());
         services.AddSingleton<Pipeline.Interfaces.IDispatchRunCreator>(sp =>

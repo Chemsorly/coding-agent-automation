@@ -4,6 +4,7 @@ using CodingAgentWebUI.Models;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Serilog;
@@ -25,17 +26,13 @@ public class AboutPageComponentTests : BunitContext
             .ReturnsAsync(new PipelineConfiguration());
 
         var factory = new Mock<IProviderFactory>();
-        var validator = new Mock<IQualityGateValidator>();
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(h => h.GetRunHistory())
             .Returns(history ?? Array.Empty<PipelineRunSummary>());
 
-        return new PipelineOrchestrationService(
-            store.Object, factory.Object, new IssueDescriptionParser(),
-            new AgentPhaseExecutor(Log.Logger),
-            new QualityGateExecutor(validator.Object, new PullRequestOrchestrator(Log.Logger), new CiLogWriter(Log.Logger), new FeedbackService(Log.Logger), Log.Logger),
-            Log.Logger,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+        return TestOrchestrationFactory.CreateMinimal(
+            configStore: store.Object,
+            providerFactory: factory.Object,
             historyService: mockHistory.Object);
     }
 

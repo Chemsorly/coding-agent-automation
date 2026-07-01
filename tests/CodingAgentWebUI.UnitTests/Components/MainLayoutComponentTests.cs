@@ -4,6 +4,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using Microsoft.JSInterop.Infrastructure;
@@ -28,12 +29,9 @@ public class MainLayoutComponentTests : BunitContext
         mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
 
-        var pipelineService = new PipelineOrchestrationService(
-            mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
-            new AgentPhaseExecutor(mockLogger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), new CiLogWriter(mockLogger.Object), new FeedbackService(mockLogger.Object), mockLogger.Object),
-            mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+        var pipelineService = TestOrchestrationFactory.CreateMinimal(
+            configStore: mockStore.Object,
+            providerFactory: mockFactory.Object,
             historyService: mockHistory.Object);
 
         Services.AddSingleton(new PipelineLoopService(pipelineService, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object));

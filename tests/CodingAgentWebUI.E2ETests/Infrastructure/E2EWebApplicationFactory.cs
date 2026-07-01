@@ -7,6 +7,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
@@ -100,16 +101,25 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
         services.AddSingleton(_dispatcher);
 
         // PipelineOrchestrationService → ResettablePipelineOrchestrationService
+        var lifecycle = new PipelineRunLifecycleService(HistoryService, _runService, Serilog.Log.Logger);
         _orchestration = new ResettablePipelineOrchestrationService(
             ConfigStore,
             FakeProviders,
             new IssueDescriptionParser(),
-            new AgentPhaseExecutor(Serilog.Log.Logger),
-            new QualityGateExecutor(QualityGateValidator, new PullRequestOrchestrator(Serilog.Log.Logger), new CiLogWriter(Serilog.Log.Logger), new FeedbackService(Serilog.Log.Logger), Serilog.Log.Logger),
-            Serilog.Log.Logger,
-            new BrainUpdateService(Serilog.Log.Logger),
-            HistoryService,
-            _runService);
+            new PipelineExecutionFacade(
+                new AgentPhaseExecutor(Serilog.Log.Logger),
+                new QualityGateExecutor(QualityGateValidator, new PullRequestOrchestrator(Serilog.Log.Logger), new CiLogWriter(Serilog.Log.Logger), new FeedbackService(Serilog.Log.Logger), Serilog.Log.Logger),
+                QualityGateValidator,
+                new BrainSyncService(new BrainUpdateService(Serilog.Log.Logger), Serilog.Log.Logger)),
+            new PipelineCompletionFacade(
+                new PullRequestOrchestrator(Serilog.Log.Logger),
+                new PullRequestFinalizationService(Serilog.Log.Logger),
+                new FeedbackService(Serilog.Log.Logger),
+                HistoryService),
+            new PipelineCancellationFacade(null, null),
+            lifecycle,
+            TestOrchestrationFactory.NoOpLabelSwapper.Instance,
+            Serilog.Log.Logger);
         RemoveService<PipelineOrchestrationService>(services);
         services.AddSingleton(_orchestration);
         services.AddSingleton<PipelineOrchestrationService>(_orchestration);

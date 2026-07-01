@@ -7,6 +7,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.TestUtilities;
 
 namespace CodingAgentWebUI.UnitTests.Services;
 
@@ -36,12 +37,9 @@ public class AgentCodingPageServiceTests
         var mockValidator = new Mock<IQualityGateValidator>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistory()).Returns(Array.Empty<PipelineRunSummary>());
-        var orchestration = new PipelineOrchestrationService(
-            _mockConfigStore.Object, _mockProviderFactory.Object,
-            new IssueDescriptionParser(), new AgentPhaseExecutor(mockLogger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), new CiLogWriter(mockLogger.Object), new FeedbackService(mockLogger.Object), mockLogger.Object),
-            mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+        var orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockConfigStore.Object,
+            providerFactory: _mockProviderFactory.Object,
             historyService: mockHistoryService.Object);
 
         _loopService = new PipelineLoopService(

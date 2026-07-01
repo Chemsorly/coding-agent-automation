@@ -3,6 +3,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.TestUtilities;
 using Moq;
 using Serilog;
 using Xunit;
@@ -220,15 +221,10 @@ public class LoopStatePersistenceServiceTests : IDisposable
         mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
 
-        var orchestration = new PipelineOrchestrationService(
-            mockStore.Object,
-            mockFactory.Object,
-            new IssueDescriptionParser(),
-            new Mock<IAgentPhaseExecutor>().Object,
-            new Mock<IQualityGateExecutor>().Object,
-            _logger,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
-            historyService: new Mock<IPipelineRunHistoryService>().Object);
+        var orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: mockStore.Object,
+            providerFactory: mockFactory.Object,
+            logger: _logger);
 
         return new PipelineLoopService(
             orchestration,

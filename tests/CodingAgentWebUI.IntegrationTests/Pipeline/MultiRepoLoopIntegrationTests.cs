@@ -5,6 +5,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.IntegrationTests.Helpers;
+using CodingAgentWebUI.TestUtilities;
 
 namespace CodingAgentWebUI.IntegrationTests.Pipeline;
 
@@ -110,12 +111,9 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HashSet<(string, string)>());
 
-        var orchestration = new PipelineOrchestrationService(
-            ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
-            new AgentPhaseExecutor(MockLogger.Object),
-            new QualityGateExecutor(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), new CiLogWriter(MockLogger.Object), new FeedbackService(MockLogger.Object), MockLogger.Object),
-            MockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+        var orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: ConfigStore,
+            providerFactory: MockFactory.Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(
@@ -194,12 +192,9 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             new ProviderConfig { Id = "rp-exists", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Exists" },
             CancellationToken.None);
 
-        var orchestration = new PipelineOrchestrationService(
-            ConfigStore, MockFactory.Object, new IssueDescriptionParser(),
-            new AgentPhaseExecutor(MockLogger.Object),
-            new QualityGateExecutor(MockValidator.Object, new PullRequestOrchestrator(MockLogger.Object), new CiLogWriter(MockLogger.Object), new FeedbackService(MockLogger.Object), MockLogger.Object),
-            MockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+        var orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: ConfigStore,
+            providerFactory: MockFactory.Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(
