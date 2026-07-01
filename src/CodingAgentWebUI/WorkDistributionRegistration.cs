@@ -259,27 +259,36 @@ public static class WorkDistributionRegistration
     /// Registers two Polly resilience pipelines for DB operations:
     /// - "db-request": 3 retries, 500ms exponential+jitter (~3.5s total) — for HTTP API endpoints
     /// - "db-background": 5 retries, 1s→16s exponential (~31s total) — for DispatchService/ReconciliationService
-    /// Both include circuit breaker: open after 5 consecutive failures, half-open after 30s.
+    /// Both include circuit breaker: open after 5 failures within 30s window, half-open after 30s.
+    ///
+    /// Strategy ordering (Issue #943):
+    ///   CircuitBreaker (outer, first added) → Retry (inner, second added) → delegate
+    ///
+    /// Why CircuitBreaker wraps Retry:
+    /// - When circuit is open, requests fail immediately with BrokenCircuitException (no retries attempted)
+    /// - CB (outer) observes the final outcome after retries are exhausted
+    /// - Circuit trips after 5 failed invocations (each having exhausted retries) within SamplingDuration
+    /// - Prevents retry amplification: open circuit stops all load immediately
     /// </summary>
     private static void RegisterResiliencePipelines(IServiceCollection services)
     {
         services.AddResiliencePipeline("db-request", builder =>
         {
             builder
-                .AddRetry(new RetryStrategyOptions
+                .AddCircuitBreaker(new CircuitBreakerStrategyOptions // OUTER: fail-fast when open
+                {
+                    FailureRatio = 1.0,
+                    SamplingDuration = TimeSpan.FromSeconds(30),
+                    MinimumThroughput = 5, // open after 5 failed invocations within SamplingDuration
+                    BreakDuration = TimeSpan.FromSeconds(30),
+                    ShouldHandle = new PredicateBuilder().Handle<Exception>(IsTransientDbException)
+                })
+                .AddRetry(new RetryStrategyOptions // INNER: retries transient DB errors
                 {
                     MaxRetryAttempts = 3,
                     Delay = TimeSpan.FromMilliseconds(500),
                     BackoffType = DelayBackoffType.Exponential,
                     UseJitter = true,
-                    ShouldHandle = new PredicateBuilder().Handle<Exception>(IsTransientDbException)
-                })
-                .AddCircuitBreaker(new CircuitBreakerStrategyOptions
-                {
-                    FailureRatio = 1.0, // open on 5 consecutive failures
-                    SamplingDuration = TimeSpan.FromSeconds(30),
-                    MinimumThroughput = 5,
-                    BreakDuration = TimeSpan.FromSeconds(30),
                     ShouldHandle = new PredicateBuilder().Handle<Exception>(IsTransientDbException)
                 });
         });
@@ -287,21 +296,21 @@ public static class WorkDistributionRegistration
         services.AddResiliencePipeline("db-background", builder =>
         {
             builder
-                .AddRetry(new RetryStrategyOptions
+                .AddCircuitBreaker(new CircuitBreakerStrategyOptions // OUTER: fail-fast when open
+                {
+                    FailureRatio = 1.0,
+                    SamplingDuration = TimeSpan.FromSeconds(30),
+                    MinimumThroughput = 5, // open after 5 failed invocations within SamplingDuration
+                    BreakDuration = TimeSpan.FromSeconds(30),
+                    ShouldHandle = new PredicateBuilder().Handle<Exception>(IsTransientDbException)
+                })
+                .AddRetry(new RetryStrategyOptions // INNER: retries transient DB errors
                 {
                     MaxRetryAttempts = 5,
                     Delay = TimeSpan.FromSeconds(1),
                     MaxDelay = TimeSpan.FromSeconds(16),
                     BackoffType = DelayBackoffType.Exponential,
                     UseJitter = false,
-                    ShouldHandle = new PredicateBuilder().Handle<Exception>(IsTransientDbException)
-                })
-                .AddCircuitBreaker(new CircuitBreakerStrategyOptions
-                {
-                    FailureRatio = 1.0,
-                    SamplingDuration = TimeSpan.FromSeconds(30),
-                    MinimumThroughput = 5,
-                    BreakDuration = TimeSpan.FromSeconds(30),
                     ShouldHandle = new PredicateBuilder().Handle<Exception>(IsTransientDbException)
                 });
         });
