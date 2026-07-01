@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -32,11 +33,17 @@ public sealed class SignalRTestFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        Environment.SetEnvironmentVariable("AGENT_API_KEY", TestApiKey);
         builder.UseEnvironment("Development");
+        builder.UseSetting("Database:Host", "");
 
         builder.ConfigureServices(services =>
         {
+            // Override the API key via options rather than env var — Program.cs reads
+            // the env var during service registration (before ConfigureWebHost runs),
+            // so Environment.SetEnvironmentVariable is too late.
+            services.PostConfigure<AgentApiKeyAuthOptions>(
+                AgentApiKeyDefaults.AuthenticationScheme,
+                opts => opts.ApiKey = TestApiKey);
             // Remove all hosted services
             services.RemoveAll<IHostedService>();
 
@@ -58,6 +65,15 @@ public sealed class SignalRTestFactory : WebApplicationFactory<Program>
             ReplaceService<IProjectStore>(services, configStore.Object);
             ReplaceService<IProviderFactory>(services, new Mock<IProviderFactory>().Object);
             ReplaceService<IQualityGateValidator>(services, new Mock<IQualityGateValidator>().Object);
+
+            // Mock IConsolidationService — Program.cs calls CleanupOrphanedRunsAsync
+            // and RehydrateQueuedRunsAsync at startup which hit PostgreSQL directly.
+            var consolidationMock = new Mock<IConsolidationService>();
+            consolidationMock.Setup(s => s.CleanupOrphanedRunsAsync(It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+            consolidationMock.Setup(s => s.RehydrateQueuedRunsAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Array.Empty<ConsolidationRun>());
+            ReplaceService<IConsolidationService>(services, consolidationMock.Object);
         });
     }
 

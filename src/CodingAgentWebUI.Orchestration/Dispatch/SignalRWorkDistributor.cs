@@ -104,9 +104,31 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
         var resolveResult = _agentResolver.ResolveAgent(request.AgentSelector);
         if (resolveResult is null)
         {
-            // No connected agent — mark as Failed
-            await TransitionToFailed(workItemId, "No connected agent found for selector: " + request.AgentSelector, ct);
-            return new DistributionResult(false, workItemId.ToString(), "No connected agent available");
+            // No idle agent available — keep WorkItem as Pending for drain service pickup.
+            // The drain service will assign it when an agent becomes idle.
+            await using var pendingDb = await _dbFactory.CreateDbContextAsync(ct);
+            var pendingItem = await pendingDb.WorkItems.FindAsync([workItemId], ct);
+            if (pendingItem is not null)
+            {
+                pendingItem.Status = WorkItemStatus.Pending;
+                pendingItem.DispatchedAt = null;
+                await pendingDb.SaveChangesAsync(ct);
+            }
+
+            _logger.LogInformation(
+                "WorkItem {WorkItemId} for issue {IssueIdentifier} queued as Pending (no idle agent)",
+                workItemId, request.IssueIdentifier);
+
+            // Clear the in-memory PipelineRun's AgentId so HeartbeatMonitor Phase 3
+            // doesn't orphan it (it checks GetByAgentId which returns null for "pending").
+            if (!string.IsNullOrEmpty(request.RunId))
+            {
+                var run = _runService.GetRun(request.RunId);
+                if (run is not null)
+                    run.AgentId = null;
+            }
+
+            return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available");
         }
 
         var connectionId = resolveResult.ConnectionId;
@@ -293,7 +315,7 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             ct);
     }
 
-    private static JobAssignmentMessage BuildJobAssignmentMessage(Guid workItemId, JobDistributionRequest request)
+    internal static JobAssignmentMessage BuildJobAssignmentMessage(Guid workItemId, JobDistributionRequest request)
     {
         return new JobAssignmentMessage
         {

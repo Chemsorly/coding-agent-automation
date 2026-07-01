@@ -730,55 +730,70 @@ public class QualityGateValidatorTests
     [Fact]
     public async Task Compilation_Timeout_ReturnsFailedGateResult()
     {
-        var validator = new TimeoutSimulatingValidator(simulateTimeout: true);
-        var qgc = new QualityGateConfiguration
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-timeout-test-{Guid.NewGuid():N}");
+        try
         {
-            DisplayName = "Test",
-            CompilationCommand = "dotnet",
-            CompilationArguments = ["build"],
-            ProcessTimeoutSeconds = 1
-        };
+            var validator = new TimeoutSimulatingValidator(simulateTimeout: true);
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                CompilationCommand = "dotnet",
+                CompilationArguments = ["build"],
+                ProcessTimeoutSeconds = 1
+            };
 
-        var report = await validator.ValidateAsync("/tmp", [qgc], CancellationToken.None);
+            var report = await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
 
-        report.Compilation.Passed.Should().BeFalse();
-        report.QgcResults[0].Compilation!.Details.Should().Contain("timed out");
+            report.Compilation.Passed.Should().BeFalse();
+            report.QgcResults[0].Compilation!.Details.Should().Contain("timed out");
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
     }
 
     [Fact]
     public async Task Tests_Timeout_ReturnsFailedGateResult()
     {
-        var validator = new TimeoutSimulatingValidator(simulateTimeout: true);
-        var qgc = new QualityGateConfiguration
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-timeout-test-{Guid.NewGuid():N}");
+        try
         {
-            DisplayName = "Test",
-            TestCommand = "dotnet",
-            TestArguments = ["test"],
-            ProcessTimeoutSeconds = 1
-        };
+            var validator = new TimeoutSimulatingValidator(simulateTimeout: true);
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                TestCommand = "dotnet",
+                TestArguments = ["test"],
+                ProcessTimeoutSeconds = 1
+            };
 
-        var report = await validator.ValidateAsync("/tmp", [qgc], CancellationToken.None);
+            var report = await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
 
-        report.Tests!.Passed.Should().BeFalse();
-        report.QgcResults[0].Tests!.Details.Should().Contain("timed out");
+            report.Tests!.Passed.Should().BeFalse();
+            report.QgcResults[0].Tests!.Details.Should().Contain("timed out");
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
     }
 
     [Fact]
     public async Task NormalExecution_WithTimeout_CompletesSuccessfully()
     {
-        var validator = new TimeoutSimulatingValidator(simulateTimeout: false);
-        var qgc = new QualityGateConfiguration
+        var tempWorkspace = Path.Combine(Path.GetTempPath(), $"qg-timeout-test-{Guid.NewGuid():N}");
+        try
         {
-            DisplayName = "Test",
-            CompilationCommand = "dotnet",
-            CompilationArguments = ["build"],
-            ProcessTimeoutSeconds = 600
-        };
+            var validator = new TimeoutSimulatingValidator(simulateTimeout: false);
+            var qgc = new QualityGateConfiguration
+            {
+                DisplayName = "Test",
+                CompilationCommand = "dotnet",
+                CompilationArguments = ["build"],
+                ProcessTimeoutSeconds = 600
+            };
 
-        var report = await validator.ValidateAsync("/tmp", [qgc], CancellationToken.None);
+            var report = await validator.ValidateAsync(tempWorkspace, [qgc], CancellationToken.None);
 
-        report.Compilation.Passed.Should().BeTrue();
-        report.Compilation.Details.Should().NotContain("timed out");
+            report.Compilation.Passed.Should().BeTrue();
+            report.Compilation.Details.Should().NotContain("timed out");
+        }
+        finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
     }
 
     // TODO: Add a test that exercises the real catch(OperationCanceledException) block with a process that holds pipes open after kill, verifying the drain completes within the expected timeout boundary.

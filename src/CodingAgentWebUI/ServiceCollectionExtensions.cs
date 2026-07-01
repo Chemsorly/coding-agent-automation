@@ -273,7 +273,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILogger<AgentHubFacade>>(),
-            sp.GetService<WorkItemTransitionService>()));
+            sp.GetService<WorkItemTransitionService>(),
+            sp.GetService<PendingWorkItemDrainService>()));
 
         return services;
     }

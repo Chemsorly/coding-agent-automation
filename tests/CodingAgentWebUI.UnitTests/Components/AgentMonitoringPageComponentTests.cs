@@ -67,6 +67,8 @@ public class AgentMonitoringPageComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<IActiveRunQueryService>(s =>
             s.GetActiveRunsAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ActiveRunSummary>>(Array.Empty<ActiveRunSummary>())));
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
+        Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
+            Services.BuildServiceProvider().GetRequiredService<JobDispatcherService>()));
     }
 
     [Fact]

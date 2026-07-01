@@ -64,6 +64,9 @@ public static class WorkDistributionRegistration
                 new Pipeline.Services.FileSystemHarnessSuggestionStore(
                     Pipeline.Models.PipelineConstants.HarnessSuggestionsPath));
             services.AddDistributedLockProvider(null);
+            // Queue visibility: wraps in-memory JobDispatcherService
+            services.AddSingleton<IPendingWorkQuery>(sp =>
+                new LegacyPendingWorkQuery(sp.GetRequiredService<JobDispatcherService>()));
             Log.Information("WorkDistribution: Legacy mode (no database). Using JsonConfigurationStore + LegacyWorkDistributor");
             return services;
         }
@@ -213,10 +216,11 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<KubernetesWorkDistributor>>()));
 
         // Dispatch + Reconciliation (under leader election)
+        services.AddSingleton<IKubernetesJobClient>(sp => new KubernetesJobClient(sp.GetRequiredService<IKubernetes>()));
         services.AddHostedService(sp => new DispatchService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<LeaderElectionService>(),
-            sp.GetRequiredService<IKubernetes>(),
+            sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IConfiguration>()));
         services.AddHostedService(sp => new ReconciliationService(
@@ -229,6 +233,10 @@ public static class WorkDistributionRegistration
 
         // HeartbeatMonitorService NOT registered in K8s mode (agent liveness via ReconciliationService)
         // JobQueueDrainService NOT registered (work distribution via IWorkDistributor)
+
+        // Queue visibility: queries WorkItems table for Pending status
+        services.AddSingleton<IPendingWorkQuery>(sp =>
+            new DbPendingWorkQuery(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
         Log.Information("WorkDistribution: Kubernetes mode — DispatchService + ReconciliationService + LeaderElection registered");
     }
@@ -250,9 +258,22 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>()));
 
         // HeartbeatMonitorService remains registered (handled by AddOrchestrationServices)
-        // JobQueueDrainService NOT registered (work distribution via IWorkDistributor, in-memory queue unused)
+        // Queue visibility: queries WorkItems table for Pending status
+        services.AddSingleton<IPendingWorkQuery>(sp =>
+            new DbPendingWorkQuery(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
-        Log.Information("WorkDistribution: SignalR mode — SignalRWorkDistributor registered");
+        // PendingWorkItemDrainService: drains Pending WorkItems to idle agents
+        services.AddSingleton<PendingWorkItemDrainService>(sp => new PendingWorkItemDrainService(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
+            sp.GetRequiredService<IAgentCommunication>(),
+            sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetRequiredService<WorkItemTransitionService>(),
+            sp.GetRequiredService<IPendingWorkQuery>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>()));
+        services.AddHostedService(sp => sp.GetRequiredService<PendingWorkItemDrainService>());
+
+        Log.Information("WorkDistribution: SignalR mode — SignalRWorkDistributor + PendingWorkItemDrainService registered");
     }
 
     /// <summary>

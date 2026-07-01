@@ -28,7 +28,7 @@ public sealed class DispatchService : BackgroundService
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly LeaderElectionService _leaderElection;
-    private readonly IKubernetes _kubeClient;
+    private readonly IKubernetesJobClient _kubeClient;
     private readonly WorkItemTransitionService _transitionService;
     private readonly DispatchServiceOptions _options;
     private readonly TokenBucketRateLimiter _rateLimiter;
@@ -36,7 +36,7 @@ public sealed class DispatchService : BackgroundService
     public DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
         LeaderElectionService leaderElection,
-        IKubernetes kubeClient,
+        IKubernetesJobClient kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration)
     {
@@ -266,7 +266,7 @@ public sealed class DispatchService : BackgroundService
         try
         {
             var job = BuildJobSpec(item, jobName, image, claimedPvc, projectSecrets);
-            await _kubeClient.BatchV1.CreateNamespacedJobAsync(job, _options.Namespace, cancellationToken: ct);
+            await _kubeClient.CreateJobAsync(job, _options.Namespace, ct);
         }
         catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
         {
@@ -541,14 +541,14 @@ public sealed class DispatchService : BackgroundService
             StringData = secrets
         };
 
-        await _kubeClient.CoreV1.CreateNamespacedSecretAsync(secret, _options.Namespace, cancellationToken: ct);
+        await _kubeClient.CreateSecretAsync(secret, _options.Namespace, ct);
     }
 
     private async Task<string?> GetJobUidAsync(string jobName, CancellationToken ct)
     {
         try
         {
-            var job = await _kubeClient.BatchV1.ReadNamespacedJobAsync(jobName, _options.Namespace, cancellationToken: ct);
+            var job = await _kubeClient.ReadJobAsync(jobName, _options.Namespace, ct);
             return job.Metadata?.Uid;
         }
         catch
