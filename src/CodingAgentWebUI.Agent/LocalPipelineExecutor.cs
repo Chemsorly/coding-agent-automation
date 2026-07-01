@@ -193,83 +193,83 @@ public sealed class LocalPipelineExecutor
         }
     }
 
-    private async Task<(IRepositoryProvider RepoProvider, IAgentProvider AgentProvider, IRepositoryProvider? BrainProvider, IPipelineProvider? PipelineProvider, List<(string TemplateName, IRepositoryProvider Provider)>? AdditionalRepoProviders)> ResolveProvidersAsync(
+    internal async Task<(IRepositoryProvider RepoProvider, IAgentProvider AgentProvider, IRepositoryProvider? BrainProvider, IPipelineProvider? PipelineProvider, List<(string TemplateName, IRepositoryProvider Provider)>? AdditionalRepoProviders)> ResolveProvidersAsync(
         JobAssignmentMessage job,
-        AgentProviderFactory providerFactory,
+        IProviderFactory providerFactory,
         ProviderConfig repoConfig,
         ProviderConfig agentConfig,
         CancellationToken ct)
     {
-        // TODO: If CreateAgentProvider (or subsequent Create* calls) throws, previously-created providers leak
-        // because the try/catch below only guards validation. Consider wrapping all creation in a try/catch that
-        // disposes already-created providers on failure.
-        var repoProvider = providerFactory.CreateRepositoryProvider(repoConfig);
-        var agentProvider = providerFactory.CreateAgentProvider(agentConfig);
-
+        IRepositoryProvider? repoProvider = null;
+        IAgentProvider? agentProvider = null;
         IRepositoryProvider? brainProvider = null;
-        if (!string.IsNullOrEmpty(job.BrainProviderConfigId))
-        {
-            var brainConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.BrainProviderConfigId);
-            if (brainConfig is not null)
-            {
-                try
-                {
-                    brainProvider = providerFactory.CreateRepositoryProvider(brainConfig);
-                    await brainProvider.ValidateAsync(ct);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Brain provider validation failed, disabling brain sync");
-                    if (brainProvider is IAsyncDisposable bd) await bd.DisposeAsync();
-                    brainProvider = null;
-                }
-            }
-        }
-
         IPipelineProvider? pipelineProvider = null;
-        if (!string.IsNullOrEmpty(job.PipelineProviderConfigId))
-        {
-            var pipelineConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.PipelineProviderConfigId);
-            if (pipelineConfig is not null)
-                pipelineProvider = await providerFactory.CreatePipelineProviderAsync(pipelineConfig, ct);
-        }
-
-        // Resolve additional repo providers for cross-repo decomposition
         List<(string TemplateName, IRepositoryProvider Provider)>? additionalRepoProviders = null;
-        if (job.ProjectContext is not null &&
-            job.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
-        {
-            additionalRepoProviders = [];
-            foreach (var repoTarget in job.ProjectContext.Repositories)
-            {
-                // Skip the primary repo (already resolved as repoProvider) and repos without a provider ID
-                if (string.IsNullOrEmpty(repoTarget.RepoProviderId) ||
-                    repoTarget.RepoProviderId == job.RepoProviderConfigId)
-                    continue;
-
-                var additionalConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == repoTarget.RepoProviderId);
-                if (additionalConfig is null)
-                {
-                    _logger.Warning("Additional repo provider config '{ProviderId}' for template '{Template}' not found in job assignment",
-                        repoTarget.RepoProviderId, repoTarget.TemplateName);
-                    continue;
-                }
-
-                try
-                {
-                    var additionalProvider = providerFactory.CreateRepositoryProvider(additionalConfig);
-                    additionalRepoProviders.Add((repoTarget.TemplateName, additionalProvider));
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Failed to create repo provider for template '{Template}', skipping",
-                        repoTarget.TemplateName);
-                }
-            }
-        }
 
         try
         {
+            repoProvider = providerFactory.CreateRepositoryProvider(repoConfig);
+            agentProvider = providerFactory.CreateAgentProvider(agentConfig);
+
+            if (!string.IsNullOrEmpty(job.BrainProviderConfigId))
+            {
+                var brainConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.BrainProviderConfigId);
+                if (brainConfig is not null)
+                {
+                    try
+                    {
+                        brainProvider = providerFactory.CreateRepositoryProvider(brainConfig);
+                        await brainProvider.ValidateAsync(ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Warning(ex, "Brain provider validation failed, disabling brain sync");
+                        if (brainProvider is not null) await brainProvider.DisposeAsync();
+                        brainProvider = null;
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(job.PipelineProviderConfigId))
+            {
+                var pipelineConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.PipelineProviderConfigId);
+                if (pipelineConfig is not null)
+                    pipelineProvider = await providerFactory.CreatePipelineProviderAsync(pipelineConfig, ct);
+            }
+
+            // Resolve additional repo providers for cross-repo decomposition
+            if (job.ProjectContext is not null &&
+                job.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+            {
+                additionalRepoProviders = [];
+                foreach (var repoTarget in job.ProjectContext.Repositories)
+                {
+                    // Skip the primary repo (already resolved as repoProvider) and repos without a provider ID
+                    if (string.IsNullOrEmpty(repoTarget.RepoProviderId) ||
+                        repoTarget.RepoProviderId == job.RepoProviderConfigId)
+                        continue;
+
+                    var additionalConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == repoTarget.RepoProviderId);
+                    if (additionalConfig is null)
+                    {
+                        _logger.Warning("Additional repo provider config '{ProviderId}' for template '{Template}' not found in job assignment",
+                            repoTarget.RepoProviderId, repoTarget.TemplateName);
+                        continue;
+                    }
+
+                    try
+                    {
+                        var additionalProvider = providerFactory.CreateRepositoryProvider(additionalConfig);
+                        additionalRepoProviders.Add((repoTarget.TemplateName, additionalProvider));
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Warning(ex, "Failed to create repo provider for template '{Template}', skipping",
+                            repoTarget.TemplateName);
+                    }
+                }
+            }
+
             await repoProvider.ValidateAsync(ct);
             await agentProvider.ValidateAsync(ct);
             if (pipelineProvider is not null)
@@ -277,16 +277,16 @@ public sealed class LocalPipelineExecutor
         }
         catch
         {
-            if (repoProvider is IAsyncDisposable rd) await rd.DisposeAsync();
-            if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
-            if (brainProvider is IAsyncDisposable brd) await brd.DisposeAsync();
-            if (pipelineProvider is IAsyncDisposable pd) await pd.DisposeAsync();
+            // TODO: If any individual DisposeAsync call throws, subsequent providers won't be disposed.
+            // Wrap each disposal in its own try/catch to ensure all resources are cleaned up even if one fails.
+            if (repoProvider is not null) await repoProvider.DisposeAsync();
+            if (agentProvider is not null) await agentProvider.DisposeAsync();
+            if (brainProvider is not null) await brainProvider.DisposeAsync();
+            if (pipelineProvider is not null) await pipelineProvider.DisposeAsync();
             if (additionalRepoProviders is not null)
             {
                 foreach (var (_, provider) in additionalRepoProviders)
-                {
-                    if (provider is IAsyncDisposable ard) await ard.DisposeAsync();
-                }
+                    await provider.DisposeAsync();
             }
             throw;
         }
