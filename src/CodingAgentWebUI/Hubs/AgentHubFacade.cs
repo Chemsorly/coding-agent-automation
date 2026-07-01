@@ -225,4 +225,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public IIssueProvider CreateIssueProvider(ProviderConfig config)
         => _providerFactory.CreateIssueProvider(config);
+
+    /// <inheritdoc />
+    public IRepositoryProvider CreateRepositoryProvider(ProviderConfig config)
+        => _providerFactory.CreateRepositoryProvider(config);
 }

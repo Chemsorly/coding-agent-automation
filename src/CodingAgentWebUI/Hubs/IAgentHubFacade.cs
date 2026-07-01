@@ -133,4 +133,9 @@ public interface IAgentHubFacade
     /// Creates an issue provider from the given configuration.
     /// </summary>
     IIssueProvider CreateIssueProvider(ProviderConfig config);
+
+    /// <summary>
+    /// Creates a repository provider from the given configuration.
+    /// </summary>
+    IRepositoryProvider CreateRepositoryProvider(ProviderConfig config);
 }

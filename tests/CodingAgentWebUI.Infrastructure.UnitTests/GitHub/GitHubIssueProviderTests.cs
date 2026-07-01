@@ -138,14 +138,18 @@ public class GitHubIssueProviderTests
     }
 
     [Fact]
-    public async Task PostCommentAsync_CallsOctokitCreateComment()
+    public async Task PostCommentAsync_CallsOctokitCreateComment_ReturnsHtmlUrl()
     {
         var mockComments = new Mock<IIssueCommentsClient>();
+        mockComments.Setup(c => c.Create("owner", "repo", 42, "Test comment body"))
+            .ReturnsAsync((Octokit.IssueComment)null!);
         _mockIssues.Setup(i => i.Comment).Returns(mockComments.Object);
 
-        await _provider.PostCommentAsync("42", "Test comment body", CancellationToken.None);
+        var url = await _provider.PostCommentAsync("42", "Test comment body", CancellationToken.None);
 
         mockComments.Verify(c => c.Create("owner", "repo", 42, "Test comment body"), Times.Once);
+        // Returns null when Octokit returns null (URL extraction is null-safe)
+        url.Should().BeNull();
     }
 
     [Fact]

@@ -122,7 +122,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
-    public async Task PostCommentAsync(string identifier, string body, CancellationToken ct)
+    public async Task<string?> PostCommentAsync(string identifier, string body, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(identifier);
         ArgumentNullException.ThrowIfNull(body);
@@ -130,13 +130,18 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
 
         try
         {
-            await ExecuteWriteWithResilienceAsync(
+            var note = await ExecuteWriteWithResilienceAsync(
                 client =>
                 {
                     var noteClient = client.GetProjectIssueNoteClient(ProjectId);
                     return Task.Run(() => noteClient.Create(new ProjectIssueNoteCreate { IssueId = iid, Body = body }), ct);
                 },
                 "PostComment", ct);
+
+            // Construct the note URL from instance base + project path + issue IID + note ID
+            if (note is not null && PathWithNamespace is not null)
+                return $"{ApiUrl.TrimEnd('/')}/{PathWithNamespace}/-/issues/{iid}#note_{note.NoteId}";
+            return null;
         }
         catch (GitLabException ex) when ((int)ex.StatusCode == 404)
         {

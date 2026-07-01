@@ -54,10 +54,10 @@ public sealed class InMemoryIssueProvider : IIssueProvider
     public Task<IReadOnlyList<IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<IssueComment>>(new List<IssueComment>());
 
-    public Task PostCommentAsync(string identifier, string body, CancellationToken ct)
+    public Task<string?> PostCommentAsync(string identifier, string body, CancellationToken ct)
     {
         PostedComments.Add((identifier, body));
-        return Task.CompletedTask;
+        return Task.FromResult<string?>(null);
     }
 
     public Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct) =>

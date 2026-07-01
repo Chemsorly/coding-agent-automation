@@ -33,17 +33,20 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// <summary>
     /// Posts an analysis comment on the issue via the orchestrator.
     /// </summary>
-    public Task PostCommentAsync(string issueIdentifier, string body, CancellationToken ct)
+    public Task<string?> PostCommentAsync(string issueIdentifier, string body, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(body);
         return _signalRPipeline.ExecuteAsync(async token =>
+        {
             await _connection.InvokeAsync(
                 HubMethodNames.RequestPostComment,
                 _jobId,
                 CommentType.Analysis,
                 new CommentPayload { AnalysisMarkdown = body },
-                token), ct).AsTask();
+                token);
+            return (string?)null;
+        }, ct).AsTask();
     }
 
     /// <summary>

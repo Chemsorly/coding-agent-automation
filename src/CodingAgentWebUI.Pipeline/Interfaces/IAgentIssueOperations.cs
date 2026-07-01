@@ -12,9 +12,9 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 public interface IAgentIssueOperations
 {
     /// <summary>
-    /// Posts a comment on the specified issue.
+    /// Posts a comment on the specified issue. Returns the comment URL if available.
     /// </summary>
-    Task PostCommentAsync(string issueIdentifier, string body, CancellationToken ct);
+    Task<string?> PostCommentAsync(string issueIdentifier, string body, CancellationToken ct);
 
     /// <summary>
     /// Swaps the current agent label on the specified issue to <paramref name="newLabel"/>.

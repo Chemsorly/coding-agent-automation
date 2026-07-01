@@ -1019,6 +1019,123 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     #endregion
 
+    #region PostIssueFeedbackComment — Feedback link in PR body
+
+    [Fact]
+    public async Task PostIssueFeedbackComment_WhenCommentUrlReturned_AppendsFeedbackLinkToPrBody()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "99";
+        run.PullRequestBody = "Existing PR body";
+
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        // Issue provider setup — returns a comment URL
+        var issueConfig = new ProviderConfig { Id = "issue-cfg-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test" };
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("issue-cfg-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.PostCommentAsync("org/repo#42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/issues/42#issuecomment-999");
+        mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _mockFacade.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
+
+        // Repo provider setup — captures the updated body
+        var repoConfig = new ProviderConfig { Id = "repo-cfg-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test" };
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-cfg-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfig);
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.GetPullRequestBodyAsync(99, It.IsAny<CancellationToken>()))
+            .ReturnsAsync("Existing PR body");
+        _mockFacade.Setup(f => f.CreateRepositoryProvider(repoConfig)).Returns(mockRepoProvider.Object);
+
+        var hub = CreateHubWithOrchestration();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            PullRequestNumber = "99",
+            Feedback = new RunFeedback
+            {
+                Outcome = FeedbackOutcome.Success,
+                CollectedAtUtc = DateTime.UtcNow,
+                Harness = new HarnessFeedback(),
+                Issue = new IssueFeedback { Description = "AC contradicts stakeholder comment" }
+            }
+        };
+        await hub.ReportJobCompleted("job-1", payload);
+
+        // Assert — PR body was updated with feedback link
+        mockRepoProvider.Verify(r => r.UpdatePullRequestAsync(99,
+            It.Is<string>(body => body.Contains("## Agent Feedback") && body.Contains("issuecomment-999")),
+            false, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task PostIssueFeedbackComment_WhenFeedbackAlreadyInBody_SkipsAppend()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "99";
+        run.PullRequestBody = "Existing body\n\n## Agent Feedback\nAlready here.";
+
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var issueConfig = new ProviderConfig { Id = "issue-cfg-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test" };
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("issue-cfg-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(issueConfig);
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider.Setup(p => p.PostCommentAsync("org/repo#42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/issues/42#issuecomment-999");
+        mockIssueProvider.Setup(p => p.ValidateAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        _mockFacade.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
+
+        var hub = CreateHubWithOrchestration();
+        var payload = new JobCompletionPayload
+        {
+            FinalStep = PipelineStep.Completed,
+            CompletedAt = DateTimeOffset.UtcNow,
+            Feedback = new RunFeedback
+            {
+                Outcome = FeedbackOutcome.Success,
+                CollectedAtUtc = DateTime.UtcNow,
+                Harness = new HarnessFeedback(),
+                Issue = new IssueFeedback { Description = "Some feedback" }
+            }
+        };
+        await hub.ReportJobCompleted("job-1", payload);
+
+        // Assert — repo provider never called (idempotency guard triggered)
+        _mockFacade.Verify(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PostIssueFeedbackComment_WhenNoFeedback_DoesNotPostOrAppend()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "99";
+        run.Feedback = null;
+
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var hub = CreateHubWithOrchestration();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+        await hub.ReportJobCompleted("job-1", payload);
+
+        // Assert — no issue provider created (no comment to post)
+        _mockFacade.Verify(f => f.GetProviderConfigByIdAsync("issue-cfg-1", ProviderKind.Issue, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    #endregion
+
     public void Dispose()
     {
         foreach (var orchestration in _orchestrationInstances)

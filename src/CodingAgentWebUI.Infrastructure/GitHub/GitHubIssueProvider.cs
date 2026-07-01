@@ -157,15 +157,16 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         };
     }
 
-    public async Task PostCommentAsync(string identifier, string body, CancellationToken ct)
+    public async Task<string?> PostCommentAsync(string identifier, string body, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(identifier);
         ArgumentNullException.ThrowIfNull(body);
         var issueNumber = ParseIssueIdentifier(identifier);
 
-        await ExecuteWithResilienceAsync(
+        var comment = await ExecuteWithResilienceAsync(
             client => client.Issue.Comment.Create(Owner, Repo, issueNumber, body),
             "PostComment", ct);
+        return comment?.HtmlUrl?.ToString();
     }
 
     public async Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct)

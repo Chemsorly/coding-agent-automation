@@ -106,7 +106,7 @@ public class PostDecompositionPlanStepTests : IDisposable
         _issueOps.Setup(x => x.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
         _issueOps.Setup(x => x.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync((string?)null);
         _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -220,7 +220,7 @@ public class PostDecompositionPlanStepTests : IDisposable
         _issueOps.Setup(x => x.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
         _issueOps.Setup(x => x.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync((string?)null);
         _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 

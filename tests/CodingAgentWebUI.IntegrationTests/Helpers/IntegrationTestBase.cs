@@ -56,7 +56,7 @@ public class IntegrationTestBase : IDisposable
                 Labels = Array.Empty<string>()
             });
         MockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
+            .ReturnsAsync((string?)null);
         MockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
         MockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
