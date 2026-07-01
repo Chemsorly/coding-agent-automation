@@ -23,6 +23,10 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
     private readonly WorkItemTransitionService _transitionService;
     private readonly ISignalRWorkDistributorAgentResolver _agentResolver;
     private readonly IOrchestratorRunService _runService;
+    private readonly IProjectStore _projectStore;
+    private readonly ILabelSwapper _labelSwapper;
+    private readonly IRunLifecycleManager? _lifecycleManager;
+    private readonly IAgentCancellationSender? _cancellationSender;
     private readonly ILogger<SignalRWorkDistributor> _logger;
 
     /// <summary>Non-terminal statuses used for dedup queries.</summary>
@@ -39,14 +43,22 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
         WorkItemTransitionService transitionService,
         ISignalRWorkDistributorAgentResolver agentResolver,
         IOrchestratorRunService runService,
-        ILogger<SignalRWorkDistributor> logger)
+        IProjectStore projectStore,
+        ILabelSwapper labelSwapper,
+        ILogger<SignalRWorkDistributor> logger,
+        IRunLifecycleManager? lifecycleManager = null,
+        IAgentCancellationSender? cancellationSender = null)
     {
         _dbFactory = dbFactory;
         _agentComm = agentComm;
         _transitionService = transitionService;
         _agentResolver = agentResolver;
         _runService = runService;
+        _projectStore = projectStore;
+        _labelSwapper = labelSwapper;
         _logger = logger;
+        _lifecycleManager = lifecycleManager;
+        _cancellationSender = cancellationSender;
     }
 
     /// <inheritdoc />
@@ -128,6 +140,23 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
                     run.AgentId = null;
             }
 
+            // Revert label to agent:next — the issue isn't actually in progress yet.
+            // Best-effort: failure here must not break queueing.
+            try
+            {
+                var targetKind = request.RunType == PipelineRunType.Review
+                    ? LabelTargetKind.PullRequest
+                    : LabelTargetKind.Issue;
+                await _labelSwapper.SwapLabelAsync(
+                    request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.Next, targetKind, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "Failed to revert label to agent:next for issue {IssueIdentifier} (best-effort, queueing continues)",
+                    request.IssueIdentifier);
+            }
+
             return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available");
         }
 
@@ -146,6 +175,15 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             }
 
             var message = BuildJobAssignmentMessage(workItemId, request);
+
+            // Inject project secrets at delivery time (not serialized in WorkItem payload for security)
+            if (!string.IsNullOrEmpty(request.ProjectId))
+            {
+                var project = await _projectStore.GetProjectByIdAsync(request.ProjectId, ct);
+                if (project?.Secrets is { Count: > 0 })
+                    message = message with { ProjectSecrets = project.Secrets };
+            }
+
             await _agentComm.AssignJobAsync(connectionId, message, ct);
 
             // Set ActiveJobId on the agent entry so HeartbeatMonitor and monitoring UI
@@ -199,6 +237,22 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
         if (!Guid.TryParse(jobId, out var workItemId))
             return false;
 
+        // Use lifecycle manager for full cleanup (in-memory + DB + label + agent state)
+        if (_lifecycleManager is not null)
+        {
+            var cancelledRun = await _lifecycleManager.CancelRunAsync(jobId, ct);
+            if (cancelledRun is not null)
+            {
+                // Send cancel signal to the agent (best-effort)
+                if (!string.IsNullOrEmpty(cancelledRun.AgentId) && _cancellationSender is not null)
+                    await _cancellationSender.SendCancelJobAsync(cancelledRun.AgentId, jobId, ct);
+                return true;
+            }
+
+            // Run not found in memory — fall through to DB-only transition
+        }
+
+        // Fallback: DB-only transition (run not in memory, or lifecycle manager not available)
         return await _transitionService.TransitionAsync(
             workItemId,
             WorkItemStatus.Cancelled,
@@ -361,8 +415,8 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             TraceContext = request.TraceContext,
             IssueProviderConfigId = request.IssueProviderConfigId
             // NOTE: ProjectSecrets are NOT serialized to WorkItem payload (security).
-            // In SignalR mode, secrets are delivered at DistributeAsync time from Project.Secrets.
-            // TODO: Load project secrets from DB and inject here.
+            // In SignalR mode, secrets are injected at DistributeAsync/DrainPendingItemsAsync time
+            // from IProjectStore after the message is built.
         };
     }
 

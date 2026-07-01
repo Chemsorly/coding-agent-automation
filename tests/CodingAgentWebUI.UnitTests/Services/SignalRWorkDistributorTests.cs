@@ -4,12 +4,14 @@ using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using System.Collections.Generic;
 
 namespace CodingAgentWebUI.UnitTests.Services;
 
@@ -22,6 +24,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly Mock<IAgentCommunication> _mockAgentComm;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver;
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper;
     private readonly SignalRWorkDistributor _sut;
     private readonly InMemoryDbContextFactory _dbFactory;
 
@@ -40,6 +43,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
         _mockAgentComm = new Mock<IAgentCommunication>();
         _mockResolver = new Mock<ISignalRWorkDistributorAgentResolver>();
+        _mockLabelSwapper = new Mock<ILabelSwapper>();
 
         var transitionService = new WorkItemTransitionService(
             _dbFactory,
@@ -51,6 +55,8 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             transitionService,
             _mockResolver.Object,
             new Mock<IOrchestratorRunService>().Object,
+            new Mock<IProjectStore>().Object,
+            _mockLabelSwapper.Object,
             NullLogger<SignalRWorkDistributor>.Instance);
     }
 
@@ -523,6 +529,8 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         var sut = new SignalRWorkDistributor(
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, mockRunService.Object,
+            new Mock<IProjectStore>().Object,
+            new Mock<ILabelSwapper>().Object,
             NullLogger<SignalRWorkDistributor>.Instance);
 
         var request = CreateMinimalRequest() with { RunId = runId };
@@ -614,6 +622,270 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         // Assert: AssignJob never called on failure
         result.Success.Should().BeFalse();
         _mockResolver.Verify(r => r.AssignJob(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_WithProjectId_InjectsProjectSecretsIntoMessage()
+    {
+        // Arrange: project with secrets in the store
+        var projectId = "proj-123";
+        var expectedSecrets = new Dictionary<string, string>
+        {
+            ["API_KEY"] = "secret-api-key-value",
+            ["DB_PASSWORD"] = "super-secret-db-pass"
+        };
+
+        var mockProjectStore = new Mock<IProjectStore>();
+        mockProjectStore
+            .Setup(s => s.GetProjectByIdAsync(projectId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineProject
+            {
+                Id = projectId,
+                Name = "Test Project",
+                Secrets = expectedSecrets
+            });
+
+        var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+        var sut = new SignalRWorkDistributor(
+            _dbFactory, _mockAgentComm.Object, transitionService,
+            _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
+            mockProjectStore.Object,
+            new Mock<ILabelSwapper>().Object,
+            NullLogger<SignalRWorkDistributor>.Instance);
+
+        var request = CreateMinimalRequest() with { ProjectId = projectId };
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockAgentComm
+            .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert: message sent to agent includes project secrets
+        result.Success.Should().BeTrue();
+        _mockAgentComm.Verify(c => c.AssignJobAsync("conn-1",
+            It.Is<JobAssignmentMessage>(m =>
+                m.ProjectSecrets != null &&
+                m.ProjectSecrets.Count == 2 &&
+                m.ProjectSecrets["API_KEY"] == "secret-api-key-value" &&
+                m.ProjectSecrets["DB_PASSWORD"] == "super-secret-db-pass"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_WithoutProjectId_DoesNotSetProjectSecrets()
+    {
+        // Arrange: no project ID on the request
+        var mockProjectStore = new Mock<IProjectStore>();
+        var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+        var sut = new SignalRWorkDistributor(
+            _dbFactory, _mockAgentComm.Object, transitionService,
+            _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
+            mockProjectStore.Object,
+            new Mock<ILabelSwapper>().Object,
+            NullLogger<SignalRWorkDistributor>.Instance);
+
+        var request = CreateMinimalRequest(); // no ProjectId
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockAgentComm
+            .Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Act
+        var result = await sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert: no project store call, no secrets on message
+        result.Success.Should().BeTrue();
+        mockProjectStore.Verify(s => s.GetProjectByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockAgentComm.Verify(c => c.AssignJobAsync("conn-1",
+            It.Is<JobAssignmentMessage>(m => m.ProjectSecrets == null),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_NoAgent_RevertsLabelToNext_ForIssueRunType()
+    {
+        // Arrange: no idle agent, implementation run type (label target = Issue)
+        var request = CreateMinimalRequest() with { RunType = PipelineRunType.Implementation };
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns((AgentResolveResult?)null);
+
+        // Act
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert: label swapped back to agent:next on Issue
+        result.Success.Should().BeTrue();
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip-1", "owner/repo#1", AgentLabels.Next, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_NoAgent_RevertsLabelToNext_ForReviewRunType()
+    {
+        // Arrange: no idle agent, review run type (label target = PullRequest)
+        var request = CreateMinimalRequest() with { RunType = PipelineRunType.Review };
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns((AgentResolveResult?)null);
+
+        // Act
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert: label swapped back to agent:next on PullRequest
+        result.Success.Should().BeTrue();
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip-1", "owner/repo#1", AgentLabels.Next, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_NoAgent_LabelSwapFailure_DoesNotThrow()
+    {
+        // Arrange: label swap throws — should not propagate
+        var request = CreateMinimalRequest();
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns((AgentResolveResult?)null);
+        _mockLabelSwapper
+            .Setup(l => l.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("GitHub API error"));
+
+        // Act
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        // Assert: still succeeds (label swap is best-effort)
+        result.Success.Should().BeTrue();
+        result.ErrorMessage.Should().Contain("Queued");
+    }
+
+    // ── CancelJobAsync with IRunLifecycleManager ─────────────────────────
+
+    [Fact]
+    public async Task CancelJobAsync_WithLifecycleManager_DelegatesToCancelRunAsync()
+    {
+        // Arrange: create SUT with lifecycle manager injected
+        var mockLifecycle = new Mock<IRunLifecycleManager>();
+        var mockCancellation = new Mock<IAgentCancellationSender>();
+        var runId = Guid.NewGuid().ToString();
+        var cancelledRun = PipelineRun.Create(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "agent-1");
+
+        mockLifecycle
+            .Setup(l => l.CancelRunAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cancelledRun);
+
+        var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+        var sut = new SignalRWorkDistributor(
+            _dbFactory, _mockAgentComm.Object, transitionService,
+            _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
+            new Mock<IProjectStore>().Object, new Mock<ILabelSwapper>().Object,
+            NullLogger<SignalRWorkDistributor>.Instance,
+            mockLifecycle.Object, mockCancellation.Object);
+
+        // Act
+        var result = await sut.CancelJobAsync(runId, CancellationToken.None);
+
+        // Assert
+        result.Should().BeTrue();
+        mockLifecycle.Verify(l => l.CancelRunAsync(runId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelJobAsync_WithLifecycleManager_SendsCancelSignalToAgent()
+    {
+        // Arrange
+        var mockLifecycle = new Mock<IRunLifecycleManager>();
+        var mockCancellation = new Mock<IAgentCancellationSender>();
+        var runId = Guid.NewGuid().ToString();
+        var cancelledRun = PipelineRun.Create(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "agent-42");
+
+        mockLifecycle
+            .Setup(l => l.CancelRunAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cancelledRun);
+
+        var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+        var sut = new SignalRWorkDistributor(
+            _dbFactory, _mockAgentComm.Object, transitionService,
+            _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
+            new Mock<IProjectStore>().Object, new Mock<ILabelSwapper>().Object,
+            NullLogger<SignalRWorkDistributor>.Instance,
+            mockLifecycle.Object, mockCancellation.Object);
+
+        // Act
+        await sut.CancelJobAsync(runId, CancellationToken.None);
+
+        // Assert: cancel signal sent to agent
+        mockCancellation.Verify(c => c.SendCancelJobAsync("agent-42", runId, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelJobAsync_LifecycleManagerReturnsNull_FallsBackToDbTransition()
+    {
+        // Arrange: lifecycle manager returns null (run not found in memory)
+        var mockLifecycle = new Mock<IRunLifecycleManager>();
+        var workItemId = Guid.NewGuid();
+        mockLifecycle
+            .Setup(l => l.CancelRunAsync(workItemId.ToString(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        // Insert a Dispatched work item so DB fallback can transition it
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#99",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Dispatched,
+                AgentSelector = "kiro",
+                CreatedAt = DateTimeOffset.UtcNow,
+                DispatchedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 300
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+        var sut = new SignalRWorkDistributor(
+            _dbFactory, _mockAgentComm.Object, transitionService,
+            _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
+            new Mock<IProjectStore>().Object, new Mock<ILabelSwapper>().Object,
+            NullLogger<SignalRWorkDistributor>.Instance,
+            mockLifecycle.Object, null);
+
+        // Act
+        var result = await sut.CancelJobAsync(workItemId.ToString(), CancellationToken.None);
+
+        // Assert: falls back to DB transition
+        result.Should().BeTrue();
+        await using var dbVerify = new InMemoryPipelineDbContext(_dbOptions);
+        var item = await dbVerify.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Cancelled);
+    }
+
+    [Fact]
+    public async Task CancelJobAsync_NoLifecycleManager_UsesLegacyDbTransition()
+    {
+        // The default _sut has no lifecycle manager (constructed without it) — legacy behavior preserved
+        var workItemId = Guid.NewGuid();
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#50",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Dispatched,
+                AgentSelector = "kiro",
+                CreatedAt = DateTimeOffset.UtcNow,
+                DispatchedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 300
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var result = await _sut.CancelJobAsync(workItemId.ToString(), CancellationToken.None);
+
+        result.Should().BeTrue();
+        await using var dbVerify = new InMemoryPipelineDbContext(_dbOptions);
+        var item = await dbVerify.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Cancelled);
     }
 
     private static JobDistributionRequest CreateMinimalRequest() => new()

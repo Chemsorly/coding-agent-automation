@@ -169,7 +169,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     {
         var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
         return new SignalRWorkDistributor(_dbFactory, _mockAgentComm.Object, transitionService,
-            _mockResolver.Object, _runService, NullLogger<SignalRWorkDistributor>.Instance);
+            _mockResolver.Object, _runService, new Mock<IProjectStore>().Object, new Mock<ILabelSwapper>().Object, NullLogger<SignalRWorkDistributor>.Instance);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

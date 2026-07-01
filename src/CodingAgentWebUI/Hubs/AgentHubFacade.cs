@@ -111,7 +111,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
             {
                 var result = await _workItemTransition.TransitionAsync(workItemId, status, item =>
                 {
-                    item.CompletedAt = DateTimeOffset.UtcNow;
+                    if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+                        item.CompletedAt = DateTimeOffset.UtcNow;
                 }, ct);
 
                 if (result)
@@ -137,7 +138,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
                     {
                         var finalResult = await _workItemTransition.TransitionAsync(workItemId, status, item =>
                         {
-                            item.CompletedAt = DateTimeOffset.UtcNow;
+                            if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+                                item.CompletedAt = DateTimeOffset.UtcNow;
                         }, ct);
 
                         if (finalResult)

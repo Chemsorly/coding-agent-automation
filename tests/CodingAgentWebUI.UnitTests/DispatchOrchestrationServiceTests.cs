@@ -909,3 +909,205 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             Times.Once);
     }
 }
+
+/// <summary>
+/// Tests for <see cref="DispatchOrchestrationService.RevertFailedDistributionAsync"/> with IRunLifecycleManager.
+/// Validates that the DB WorkItem is transitioned to Failed immediately on distribution failure.
+/// </summary>
+public class DispatchOrchestrationService_RevertFailedDistribution_LifecycleTests
+{
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<IRunLifecycleManager> _mockLifecycle = new();
+    private readonly Mock<ILogger> _mockLogger = new();
+    private readonly OrchestratorRunService _runService;
+    private readonly DispatchOrchestrationService _service;
+
+    public DispatchOrchestrationService_RevertFailedDistribution_LifecycleTests()
+    {
+        _runService = new OrchestratorRunService(_mockLogger.Object);
+
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        var mockProviderFactory = new Mock<IProviderFactory>();
+        var mockTokenVending = new Mock<ITokenVendingService>();
+        var resolution = new DispatchResolutionService(
+            new ProfileResolver(),
+            new QualityGateResolver(),
+            new ReviewerResolver(),
+            mockConfigStore.Object,
+            _mockLogger.Object);
+        var orchestration = new PipelineOrchestrationService(
+            mockConfigStore.Object, mockProviderFactory.Object,
+            new IssueDescriptionParser(),
+            new Mock<IAgentPhaseExecutor>().Object,
+            new Mock<IQualityGateExecutor>().Object,
+            _mockLogger.Object,
+            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+            historyService: new Mock<IPipelineRunHistoryService>().Object,
+            runService: _runService);
+
+        _service = new DispatchOrchestrationService(
+            new DispatchInfrastructure(
+                mockTokenVending.Object, mockProviderFactory.Object,
+                _mockLabelSwapper.Object, resolution),
+            orchestration,
+            _runService, _mockLogger.Object,
+            _mockLifecycle.Object);
+    }
+
+    [Fact]
+    public async Task RevertFailedDistribution_WithLifecycleManager_TransitionsWorkItemToFailed()
+    {
+        // Arrange: dangling run exists
+        var run = new PipelineRun
+        {
+            RunId = "run-lifecycle-1",
+            IssueIdentifier = "owner/repo#100",
+            IssueTitle = "Test issue",
+            IssueProviderConfigId = "ipc-lc",
+            RepoProviderConfigId = "rpc-lc"
+        };
+        _runService.AddRun(run);
+
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#100",
+            IssueProviderConfigId = "ipc-lc",
+            RepoProviderConfigId = "rpc-lc",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600,
+            RunId = "run-lifecycle-1"
+        };
+
+        // Act
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        // Assert: lifecycle manager called to transition WorkItem to Failed
+        _mockLifecycle.Verify(
+            l => l.TransitionWorkItemToFailedAsync("run-lifecycle-1", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RevertFailedDistribution_WithLifecycleManager_UsesRunIdFromDanglingRun()
+    {
+        // Arrange: dangling run with a specific RunId, request has no RunId
+        var run = new PipelineRun
+        {
+            RunId = "dangling-run-xyz",
+            IssueIdentifier = "owner/repo#200",
+            IssueTitle = "Test issue",
+            IssueProviderConfigId = "ipc-dr",
+            RepoProviderConfigId = "rpc-dr"
+        };
+        _runService.AddRun(run);
+
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#200",
+            IssueProviderConfigId = "ipc-dr",
+            RepoProviderConfigId = "rpc-dr",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600
+            // RunId intentionally not set — should use dangling run's RunId
+        };
+
+        // Act
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        // Assert: uses the dangling run's RunId for DB transition
+        _mockLifecycle.Verify(
+            l => l.TransitionWorkItemToFailedAsync("dangling-run-xyz", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RevertFailedDistribution_TransitionFailure_DoesNotThrow()
+    {
+        // Arrange: lifecycle manager throws on transition
+        _mockLifecycle
+            .Setup(l => l.TransitionWorkItemToFailedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB connection lost"));
+
+        var run = new PipelineRun
+        {
+            RunId = "run-fail-transition",
+            IssueIdentifier = "owner/repo#300",
+            IssueTitle = "Test issue",
+            IssueProviderConfigId = "ipc-ft",
+            RepoProviderConfigId = "rpc-ft"
+        };
+        _runService.AddRun(run);
+
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#300",
+            IssueProviderConfigId = "ipc-ft",
+            RepoProviderConfigId = "rpc-ft",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600
+        };
+
+        // Act — should not throw
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        // Assert: label was still reverted despite transition failure
+        _mockLabelSwapper.Verify(
+            s => s.SwapLabelAsync("ipc-ft", "owner/repo#300", AgentLabels.Next, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RevertFailedDistribution_NoDanglingRun_UsesRequestRunId()
+    {
+        // Arrange: no dangling run in memory, but request has RunId
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#400",
+            IssueProviderConfigId = "ipc-nr",
+            RepoProviderConfigId = "rpc-nr",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600,
+            RunId = "request-run-id-fallback"
+        };
+
+        // Act
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        // Assert: uses request.RunId as fallback
+        _mockLifecycle.Verify(
+            l => l.TransitionWorkItemToFailedAsync("request-run-id-fallback", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task RevertFailedDistribution_NoRunIdAnywhere_DoesNotCallLifecycleManager()
+    {
+        // Arrange: no dangling run, no RunId on request
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#500",
+            IssueProviderConfigId = "ipc-empty",
+            RepoProviderConfigId = "rpc-empty",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "dotnet",
+            TimeoutSeconds = 3600
+        };
+
+        // Act
+        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+
+        // Assert: lifecycle manager NOT called (no runId to transition)
+        _mockLifecycle.Verify(
+            l => l.TransitionWorkItemToFailedAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+}

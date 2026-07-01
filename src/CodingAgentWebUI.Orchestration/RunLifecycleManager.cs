@@ -77,7 +77,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct);
 
         // 3. Persist to history
-        _historyService.AddRunToHistory(run);
+        await _historyService.AddRunToHistoryAsync(run, ct);
 
         // 4. Mark issue complete in dedup tracker
         _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
@@ -111,7 +111,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         await TransitionWorkItemAsync(runId, terminalStatus, ct);
 
         // 2. Persist to history
-        _historyService.AddRunToHistory(run);
+        await _historyService.AddRunToHistoryAsync(run, ct);
 
         // 3. Mark issue complete in dedup tracker
         _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
@@ -143,7 +143,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         await TransitionWorkItemAsync(runId, WorkItemStatus.Cancelled, ct);
 
         // 3. Persist to history
-        _historyService.AddRunToHistory(run);
+        await _historyService.AddRunToHistoryAsync(run, ct);
 
         // 4. Mark issue complete in dedup tracker
         _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);

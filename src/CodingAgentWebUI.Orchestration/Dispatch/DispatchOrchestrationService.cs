@@ -22,13 +22,15 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private readonly DispatchInfrastructure _infra;
     private readonly IDispatchRunCreator _orchestration;
     private readonly IOrchestratorRunService _runService;
+    private readonly IRunLifecycleManager? _lifecycleManager;
     private readonly ILogger _logger;
 
     public DispatchOrchestrationService(
         DispatchInfrastructure infra,
         IDispatchRunCreator orchestration,
         IOrchestratorRunService runService,
-        ILogger logger)
+        ILogger logger,
+        IRunLifecycleManager? lifecycleManager = null)
     {
         ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(orchestration);
@@ -39,6 +41,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         _orchestration = orchestration;
         _runService = runService;
         _logger = logger;
+        _lifecycleManager = lifecycleManager;
     }
 
     /// <summary>
@@ -534,6 +537,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 request.IssueIdentifier);
         }
 
+        string? removedRunId = null;
         try
         {
             // Remove the dangling run that was created during PrepareAsync
@@ -543,6 +547,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 r.IssueProviderConfigId == request.IssueProviderConfigId);
             if (danglingRun is not null)
             {
+                removedRunId = danglingRun.RunId;
                 _runService.RemoveRun(danglingRun.RunId);
                 _logger.Information("Removed dangling run {RunId} for issue {IssueIdentifier} after distribution failure",
                     danglingRun.RunId, request.IssueIdentifier);
@@ -551,6 +556,22 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to remove dangling run for issue {IssueIdentifier} after distribution failure",
+                request.IssueIdentifier);
+        }
+
+        // Transition the DB WorkItem to Failed immediately (prevents 5-min stuck detection delay)
+        try
+        {
+            var runIdForDb = removedRunId ?? request.RunId;
+            if (!string.IsNullOrEmpty(runIdForDb) && _lifecycleManager is not null)
+            {
+                await _lifecycleManager.TransitionWorkItemToFailedAsync(runIdForDb, ct);
+                _logger.Information("Transitioned WorkItem {RunId} to Failed after distribution failure", runIdForDb);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to transition WorkItem to Failed for issue {IssueIdentifier} after distribution failure",
                 request.IssueIdentifier);
         }
     }
