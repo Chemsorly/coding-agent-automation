@@ -258,7 +258,8 @@ public class DispatchServiceLifecycleTests : IDisposable
             ["WorkDistribution:Namespace"] = "default",
             ["WorkDistribution:OrchestratorUrl"] = "http://orchestrator:8080",
             ["WorkDistribution:AgentApiKeySecretName"] = "agent-api-key",
-            ["WorkDistribution:CredentialPools:Kiro:0"] = "pvc-test-1"
+            ["WorkDistribution:CredentialPools:Kiro:0"] = "pvc-test-1",
+            ["WorkDistribution:CredentialPools:Kiro:1"] = "pvc-test-2"
         };
 
         if (imageMapping is not null)
