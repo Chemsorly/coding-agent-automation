@@ -21,6 +21,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     private readonly ILabelSwapper _labelSwapper;
     private readonly IConfigurationStore _configStore;
     private readonly IConsolidationService? _consolidationService;
+    private readonly IRunLifecycleManager? _lifecycleManager;
     private readonly ILogger _logger;
 
     public HeartbeatMonitorService(
@@ -31,7 +32,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
         ILabelSwapper labelSwapper,
         IConfigurationStore configStore,
         ILogger logger,
-        IConsolidationService? consolidationService = null)
+        IConsolidationService? consolidationService = null,
+        IRunLifecycleManager? lifecycleManager = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(runService);
@@ -48,6 +50,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         _labelSwapper = labelSwapper;
         _configStore = configStore;
         _consolidationService = consolidationService;
+        _lifecycleManager = lifecycleManager;
         _logger = logger;
     }
 
@@ -134,29 +137,37 @@ public sealed class HeartbeatMonitorService : BackgroundService
                         // Fail the orphaned run directly
                         if (orphanedJobId is not null)
                         {
-                            var run = _runService.GetRun(orphanedJobId);
-                            if (run is not null)
+                            if (_lifecycleManager is not null)
                             {
-                                run.FailureReason = "Agent did not resume orphaned job within grace period";
-                                run.MarkCompleted();
-                                run.CurrentStep = PipelineStep.Failed;
+                                await _lifecycleManager.FailRunAsync(orphanedJobId,
+                                    "Agent did not resume orphaned job within grace period", ct);
+                            }
+                            else
+                            {
+                                var run = _runService.GetRun(orphanedJobId);
+                                if (run is not null)
+                                {
+                                    run.FailureReason = "Agent did not resume orphaned job within grace period";
+                                    run.MarkCompleted();
+                                    run.CurrentStep = PipelineStep.Failed;
 
-                                _historyService.AddRunToHistory(run);
-                                _runService.RemoveRun(orphanedJobId);
-                                _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+                                    _historyService.AddRunToHistory(run);
+                                    _runService.RemoveRun(orphanedJobId);
+                                    _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
-                                await TrySwapLabelToErrorAsync(run, ct);
+                                    await TrySwapLabelToErrorAsync(run, ct);
+                                }
+
+                                // Return agent to Idle so it can accept new jobs
+                                lock (agent.SyncRoot)
+                                {
+                                    agent.ActiveJobId = null;
+                                    agent.OrphanRestoredAt = null;
+                                }
+
+                                _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
                             }
                         }
-
-                        // Return agent to Idle so it can accept new jobs
-                        lock (agent.SyncRoot)
-                        {
-                            agent.ActiveJobId = null;
-                            agent.OrphanRestoredAt = null;
-                        }
-
-                        _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
                     }
                 }
                 // Phase 1.6: Detect agents stuck in Busy without pipeline progress.
@@ -173,32 +184,41 @@ public sealed class HeartbeatMonitorService : BackgroundService
                         var elapsed = now - run.LastStepChangeAt;
                         if (elapsed > progressTimeout)
                         {
-                            // Use RemoveRun as atomic claim — if another thread (ReportJobCompleted)
-                            // already removed it, we get null and skip duplicate processing.
-                            var claimedRun = _runService.RemoveRun(agent.ActiveJobId);
-                            if (claimedRun is not null)
+                            _logger.Warning(
+                                "Agent {AgentId} stuck in Busy: job {JobId} has not progressed for {Elapsed:F0}s (timeout={Timeout}). " +
+                                "Marking run as Failed and returning agent to Idle.",
+                                agent.AgentId, agent.ActiveJobId, elapsed.TotalSeconds, progressTimeout);
+
+                            var failureReason = $"Agent busy without progress for {elapsed.TotalMinutes:F0} minutes (progress timeout)";
+
+                            if (_lifecycleManager is not null)
                             {
-                                _logger.Warning(
-                                    "Agent {AgentId} stuck in Busy: job {JobId} has not progressed for {Elapsed:F0}s (timeout={Timeout}). " +
-                                    "Marking run as Failed and returning agent to Idle.",
-                                    agent.AgentId, agent.ActiveJobId, elapsed.TotalSeconds, progressTimeout);
-
-                                claimedRun.FailureReason = $"Agent busy without progress for {elapsed.TotalMinutes:F0} minutes (progress timeout)";
-                                claimedRun.MarkCompleted();
-                                claimedRun.CurrentStep = PipelineStep.Failed;
-
-                                _historyService.AddRunToHistory(claimedRun);
-                                _dispatcher.MarkIssueComplete(claimedRun.IssueIdentifier, claimedRun.IssueProviderConfigId);
-
-                                await TrySwapLabelToErrorAsync(claimedRun, ct);
-
-                                lock (agent.SyncRoot)
+                                await _lifecycleManager.FailRunAsync(agent.ActiveJobId, failureReason, ct);
+                            }
+                            else
+                            {
+                                // Use RemoveRun as atomic claim — if another thread (ReportJobCompleted)
+                                // already removed it, we get null and skip duplicate processing.
+                                var claimedRun = _runService.RemoveRun(agent.ActiveJobId);
+                                if (claimedRun is not null)
                                 {
-                                    agent.ActiveJobId = null;
-                                    agent.OrphanRestoredAt = null;
-                                }
+                                    claimedRun.FailureReason = failureReason;
+                                    claimedRun.MarkCompleted();
+                                    claimedRun.CurrentStep = PipelineStep.Failed;
 
-                                _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                                    _historyService.AddRunToHistory(claimedRun);
+                                    _dispatcher.MarkIssueComplete(claimedRun.IssueIdentifier, claimedRun.IssueProviderConfigId);
+
+                                    await TrySwapLabelToErrorAsync(claimedRun, ct);
+
+                                    lock (agent.SyncRoot)
+                                    {
+                                        agent.ActiveJobId = null;
+                                        agent.OrphanRestoredAt = null;
+                                    }
+
+                                    _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                                }
                             }
                         }
                     }
@@ -235,33 +255,44 @@ public sealed class HeartbeatMonitorService : BackgroundService
             // Grace period expired
             if (agent.ActiveJobId is not null)
             {
-                // Agent had an active job — mark the run as failed
-                var run = _runService.GetRun(agent.ActiveJobId);
-                if (run is not null)
+                if (_lifecycleManager is not null)
                 {
-                    run.FailureReason = "Agent disconnected";
-                    run.MarkCompleted();
-                    run.CurrentStep = PipelineStep.Failed;
-
-                    // Persist to history and remove from active runs
-                    _historyService.AddRunToHistory(run);
-                    _runService.RemoveRun(agent.ActiveJobId);
-
-                    // Mark issue as no longer processing in the dispatcher
-                    _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-
-                    // Swap label to agent:error via issue provider
-                    await TrySwapLabelToErrorAsync(run, ct);
+                    await _lifecycleManager.FailRunAsync(agent.ActiveJobId, "Agent disconnected", ct);
 
                     _logger.Warning(
                         "Agent {AgentId} disconnected with active job {JobId} past grace period ({GracePeriod}), marking run as Failed",
                         agent.AgentId, agent.ActiveJobId, gracePeriod);
                 }
-
-                // Clear the active job and deregister
-                lock (agent.SyncRoot)
+                else
                 {
-                    agent.ActiveJobId = null;
+                    // Agent had an active job — mark the run as failed
+                    var run = _runService.GetRun(agent.ActiveJobId);
+                    if (run is not null)
+                    {
+                        run.FailureReason = "Agent disconnected";
+                        run.MarkCompleted();
+                        run.CurrentStep = PipelineStep.Failed;
+
+                        // Persist to history and remove from active runs
+                        _historyService.AddRunToHistory(run);
+                        _runService.RemoveRun(agent.ActiveJobId);
+
+                        // Mark issue as no longer processing in the dispatcher
+                        _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+                        // Swap label to agent:error via issue provider
+                        await TrySwapLabelToErrorAsync(run, ct);
+
+                        _logger.Warning(
+                            "Agent {AgentId} disconnected with active job {JobId} past grace period ({GracePeriod}), marking run as Failed",
+                            agent.AgentId, agent.ActiveJobId, gracePeriod);
+                    }
+
+                    // Clear the active job
+                    lock (agent.SyncRoot)
+                    {
+                        agent.ActiveJobId = null;
+                    }
                 }
             }
             else
@@ -285,15 +316,22 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 continue;
 
             // Agent gone from registry entirely — orphaned run
-            run.FailureReason = "Agent deregistered (orphaned run)";
-            run.MarkCompleted();
-            run.CurrentStep = PipelineStep.Failed;
+            if (_lifecycleManager is not null)
+            {
+                await _lifecycleManager.FailRunAsync(run.RunId, "Agent deregistered (orphaned run)", ct);
+            }
+            else
+            {
+                run.FailureReason = "Agent deregistered (orphaned run)";
+                run.MarkCompleted();
+                run.CurrentStep = PipelineStep.Failed;
 
-            _historyService.AddRunToHistory(run);
-            _runService.RemoveRun(run.RunId);
-            _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+                _historyService.AddRunToHistory(run);
+                _runService.RemoveRun(run.RunId);
+                _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
-            await TrySwapLabelToErrorAsync(run, ct);
+                await TrySwapLabelToErrorAsync(run, ct);
+            }
 
             _logger.Warning(
                 "Orphaned run {RunId} for issue {IssueIdentifier} — agent {AgentId} no longer in registry, marking Failed",

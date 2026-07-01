@@ -707,6 +707,232 @@ public class HeartbeatMonitorServiceTests : IDisposable
             r.FailureReason!.Contains("progress timeout"))), Times.Once);
     }
 
+    [Fact]
+    public async Task SweepAsync_DisconnectedPastGrace_WithLifecycleManager_CallsFailRunAsync()
+    {
+        // Arrange: HeartbeatMonitor constructed WITH IRunLifecycleManager should delegate to it
+        var mockLifecycle = new Mock<IRunLifecycleManager>();
+        mockLifecycle
+            .Setup(l => l.FailRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentDisconnectGracePeriod = TimeSpan.Zero });
+
+        var registry = new AgentRegistryService(_mockLogger.Object);
+        var runService = new OrchestratorRunService(_mockLogger.Object);
+        var dispatcher = new JobDispatcherService(registry, _mockLogger.Object);
+
+        var monitor = new HeartbeatMonitorService(
+            registry,
+            runService,
+            _mockHistoryService.Object,
+            dispatcher,
+            _mockLabelSwapper.Object,
+            mockConfigStore.Object,
+            _mockLogger.Object,
+            lifecycleManager: mockLifecycle.Object);
+
+        var entry = registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-lm",
+            Hostname = "host-lm",
+            Labels = new[] { "dotnet" }
+        }, "conn-lm");
+        entry.ActiveJobId = "job-lm";
+        registry.TransitionStatus("agent-lm", AgentStatus.Disconnected);
+        entry.DisconnectedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-lm",
+            IssueIdentifier = "org/repo#100",
+            IssueTitle = "Lifecycle test",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "agent-lm"
+        };
+        runService.AddRun(run);
+
+        // Act
+        await monitor.SweepAsync(CancellationToken.None);
+
+        // Assert: FailRunAsync should have been called with the correct runId and reason
+        mockLifecycle.Verify(l => l.FailRunAsync("job-lm", "Agent disconnected", It.IsAny<CancellationToken>()), Times.Once);
+
+        // The old manual path should NOT have been taken (history not called directly)
+        _mockHistoryService.Verify(h => h.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
+
+        monitor.Dispose();
+    }
+
+    [Fact]
+    public async Task SweepAsync_ProgressTimeout_WithLifecycleManager_CallsFailRunAsync()
+    {
+        // Phase 1.6: stuck agent with lifecycle manager delegates to FailRunAsync
+        var mockLifecycle = new Mock<IRunLifecycleManager>();
+        mockLifecycle
+            .Setup(l => l.FailRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentBusyProgressTimeout = TimeSpan.FromMinutes(5) });
+
+        var registry = new AgentRegistryService(_mockLogger.Object);
+        var runService = new OrchestratorRunService(_mockLogger.Object);
+        var dispatcher = new JobDispatcherService(registry, _mockLogger.Object);
+
+        var monitor = new HeartbeatMonitorService(
+            registry,
+            runService,
+            _mockHistoryService.Object,
+            dispatcher,
+            _mockLabelSwapper.Object,
+            mockConfigStore.Object,
+            _mockLogger.Object,
+            lifecycleManager: mockLifecycle.Object);
+
+        var entry = registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-stuck",
+            Hostname = "host-stuck",
+            Labels = new[] { "dotnet" }
+        }, "conn-stuck");
+        entry.ActiveJobId = "job-stuck";
+        registry.TransitionStatus("agent-stuck", AgentStatus.Busy);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-stuck",
+            IssueIdentifier = "org/repo#200",
+            IssueTitle = "Stuck",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "agent-stuck",
+            LastStepChangeAt = DateTimeOffset.UtcNow.AddMinutes(-10) // exceeds 5min timeout
+        };
+        runService.AddRun(run);
+
+        // Act
+        await monitor.SweepAsync(CancellationToken.None);
+
+        // Assert: FailRunAsync called with reason containing "progress timeout"
+        mockLifecycle.Verify(l => l.FailRunAsync("job-stuck",
+            It.Is<string>(s => s.Contains("progress timeout")),
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        monitor.Dispose();
+    }
+
+    [Fact]
+    public async Task SweepAsync_OrphanedRun_WithLifecycleManager_CallsFailRunAsync()
+    {
+        // Phase 3: orphaned run with lifecycle manager
+        var mockLifecycle = new Mock<IRunLifecycleManager>();
+        mockLifecycle
+            .Setup(l => l.FailRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var registry = new AgentRegistryService(_mockLogger.Object);
+        var runService = new OrchestratorRunService(_mockLogger.Object);
+        var dispatcher = new JobDispatcherService(registry, _mockLogger.Object);
+
+        var monitor = new HeartbeatMonitorService(
+            registry,
+            runService,
+            _mockHistoryService.Object,
+            dispatcher,
+            _mockLabelSwapper.Object,
+            _mockConfigStore.Object,
+            _mockLogger.Object,
+            lifecycleManager: mockLifecycle.Object);
+
+        var run = new PipelineRun
+        {
+            RunId = "orphan-lm",
+            IssueIdentifier = "org/repo#300",
+            IssueTitle = "Orphan",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "agent-gone" // not in registry
+        };
+        runService.AddRun(run);
+
+        // Act
+        await monitor.SweepAsync(CancellationToken.None);
+
+        // Assert
+        mockLifecycle.Verify(l => l.FailRunAsync("orphan-lm",
+            "Agent deregistered (orphaned run)",
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        monitor.Dispose();
+    }
+
+    [Fact]
+    public async Task SweepAsync_OrphanRestored_WithLifecycleManager_CallsFailRunAsync()
+    {
+        // Phase 1.5: orphan not resumed with lifecycle manager
+        var mockLifecycle = new Mock<IRunLifecycleManager>();
+        mockLifecycle
+            .Setup(l => l.FailRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRun?)null);
+
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentDisconnectGracePeriod = TimeSpan.FromMinutes(5) });
+
+        var registry = new AgentRegistryService(_mockLogger.Object);
+        var runService = new OrchestratorRunService(_mockLogger.Object);
+        var dispatcher = new JobDispatcherService(registry, _mockLogger.Object);
+
+        var monitor = new HeartbeatMonitorService(
+            registry,
+            runService,
+            _mockHistoryService.Object,
+            dispatcher,
+            _mockLabelSwapper.Object,
+            mockConfigStore.Object,
+            _mockLogger.Object,
+            lifecycleManager: mockLifecycle.Object);
+
+        var entry = registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-orphan",
+            Hostname = "host-orphan",
+            Labels = new[] { "dotnet" }
+        }, "conn-orphan");
+        entry.ActiveJobId = "job-orphan";
+        entry.OrphanRestoredAt = DateTimeOffset.UtcNow.AddMinutes(-10); // past 5min grace
+        registry.TransitionStatus("agent-orphan", AgentStatus.Busy);
+
+        var run = new PipelineRun
+        {
+            RunId = "job-orphan",
+            IssueIdentifier = "org/repo#400",
+            IssueTitle = "Orphan resumed",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            AgentId = "agent-orphan"
+        };
+        runService.AddRun(run);
+
+        // Act
+        await monitor.SweepAsync(CancellationToken.None);
+
+        // Assert
+        mockLifecycle.Verify(l => l.FailRunAsync("job-orphan",
+            "Agent did not resume orphaned job within grace period",
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        monitor.Dispose();
+    }
+
     private AgentEntry RegisterAgent(string agentId, string connectionId)
     {
         return _registry.Register(new AgentRegistrationMessage

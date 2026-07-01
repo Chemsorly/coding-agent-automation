@@ -67,6 +67,15 @@ public static class WorkDistributionRegistration
             // Queue visibility: wraps in-memory JobDispatcherService
             services.AddSingleton<IPendingWorkQuery>(sp =>
                 new LegacyPendingWorkQuery(sp.GetRequiredService<JobDispatcherService>()));
+            // RunLifecycleManager (Legacy — no WorkItemTransitionService)
+            services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
+                sp.GetRequiredService<IOrchestratorRunService>(),
+                sp.GetRequiredService<IPipelineRunHistoryService>(),
+                sp.GetRequiredService<AgentRegistryService>(),
+                sp.GetRequiredService<ILabelSwapper>(),
+                sp.GetRequiredService<JobDispatcherService>(),
+                Log.Logger,
+                workItemTransition: null));
             Log.Information("WorkDistribution: Legacy mode (no database). Using JsonConfigurationStore + LegacyWorkDistributor");
             return services;
         }
@@ -128,6 +137,16 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
             Log.Logger));
+
+        // ── IRunLifecycleManager (DB mode — coordinates in-memory + DB transitions) ──
+        services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
+            sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetRequiredService<IPipelineRunHistoryService>(),
+            sp.GetRequiredService<AgentRegistryService>(),
+            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<JobDispatcherService>(),
+            Log.Logger,
+            sp.GetRequiredService<WorkItemTransitionService>()));
 
         // ── PostgresConfigurationStore (replaces JsonConfigurationStore) ─────
         // Singleton: consumed by singleton services (LabelSwapper, DispatchResolutionService,
