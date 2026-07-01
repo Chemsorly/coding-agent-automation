@@ -13,11 +13,11 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
             // SummaryJson was added to the entity model and retroactively inserted into
             // InitialCreate, but the running database was created before that edit.
             // This migration adds the missing column to existing databases.
-            migrationBuilder.AddColumn<string>(
-                name: "SummaryJson",
-                table: "PipelineRuns",
-                type: "jsonb",
-                nullable: true);
+            // Uses IF NOT EXISTS to be idempotent — handles cases where the column
+            // was already added via the modified InitialCreate migration.
+            migrationBuilder.Sql("""
+                ALTER TABLE "PipelineRuns" ADD COLUMN IF NOT EXISTS "SummaryJson" jsonb;
+                """);
         }
 
         /// <inheritdoc />
