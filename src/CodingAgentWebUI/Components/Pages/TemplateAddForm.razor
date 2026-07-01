@@ -18,7 +18,7 @@
         <select @bind="Form.ProjectId">
             @foreach (var p in Projects)
             {
-                <option value="@p.Id">@p.Name @(!string.IsNullOrEmpty(p.EpicIssueProviderId) ? "🧩" : "")</option>
+                <option value="@p.Id">@p.Name @(!string.IsNullOrEmpty(p.EpicIssueProviderId) ? "[Epic]" : "")</option>
             }
         </select>
     </div>

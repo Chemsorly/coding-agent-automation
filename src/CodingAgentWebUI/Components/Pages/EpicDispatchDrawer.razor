@@ -56,8 +56,9 @@
             }
             else
             {
+                @* TODO: max-height was changed from 380px to 320px — verify this unrelated CSS change is intentional *@
                 <div class="agent-history-list" tabindex="0" @onkeydown="HandleKeyDown" @onkeydown:preventDefault="ShouldPreventDefault"
-                     style="max-height: calc(100vh - 380px); overflow-y: auto;">
+                     style="max-height: calc(100vh - 320px); overflow-y: auto;">
                     @{ var idx = 0; }
                     @foreach (var issue in FilteredItems)
                     {
@@ -72,11 +73,11 @@
                                 <span class="drawer-issue-number">#@issue.Identifier</span>
                                 @if (isApproved)
                                 {
-                                    <span class="badge-default" style="background: #0e8a16; color: white; font-size: 0.7rem;">Create Sub-Issues</span>
+                                    <span class="badge-default" style="background: #0e8a16; color: white; font-size: 0.7rem;"><Icon Name="puzzle" Size="12" /> Create Sub-Issues</span>
                                 }
                                 else
                                 {
-                                    <span class="badge-default" style="background: #7057ff; color: white; font-size: 0.7rem;">Analysis</span>
+                                    <span class="badge-default" style="background: #7057ff; color: white; font-size: 0.7rem;"><Icon Name="search" Size="12" /> Analysis</span>
                                 }
                                 @if (isProcessing)
                                 {
@@ -119,11 +120,11 @@
                     <div style="margin-bottom: 8px; font-size: 0.8rem; font-weight: 500;">
                         @if (selectedIsApproved)
                         {
-                            <span style="color: #0e8a16;">Phase 2: Create Sub-Issues (Decomposition)</span>
+                            <span style="color: #0e8a16;"><Icon Name="puzzle" Size="14" /> Phase 2: Create Sub-Issues (Decomposition)</span>
                         }
                         else
                         {
-                            <span style="color: #7057ff;">Phase 1: Analysis (DecompositionAnalysis)</span>
+                            <span style="color: #7057ff;"><Icon Name="search" Size="14" /> Phase 1: Analysis (DecompositionAnalysis)</span>
                         }
                     </div>
                     @if (SelectedItem.CreatedAt.HasValue)
