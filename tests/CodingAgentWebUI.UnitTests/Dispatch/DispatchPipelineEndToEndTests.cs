@@ -4,6 +4,7 @@ using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -235,7 +236,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     }
 
     [Fact]
-    public async Task FullDispatch_AgentIdUpdated_FromPendingToActualAgent()
+    public async Task FullDispatch_AgentIdUpdated_FromNullToActualAgent()
     {
         // Arrange
         var orchestration = CreateOrchestrationService();
@@ -247,10 +248,10 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             "loop", TestProject, ct: CancellationToken.None);
         request.Should().NotBeNull();
 
-        // Before distribution, run has agentId="pending"
+        // Before distribution, run has agentId=null (dispatch window)
         var run = _runService.GetRun(request!.RunId!);
         run.Should().NotBeNull();
-        run!.AgentId.Should().Be("pending");
+        run!.AgentId.Should().BeNull();
 
         // Act: distribute
         var result = await distributor.DistributeAsync(request, CancellationToken.None);
@@ -258,7 +259,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         // After distribution, run.AgentId updated to actual agent
         run.AgentId.Should().Be("agent-dotnet-1",
-            "distributor must update run.AgentId from 'pending' to the resolved agent");
+            "distributor must update run.AgentId from null to the resolved agent");
     }
 
     [Fact]
@@ -309,7 +310,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     [Fact]
     public async Task FullDispatch_HeartbeatMonitor_DoesNotOrphanFreshRun()
     {
-        // Verifies that after dispatch, the run has a real AgentId (not "pending"),
+        // Verifies that after dispatch, the run has a real AgentId,
         // so HeartbeatMonitor won't orphan it during its next sweep.
         var orchestration = CreateOrchestrationService();
         var distributor = CreateDistributor();
@@ -319,13 +320,53 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             "loop", TestProject, ct: CancellationToken.None);
         await distributor.DistributeAsync(request!, CancellationToken.None);
 
-        // Verify: all active runs have real agent IDs (not "pending")
+        // Verify: all active runs have real agent IDs (not null or "pending")
         var activeRuns = _runService.GetActiveRuns();
         foreach (var run in activeRuns)
         {
-            run.AgentId.Should().NotBe("pending",
-                "HeartbeatMonitor would orphan runs with AgentId='pending' — distributor must update it");
+            run.AgentId.Should().NotBeNullOrEmpty(
+                "after distribution, runs must have a resolved agent ID so HeartbeatMonitor doesn't orphan them");
         }
+    }
+
+    [Fact]
+    public async Task FullDispatch_HeartbeatMonitor_DoesNotOrphanRunDuringDispatchWindow()
+    {
+        // This is the core race-condition test: HeartbeatMonitor fires DURING the dispatch
+        // window (after PrepareDistributionRequestAsync creates the run with AgentId=null,
+        // but BEFORE DistributeAsync assigns a real agent). The run must survive.
+        var orchestration = CreateOrchestrationService();
+        var distributor = CreateDistributor();
+
+        // Step 1: Create the run (AgentId=null during dispatch window)
+        var request = await orchestration.PrepareDistributionRequestAsync(
+            "org/repo#42", "issue-1", "repo-1", null, null,
+            "loop", TestProject, ct: CancellationToken.None);
+        request.Should().NotBeNull();
+
+        var run = _runService.GetRun(request!.RunId!);
+        run.Should().NotBeNull();
+        run!.AgentId.Should().BeNull("run is in dispatch window — no agent assigned yet");
+
+        // Step 2: HeartbeatMonitor fires during the dispatch window
+        var registry = new AgentRegistryService(_mockLogger.Object);
+        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
+        var dispatcher = new JobDispatcherService(registry, _mockLogger.Object);
+        var monitor = new HeartbeatMonitorService(
+            registry, _runService, mockHistoryService.Object, dispatcher,
+            _mockLabelSwapper.Object, _mockConfigStore.Object, _mockLogger.Object);
+
+        await monitor.SweepAsync(CancellationToken.None);
+
+        // Step 3: Verify the run was NOT orphaned
+        var survivedRun = _runService.GetRun(request.RunId!);
+        survivedRun.Should().NotBeNull("Phase 3 must skip runs with null AgentId — they're in the dispatch window");
+        survivedRun!.CurrentStep.Should().NotBe(PipelineStep.Failed);
+
+        // Step 4: Distribution still works after the sweep
+        var result = await distributor.DistributeAsync(request, CancellationToken.None);
+        result.Success.Should().BeTrue();
+        run.AgentId.Should().Be("agent-dotnet-1");
     }
 
     // ═══════════════════════════════════════════════════════════════════════

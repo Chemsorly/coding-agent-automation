@@ -38,7 +38,7 @@ public interface IDispatchRunCreator
     /// <returns>The created <see cref="PipelineRun"/> ready for dispatch, or <c>null</c> if the issue is already being processed.</returns>
     Task<PipelineRun?> CreateDispatchedRunAsync(
         string issueProviderId, string repoProviderId, string issueIdentifier,
-        string agentProviderId, string agentId, CancellationToken ct,
+        string agentProviderId, string? agentId, CancellationToken ct,
         string? brainProviderId = null, string? pipelineProviderId = null,
         string initiatedBy = "dispatch");
 

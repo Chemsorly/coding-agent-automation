@@ -160,7 +160,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// <returns>The created <see cref="PipelineRun"/> ready for dispatch, or <c>null</c> if the issue is already being processed.</returns>
     public async Task<PipelineRun?> CreateDispatchedRunAsync(
         string issueProviderId, string repoProviderId, string issueIdentifier,
-        string agentProviderId, string agentId, CancellationToken ct,
+        string agentProviderId, string? agentId, CancellationToken ct,
         string? brainProviderId = null, string? pipelineProviderId = null,
         string initiatedBy = "dispatch")
     {
@@ -168,7 +168,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         ArgumentNullException.ThrowIfNull(repoProviderId);
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(agentProviderId);
-        ArgumentNullException.ThrowIfNull(agentId);
 
         if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId))
         {

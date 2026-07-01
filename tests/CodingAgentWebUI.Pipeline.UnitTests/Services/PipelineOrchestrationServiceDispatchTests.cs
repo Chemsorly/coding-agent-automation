@@ -127,11 +127,16 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateDispatchedRunAsync_NullAgentId_ThrowsArgumentNullException()
+    public async Task CreateDispatchedRunAsync_NullAgentId_CreatesRunWithNullAgentId()
     {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            _service.CreateDispatchedRunAsync("issue-1", "repo-1", "42", "agent-1", null!, CancellationToken.None));
+        // Act — null agentId is valid (used during dispatch window before agent resolution)
+        var run = await _service.CreateDispatchedRunAsync(
+            "issue-1", "repo-1", "42", "agent-1", null, CancellationToken.None);
+
+        // Assert
+        run.Should().NotBeNull();
+        run!.AgentId.Should().BeNull();
+        run.IssueIdentifier.Should().Be("42");
     }
 
     public void Dispose()
