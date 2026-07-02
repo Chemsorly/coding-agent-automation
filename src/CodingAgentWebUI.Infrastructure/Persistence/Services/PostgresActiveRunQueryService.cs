@@ -82,6 +82,29 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
                     IssueTitle = !string.IsNullOrEmpty(liveRun.IssueTitle) ? liveRun.IssueTitle : summaries[i].IssueTitle
                 };
             }
+
+            // Append in-memory-only runs that have no matching WorkItem in the DB.
+            // This covers runs restored via agent reconnection (RegisterAgent) where
+            // no WorkItem row exists — without this, monitoring shows fewer active runs
+            // than busy agents.
+            var dbRunIds = new HashSet<string>(summaries.Select(s => s.RunId), StringComparer.OrdinalIgnoreCase);
+            foreach (var liveRun in _runService.GetActiveRuns())
+            {
+                if (dbRunIds.Contains(liveRun.RunId))
+                    continue;
+
+                summaries.Add(new ActiveRunSummary
+                {
+                    RunId = liveRun.RunId,
+                    IssueIdentifier = liveRun.IssueIdentifier,
+                    IssueTitle = liveRun.IssueTitle ?? "",
+                    RunType = liveRun.RunType,
+                    AgentId = liveRun.AgentId,
+                    StartedAt = liveRun.StartedAtOffset,
+                    ProjectName = liveRun.ProjectName,
+                    CurrentStep = liveRun.CurrentStep
+                });
+            }
         }
 
         return summaries;

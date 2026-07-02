@@ -38,7 +38,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         // Synchronous wrapper over async DB call — acceptable here because callers
         // are already in synchronous context (HeartbeatMonitor, ConsolidationService).
         // Uses GetAwaiter().GetResult() to avoid deadlocks in sync-over-async.
-        return GetRunHistoryAsync().GetAwaiter().GetResult();
+        return GetRunHistoryInternalAsync().GetAwaiter().GetResult();
     }
 
     /// <inheritdoc />
@@ -56,12 +56,34 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
         try
         {
-            AddRunToHistoryAsync(summary).GetAwaiter().GetResult();
+            AddRunToHistoryInternalAsync(summary).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to persist run summary {RunId} to database", summary.RunId);
         }
+    }
+
+    /// <inheritdoc />
+    public async Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        var summary = run.ToSummary();
+
+        try
+        {
+            await AddRunToHistoryInternalAsync(summary).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to persist run summary {RunId} to database", summary.RunId);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
+    {
+        return await GetRunHistoryInternalAsync().ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -127,7 +149,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
     // ── Async internals ─────────────────────────────────────────────────
 
-    private async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync()
+    private async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryInternalAsync()
     {
         await using var db = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
         var entities = await db.PipelineRuns
@@ -152,7 +174,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         return entities.Select(DeserializeSummary).Where(s => s is not null).ToList()!;
     }
 
-    private async Task AddRunToHistoryAsync(PipelineRunSummary summary)
+    private async Task AddRunToHistoryInternalAsync(PipelineRunSummary summary)
     {
         var entity = ToEntity(summary);
 

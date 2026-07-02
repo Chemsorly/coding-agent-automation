@@ -225,13 +225,8 @@ public sealed partial class AgentJobDispatcher
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
             var config = await LoadAndApplySettingsAsync(project, request.RepoProviderId, request.BrainProviderId, providerConfigs, ct);
 
-            // Swap label to agent:in-progress before dispatch so the PR is immediately marked
-            // in-progress, preventing the loop from re-dispatching it on the next cycle.
-            // CloneRepositoryStep skips the swap for agent-dispatched runs (AgentId is set).
-            _logger.Information("Dispatch (review): swapping label to agent:in-progress for PR {PrIdentifier} (provider={ProviderId})",
-                request.PrIdentifier, request.RepoProviderId);
-            await _infra.LabelSwapper.SwapLabelAsync(
-                request.RepoProviderId, request.PrIdentifier, AgentLabels.InProgress, LabelTargetKind.PullRequest, ct);
+            // NOTE: Label swap to agent:in-progress is handled by AssignAndSendAsync → AgentAcceptedRunAsync.
+            // This ensures the label only changes when an agent actually accepts the job.
 
             // Build a synthetic IssueDetail and ParsedIssue from PR metadata for the job assignment
             var syntheticIssueDetail = new IssueDetail
@@ -466,11 +461,7 @@ public sealed partial class AgentJobDispatcher
             };
 
             // Swap label to agent:in-progress before dispatch so the epic is immediately marked
-            // in-progress, preventing the loop from re-dispatching it on the next cycle.
-            _logger.Information("Dispatch (decomposition): swapping label to agent:in-progress for epic {EpicIdentifier} (provider={ProviderId})",
-                epicIdentifier, issueProviderId);
-            await _infra.LabelSwapper.SwapLabelAsync(issueProviderId, epicIdentifier, AgentLabels.InProgress, ct);
-
+            // NOTE: Label swap to agent:in-progress is handled by AssignAndSendAsync → AgentAcceptedRunAsync.
             await AssignAndSendAsync(agent, run.RunId, message, ct);
 
             _logger.Information(
@@ -512,13 +503,27 @@ public sealed partial class AgentJobDispatcher
     }
 
     /// <summary>
-    /// Assigns the job to the agent in the registry and sends the assignment via IAgentCommunication.
+    /// Assigns the job to the agent and sends the assignment via IAgentCommunication.
+    /// Routes through IRunLifecycleManager.AgentAcceptedRunAsync to ensure label swap
+    /// and agent state are handled uniformly across all modes.
     /// </summary>
     private async Task AssignAndSendAsync(AgentEntry agent, string runId, JobAssignmentMessage message, CancellationToken ct)
     {
-        agent.ActiveJobId = runId;
-        _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
         await _agentComm.AssignJobAsync(agent.ConnectionId, message, ct);
+
+        if (_lifecycleManager is not null)
+        {
+            await _lifecycleManager.AgentAcceptedRunAsync(
+                runId, agent.AgentId,
+                message.IssueIdentifier, message.IssueProviderConfigId ?? "",
+                message.RepoProviderConfigId ?? "", message.RunType, ct);
+        }
+        else
+        {
+            // Fallback for tests without lifecycle manager
+            agent.ActiveJobId = runId;
+            _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
+        }
     }
 
     /// <summary>
@@ -687,10 +692,9 @@ public sealed partial class AgentJobDispatcher
                 : allComments;
         }
 
-        // Swap label to agent:in-progress before dispatch (REQ-7.2)
-        _logger.Information("Dispatch: swapping label to agent:in-progress for issue {IssueIdentifier} (provider={ProviderId})",
-            issueIdentifier, issueProviderId);
-        await _infra.LabelSwapper.SwapLabelAsync(issueProviderId, issueIdentifier, AgentLabels.InProgress, ct);
+        // NOTE: Label swap to agent:in-progress is NOT done here.
+        // It's handled by IRunLifecycleManager.AgentAcceptedRunAsync after the agent accepts the job,
+        // ensuring label state is consistent across all three modes (Legacy, SignalR, K8s).
 
         // Detect existing analysis and rework state from comments
         string? existingAnalysis = null;

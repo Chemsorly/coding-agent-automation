@@ -37,6 +37,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
     private readonly DispatchInfrastructure _infra;
     private readonly IAgentCommunication _agentComm;
     private readonly IShutdownSignal _shutdownSignal;
+    private readonly IRunLifecycleManager? _lifecycleManager;
     private readonly ILogger _logger;
 
     public AgentJobDispatcher(
@@ -47,7 +48,8 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         DispatchInfrastructure infra,
         IAgentCommunication agentComm,
         IShutdownSignal shutdownSignal,
-        ILogger logger)
+        ILogger logger,
+        IRunLifecycleManager? lifecycleManager = null)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(registry);
@@ -65,6 +67,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         _infra = infra;
         _agentComm = agentComm;
         _shutdownSignal = shutdownSignal;
+        _lifecycleManager = lifecycleManager;
         _logger = logger;
     }
 

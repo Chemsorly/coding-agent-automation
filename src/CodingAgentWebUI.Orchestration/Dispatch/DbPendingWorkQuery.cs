@@ -1,4 +1,6 @@
+using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
@@ -32,25 +34,55 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending)
             .OrderBy(w => w.CreatedAt)
-            .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId, w.CreatedAt, w.AgentSelector, w.TaskType })
+            .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId, w.CreatedAt, w.AgentSelector, w.TaskType, w.Payload })
             .ToListAsync(ct);
 
-        var result = items.Select(w => new PendingJob
+        var result = items.Select(w =>
         {
-            IssueIdentifier = w.IssueIdentifier,
-            IssueProviderId = w.IssueProviderConfigId,
-            RepoProviderId = "",
-            EnqueuedAt = w.CreatedAt,
-            InitiatedBy = "loop",
-            RequiredLabels = string.IsNullOrEmpty(w.AgentSelector)
-                ? []
-                : w.AgentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
-            RunType = w.TaskType == WorkItemTaskType.Review ? PipelineRunType.Review
-                : w.TaskType == WorkItemTaskType.Decomposition ? PipelineRunType.DecompositionAnalysis
-                : PipelineRunType.Implementation
+            var (issueTitle, repoProviderId) = ExtractFromPayload(w.Payload);
+            return new PendingJob
+            {
+                IssueIdentifier = w.IssueIdentifier,
+                IssueProviderId = w.IssueProviderConfigId,
+                IssueTitle = issueTitle,
+                RepoProviderId = repoProviderId,
+                EnqueuedAt = w.CreatedAt,
+                InitiatedBy = "loop",
+                RequiredLabels = string.IsNullOrEmpty(w.AgentSelector)
+                    ? []
+                    : w.AgentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                RunType = w.TaskType == WorkItemTaskType.Review ? PipelineRunType.Review
+                    : w.TaskType == WorkItemTaskType.Decomposition ? PipelineRunType.DecompositionAnalysis
+                    : PipelineRunType.Implementation
+            };
         }).ToList();
 
         _cachedCount = result.Count;
         return result;
+    }
+
+    /// <summary>
+    /// Extracts IssueTitle and RepoProviderConfigId from the serialized payload JSONB.
+    /// Falls back to empty strings if payload is null or deserialization fails.
+    /// </summary>
+    internal static (string IssueTitle, string RepoProviderId) ExtractFromPayload(string? payload)
+    {
+        if (string.IsNullOrEmpty(payload))
+            return ("", "");
+
+        try
+        {
+            var request = JsonSerializer.Deserialize<JobDistributionRequest>(payload, PipelineJsonOptions.Default);
+            if (request is null)
+                return ("", "");
+
+            var title = request.IssueDetail?.Title ?? "";
+            var repoId = request.RepoProviderConfigId ?? "";
+            return (title, repoId);
+        }
+        catch (JsonException)
+        {
+            return ("", "");
+        }
     }
 }

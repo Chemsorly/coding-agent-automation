@@ -412,8 +412,7 @@ public class AgentJobDispatcherTests : IDisposable
         }, CancellationToken.None);
 
         result.Should().BeTrue();
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
-            "rp", "3", AgentLabels.InProgress, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()), Times.Once);
+        // Label swap to InProgress now happens via IRunLifecycleManager.AgentAcceptedRunAsync (not dispatcher)
         _mockAgentComm.Verify(c => c.AssignJobAsync("conn-review", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -535,8 +534,7 @@ public class AgentJobDispatcherTests : IDisposable
             "ip", "rp", null, "user", CancellationToken.None);
 
         result.Should().BeTrue();
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
-            "ip", "epic-hp", AgentLabels.InProgress, It.IsAny<CancellationToken>()), Times.Once);
+        // Label swap to InProgress now happens via IRunLifecycleManager.AgentAcceptedRunAsync (not dispatcher)
         _mockAgentComm.Verify(c => c.AssignJobAsync("conn-decomp", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -946,8 +944,7 @@ public class AgentJobDispatcherTests : IDisposable
         result.Should().BeTrue();
         agent.Status.Should().Be(AgentStatus.Busy);
         _mockAgentComm.Verify(c => c.AssignJobAsync("conn-direct-rev", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
-            "rp", "42", AgentLabels.InProgress, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()), Times.Once);
+        // Label swap to InProgress now happens via IRunLifecycleManager.AgentAcceptedRunAsync (not dispatcher)
     }
 
     [Fact]
@@ -981,8 +978,7 @@ public class AgentJobDispatcherTests : IDisposable
         result.Should().BeTrue();
         agent.Status.Should().Be(AgentStatus.Busy);
         _mockAgentComm.Verify(c => c.AssignJobAsync("conn-direct-decomp", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
-            "ip", "epic-direct", AgentLabels.InProgress, It.IsAny<CancellationToken>()), Times.Once);
+        // Label swap to InProgress now happens via IRunLifecycleManager.AgentAcceptedRunAsync (not dispatcher)
     }
 
     [Fact]

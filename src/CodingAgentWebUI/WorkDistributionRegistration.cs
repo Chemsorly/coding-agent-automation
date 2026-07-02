@@ -68,6 +68,15 @@ public static class WorkDistributionRegistration
             // Queue visibility: wraps in-memory JobDispatcherService
             services.AddSingleton<IPendingWorkQuery>(sp =>
                 new LegacyPendingWorkQuery(sp.GetRequiredService<JobDispatcherService>()));
+            // RunLifecycleManager (Legacy — no WorkItemTransitionService)
+            services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
+                sp.GetRequiredService<IOrchestratorRunService>(),
+                sp.GetRequiredService<IPipelineRunHistoryService>(),
+                sp.GetRequiredService<AgentRegistryService>(),
+                sp.GetRequiredService<ILabelSwapper>(),
+                sp.GetRequiredService<JobDispatcherService>(),
+                Log.Logger,
+                workItemTransition: null));
             Log.Information("WorkDistribution: Legacy mode (no database). Using JsonConfigurationStore + LegacyWorkDistributor");
             return services;
         }
@@ -128,7 +137,18 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<DispatchInfrastructure>(),
             sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetRequiredService<IRunLifecycleManager>()));
+
+        // ── IRunLifecycleManager (DB mode — coordinates in-memory + DB transitions) ──
+        services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
+            sp.GetRequiredService<IOrchestratorRunService>(),
+            sp.GetRequiredService<IPipelineRunHistoryService>(),
+            sp.GetRequiredService<AgentRegistryService>(),
+            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<JobDispatcherService>(),
+            Log.Logger,
+            sp.GetRequiredService<WorkItemTransitionService>()));
 
         // ── PostgresConfigurationStore (replaces JsonConfigurationStore) ─────
         // Singleton: consumed by singleton services (LabelSwapper, DispatchResolutionService,
@@ -256,7 +276,11 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>()));
+            sp.GetRequiredService<IProjectStore>(),
+            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>(),
+            sp.GetRequiredService<IRunLifecycleManager>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IAgentCancellationSender>()));
 
         // HeartbeatMonitorService remains registered (handled by AddOrchestrationServices)
         // Queue visibility: queries WorkItems table for Pending status
@@ -271,7 +295,10 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IPendingWorkQuery>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>()));
+            sp.GetRequiredService<IProjectStore>(),
+            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>(),
+            sp.GetRequiredService<IRunLifecycleManager>()));
         services.AddHostedService(sp => sp.GetRequiredService<PendingWorkItemDrainService>());
 
         Log.Information("WorkDistribution: SignalR mode — SignalRWorkDistributor + PendingWorkItemDrainService registered");

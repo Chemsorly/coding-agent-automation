@@ -23,6 +23,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly IOrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
+    private readonly IProjectStore _projectStore;
+    private readonly ILabelSwapper _labelSwapper;
+    private readonly IRunLifecycleManager? _lifecycleManager;
     private readonly ILogger<PendingWorkItemDrainService> _logger;
 
     private readonly SemaphoreSlim _wakeSignal = new(0, int.MaxValue);
@@ -36,7 +39,10 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         IOrchestratorRunService runService,
         WorkItemTransitionService transitionService,
         IPendingWorkQuery pendingWorkQuery,
-        ILogger<PendingWorkItemDrainService> logger)
+        IProjectStore projectStore,
+        ILabelSwapper labelSwapper,
+        ILogger<PendingWorkItemDrainService> logger,
+        IRunLifecycleManager? lifecycleManager = null)
     {
         _dbFactory = dbFactory;
         _agentResolver = agentResolver;
@@ -44,6 +50,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         _runService = runService;
         _transitionService = transitionService;
         _pendingWorkQuery = pendingWorkQuery;
+        _projectStore = projectStore;
+        _labelSwapper = labelSwapper;
+        _lifecycleManager = lifecycleManager;
         _logger = logger;
     }
 
@@ -156,13 +165,43 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 {
                     var run = _runService.GetRun(request.RunId);
                     if (run is not null)
+                    {
                         run.AgentId = agentId;
+                    }
+                    else
+                    {
+                        // Orchestrator restarted or multi-replica scenario — recreate the run
+                        // so HeartbeatMonitor and UI can track this agent's active job.
+                        var createdRun = PipelineRun.Create(
+                            runId: request.RunId,
+                            issueIdentifier: request.IssueIdentifier,
+                            issueTitle: request.IssueDetail?.Title ?? "",
+                            issueProviderConfigId: request.IssueProviderConfigId,
+                            repoProviderConfigId: request.RepoProviderConfigId,
+                            runType: request.RunType,
+                            startedAt: DateTimeOffset.UtcNow,
+                            initiatedBy: request.InitiatedBy,
+                            agentId: agentId);
+                        createdRun.ProjectId = request.ProjectId;
+                        createdRun.ProjectName = request.ProjectName;
+                        _runService.AddRun(createdRun);
+                        _logger.LogInformation(
+                            "PendingWorkItemDrainService: recreated PipelineRun {RunId} for issue {IssueIdentifier} (original run lost)",
+                            request.RunId, request.IssueIdentifier);
+                    }
                 }
 
                 var message = SignalRWorkDistributor.BuildJobAssignmentMessage(item.Id, request);
-                await _agentComm.AssignJobAsync(connectionId, message, ct);
 
-                _agentResolver.AssignJob(agentId, item.Id.ToString());
+                // Inject project secrets at delivery time (not serialized in WorkItem payload for security)
+                if (!string.IsNullOrEmpty(request.ProjectId))
+                {
+                    var project = await _projectStore.GetProjectByIdAsync(request.ProjectId, ct);
+                    if (project?.Secrets is { Count: > 0 })
+                        message = message with { ProjectSecrets = project.Secrets };
+                }
+
+                await _agentComm.AssignJobAsync(connectionId, message, ct);
             }
             catch (Exception ex)
             {
@@ -183,6 +222,21 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     entity.AssignedAgentId = agentId;
                 },
                 ct);
+
+            // Signal the lifecycle manager that an agent accepted this run.
+            // This atomically: sets AgentId on run, sets ActiveJobId on agent, swaps label to in-progress.
+            if (_lifecycleManager is not null)
+            {
+                await _lifecycleManager.AgentAcceptedRunAsync(
+                    request.RunId ?? item.Id.ToString(), agentId,
+                    request.IssueIdentifier, request.IssueProviderConfigId,
+                    request.RepoProviderConfigId, request.RunType, ct);
+            }
+            else
+            {
+                // Legacy fallback for tests without lifecycle manager
+                _agentResolver.AssignJob(agentId, item.Id.ToString());
+            }
 
             _logger.LogInformation(
                 "PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
