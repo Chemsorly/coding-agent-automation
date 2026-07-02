@@ -160,3 +160,33 @@
 .dispatch-template-select {
     max-width: 300px;
 }
+
+/* ═══ Dispatch Drawer Tabs ═══ */
+.dispatch-drawer-tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin: -16px -16px 0 -16px;
+    padding: 0 16px;
+}
+
+.dispatch-drawer-tab {
+    padding: 10px 14px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    border: none;
+    background: none;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.dispatch-drawer-tab:hover:not(.active) {
+    color: var(--text);
+}
+
+.dispatch-drawer-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    cursor: default;
+}

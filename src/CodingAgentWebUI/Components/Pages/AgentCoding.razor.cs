@@ -272,12 +272,68 @@ public partial class AgentCoding : IDisposable
 
     private void ResumeLoop() => PageService.ResumeLoop();
 
+    // ── Drawer Mutual Exclusion ──
+
+    private void HideOtherDrawers(string keepOpen)
+    {
+        if (keepOpen != "issue") _drawerOpen = false;
+        if (keepOpen != "pr") _prDrawerOpen = false;
+        if (keepOpen != "epic") _epicDrawerOpen = false;
+    }
+
+    private string ActiveDrawerTab => _drawerOpen ? "issue" : _prDrawerOpen ? "pr" : _epicDrawerOpen ? "epic" : "";
+
+    // TODO: ActiveDrawerTemplate uses a fixed fallback chain that doesn't reflect the currently active drawer.
+    // If templates ever differ per drawer type, this may return a stale template. Consider keying off ActiveDrawerTab instead.
+    private PipelineJobTemplate? ActiveDrawerTemplate =>
+        _drawerTemplate ?? _prDrawerTemplate ?? _epicDrawerTemplate;
+
+    private async Task SwitchToIssueDrawer()
+    {
+        HideOtherDrawers("issue");
+        if (_drawerTemplate != null && PageService.DrawerIssues.Count > 0)
+        {
+            _drawerOpen = true;
+        }
+        else
+        {
+            await OpenDrawer();
+        }
+    }
+
+    private async Task SwitchToPrDrawer()
+    {
+        HideOtherDrawers("pr");
+        if (_prDrawerTemplate != null && PageService.PrDrawerPrs.Count > 0)
+        {
+            _prDrawerOpen = true;
+        }
+        else
+        {
+            await OpenPrDrawer();
+        }
+    }
+
+    private async Task SwitchToEpicDrawer()
+    {
+        HideOtherDrawers("epic");
+        if (_epicDrawerTemplate != null && PageService.EpicDrawerIssues.Count > 0)
+        {
+            _epicDrawerOpen = true;
+        }
+        else
+        {
+            await OpenEpicDrawer();
+        }
+    }
+
     // ── Issue Drawer ──
 
     private async Task OpenDrawer()
     {
         var template = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
         if (template == null) return;
+        HideOtherDrawers("issue");
         _drawerTemplate = template; _drawerOpen = true;
         await RefreshActiveIssuesAsync();
         StateHasChanged(); // flush loading spinner before async fetches
@@ -357,6 +413,7 @@ public partial class AgentCoding : IDisposable
         if (string.IsNullOrEmpty(_manualDispatchTemplateId)) return;
         _prDrawerTemplate = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
         if (_prDrawerTemplate == null) return;
+        HideOtherDrawers("pr");
         _prDrawerOpen = true;
         await RefreshActiveIssuesAsync();
         StateHasChanged(); // flush loading spinner before async fetches
@@ -366,6 +423,8 @@ public partial class AgentCoding : IDisposable
         if (error != null) _errorMessage = error;
     }
 
+    // TODO: ClosePrDrawer does not null _prDrawerTemplate unlike CloseDrawer and CloseEpicDrawer.
+    // This asymmetry means ActiveDrawerTemplate may return stale PR template after close.
     private void ClosePrDrawer() { _prDrawerOpen = false; PageService.ClearPrDrawerLabelFilter(); }
 
     // TODO: Behavioral change — original PrDrawerNextPage always incremented page unconditionally; now guarded by null check on template.
@@ -425,6 +484,7 @@ public partial class AgentCoding : IDisposable
         if (string.IsNullOrEmpty(_manualDispatchTemplateId)) return;
         _epicDrawerTemplate = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
         if (_epicDrawerTemplate == null) return;
+        HideOtherDrawers("epic");
         _epicDrawerOpen = true;
         await RefreshActiveIssuesAsync();
         StateHasChanged(); // flush loading spinner before async fetches
