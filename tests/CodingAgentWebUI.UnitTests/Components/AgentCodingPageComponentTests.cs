@@ -9,6 +9,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 
@@ -42,14 +43,9 @@ public class AgentCodingPageComponentTests : BunitContext
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistory()).Returns(Array.Empty<PipelineRunSummary>());
 
-        _pipelineService = new PipelineOrchestrationService(
-            _mockStore.Object,
-            _mockFactory.Object,
-            new IssueDescriptionParser(),
-            new AgentPhaseExecutor(mockLogger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), new CiLogWriter(mockLogger.Object), new FeedbackService(mockLogger.Object), mockLogger.Object),
-            mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+        _pipelineService = TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockStore.Object,
+            providerFactory: _mockFactory.Object,
             historyService: mockHistoryService.Object);
 
         SetupDefaults();

@@ -22,14 +22,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockIssueProvider = new Mock<IIssueProvider>();
         _mockLogger = new Mock<Serilog.ILogger>();
 
-        var mockValidator = new Mock<IQualityGateValidator>();
-        _orchestration = new PipelineOrchestrationService(
-            _mockStore.Object, _mockFactory.Object, new IssueDescriptionParser(),
-            new AgentPhaseExecutor(_mockLogger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
-            _mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
-            historyService: new Mock<IPipelineRunHistoryService>().Object);
+        _orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockStore.Object,
+            providerFactory: _mockFactory.Object,
+            logger: _mockLogger.Object);
 
         SetupDefaults();
     }

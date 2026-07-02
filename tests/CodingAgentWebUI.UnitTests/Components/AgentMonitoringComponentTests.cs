@@ -9,6 +9,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
@@ -38,12 +39,9 @@ public class AgentMonitoringComponentTests : BunitContext
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(h => h.GetRunHistory()).Returns(Array.Empty<PipelineRunSummary>());
 
-        _pipelineService = new PipelineOrchestrationService(
-            mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
-            new AgentPhaseExecutor(mockLogger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), new CiLogWriter(mockLogger.Object), new FeedbackService(mockLogger.Object), mockLogger.Object),
-            mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+        _pipelineService = TestOrchestrationFactory.CreateMinimal(
+            configStore: mockStore.Object,
+            providerFactory: mockFactory.Object,
             historyService: mockHistory.Object);
 
         var registry = new AgentRegistryService(mockLogger.Object);

@@ -65,18 +65,13 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         mockHistoryService.Setup(h => h.GetRunHistory()).Returns(new List<PipelineRunSummary>().AsReadOnly());
 
-        var mockValidator = new Mock<IQualityGateValidator>();
         var mockAgentProvider = new Mock<IAgentProvider>();
         _mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(mockAgentProvider.Object);
 
-        _service = new PipelineOrchestrationService(
-            _mockConfigStore.Object,
-            _mockFactory.Object,
-            new IssueDescriptionParser(),
-            new AgentPhaseExecutor(_mockLogger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
-            _mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+        _service = TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockConfigStore.Object,
+            providerFactory: _mockFactory.Object,
+            logger: _mockLogger.Object,
             historyService: mockHistoryService.Object,
             runService: _mockRunService.Object);
     }

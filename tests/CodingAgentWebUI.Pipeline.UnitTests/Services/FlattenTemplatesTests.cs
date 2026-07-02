@@ -33,14 +33,10 @@ public class FlattenTemplatesTests : IAsyncDisposable
         _mockLogger.Setup(l => l.Warning(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<object>()));
         _mockLogger.Setup(l => l.Warning(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string>()));
 
-        var mockValidator = new Mock<IQualityGateValidator>();
-        _orchestration = new PipelineOrchestrationService(
-            _mockStore.Object, _mockFactory.Object, new IssueDescriptionParser(),
-            new AgentPhaseExecutor(_mockLogger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
-            _mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
-            historyService: new Mock<IPipelineRunHistoryService>().Object);
+        _orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockStore.Object,
+            providerFactory: _mockFactory.Object,
+            logger: _mockLogger.Object);
     }
 
     private PipelineLoopService CreateService()

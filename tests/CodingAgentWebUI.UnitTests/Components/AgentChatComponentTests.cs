@@ -10,6 +10,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
@@ -42,12 +43,9 @@ public class AgentChatComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
 
-        _pipelineService = new PipelineOrchestrationService(
-            _mockStore.Object, mockFactory.Object, new IssueDescriptionParser(),
-            new AgentPhaseExecutor(mockLogger.Object),
-            new QualityGateExecutor(mockValidator.Object, new PullRequestOrchestrator(mockLogger.Object), new CiLogWriter(mockLogger.Object), new FeedbackService(mockLogger.Object), mockLogger.Object),
-            mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
+        _pipelineService = TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockStore.Object,
+            providerFactory: mockFactory.Object,
             historyService: mockHistory.Object);
 
         _registry = new AgentRegistryService(mockLogger.Object);

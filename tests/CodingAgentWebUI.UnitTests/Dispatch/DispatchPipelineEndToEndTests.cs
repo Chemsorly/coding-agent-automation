@@ -9,6 +9,7 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.TestUtilities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -149,12 +150,10 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
     private DispatchOrchestrationService CreateOrchestrationService()
     {
-        var orchestration = new PipelineOrchestrationService(
-            _mockConfigStore.Object, _mockProviderFactory.Object,
-            new IssueDescriptionParser(), new Mock<IAgentPhaseExecutor>().Object,
-            new Mock<IQualityGateExecutor>().Object, _mockLogger.Object,
-            new Mock<IBrainUpdateService>().Object, new Mock<IPipelineRunHistoryService>().Object,
-            _runService);
+        var orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockConfigStore.Object,
+            providerFactory: _mockProviderFactory.Object,
+            lifecycle: new PipelineRunLifecycleService(new Mock<IPipelineRunHistoryService>().Object, _runService, _mockLogger.Object));
 
         return new DispatchOrchestrationService(
             new DispatchInfrastructure(

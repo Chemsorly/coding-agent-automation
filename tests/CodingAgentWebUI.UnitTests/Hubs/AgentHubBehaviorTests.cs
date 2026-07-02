@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
 using ILogger = Serilog.ILogger;
@@ -476,16 +477,9 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     private PipelineOrchestrationService CreateMinimalOrchestrationService()
     {
-        var service = new PipelineOrchestrationService(
-            Mock.Of<IConfigurationStore>(),
-            Mock.Of<IProviderFactory>(),
-            new IssueDescriptionParser(),
-            Mock.Of<IAgentPhaseExecutor>(),
-            Mock.Of<IQualityGateExecutor>(),
-            _mockLogger.Object,
-            brainUpdateService: Mock.Of<IBrainUpdateService>(),
-            historyService: Mock.Of<IPipelineRunHistoryService>(),
-            runService: Mock.Of<IOrchestratorRunService>());
+        var service = TestOrchestrationFactory.CreateMinimal(
+            configStore: Mock.Of<IConfigurationStore>(),
+            providerFactory: Mock.Of<IProviderFactory>());
         _orchestrationInstances.Add(service);
         return service;
     }

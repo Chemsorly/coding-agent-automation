@@ -27,16 +27,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     private readonly IProviderFactory _providerFactory;
     private readonly ILabelSwapper _labelSwapper;
     private readonly IssueDescriptionParser _issueParser;
-    private readonly IBrainSyncService _brainSync;
-    private readonly PullRequestOrchestrator _prOrchestrator;
-    private readonly PullRequestFinalizationService _finalization;
-    private readonly IPipelineRunHistoryService _historyService;
-    private readonly IAgentPhaseExecutor _agentExecution;
-    private readonly IQualityGateExecutor _qualityGates;
-    private readonly Interfaces.IQualityGateValidator? _qualityGateValidator;
-    private readonly FeedbackService _feedbackService;
-    private readonly IJobDeduplicationGuard? _dedupGuard;
-    private readonly IAgentCancellationSender? _agentCancellation;
+    private readonly IPipelineExecutionFacade _executionFacade;
+    private readonly IPipelineCompletionFacade _completionFacade;
+    private readonly IPipelineCancellationFacade _cancellationFacade;
     private readonly Serilog.ILogger _logger;
 
     protected readonly PipelineProviderManager _providerManager;
@@ -105,51 +98,33 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
-        IAgentPhaseExecutor agentExecution,
-        IQualityGateExecutor qualityGates,
-        Serilog.ILogger logger,
-        IBrainUpdateService? brainUpdateService = null,
-        IPipelineRunHistoryService? historyService = null,
-        IOrchestratorRunService? runService = null,
-        PipelineRunLifecycleService? lifecycle = null,
-        Interfaces.IQualityGateValidator? qualityGateValidator = null,
-        ILabelSwapper? labelSwapper = null,
-        FeedbackService? feedbackService = null,
-        PullRequestOrchestrator? prOrchestrator = null,
-        PullRequestFinalizationService? finalization = null,
-        IBrainSyncService? brainSync = null,
-        IJobDeduplicationGuard? dedupGuard = null,
-        IAgentCancellationSender? agentCancellation = null)
+        IPipelineExecutionFacade executionFacade,
+        IPipelineCompletionFacade completionFacade,
+        IPipelineCancellationFacade cancellationFacade,
+        PipelineRunLifecycleService lifecycle,
+        ILabelSwapper labelSwapper,
+        Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(issueParser);
-        ArgumentNullException.ThrowIfNull(agentExecution);
-        ArgumentNullException.ThrowIfNull(qualityGates);
+        ArgumentNullException.ThrowIfNull(executionFacade);
+        ArgumentNullException.ThrowIfNull(completionFacade);
+        ArgumentNullException.ThrowIfNull(cancellationFacade);
+        ArgumentNullException.ThrowIfNull(lifecycle);
+        ArgumentNullException.ThrowIfNull(labelSwapper);
         ArgumentNullException.ThrowIfNull(logger);
 
         _configStore = configStore;
         _providerFactory = providerFactory;
-        _labelSwapper = labelSwapper ?? NoOpLabelSwapper.Instance;
+        _labelSwapper = labelSwapper;
         _issueParser = issueParser;
         _logger = logger;
-        _agentExecution = agentExecution;
-        _qualityGates = qualityGates;
-        _qualityGateValidator = qualityGateValidator;
-        _feedbackService = feedbackService ?? new FeedbackService(logger);
+        _executionFacade = executionFacade;
+        _completionFacade = completionFacade;
+        _cancellationFacade = cancellationFacade;
         _providerManager = new PipelineProviderManager(configStore, providerFactory, logger);
-
-        ArgumentNullException.ThrowIfNull(brainUpdateService);
-        _brainSync = brainSync ?? new BrainSyncService(brainUpdateService, logger);
-        _prOrchestrator = prOrchestrator ?? new PullRequestOrchestrator(logger);
-        _finalization = finalization ?? new PullRequestFinalizationService(logger);
-        _historyService = historyService ?? throw new ArgumentNullException(nameof(historyService));
-        _dedupGuard = dedupGuard;
-        _agentCancellation = agentCancellation;
-
-        // Use provided lifecycle service or create one internally for backward compatibility
-        _lifecycle = lifecycle ?? new PipelineRunLifecycleService(
-            _historyService, runService, logger);
+        _lifecycle = lifecycle;
     }
 
     /// <summary>
@@ -232,10 +207,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             PipelineProvider = _providerManager.ActivePipelineProvider, Cts = _lifecycle.CancellationTokenSource,
             ConfigStore = _configStore, IssueProvider = issueProvider,
             Callbacks = callbacks,
-            IssueOps = issueOps, AgentExecution = _agentExecution,
-            QualityGates = _qualityGates, BrainSync = _brainSync,
-            PrOrchestrator = _prOrchestrator, Logger = _logger,
-            QualityGateValidator = _qualityGateValidator
+            IssueOps = issueOps, AgentExecution = _executionFacade.AgentExecution,
+            QualityGates = _executionFacade.QualityGates, BrainSync = _executionFacade.BrainSync,
+            PrOrchestrator = _completionFacade.PrOrchestrator, Logger = _logger,
+            QualityGateValidator = _executionFacade.QualityGateValidator
         };
 
         try
@@ -334,12 +309,12 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
         // Send CancelJob to each agent in parallel (2s per-agent timeout)
         // Non-fatal — agent may already be disconnected
-        if (_agentCancellation is not null)
+        if (_cancellationFacade.AgentCancellation is not null)
         {
             try
             {
                 var cancelTasks = allRuns.Select(run =>
-                    _agentCancellation.SendCancelJobAsync(run.AgentId!, run.RunId, CancellationToken.None));
+                    _cancellationFacade.AgentCancellation.SendCancelJobAsync(run.AgentId!, run.RunId, CancellationToken.None));
                 await Task.WhenAll(cancelTasks);
             }
             catch (Exception ex)
@@ -365,17 +340,17 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         var cancelledIssues = await _lifecycle.MarkAgentRunsCancelled();
 
         // Release dedup guards so issues become re-dispatchable after restart
-        if (_dedupGuard is not null)
+        if (_cancellationFacade.DedupGuard is not null)
         {
             foreach (var (issueId, providerId) in cancelledIssues)
             {
-                _dedupGuard.MarkIssueComplete(issueId, providerId);
+                _cancellationFacade.DedupGuard.MarkIssueComplete(issueId, providerId);
             }
         }
     }
 
     /// <summary>Returns the in-memory run history.</summary>
-    public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _historyService.GetRunHistory();
+    public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _completionFacade.HistoryService.GetRunHistory();
 
     // --- Private helpers ---
     private async Task CreatePullRequestAsync(
@@ -397,7 +372,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
                 run.PullRequestNumber = run.LinkedPullRequest.Number.ToString();
             }
 
-            var prUrl = await _prOrchestrator.CreatePullRequestAsync(
+            var prUrl = await _completionFacade.PrOrchestrator.CreatePullRequestAsync(
                 run, report, isDraft, _providerManager.ActiveRepoProvider!, _activeIssue,
                 _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
                 isRework: run.LinkedPullRequest != null,
@@ -414,13 +389,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         }
     }
     private Task UpdateFileChangeStatsAsync(PipelineRun run)
-        => _prOrchestrator.UpdateFileChangeStatsAsync(run, _providerManager.ActiveRepoProvider!);
+        => _completionFacade.PrOrchestrator.UpdateFileChangeStatsAsync(run, _providerManager.ActiveRepoProvider!);
 
     private async Task CreateDraftPrIfNotExistsAsync(PipelineRun run, CancellationToken ct)
     {
         try
         {
-            var prUrl = await _prOrchestrator.CreateDraftPrIfNotExistsAsync(
+            var prUrl = await _completionFacade.PrOrchestrator.CreateDraftPrIfNotExistsAsync(
                 run, _providerManager.ActiveRepoProvider!, ct,
                 issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
             if (prUrl != null)
@@ -454,7 +429,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
                 return;
             }
 
-            var prUrl = await _prOrchestrator.FinalizePullRequestAsync(
+            var prUrl = await _completionFacade.PrOrchestrator.FinalizePullRequestAsync(
                 run, report, isDraft, _providerManager.ActiveRepoProvider!, _activeIssue,
                 _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
                 issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
@@ -489,10 +464,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         else
             await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Done, ct);
 
-        await _finalization.RunPostPrSequenceAsync(
+        await _completionFacade.Finalization.RunPostPrSequenceAsync(
             run, isDraft, _providerManager.ActiveAgentProvider!, _providerManager.ActiveRepoProvider!,
-            _activeConfig!, _brainSync, _providerManager.ActiveBrainProvider, _feedbackService,
-            _historyService, line => _lifecycle.EmitOutputLine(line),
+            _activeConfig!, _executionFacade.BrainSync, _providerManager.ActiveBrainProvider, _completionFacade.FeedbackService,
+            _completionFacade.HistoryService, line => _lifecycle.EmitOutputLine(line),
             step => { _lifecycle.TransitionTo(run, step); return Task.CompletedTask; },
             ct);
 
@@ -506,7 +481,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             _lifecycle.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
 
         if (finalStep == PipelineStep.Completed)
-            _historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.WorkspaceBaseDirectory);
+            _completionFacade.HistoryService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.WorkspaceBaseDirectory);
         _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
             run.RunId, finalStep, run.CompletedAtOffset!.Value - run.StartedAtOffset, run.RetryCount, run.PullRequestUrl);
     }
@@ -692,10 +667,4 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// </summary>
     internal void NotifyChange() => _lifecycle.NotifyChange();
 
-    private sealed class NoOpLabelSwapper : ILabelSwapper
-    {
-        internal static readonly NoOpLabelSwapper Instance = new();
-        public Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct) => Task.CompletedTask;
-        public Task<bool> EnsureAgentLabelsAsync(string providerConfigId, LabelTargetKind targetKind, CancellationToken ct) => Task.FromResult(true);
-    }
 }

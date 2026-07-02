@@ -7,6 +7,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.TestUtilities;
 using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
@@ -48,24 +49,17 @@ public class EpicDeduplicationPropertyTests
         mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
 
-        var mockQualityGateValidator = new Mock<IQualityGateValidator>();
-        var mockBrainUpdateService = new Mock<IBrainUpdateService>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        var issueParser = new IssueDescriptionParser();
         var mockHttpClientFactory = new Mock<IHttpClientFactory>();
         mockHttpClientFactory.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(new HttpClient());
         var tokenVending = new TokenVendingService(mockLogger.Object, mockHttpClientFactory.Object);
 
-        var orchestration = new PipelineOrchestrationService(
-            mockConfigStore.Object,
-            mockProviderFactory.Object,
-            issueParser,
-            new AgentPhaseExecutor(mockLogger.Object),
-            new QualityGateExecutor(mockQualityGateValidator.Object, new PullRequestOrchestrator(mockLogger.Object), new CiLogWriter(mockLogger.Object), new FeedbackService(mockLogger.Object), mockLogger.Object),
-            mockLogger.Object,
-            mockBrainUpdateService.Object,
-            mockHistoryService.Object,
-            runService);
+        var orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: mockConfigStore.Object,
+            providerFactory: mockProviderFactory.Object,
+            logger: mockLogger.Object,
+            historyService: mockHistoryService.Object,
+            runService: runService);
 
         var dispatcher = new AgentJobDispatcher(
             jobService,
