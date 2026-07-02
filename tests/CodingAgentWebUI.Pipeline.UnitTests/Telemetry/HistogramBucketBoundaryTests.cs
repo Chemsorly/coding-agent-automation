@@ -12,7 +12,7 @@ public class HistogramBucketBoundaryTests
     {
         var boundaries = PipelineTelemetry.JobDuration.Advice?.HistogramBucketBoundaries;
         boundaries.Should().NotBeNull();
-        boundaries.Should().Equal(30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200);
+        boundaries.Should().Equal(30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600);
     }
 
     [Fact]

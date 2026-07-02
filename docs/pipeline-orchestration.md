@@ -142,7 +142,7 @@ flowchart TD
 - **`not_ready`** — abort, label `agent:needs-refinement`, post blocking issues to GitHub
 - **`wont_do`** — mark Completed, label `agent:wont-do`, post reasoning to GitHub
 
-Override rule: if `blockingIssues` is non-empty, the gate forces `not_ready` regardless of the recommendation value. Unknown recommendation values (e.g. typos) fall through as `ready` (fail-open design).
+Override rule: if `blockingIssues` is non-empty, the gate forces `not_ready` regardless of the recommendation value. Unknown recommendation values (e.g. typos) are treated as `not_ready` (fail-closed design) — this prevents accidental progression on malformed assessments.
 
 ## Quality Gate Retry Loop
 
@@ -170,7 +170,7 @@ Quality gates checked (in order):
 3. **Coverage** — Code coverage must meet `coverageThreshold` (if configured). Supports Cobertura XML (Python, .NET) and JaCoCo XML (Java) formats
 4. **External CI** — External CI pipeline must pass (if enabled). Requires commit + push before checking
 
-External CI is only evaluated after local gates (compilation, tests, coverage) pass. If external CI fails, it does not enter the agent retry loop — the failure goes straight to a draft PR. Only local gate failures trigger retries with agent error feedback.
+External CI is only evaluated after local gates (compilation, tests, coverage) pass. If any gate (including external CI) fails, the pipeline enters the retry loop — the agent gets error feedback and attempts to fix the code. After all retries are exhausted, the run falls back to a draft PR. Infrastructure-level CI failures (runner crashes, network errors) are counted separately via `MaxInfrastructureRetries` and do not consume the agent's code-fix retry budget.
 
 The retry prompt includes the full gate failure details and points the agent to diagnostic output files. Each retry attempt is a `--resume` call, so the agent has full conversation history.
 

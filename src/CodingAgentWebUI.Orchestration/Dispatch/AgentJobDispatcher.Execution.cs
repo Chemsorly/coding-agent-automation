@@ -575,6 +575,11 @@ public sealed partial class AgentJobDispatcher
     {
         _logger.Error(ex, messageTemplate, agent.AgentId, identifier);
 
+        // Remove the orphaned run from OrchestratorRunService to unblock future dispatch.
+        // Without this, IsIssueBeingProcessed returns true forever in legacy mode.
+        if (agent.ActiveJobId is not null)
+            _runService.RemoveRun(agent.ActiveJobId);
+
         agent.ActiveJobId = null;
         _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 

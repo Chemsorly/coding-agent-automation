@@ -198,6 +198,9 @@ public sealed partial class AgentHub
         // Non-fatal post-completion bookkeeping: label swap and feedback comment.
         // These may involve external API calls and can be slow — executed after agent
         // is already marked Idle so it doesn't block availability.
+        // Note: These run inline (not fire-and-forget) to maintain testability and ensure
+        // label swaps complete before the hub method returns. The agent is already Idle
+        // in the registry, so the dispatcher can assign it work via the periodic drain sweep.
         if (run is not null)
         {
             // Swap label based on final outcome (non-fatal).
@@ -251,8 +254,10 @@ public sealed partial class AgentHub
             run.LastStepChangeAt = clampedTimestamp;
 
             // Update HighWaterMark — only advance, never go backward
-            // Exclude terminal states (Completed, Failed, Cancelled) from high water mark
-            if (step < PipelineStep.Completed && step > run.HighWaterMark)
+            // Uses StepOrder.GetOrder (logical execution order) — NOT enum ordinals.
+            // Terminal states (Failed, Cancelled) return -1 and are excluded.
+            if (step is not (PipelineStep.Failed or PipelineStep.Cancelled)
+                && StepOrder.GetOrder(step) > StepOrder.GetOrder(run.HighWaterMark))
                 run.HighWaterMark = step;
 
             // Apply step metadata from the agent (carries data from the just-completed step)
