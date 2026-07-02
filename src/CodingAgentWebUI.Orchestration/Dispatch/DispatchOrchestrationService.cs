@@ -514,7 +514,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         };
     }
 
-    // TODO: Remove duplicate <inheritdoc /> — copy-paste artifact (#997 review)
     /// <inheritdoc />
     public async Task ConfirmDistributionLabelAsync(JobDistributionRequest request, CancellationToken ct)
     {
