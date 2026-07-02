@@ -22,6 +22,7 @@
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
 @inject ILabelSwapper LabelSwapper
 @inject IPipelineRunHistoryService HistoryService
+@inject InfrastructureHealthService InfraHealth
 @inject IJSRuntime JS
 @using Microsoft.AspNetCore.SignalR
 
@@ -44,6 +45,8 @@
     </header>
 
     <RunHistoryStats Runs="_runHistory" Agents="Registry.GetAllAgents()" QueueLength="_queuedJobs.Count" ShowAgentStats="true" />
+
+    <InfrastructureHealth DatabaseStatus="_dbStatus" RedisStatus="_redisStatus" />
 
     <!-- Active Runs -->
     <section class="settings-section" style="margin: 16px 20px;">
@@ -764,6 +767,8 @@
     private bool _showDisconnectConfirm;
     private DateTimeOffset _lastSuccessfulRefresh = DateTimeOffset.UtcNow;
     private bool _lastRefreshFailed;
+    private bool? _dbStatus;
+    private bool? _redisStatus;
 
     protected override async Task OnInitializedAsync()
     {
@@ -851,6 +856,8 @@
         _agents = Registry.GetAllAgents();
         _runHistory = PipelineService.GetRunHistory();
         _queuedJobs = await PendingWorkQuery.GetPendingJobsAsync();
+        _dbStatus = InfraHealth.DatabaseConnected;
+        _redisStatus = InfraHealth.RedisConnected;
 
         if (includeConsolidation)
             await RefreshConsolidationAsync();
