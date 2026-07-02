@@ -1,0 +1,28 @@
+@if (DatabaseStatus is not null || RedisStatus is not null)
+{
+    <div class="infra-health-bar">
+        @if (DatabaseStatus is not null)
+        {
+            <span class="infra-health-item" title="@DbTooltip">
+                <span class="infra-health-dot @DbClass"></span> DB
+            </span>
+        }
+        @if (RedisStatus is not null)
+        {
+            <span class="infra-health-item" title="@RedisTooltip">
+                <span class="infra-health-dot @RedisClass"></span> Redis
+            </span>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public bool? DatabaseStatus { get; set; }
+    [Parameter] public bool? RedisStatus { get; set; }
+
+    private string DbClass => DatabaseStatus == true ? "dot-healthy" : "dot-unhealthy";
+    private string DbTooltip => DatabaseStatus == true ? "Database: Connected" : "Database: Disconnected";
+
+    private string RedisClass => RedisStatus == true ? "dot-healthy" : "dot-unhealthy";
+    private string RedisTooltip => RedisStatus == true ? "Redis: Connected" : "Redis: Disconnected";
+}

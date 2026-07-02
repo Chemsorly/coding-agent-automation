@@ -120,6 +120,9 @@ builder.Services.AddConsolidationServices(pipelineConfig);
 builder.Services.AddWorkDistribution(builder.Configuration);
 builder.Services.AddDatabaseHealthServices(builder.Configuration);
 
+// Infrastructure health aggregation — reads from DatabaseHealthState + IConnectionMultiplexer (both optional)
+builder.Services.AddSingleton<CodingAgentWebUI.Services.InfrastructureHealthService>();
+
 // Page-level services (scoped — one instance per Blazor circuit)
 builder.Services.AddScoped<CodingAgentWebUI.Services.AgentCodingPageService>();
 builder.Services.AddScoped<CodingAgentWebUI.Services.NotificationService>();
