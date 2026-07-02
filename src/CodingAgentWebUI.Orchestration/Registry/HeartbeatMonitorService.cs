@@ -248,7 +248,37 @@ public sealed class HeartbeatMonitorService : BackgroundService
                     {
                         // Check if this is a consolidation run — those are tracked separately
                         if (_consolidationService?.IsRunActive(agent.ActiveJobId) == true)
+                        {
+                            // Phase 1.7: Detect stuck consolidation runs exceeding progress timeout.
+                            // Consolidation runs don't have PipelineRun entries in _runService,
+                            // so the standard progress timeout (Phase 1.6) doesn't apply.
+                            // Use the consolidation run's StartedAtUtc instead.
+                            var consolidationStartedAt = _consolidationService.GetActiveRunStartedAt(agent.ActiveJobId);
+                            if (consolidationStartedAt.HasValue)
+                            {
+                                var consolidationElapsed = now - consolidationStartedAt.Value;
+                                var consolidationTimeout = pipelineConfig.AgentBusyProgressTimeout;
+                                if (consolidationElapsed > consolidationTimeout)
+                                {
+                                    _logger.Warning(
+                                        "Agent {AgentId} consolidation run {RunId} stuck for {ElapsedMin:F0} minutes (progress timeout: {TimeoutMin:F0} min) — failing run",
+                                        agent.AgentId, agent.ActiveJobId, consolidationElapsed.TotalMinutes, consolidationTimeout.TotalMinutes);
+
+                                    var failReason = $"Consolidation run exceeded progress timeout ({consolidationElapsed.TotalMinutes:F0} minutes > {consolidationTimeout.TotalMinutes:F0} minute limit)";
+                                    await _consolidationService.UpdateRunAsync(
+                                        agent.ActiveJobId, ConsolidationRunStatus.Failed, failReason, ct);
+
+                                    lock (agent.SyncRoot)
+                                    {
+                                        agent.ActiveJobId = null;
+                                        agent.OrphanRestoredAt = null;
+                                    }
+                                    _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                                }
+                            }
+
                             continue;
+                        }
 
                         _logger.Warning(
                             "Agent {AgentId} is Busy with ActiveJobId {JobId} but run not found — resetting to Idle",

@@ -98,4 +98,11 @@ public interface IConsolidationService
     /// Used by HeartbeatMonitor to avoid resetting agents working on consolidation jobs.
     /// </summary>
     bool IsRunActive(string runId);
+
+    /// <summary>
+    /// Returns the <see cref="ConsolidationRun.StartedAtUtc"/> for the specified active run,
+    /// or <c>null</c> if the run is not tracked as active.
+    /// Used by HeartbeatMonitor to detect stuck consolidation runs that exceed the progress timeout.
+    /// </summary>
+    DateTimeOffset? GetActiveRunStartedAt(string runId);
 }

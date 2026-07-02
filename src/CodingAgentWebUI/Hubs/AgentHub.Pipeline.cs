@@ -170,7 +170,13 @@ public sealed partial class AgentHub
             }
             catch (Exception ex)
             {
-                _logger.Warning(ex, "CompleteRunAsync failed for job {JobId} (status={Status})", jobId, workItemStatus);
+                _logger.Warning(ex, "CompleteRunAsync failed for job {JobId} (status={Status}), performing defensive cleanup", jobId, workItemStatus);
+
+                // Defensive cleanup: if CompleteRunAsync threw (e.g., DB failure mid-operation),
+                // the dedup guard and active runs list may not have been cleaned up.
+                // Without this, the issue becomes permanently blocked from re-dispatch.
+                _facade.RemoveRun(jobId);
+                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
             }
 
             _logger.Information(

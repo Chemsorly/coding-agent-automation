@@ -6,6 +6,9 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
 /// Unit tests verifying agent worker metric instruments emit correct tags.
+/// Uses a warm-up pattern for each instrument to ensure MeterListener observes
+/// static instruments that were created before the listener started (eliminates
+/// race condition where InstrumentPublished doesn't fire for pre-existing instruments).
 /// </summary>
 [Collection("Metrics")]
 public class PipelineTelemetryAgentMetricsTests : IDisposable
@@ -30,6 +33,15 @@ public class PipelineTelemetryAgentMetricsTests : IDisposable
         });
 
         _listener.Start();
+
+        // Warm up: force the listener to observe all static instruments by emitting
+        // a measurement on each. This eliminates the MeterListener race condition where
+        // InstrumentPublished may not fire for instruments created before Start().
+        PipelineTelemetry.AgentJobsReceived.Add(0);
+        PipelineTelemetry.AgentJobsRejected.Add(0);
+        PipelineTelemetry.AgentHeartbeatFailures.Add(0);
+        PipelineTelemetry.AgentReconnections.Add(0);
+        _measurements.Clear();
     }
 
     public void Dispose() => _listener.Dispose();
@@ -47,10 +59,6 @@ public class PipelineTelemetryAgentMetricsTests : IDisposable
     [Fact]
     public void AgentJobsRejected_Add_IncludesReasonTag()
     {
-        // Warm up: force the listener to observe this instrument (workaround for
-        // InstrumentPublished not reliably firing for pre-existing static instruments)
-        PipelineTelemetry.AgentJobsRejected.Add(1,
-            new KeyValuePair<string, object?>("reason", "warmup"));
         _measurements.Clear();
 
         PipelineTelemetry.AgentJobsRejected.Add(1,

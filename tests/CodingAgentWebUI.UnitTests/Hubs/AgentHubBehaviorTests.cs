@@ -486,6 +486,32 @@ public sealed class AgentHubBehaviorTests : IDisposable
         return service;
     }
 
+    [Fact]
+    public async Task ReportJobCompleted_WhenCompleteRunAsyncThrows_StillCleansDedupGuardAndActiveRun()
+    {
+        // Arrange: CompleteRunAsync throws (simulating DB failure during completion)
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        var run = CreateRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        _mockLifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Simulated DB failure"));
+
+        var hub = CreateHubWithOrchestration();
+
+        // Act: should not throw despite CompleteRunAsync failure
+        await hub.ReportJobCompleted("job-1", payload);
+
+        // Assert: defensive cleanup must release the dedup guard and remove the orphaned run
+        _mockFacade.Verify(f => f.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId), Times.Once);
+        _mockFacade.Verify(f => f.RemoveRun("job-1"), Times.Once);
+    }
+
     #endregion
 
     #region ReportStepTransition
