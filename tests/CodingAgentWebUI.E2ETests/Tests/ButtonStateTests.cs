@@ -230,6 +230,54 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
     }
 
     [Fact]
+    public async Task StartLoop_EnabledWhenPrerequisitesMet()
+    {
+        // Arrange: seed an enabled template (fixture SeedDefaults provides issue/repo providers)
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        // Act: navigate to the page
+        var codingPage = new AgentCodingPage(Page, BaseUrl);
+        await codingPage.NavigateAsync();
+
+        // Assert: Start Loop button is enabled
+        var startLoopBtn = await Page.WaitForSelectorAsync(
+            "button:has-text('Start Loop')",
+            new() { Timeout = 5_000 });
+        Assert.NotNull(startLoopBtn);
+        var isDisabled = await startLoopBtn.IsDisabledAsync();
+        Assert.False(isDisabled, "Start Loop button should be enabled when prerequisites are met");
+    }
+
+    [Fact]
+    public async Task StartLoop_ShowsTooltipWhenDisabled()
+    {
+        // TODO: Add E2E tests for "No issue provider configured" and "No repository provider configured" tooltip messages
+        // to validate all disabled-reason paths at the E2E level.
+
+        // Arrange: ensure no templates exist (button should be disabled)
+
+        // Act: navigate to the page
+        var codingPage = new AgentCodingPage(Page, BaseUrl);
+        await codingPage.NavigateAsync();
+
+        // Assert: Start Loop button has a title tooltip explaining why it's disabled
+        var startLoopBtn = await Page.WaitForSelectorAsync(
+            "button:has-text('Start Loop')",
+            new() { Timeout = 5_000 });
+        Assert.NotNull(startLoopBtn);
+        var title = await startLoopBtn.GetAttributeAsync("title");
+        Assert.NotNull(title);
+        Assert.Contains("No enabled pipeline templates configured", title);
+    }
+
+    [Fact]
     public async Task DrawerPagination_PrevDisabledOnFirstPage()
     {
         // Arrange: seed template and a few issues (less than page size)
