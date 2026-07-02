@@ -357,28 +357,9 @@ public class AgentCodingPageService
         }
 
         // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
-        var minimalRequest = new JobDistributionRequest
-        {
-            IssueIdentifier = issue.Identifier,
-            IssueProviderConfigId = template.IssueProviderId,
-            RepoProviderConfigId = template.RepoProviderId,
-            BrainProviderConfigId = template.BrainProviderId,
-            PipelineProviderConfigId = template.PipelineProviderId,
-            InitiatedBy = "manual",
-            TaskType = WorkItemTaskType.Implementation,
-            AgentSelector = "",
-            TimeoutSeconds = 3600,
-            ProjectId = GetParentProject(template.Id)?.Id,
-            ProjectName = GetParentProject(template.Id)?.Name,
-            RunType = PipelineRunType.Implementation,
-            IssueDetail = new IssueDetail
-            {
-                Title = issue.Title ?? "",
-                Identifier = issue.Identifier,
-                Description = issue.Description ?? "",
-                Labels = issue.Labels ?? []
-            }
-        };
+        var minimalRequest = JobDistributionRequest.FromTemplate(
+            template, issue, initiatedBy: "manual", timeoutSeconds: 3600,
+            projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
         var legacyResult = await _workDistributor.DistributeAsync(minimalRequest, CancellationToken.None);
         if (legacyResult.Success) return (true, null, $"✅ Dispatched #{issue.Identifier}");
         return (false, "Could not dispatch — issue is already being processed or queued, or no agents are available.", null);
@@ -463,37 +444,9 @@ public class AgentCodingPageService
         }
 
         // Legacy mode
-        var minimalRequest = new JobDistributionRequest
-        {
-            IssueIdentifier = pr.Identifier,
-            IssueProviderConfigId = template.IssueProviderId,
-            RepoProviderConfigId = template.RepoProviderId,
-            BrainProviderConfigId = template.BrainProviderId,
-            InitiatedBy = "manual",
-            TaskType = WorkItemTaskType.Review,
-            AgentSelector = "",
-            TimeoutSeconds = 3600,
-            ProjectId = GetParentProject(template.Id)?.Id,
-            ProjectName = GetParentProject(template.Id)?.Name,
-            RunType = PipelineRunType.Review,
-            IssueDetail = new IssueDetail
-            {
-                Title = pr.Title ?? "",
-                Identifier = pr.Identifier,
-                Description = pr.Description ?? "",
-                Labels = []
-            },
-            LinkedPullRequest = new LinkedPullRequest
-            {
-                BranchName = pr.BranchName,
-                Url = pr.Url,
-                IsDraft = pr.IsDraft,
-                Number = pr.Number
-            },
-            ReviewPrTargetBranch = pr.TargetBranch,
-            ReviewPrDescription = pr.Description,
-            ReviewPrAuthor = pr.Author
-        };
+        var minimalRequest = JobDistributionRequest.FromTemplate(
+            template, pr, initiatedBy: "manual", timeoutSeconds: 3600,
+            projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
         var legacyResult = await _workDistributor.DistributeAsync(minimalRequest, CancellationToken.None);
         if (legacyResult.Success) return (true, null, $"PR #{pr.Identifier} dispatched for review.");
         return (false, $"PR #{pr.Identifier} is already being processed or queued.", null);
@@ -594,27 +547,9 @@ public class AgentCodingPageService
         }
 
         // Legacy mode
-        var minimalRequest = new JobDistributionRequest
-        {
-            IssueIdentifier = issue.Identifier,
-            IssueProviderConfigId = template.IssueProviderId,
-            RepoProviderConfigId = template.RepoProviderId,
-            BrainProviderConfigId = template.BrainProviderId,
-            InitiatedBy = "manual",
-            TaskType = WorkItemTaskType.Decomposition,
-            AgentSelector = "",
-            TimeoutSeconds = 3600,
-            ProjectId = GetParentProject(template.Id)?.Id,
-            ProjectName = GetParentProject(template.Id)?.Name,
-            RunType = phaseType,
-            IssueDetail = new IssueDetail
-            {
-                Title = issue.Title ?? "",
-                Identifier = issue.Identifier,
-                Description = issue.Description ?? "",
-                Labels = issue.Labels ?? []
-            }
-        };
+        var minimalRequest = JobDistributionRequest.FromTemplate(
+            template, issue, phaseType, initiatedBy: "manual", timeoutSeconds: 3600,
+            projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
         var legacyResult = await _workDistributor.DistributeAsync(minimalRequest, CancellationToken.None);
         if (legacyResult.Success) return (true, null, $"✅ Dispatched epic #{issue.Identifier} for {(phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition")}");
         return (false, "Could not dispatch — epic is already being processed or queued, or no agents are available.", null);
