@@ -98,9 +98,10 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     public async Task ProviderConfig_SaveThenLoadByKind_Returns()
     {
         var store = CreateStore();
+        var id = Guid.NewGuid().ToString();
         var config = new ProviderConfig
         {
-            Id = "pc-contract-1",
+            Id = id,
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             DisplayName = "Contract Test Repo",
@@ -110,8 +111,8 @@ public abstract class ConfigurationStoreContractTests : IDisposable
         await store.SaveProviderConfigAsync(config, CancellationToken.None);
         var loaded = await store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
 
-        loaded.Should().Contain(c => c.Id == "pc-contract-1");
-        var match = loaded.First(c => c.Id == "pc-contract-1");
+        loaded.Should().Contain(c => c.Id == id);
+        var match = loaded.First(c => c.Id == id);
         match.ProviderType.Should().Be("GitHub");
         match.DisplayName.Should().Be("Contract Test Repo");
         match.Settings["owner"].Should().Be("test-org");
@@ -121,9 +122,10 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     public async Task ProviderConfig_GetById_ReturnsCorrect()
     {
         var store = CreateStore();
+        var id = Guid.NewGuid().ToString();
         var config = new ProviderConfig
         {
-            Id = "pc-contract-byid",
+            Id = id,
             Kind = ProviderKind.Agent,
             ProviderType = "KiroCli",
             DisplayName = "Test Agent",
@@ -131,10 +133,10 @@ public abstract class ConfigurationStoreContractTests : IDisposable
         };
 
         await store.SaveProviderConfigAsync(config, CancellationToken.None);
-        var loaded = await store.GetProviderConfigByIdAsync("pc-contract-byid", ProviderKind.Agent, CancellationToken.None);
+        var loaded = await store.GetProviderConfigByIdAsync(id, ProviderKind.Agent, CancellationToken.None);
 
         loaded.Should().NotBeNull();
-        loaded!.Id.Should().Be("pc-contract-byid");
+        loaded!.Id.Should().Be(id);
         loaded.ProviderType.Should().Be("KiroCli");
     }
 
@@ -143,7 +145,7 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     {
         var store = CreateStore();
 
-        var loaded = await store.GetProviderConfigByIdAsync("non-existent", ProviderKind.Repository, CancellationToken.None);
+        var loaded = await store.GetProviderConfigByIdAsync(Guid.NewGuid().ToString(), ProviderKind.Repository, CancellationToken.None);
 
         loaded.Should().BeNull();
     }
@@ -152,9 +154,10 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     public async Task ProviderConfig_Delete_RemovesFromStore()
     {
         var store = CreateStore();
+        var id = Guid.NewGuid().ToString();
         var config = new ProviderConfig
         {
-            Id = "pc-contract-del",
+            Id = id,
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             DisplayName = "To Delete",
@@ -162,9 +165,9 @@ public abstract class ConfigurationStoreContractTests : IDisposable
         };
 
         await store.SaveProviderConfigAsync(config, CancellationToken.None);
-        await store.DeleteProviderConfigAsync("pc-contract-del", ProviderKind.Repository, CancellationToken.None);
+        await store.DeleteProviderConfigAsync(id, ProviderKind.Repository, CancellationToken.None);
 
-        var loaded = await store.GetProviderConfigByIdAsync("pc-contract-del", ProviderKind.Repository, CancellationToken.None);
+        var loaded = await store.GetProviderConfigByIdAsync(id, ProviderKind.Repository, CancellationToken.None);
         loaded.Should().BeNull();
     }
 
@@ -172,17 +175,19 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     public async Task ProviderConfig_LoadByKind_OnlyReturnsThatKind()
     {
         var store = CreateStore();
+        var repoId = Guid.NewGuid().ToString();
+        var agentId = Guid.NewGuid().ToString();
 
         await store.SaveProviderConfigAsync(new ProviderConfig
         {
-            Id = "pc-repo-kind", Kind = ProviderKind.Repository,
+            Id = repoId, Kind = ProviderKind.Repository,
             ProviderType = "GitHub", DisplayName = "Repo",
             Settings = new Dictionary<string, string>()
         }, CancellationToken.None);
 
         await store.SaveProviderConfigAsync(new ProviderConfig
         {
-            Id = "pc-agent-kind", Kind = ProviderKind.Agent,
+            Id = agentId, Kind = ProviderKind.Agent,
             ProviderType = "KiroCli", DisplayName = "Agent",
             Settings = new Dictionary<string, string>()
         }, CancellationToken.None);
@@ -190,19 +195,20 @@ public abstract class ConfigurationStoreContractTests : IDisposable
         var repos = await store.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None);
         var agents = await store.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None);
 
-        repos.Should().Contain(c => c.Id == "pc-repo-kind");
-        repos.Should().NotContain(c => c.Id == "pc-agent-kind");
-        agents.Should().Contain(c => c.Id == "pc-agent-kind");
-        agents.Should().NotContain(c => c.Id == "pc-repo-kind");
+        repos.Should().Contain(c => c.Id == repoId);
+        repos.Should().NotContain(c => c.Id == agentId);
+        agents.Should().Contain(c => c.Id == agentId);
+        agents.Should().NotContain(c => c.Id == repoId);
     }
 
     [Fact]
     public async Task ProviderConfig_Save_UpdatesExisting()
     {
         var store = CreateStore();
+        var id = Guid.NewGuid().ToString();
         var original = new ProviderConfig
         {
-            Id = "pc-contract-update",
+            Id = id,
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             DisplayName = "Original Name",
@@ -211,10 +217,17 @@ public abstract class ConfigurationStoreContractTests : IDisposable
 
         await store.SaveProviderConfigAsync(original, CancellationToken.None);
 
-        var updated = original with { DisplayName = "Updated Name", Settings = new Dictionary<string, string> { ["owner"] = "org2" } };
+        var updated = new ProviderConfig
+        {
+            Id = id,
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Updated Name",
+            Settings = new Dictionary<string, string> { ["owner"] = "org2" }
+        };
         await store.SaveProviderConfigAsync(updated, CancellationToken.None);
 
-        var loaded = await store.GetProviderConfigByIdAsync("pc-contract-update", ProviderKind.Repository, CancellationToken.None);
+        var loaded = await store.GetProviderConfigByIdAsync(id, ProviderKind.Repository, CancellationToken.None);
         loaded!.DisplayName.Should().Be("Updated Name");
         loaded.Settings["owner"].Should().Be("org2");
     }
@@ -260,33 +273,35 @@ public class PostgresConfigurationStoreContractTests : ConfigurationStoreContrac
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
 
-        using var ctx = new InMemoryPipelineDbContext(_dbOptions);
+        using var ctx = new ContractTestPipelineDbContext(_dbOptions);
         ctx.Database.EnsureCreated();
     }
 
     protected override IConfigurationStore CreateStore()
     {
-        var factory = new InMemoryDbContextFactory(_dbOptions);
+        var factory = new ContractTestDbContextFactory(_dbOptions);
         return new PostgresConfigurationStore(factory, cacheTtl: TimeSpan.FromMilliseconds(1));
     }
 
     public override void Dispose()
     {
-        using var db = new InMemoryPipelineDbContext(_dbOptions);
+        using var db = new ContractTestPipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
     }
 }
 
 /// <summary>Helper: InMemory EF context for test isolation.</summary>
-internal class InMemoryPipelineDbContext : PipelineDbContext
+file class ContractTestPipelineDbContext : PipelineDbContext
 {
-    public InMemoryPipelineDbContext(DbContextOptions<PipelineDbContext> options) : base(options) { }
+    public ContractTestPipelineDbContext(DbContextOptions<PipelineDbContext> options) : base(options) { }
 }
 
 /// <summary>Helper: IDbContextFactory for InMemory provider.</summary>
-internal class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
+file class ContractTestDbContextFactory : IDbContextFactory<PipelineDbContext>
 {
     private readonly DbContextOptions<PipelineDbContext> _options;
-    public InMemoryDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
-    public PipelineDbContext CreateDbContext() => new InMemoryPipelineDbContext(_options);
+    public ContractTestDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
+    public PipelineDbContext CreateDbContext() => new ContractTestPipelineDbContext(_options);
+    public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+        => Task.FromResult(CreateDbContext());
 }
