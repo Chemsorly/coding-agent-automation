@@ -140,7 +140,7 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
                     run.AgentId = null;
             }
 
-            return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available");
+            return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available", Queued: true);
         }
 
         var connectionId = resolveResult.ConnectionId;

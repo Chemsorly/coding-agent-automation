@@ -68,15 +68,6 @@ public static class WorkDistributionRegistration
             // Queue visibility: wraps in-memory JobDispatcherService
             services.AddSingleton<IPendingWorkQuery>(sp =>
                 new LegacyPendingWorkQuery(sp.GetRequiredService<JobDispatcherService>()));
-            // RunLifecycleManager (Legacy — no WorkItemTransitionService)
-            services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
-                sp.GetRequiredService<IOrchestratorRunService>(),
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<AgentRegistryService>(),
-                sp.GetRequiredService<ILabelSwapper>(),
-                sp.GetRequiredService<JobDispatcherService>(),
-                Log.Logger,
-                workItemTransition: null));
             Log.Information("WorkDistribution: Legacy mode (no database). Using JsonConfigurationStore + LegacyWorkDistributor");
             return services;
         }
@@ -137,18 +128,7 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<DispatchInfrastructure>(),
             sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
-            Log.Logger,
-            sp.GetRequiredService<IRunLifecycleManager>()));
-
-        // ── IRunLifecycleManager (DB mode — coordinates in-memory + DB transitions) ──
-        services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<JobDispatcherService>(),
-            Log.Logger,
-            sp.GetRequiredService<WorkItemTransitionService>()));
+            Log.Logger));
 
         // ── PostgresConfigurationStore (replaces JsonConfigurationStore) ─────
         // Singleton: consumed by singleton services (LabelSwapper, DispatchResolutionService,
@@ -276,11 +256,7 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>(),
-            sp.GetRequiredService<IRunLifecycleManager>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IAgentCancellationSender>()));
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>()));
 
         // HeartbeatMonitorService remains registered (handled by AddOrchestrationServices)
         // Queue visibility: queries WorkItems table for Pending status
@@ -295,10 +271,8 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IPendingWorkQuery>(),
-            sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>(),
-            sp.GetRequiredService<IRunLifecycleManager>()));
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>()));
         services.AddHostedService(sp => sp.GetRequiredService<PendingWorkItemDrainService>());
 
         Log.Information("WorkDistribution: SignalR mode — SignalRWorkDistributor + PendingWorkItemDrainService registered");
@@ -359,7 +333,6 @@ public static class WorkDistributionRegistration
     /// <summary>
     /// Wires SignalR Redis backplane when SignalR:Redis:ConnectionString is configured.
     /// Without Redis, uses default in-memory transport (single replica / docker-compose).
-    /// Also registers IConnectionMultiplexer as a singleton for health observability.
     /// </summary>
     private static void ConfigureSignalRRedisBackplane(IServiceCollection services, IConfiguration configuration)
     {
@@ -367,40 +340,31 @@ public static class WorkDistributionRegistration
         if (string.IsNullOrEmpty(redisConnectionString))
             return;
 
-        var config = ConfigurationOptions.Parse(redisConnectionString);
-        config.ChannelPrefix = RedisChannel.Literal("caa");
-        config.AbortOnConnectFail = false;
-        config.ConnectRetry = 5;
-        config.ReconnectRetryPolicy = new ExponentialRetry(5000, 55000);
-
-        // Create the multiplexer eagerly and register as singleton for health observability.
-        // AbortOnConnectFail=false ensures Connect returns immediately even if Redis is unreachable —
-        // the multiplexer retries in the background. Tradeoff: we lose SignalR's TextWriter logging
-        // for the initial connection, but retain Serilog event handlers for connection state changes.
-        // TODO: ConnectionMultiplexer.Connect() is synchronous and could block startup if DNS resolution hangs.
-        // Consider using ConnectAsync with .GetAwaiter().GetResult() or deferring to a factory delegate.
-        var multiplexer = ConnectionMultiplexer.Connect(config);
-        multiplexer.ConnectionFailed += (_, e) =>
-            Log.Warning("Redis backplane connection failed: {FailureType} — {Exception}",
-                e.FailureType, e.Exception?.Message);
-        multiplexer.ConnectionRestored += (_, e) =>
-            Log.Information("Redis backplane connection restored: {EndPoint}", e.EndPoint);
-
-        // TODO: Pre-built instance registered via AddSingleton won't be disposed by the DI container on shutdown.
-        // Register via factory overload or implement IHostApplicationLifetime shutdown hook for clean disposal.
-        services.AddSingleton<IConnectionMultiplexer>(multiplexer);
-
         // Replace the default AddSignalR() registration with Redis backplane.
         // Note: AddSignalR() is already called in Program.cs. AddStackExchangeRedis extends it.
         services.AddSignalR().AddStackExchangeRedis(options =>
         {
+            var config = ConfigurationOptions.Parse(redisConnectionString);
+            config.ChannelPrefix = RedisChannel.Literal("caa");
+            config.AbortOnConnectFail = false;
+            config.ConnectRetry = 5;
+            config.ReconnectRetryPolicy = new ExponentialRetry(5000, 55000);
+
             options.Configuration = config;
 
-            // Return the shared singleton. StackExchange.Redis handles reconnection internally
-            // via AbortOnConnectFail=false, so SignalR will not call this factory to create a
-            // fresh connection after a disconnect — it relies on the multiplexer's built-in
-            // reconnection logic. Returning the same instance is safe and expected.
-            options.ConnectionFactory = (writer) => Task.FromResult<IConnectionMultiplexer>(multiplexer);
+            options.ConnectionFactory = async (writer) =>
+            {
+                // With AbortOnConnectFail=false, ConnectAsync returns immediately with a
+                // disconnected multiplexer that retries in the background. This ensures
+                // startup never crashes due to Redis unavailability.
+                var connection = await ConnectionMultiplexer.ConnectAsync(config, writer);
+                connection.ConnectionFailed += (_, e) =>
+                    Log.Warning("Redis backplane connection failed: {FailureType} — {Exception}",
+                        e.FailureType, e.Exception?.Message);
+                connection.ConnectionRestored += (_, e) =>
+                    Log.Information("Redis backplane connection restored: {EndPoint}", e.EndPoint);
+                return connection;
+            };
         });
 
         Log.Information("WorkDistribution: SignalR Redis backplane configured with AbortOnConnectFail=false");

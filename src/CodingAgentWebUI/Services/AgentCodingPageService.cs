@@ -350,10 +350,19 @@ public class AgentCodingPageService
                 return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
 
             var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
-            if (result.Success) return (true, null, $"✅ Dispatched #{issue.Identifier}");
             if (!result.Success)
+            {
                 await _dispatchOrchestration.RevertFailedDistributionAsync(request, CancellationToken.None);
-            return (false, "Could not dispatch — distribution failed.", null);
+                return (false, "Could not dispatch — distribution failed.", null);
+            }
+
+            if (!result.Queued)
+                // TODO: Consider propagating the request's cancellation token instead of CancellationToken.None
+                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, CancellationToken.None);
+
+            return (true, null, result.Queued
+                ? $"⏳ Queued #{issue.Identifier} — waiting for an idle agent"
+                : $"✅ Dispatched #{issue.Identifier}");
         }
 
         // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
@@ -438,9 +447,18 @@ public class AgentCodingPageService
                 return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
 
             var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
-            if (result.Success) return (true, null, $"PR #{pr.Identifier} dispatched for review.");
-            await _dispatchOrchestration.RevertFailedDistributionAsync(request, CancellationToken.None);
-            return (false, $"PR #{pr.Identifier} is already being processed or queued.", null);
+            if (!result.Success)
+            {
+                await _dispatchOrchestration.RevertFailedDistributionAsync(request, CancellationToken.None);
+                return (false, $"PR #{pr.Identifier} is already being processed or queued.", null);
+            }
+
+            if (!result.Queued)
+                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, CancellationToken.None);
+
+            return (true, null, result.Queued
+                ? $"⏳ Queued PR #{pr.Identifier} for review — waiting for an idle agent"
+                : $"PR #{pr.Identifier} dispatched for review.");
         }
 
         // Legacy mode
@@ -541,9 +559,19 @@ public class AgentCodingPageService
                 return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
 
             var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
-            if (result.Success) return (true, null, $"✅ Dispatched epic #{issue.Identifier} for {(phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition")}");
-            await _dispatchOrchestration.RevertFailedDistributionAsync(request, CancellationToken.None);
-            return (false, "Could not dispatch — epic is already being processed or queued, or no agents are available.", null);
+            if (!result.Success)
+            {
+                await _dispatchOrchestration.RevertFailedDistributionAsync(request, CancellationToken.None);
+                return (false, "Could not dispatch — epic is already being processed or queued, or no agents are available.", null);
+            }
+
+            if (!result.Queued)
+                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, CancellationToken.None);
+
+            var phaseLabel = phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
+            return (true, null, result.Queued
+                ? $"⏳ Queued epic #{issue.Identifier} for {phaseLabel} — waiting for an idle agent"
+                : $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}");
         }
 
         // Legacy mode

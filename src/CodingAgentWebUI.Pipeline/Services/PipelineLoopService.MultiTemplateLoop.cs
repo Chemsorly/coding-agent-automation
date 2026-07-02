@@ -740,6 +740,8 @@ public sealed partial class PipelineLoopService
                             dispatched = result.Success;
                             if (!dispatched)
                                 await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
+                            else if (!result.Queued)
+                                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, stopToken);
                         }
                         else
                         {
@@ -843,6 +845,8 @@ public sealed partial class PipelineLoopService
                             dispatched = result.Success;
                             if (!dispatched)
                                 await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
+                            else if (!result.Queued)
+                                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, stopToken);
                         }
                         else
                         {
@@ -940,6 +944,8 @@ public sealed partial class PipelineLoopService
                             dispatched = result.Success;
                             if (!dispatched)
                                 await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
+                            else if (!result.Queued)
+                                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, stopToken);
                         }
                         else
                         {
