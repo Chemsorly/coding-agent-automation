@@ -129,8 +129,32 @@ public sealed class WorkItemTransitionService
         => (current, target) switch
         {
             (WorkItemStatus.Pending, WorkItemStatus.Dispatched or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
-            (WorkItemStatus.Dispatched, WorkItemStatus.Running or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
+            (WorkItemStatus.Dispatched, WorkItemStatus.Running or WorkItemStatus.Failed or WorkItemStatus.Cancelled or WorkItemStatus.Pending) => true,
             (WorkItemStatus.Running, WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled) => true,
             _ => false
         };
+
+    /// <summary>
+    /// Gets the current RetryCount for a work item.
+    /// </summary>
+    public async Task<int> GetRetryCountAsync(Guid workItemId, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var item = await db.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId, ct);
+        return item?.RetryCount ?? 0;
+    }
+
+    /// <summary>
+    /// Re-queues a work item: transitions back to Pending, increments RetryCount,
+    /// clears DispatchedAt and AssignedAgentId so the drain service picks it up again.
+    /// </summary>
+    public async Task RequeueAsync(Guid workItemId, CancellationToken ct)
+    {
+        await TransitionAsync(workItemId, WorkItemStatus.Pending, item =>
+        {
+            item.RetryCount++;
+            item.DispatchedAt = null;
+            item.AssignedAgentId = null;
+        }, ct);
+    }
 }

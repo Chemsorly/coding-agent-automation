@@ -59,25 +59,64 @@ public sealed partial class AgentHub
         if (run is not null)
         {
             _facade.RemoveRun(jobId);
-            _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
-            // Revert label to agent:error — not agent:next to avoid infinite dispatch loops
-            // in case of misconfiguration. Human intervention needed to retry.
-            try
+            // Check retry count to decide: re-queue or permanently fail
+            const int maxRejectionRetries = 3;
+            var retryCount = await _facade.GetWorkItemRetryCountAsync(jobId, CancellationToken.None);
+            var shouldRequeue = retryCount < maxRejectionRetries;
+
+            if (shouldRequeue)
             {
-                _logger.Warning("JobRejected: swapping label to agent:error for issue {IssueIdentifier} (jobId={JobId})",
-                    run.IssueIdentifier, jobId);
-                await SwapLabelAsync(run, AgentLabels.Error, GetLabelTargetKind(run));
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to revert label for rejected run {JobId} (issue {IssueIdentifier})",
-                    jobId, run.IssueIdentifier);
+                // Re-queue: transition back to Pending with incremented RetryCount.
+                // The drain service will pick it up again on the next cycle.
+                // Clear the dedup tracker so the drain/loop doesn't consider it "already processing".
+                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+                try
+                {
+                    await _facade.RequeueWorkItemAsync(jobId, CancellationToken.None);
+                    _logger.Information(
+                        "JobRejected: re-queued job {JobId} for issue {IssueIdentifier} (retry {RetryCount}/{MaxRetries})",
+                        jobId, run.IssueIdentifier, retryCount + 1, maxRejectionRetries);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to re-queue WorkItem {JobId}, falling back to permanent failure", jobId);
+                    shouldRequeue = false; // fall through to permanent failure
+                }
             }
 
-            _logger.Warning("Cleaned up rejected run {JobId} for issue {IssueIdentifier} (step={Step}, agent={AgentId}). " +
+            if (!shouldRequeue)
+            {
+                // Max retries exhausted (or re-queue failed) — permanent failure. Human intervention needed.
+                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+                try
+                {
+                    await _facade.TransitionWorkItemAsync(jobId, WorkItemStatus.Failed, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to transition WorkItem {JobId} to Failed on JobRejected", jobId);
+                }
+
+                try
+                {
+                    _logger.Warning("JobRejected: swapping label to agent:error for issue {IssueIdentifier} (jobId={JobId}, retries exhausted)",
+                        run.IssueIdentifier, jobId);
+                    await SwapLabelAsync(run, AgentLabels.Error, GetLabelTargetKind(run));
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to revert label for rejected run {JobId} (issue {IssueIdentifier})",
+                        jobId, run.IssueIdentifier);
+                }
+            }
+
+            _logger.Warning("Cleaned up rejected run {JobId} for issue {IssueIdentifier} (step={Step}, agent={AgentId}, retryCount={RetryCount}). " +
                 "This indicates a dispatch race condition — investigate if recurring.",
-                jobId, run.IssueIdentifier, run.CurrentStep, run.AgentId);
+                jobId, run.IssueIdentifier, run.CurrentStep, run.AgentId, retryCount);
+
+            _orchestration.NotifyChange();
         }
         else
         {
@@ -88,6 +127,7 @@ public sealed partial class AgentHub
         if (agent is not null)
         {
             agent.ActiveJobId = null;
+            agent.LastJobCompletedAt = DateTimeOffset.UtcNow; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
             // Signal drain service — agent is idle and may pick up a different job
@@ -142,15 +182,17 @@ public sealed partial class AgentHub
 
         // Transition agent to Idle BEFORE slow I/O operations (label swap, comment posting).
         // This ensures agent availability is not gated on external provider latency.
+        // NOTE: We do NOT call Signal() here. The agent will send AgentReady after clearing
+        // its local _activeJobId (via ReleaseJobSlotAndSignalReadyAsync), which triggers
+        // the safe Signal path. Signaling here caused a race condition where the drain
+        // service dispatched to the agent before it cleared its local slot, resulting in
+        // immediate rejection and permanent work item loss.
         if (agent is not null)
         {
             agent.ActiveJobId = null;
             agent.OrphanRestoredAt = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-
-            // Signal the drain service to attempt dispatch for this now-idle agent
-            _facade.Signal();
         }
 
         // Non-fatal post-completion bookkeeping: label swap and feedback comment.

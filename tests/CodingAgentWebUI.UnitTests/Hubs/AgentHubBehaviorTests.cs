@@ -193,7 +193,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
     }
 
     [Fact]
-    public async Task ReportJobCompleted_TransitionsAgentToIdle_SignalsDrain()
+    public async Task ReportJobCompleted_TransitionsAgentToIdle_DoesNotSignalDrain()
     {
         var agent = CreateAgent();
         agent.ActiveJobId = "job-1";
@@ -207,7 +207,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
         await hub.ReportJobCompleted("job-1", payload);
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
-        _mockFacade.Verify(f => f.Signal(), Times.Once);
+        // Signal is NOT called — agent sends AgentReady after clearing its local slot
+        _mockFacade.Verify(f => f.Signal(), Times.Never);
         agent.ActiveJobId.Should().BeNull();
     }
 
@@ -225,7 +226,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
         await hub.ReportJobCompleted("job-1", payload);
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
-        _mockFacade.Verify(f => f.Signal(), Times.Once);
+        // Signal is NOT called — agent sends AgentReady after clearing its local slot
+        _mockFacade.Verify(f => f.Signal(), Times.Never);
         agent.ActiveJobId.Should().BeNull();
     }
 
@@ -1123,6 +1125,111 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         // Assert — no issue provider created (no comment to post)
         _mockFacade.Verify(f => f.GetProviderConfigByIdAsync("issue-cfg-1", ProviderKind.Issue, It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    #endregion
+
+    #region JobRejected_GhostWorkItem
+
+    [Fact]
+    public async Task JobRejected_FirstRejection_RequeuesWorkItem_NotPermanentFailure()
+    {
+        // On first rejection (dispatch race), the work item should be re-queued
+        // (transitioned back to Pending) so the drain service picks it up again.
+        // Only after max retries (3) should it permanently fail with agent:error.
+        var agent = CreateAgent();
+        var run = CreateRun("job-requeue-1");
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-requeue-1")).Returns(run);
+        // Simulate first rejection: facade reports RetryCount=0 for this work item
+        _mockFacade.Setup(f => f.GetWorkItemRetryCountAsync("job-requeue-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.JobRejected("job-requeue-1", "Agent is busy");
+
+        // Should re-queue (transition to Pending with incremented retry), NOT fail
+        _mockFacade.Verify(f => f.RequeueWorkItemAsync("job-requeue-1", It.IsAny<CancellationToken>()), Times.Once);
+        // Should NOT transition to Failed
+        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-requeue-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>()), Times.Never);
+        // Should NOT swap label to agent:error (item will be retried)
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), AgentLabels.Error, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task JobRejected_ThirdRejection_PermanentlyFails()
+    {
+        // After 3 rejections, the work item should be permanently marked as Failed
+        // with agent:error label — human intervention needed.
+        var agent = CreateAgent();
+        var run = CreateRun("job-maxretry-1");
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-maxretry-1")).Returns(run);
+        // Simulate third rejection: RetryCount already at 3
+        _mockFacade.Setup(f => f.GetWorkItemRetryCountAsync("job-maxretry-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(3);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.JobRejected("job-maxretry-1", "Agent is busy");
+
+        // Should permanently fail (not re-queue)
+        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-maxretry-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>()), Times.Once);
+        _mockFacade.Verify(f => f.RequeueWorkItemAsync("job-maxretry-1", It.IsAny<CancellationToken>()), Times.Never);
+        // Should swap label to agent:error
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task JobRejected_Requeue_ClearsDedupEntry_SoDrainCanRedispatch()
+    {
+        // When re-queuing, MarkIssueComplete MUST be called to clear the dedup tracker.
+        // Without this, the in-memory _processingIssues entry from the original dispatch
+        // blocks re-dispatch attempts. The drain service works from DB state (Pending status),
+        // but manual dispatch or loop re-poll would be blocked by the stale dedup entry.
+        var agent = CreateAgent();
+        var run = CreateRun("job-requeue-dedup");
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-requeue-dedup")).Returns(run);
+        _mockFacade.Setup(f => f.GetWorkItemRetryCountAsync("job-requeue-dedup", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(0);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.JobRejected("job-requeue-dedup", "Agent is busy");
+
+        // MarkIssueComplete MUST be called to clear dedup tracker
+        _mockFacade.Verify(f => f.MarkIssueComplete("org/repo#42", "issue-cfg-1"), Times.Once);
+    }
+
+    #endregion
+
+    #region ReportJobCompleted_SignalRace
+
+    [Fact]
+    public async Task ReportJobCompleted_DoesNotSignalDrainService_ToPreventDispatchRace()
+    {
+        // Reproduction for dispatch race condition: ReportJobCompleted called Signal()
+        // which woke the drain service before the agent cleared its local _activeJobId.
+        // The drain dispatched to the agent which rejected (still busy locally),
+        // causing permanent work item loss.
+        //
+        // Fix: Signal() must NOT be called from ReportJobCompleted. The agent will send
+        // AgentReady after clearing its slot, which triggers the safe Signal path.
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        var run = CreateRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportJobCompleted("job-1", payload);
+
+        // Agent should still transition to Idle (orchestrator-side registry)
+        _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
+
+        // Signal MUST NOT be called — the agent will send AgentReady after clearing its slot
+        _mockFacade.Verify(f => f.Signal(), Times.Never);
     }
 
     #endregion

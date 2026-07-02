@@ -19,7 +19,7 @@ public class WorkItemStateMachinePropertyTests
     /// <summary>
     /// The exhaustive set of allowed state transitions per the work item state machine:
     /// - Pending → Dispatched, Failed, Cancelled
-    /// - Dispatched → Running, Failed, Cancelled
+    /// - Dispatched → Running, Failed, Cancelled, Pending (re-queue on rejection)
     /// - Running → Succeeded, Failed, Cancelled
     /// All other pairs (including self-transitions) must be rejected.
     /// </summary>
@@ -31,6 +31,7 @@ public class WorkItemStateMachinePropertyTests
         (WorkItemStatus.Dispatched, WorkItemStatus.Running),
         (WorkItemStatus.Dispatched, WorkItemStatus.Failed),
         (WorkItemStatus.Dispatched, WorkItemStatus.Cancelled),
+        (WorkItemStatus.Dispatched, WorkItemStatus.Pending),
         (WorkItemStatus.Running, WorkItemStatus.Succeeded),
         (WorkItemStatus.Running, WorkItemStatus.Failed),
         (WorkItemStatus.Running, WorkItemStatus.Cancelled),
