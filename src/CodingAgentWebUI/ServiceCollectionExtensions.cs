@@ -264,7 +264,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<DispatchInfrastructure>(),
             sp.GetRequiredService<IAgentCommunication>(),
             sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetService<IRunLifecycleManager>()));
 
         services.AddSingleton<IAgentHubFacade>(sp => new AgentHubFacade(
             sp.GetRequiredService<AgentRegistryService>(),

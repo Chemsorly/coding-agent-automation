@@ -140,23 +140,6 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
                     run.AgentId = null;
             }
 
-            // Revert label to agent:next — the issue isn't actually in progress yet.
-            // Best-effort: failure here must not break queueing.
-            try
-            {
-                var targetKind = request.RunType == PipelineRunType.Review
-                    ? LabelTargetKind.PullRequest
-                    : LabelTargetKind.Issue;
-                await _labelSwapper.SwapLabelAsync(
-                    request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.Next, targetKind, ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex,
-                    "Failed to revert label to agent:next for issue {IssueIdentifier} (best-effort, queueing continues)",
-                    request.IssueIdentifier);
-            }
-
             return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available");
         }
 
@@ -186,9 +169,20 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
 
             await _agentComm.AssignJobAsync(connectionId, message, ct);
 
-            // Set ActiveJobId on the agent entry so HeartbeatMonitor and monitoring UI
-            // can correlate the agent with its active run.
-            _agentResolver.AssignJob(resolvedAgentId, workItemId.ToString());
+            // Signal the lifecycle manager that an agent accepted this run.
+            // This atomically: sets AgentId on run, sets ActiveJobId on agent, swaps label to in-progress.
+            if (_lifecycleManager is not null)
+            {
+                await _lifecycleManager.AgentAcceptedRunAsync(
+                    request.RunId ?? workItemId.ToString(), resolvedAgentId,
+                    request.IssueIdentifier, request.IssueProviderConfigId,
+                    request.RepoProviderConfigId, request.RunType, ct);
+            }
+            else
+            {
+                // Legacy fallback (no lifecycle manager in tests without it)
+                _agentResolver.AssignJob(resolvedAgentId, workItemId.ToString());
+            }
         }
         catch (Exception ex)
         {

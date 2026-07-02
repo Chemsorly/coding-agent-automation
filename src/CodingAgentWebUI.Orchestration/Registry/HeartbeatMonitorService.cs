@@ -139,8 +139,19 @@ public sealed class HeartbeatMonitorService : BackgroundService
                         {
                             if (_lifecycleManager is not null)
                             {
-                                await _lifecycleManager.FailRunAsync(orphanedJobId,
+                                var result = await _lifecycleManager.FailRunAsync(orphanedJobId,
                                     "Agent did not resume orphaned job within grace period", ct);
+                                if (result is null)
+                                {
+                                    // Race lost — another path (e.g., ReportJobCompleted) already processed the run.
+                                    // Clear agent state defensively in case the other path didn't.
+                                    lock (agent.SyncRoot)
+                                    {
+                                        agent.ActiveJobId = null;
+                                        agent.OrphanRestoredAt = null;
+                                    }
+                                    _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                                }
                             }
                             else
                             {
@@ -193,7 +204,18 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
                             if (_lifecycleManager is not null)
                             {
-                                await _lifecycleManager.FailRunAsync(agent.ActiveJobId, failureReason, ct);
+                                var result = await _lifecycleManager.FailRunAsync(agent.ActiveJobId, failureReason, ct);
+                                if (result is null)
+                                {
+                                    // Race lost — another path already processed the run.
+                                    // Clear agent state defensively.
+                                    lock (agent.SyncRoot)
+                                    {
+                                        agent.ActiveJobId = null;
+                                        agent.OrphanRestoredAt = null;
+                                    }
+                                    _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                                }
                             }
                             else
                             {
@@ -257,7 +279,21 @@ public sealed class HeartbeatMonitorService : BackgroundService
             {
                 if (_lifecycleManager is not null)
                 {
-                    await _lifecycleManager.FailRunAsync(agent.ActiveJobId, "Agent disconnected", ct);
+                    // NOTE: FailRunAsync internally calls ClearAgentState which transitions the agent
+                    // to Idle before we Deregister below. This creates a sub-millisecond window where
+                    // the agent is Idle in the registry. This is acceptable: the dispatch loop won't
+                    // pick up a Disconnected-then-Idle agent in that window because Deregister follows
+                    // immediately and the dispatcher checks agent.Status == Idle && connected.
+                    var result = await _lifecycleManager.FailRunAsync(agent.ActiveJobId, "Agent disconnected", ct);
+                    if (result is null)
+                    {
+                        // Race lost — run already processed by another path.
+                        // Agent will still be deregistered below.
+                        lock (agent.SyncRoot)
+                        {
+                            agent.ActiveJobId = null;
+                        }
+                    }
 
                     _logger.Warning(
                         "Agent {AgentId} disconnected with active job {JobId} past grace period ({GracePeriod}), marking run as Failed",

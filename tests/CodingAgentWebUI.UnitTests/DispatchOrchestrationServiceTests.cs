@@ -221,8 +221,10 @@ public class DispatchOrchestrationServiceTests
     }
 
     [Fact]
-    public async Task PrepareAsync_SwapsLabelToInProgress()
+    public async Task PrepareAsync_DoesNotSwapLabelToInProgress_DeferredToLifecycleManager()
     {
+        // Label swap to InProgress is now handled by IRunLifecycleManager.AgentAcceptedRunAsync,
+        // not by PrepareAsync. Verify no label swap occurs during preparation.
         SetupStandardMocks();
         var orchestration = CreateOrchestration();
         var service = CreateService(orchestration);
@@ -240,7 +242,7 @@ public class DispatchOrchestrationServiceTests
 
         _mockLabelSwapper.Verify(
             l => l.SwapLabelAsync("issue-1", "issue-42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
-            Times.Once);
+            Times.Never);
     }
 
     [Fact]

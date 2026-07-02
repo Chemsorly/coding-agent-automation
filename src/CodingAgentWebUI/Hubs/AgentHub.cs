@@ -28,6 +28,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly IConsolidationService _consolidationService;
     private readonly ConsolidationBadgeService _badgeService;
     private readonly ILabelSwapper _labelSwapper;
+    private readonly IRunLifecycleManager _lifecycleManager;
     private readonly ILogger _logger;
 
     public AgentHub(
@@ -38,6 +39,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         IConsolidationService consolidationService,
         ConsolidationBadgeService badgeService,
         ILabelSwapper labelSwapper,
+        IRunLifecycleManager lifecycleManager,
         ILogger logger)
     {
         _facade = facade;
@@ -47,6 +49,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _consolidationService = consolidationService;
         _badgeService = badgeService;
         _labelSwapper = labelSwapper;
+        _lifecycleManager = lifecycleManager;
         _logger = logger;
     }
 

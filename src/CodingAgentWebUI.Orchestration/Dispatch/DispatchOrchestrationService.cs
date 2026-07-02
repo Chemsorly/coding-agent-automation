@@ -237,12 +237,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 : allComments;
         }
 
-        // Swap label to agent:in-progress
-        _logger.Information(
-            "Orchestration: swapping label to agent:in-progress for issue {IssueIdentifier} (provider={ProviderId})",
-            issueIdentifier, issueProviderId);
-        await _infra.LabelSwapper.SwapLabelAsync(
-            issueProviderId, issueIdentifier, AgentLabels.InProgress, ct);
+        // NOTE: Label swap to agent:in-progress is NOT done here.
+        // In DB mode, the label is only swapped when an agent actually accepts the job
+        // (in SignalRWorkDistributor after successful AssignJobAsync, or in DrainService).
+        // This prevents issues from appearing "in progress" when sitting in the Pending queue.
 
         // Detect existing analysis and rework state from comments
         string? existingAnalysis = null;

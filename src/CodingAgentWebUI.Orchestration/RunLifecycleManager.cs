@@ -162,6 +162,46 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
+    public async Task AgentAcceptedRunAsync(string runId, string agentId, string issueIdentifier,
+        string issueProviderConfigId, string repoProviderConfigId,
+        PipelineRunType runType, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(runId);
+        ArgumentNullException.ThrowIfNull(agentId);
+
+        // 1. Set AgentId on the in-memory PipelineRun
+        var run = _runService.GetRun(runId);
+        if (run is not null)
+            run.AgentId = agentId;
+
+        // 2. Set ActiveJobId on agent + transition to Busy
+        var agent = _registry.GetByAgentId(agentId);
+        if (agent is not null)
+        {
+            lock (agent.SyncRoot)
+            {
+                agent.ActiveJobId = runId;
+            }
+            _registry.TransitionStatus(agentId, AgentStatus.Busy);
+        }
+
+        // 3. Swap label to agent:in-progress (best-effort)
+        // For Review runs, use repoProviderConfigId (PR labels live on repo provider).
+        // For all others, use issueProviderConfigId.
+        var providerForLabel = runType == PipelineRunType.Review
+            ? repoProviderConfigId
+            : issueProviderConfigId;
+        var targetKind = runType == PipelineRunType.Review
+            ? LabelTargetKind.PullRequest
+            : LabelTargetKind.Issue;
+        await TrySwapLabelAsync(issueIdentifier, providerForLabel, targetKind, AgentLabels.InProgress, ct);
+
+        _logger.Information(
+            "RunLifecycleManager.AgentAcceptedRunAsync: agent {AgentId} accepted run {RunId} for issue {IssueIdentifier}",
+            agentId, runId, issueIdentifier);
+    }
+
+    /// <inheritdoc />
     public async Task TransitionWorkItemToFailedAsync(string runId, CancellationToken ct)
     {
         await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct);
@@ -239,6 +279,20 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex, "RunLifecycleManager: label swap to {Label} failed for run {RunId} (non-fatal)", label, run.RunId);
+        }
+    }
+
+    private async Task TrySwapLabelAsync(string issueIdentifier, string providerConfigId,
+        LabelTargetKind targetKind, string label, CancellationToken ct)
+    {
+        try
+        {
+            await _labelSwapper.SwapLabelAsync(providerConfigId, issueIdentifier, label, targetKind, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "RunLifecycleManager: label swap to {Label} failed for issue {IssueIdentifier} (non-fatal)",
+                label, issueIdentifier);
         }
     }
 }

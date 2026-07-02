@@ -38,6 +38,7 @@ public class BrainTokenRefreshRegressionTests
             null!,  // IConsolidationService — not used by RequestTokenRefresh
             null!,  // ConsolidationBadgeService — not used by RequestTokenRefresh
             new Mock<ILabelSwapper>().Object,
+            new Mock<IRunLifecycleManager>().Object,
             _mockLogger.Object);
 
         // Set up a mock HubCallerContext

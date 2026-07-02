@@ -20,6 +20,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
     private readonly Mock<IConsolidationService> _mockConsolidation = new();
     private readonly ConsolidationBadgeService _badgeService = new();
     private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<IRunLifecycleManager> _mockLifecycleManager = new();
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly List<PipelineOrchestrationService> _orchestrationInstances = new();
 
@@ -33,6 +34,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockConsolidation.Object,
             _badgeService,
             _mockLabelSwapper.Object,
+            _mockLifecycleManager.Object,
             _mockLogger.Object);
 
         var mockContext = new Mock<HubCallerContext>();
@@ -111,8 +113,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockFacade.Verify(f => f.AddRunToHistory(run), Times.Once);
-        _mockFacade.Verify(f => f.RemoveRun("job-1"), Times.Once);
+        // History + removal now delegated to lifecycle manager's CompleteRunAsync
+        _mockLifecycleManager.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -205,7 +207,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         _mockFacade.Verify(f => f.Signal(), Times.Once);
-        _mockFacade.Verify(f => f.MarkIssueComplete("org/repo#42", "issue-cfg-1"), Times.Once);
         agent.ActiveJobId.Should().BeNull();
     }
 
@@ -235,21 +236,18 @@ public sealed class AgentHubBehaviorTests : IDisposable
     public async Task ReportJobCompleted_Succeeded_TransitionsWorkItemToSucceeded()
     {
         // This test asserts that when an agent reports job completion,
-        // the WorkItem row in Postgres transitions to the correct terminal status.
-        // Without this, WorkItems stay stuck in Dispatched/Running forever.
+        // the lifecycle manager is called with the correct terminal status.
         var agent = CreateAgent();
         var run = CreateRun();
         var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
 
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLifecycleManager.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -261,13 +259,11 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
 
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLifecycleManager.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion
@@ -468,6 +464,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockConsolidation.Object,
             _badgeService,
             _mockLabelSwapper.Object,
+            _mockLifecycleManager.Object,
             _mockLogger.Object);
 
         var mockContext = new Mock<HubCallerContext>();

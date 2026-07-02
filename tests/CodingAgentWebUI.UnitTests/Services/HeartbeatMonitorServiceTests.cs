@@ -765,6 +765,9 @@ public class HeartbeatMonitorServiceTests : IDisposable
         // The old manual path should NOT have been taken (history not called directly)
         _mockHistoryService.Verify(h => h.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
 
+        // Assert: agent should be deregistered after FailRunAsync
+        registry.GetByAgentId("agent-lm").Should().BeNull();
+
         monitor.Dispose();
     }
 

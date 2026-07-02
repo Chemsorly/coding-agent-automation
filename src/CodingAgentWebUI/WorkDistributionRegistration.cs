@@ -297,7 +297,8 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IPendingWorkQuery>(),
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>()));
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>(),
+            sp.GetRequiredService<IRunLifecycleManager>()));
         services.AddHostedService(sp => sp.GetRequiredService<PendingWorkItemDrainService>());
 
         Log.Information("WorkDistribution: SignalR mode — SignalRWorkDistributor + PendingWorkItemDrainService registered");

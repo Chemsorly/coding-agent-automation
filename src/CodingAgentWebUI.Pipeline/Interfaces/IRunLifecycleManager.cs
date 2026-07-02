@@ -59,6 +59,20 @@ public interface IRunLifecycleManager
     Task<PipelineRun?> CancelRunAsync(string runId, CancellationToken ct);
 
     /// <summary>
+    /// Signals that an agent has accepted a run. Performs in order:
+    /// 1. Sets AgentId on the in-memory PipelineRun
+    /// 2. Sets ActiveJobId on the agent registry entry and transitions to Busy
+    /// 3. Swaps label to agent:in-progress (best-effort)
+    ///
+    /// Called by ALL distribution paths (SignalRWorkDistributor, DrainService, Legacy dispatcher)
+    /// to ensure label swap timing is consistent across modes: labels only change when
+    /// an agent actually starts working on the issue.
+    /// </summary>
+    Task AgentAcceptedRunAsync(string runId, string agentId, string issueIdentifier,
+        string issueProviderConfigId, string repoProviderConfigId,
+        PipelineRunType runType, CancellationToken ct);
+
+    /// <summary>
     /// Transitions a WorkItem to Failed in the database without touching in-memory state.
     /// Used when the in-memory run was already removed by other means (e.g., RevertFailedDistribution)
     /// but the DB row is still in a non-terminal state.

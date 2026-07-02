@@ -25,6 +25,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly IProjectStore _projectStore;
     private readonly ILabelSwapper _labelSwapper;
+    private readonly IRunLifecycleManager? _lifecycleManager;
     private readonly ILogger<PendingWorkItemDrainService> _logger;
 
     private readonly SemaphoreSlim _wakeSignal = new(0, int.MaxValue);
@@ -40,7 +41,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         IPendingWorkQuery pendingWorkQuery,
         IProjectStore projectStore,
         ILabelSwapper labelSwapper,
-        ILogger<PendingWorkItemDrainService> logger)
+        ILogger<PendingWorkItemDrainService> logger,
+        IRunLifecycleManager? lifecycleManager = null)
     {
         _dbFactory = dbFactory;
         _agentResolver = agentResolver;
@@ -50,6 +52,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         _pendingWorkQuery = pendingWorkQuery;
         _projectStore = projectStore;
         _labelSwapper = labelSwapper;
+        _lifecycleManager = lifecycleManager;
         _logger = logger;
     }
 
@@ -199,8 +202,6 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 }
 
                 await _agentComm.AssignJobAsync(connectionId, message, ct);
-
-                _agentResolver.AssignJob(agentId, item.Id.ToString());
             }
             catch (Exception ex)
             {
@@ -222,21 +223,19 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 },
                 ct);
 
-            // Swap label to agent:in-progress now that an agent accepted the job.
-            // Best-effort: failure here must not break the assignment.
-            try
+            // Signal the lifecycle manager that an agent accepted this run.
+            // This atomically: sets AgentId on run, sets ActiveJobId on agent, swaps label to in-progress.
+            if (_lifecycleManager is not null)
             {
-                var targetKind = request.RunType == PipelineRunType.Review
-                    ? LabelTargetKind.PullRequest
-                    : LabelTargetKind.Issue;
-                await _labelSwapper.SwapLabelAsync(
-                    request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
+                await _lifecycleManager.AgentAcceptedRunAsync(
+                    request.RunId ?? item.Id.ToString(), agentId,
+                    request.IssueIdentifier, request.IssueProviderConfigId,
+                    request.RepoProviderConfigId, request.RunType, ct);
             }
-            catch (Exception ex)
+            else
             {
-                _logger.LogWarning(ex,
-                    "Failed to swap label to agent:in-progress for issue {IssueIdentifier} (best-effort)",
-                    request.IssueIdentifier);
+                // Legacy fallback for tests without lifecycle manager
+                _agentResolver.AssignJob(agentId, item.Id.ToString());
             }
 
             _logger.LogInformation(

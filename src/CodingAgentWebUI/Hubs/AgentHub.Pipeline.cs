@@ -117,21 +117,20 @@ public sealed partial class AgentHub
 
             activity?.SetTag("success", payload.FinalStep == PipelineStep.Completed);
 
-            // Persist to history and remove from active runs
-            _facade.AddRunToHistory(run);
-            _facade.RemoveRun(jobId);
-
-            // Transition the WorkItem row in Postgres (DB+SignalR mode)
+            // Determine terminal WorkItem status
             var workItemStatus = payload.FinalStep == PipelineStep.Completed
                 ? WorkItemStatus.Succeeded
                 : WorkItemStatus.Failed;
+
+            // Use lifecycle manager to atomically: remove run, transition DB WorkItem,
+            // persist history, and mark issue complete in dedup tracker.
             try
             {
-                await _facade.TransitionWorkItemAsync(jobId, workItemStatus, CancellationToken.None);
+                await _lifecycleManager.CompleteRunAsync(jobId, workItemStatus, CancellationToken.None);
             }
             catch (Exception ex)
             {
-                _logger.Warning(ex, "Failed to transition WorkItem {JobId} to {Status}", jobId, workItemStatus);
+                _logger.Warning(ex, "CompleteRunAsync failed for job {JobId} (status={Status})", jobId, workItemStatus);
             }
 
             _logger.Information(
@@ -149,10 +148,6 @@ public sealed partial class AgentHub
             agent.OrphanRestoredAt = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-
-            // Mark issue as no longer processing in the dispatcher
-            if (run is not null)
-                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
             // Signal the drain service to attempt dispatch for this now-idle agent
             _facade.Signal();
