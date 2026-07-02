@@ -203,6 +203,69 @@ public class AgentCodingPageComponentTests : BunitContext
     }
 
     [Fact]
+    public void AgentCoding_WhenNoIssueProviders_StartLoopDisabled()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var component = Render<AgentCoding>();
+
+        var startBtn = component.FindAll("button").First(b => b.TextContent.Contains("Start Loop"));
+        Assert.True(startBtn.HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void AgentCoding_WhenNoRepoProviders_StartLoopDisabled()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var component = Render<AgentCoding>();
+
+        var startBtn = component.FindAll("button").First(b => b.TextContent.Contains("Start Loop"));
+        Assert.True(startBtn.HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void AgentCoding_WhenOnlyDisabledTemplates_StartLoopDisabled()
+    {
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "Disabled Template", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = false }
+            });
+
+        var component = Render<AgentCoding>();
+
+        var startBtn = component.FindAll("button").First(b => b.TextContent.Contains("Start Loop"));
+        Assert.True(startBtn.HasAttribute("disabled"));
+    }
+
+    [Fact]
+    public void AgentCoding_WhenAllPrerequisitesMet_StartLoopEnabled()
+    {
+        // Default setup has issue provider, repo provider, and enabled template
+        var component = Render<AgentCoding>();
+
+        var startBtn = component.FindAll("button").First(b => b.TextContent.Contains("Start Loop"));
+        Assert.False(startBtn.HasAttribute("disabled"));
+        // TODO: Assert that title attribute is absent when button is enabled to catch spurious tooltip rendering
+    }
+
+    [Fact]
+    public void AgentCoding_WhenStartLoopDisabled_ShowsTooltip()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var component = Render<AgentCoding>();
+
+        var startBtn = component.FindAll("button").First(b => b.TextContent.Contains("Start Loop"));
+        Assert.True(startBtn.HasAttribute("title"));
+        Assert.Contains("No issue provider configured", startBtn.GetAttribute("title"));
+    }
+
+    [Fact]
     public void AgentCoding_ShowsAddTemplateButton()
     {
         var component = Render<AgentCoding>();

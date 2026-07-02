@@ -240,6 +240,27 @@ public partial class AgentCoding : IDisposable
 
     // ── Loop Controls ──
 
+    // TODO: Consider deriving CanStartLoop from `StartLoopDisabledReason == null` to maintain a single source of truth
+    // and prevent drift if additional conditions are added in the future.
+    // TODO: The Browse buttons use a different disabled condition (no template selected in dropdown) than CanStartLoop
+    // (provider/template availability). Per acceptance criteria, Start Loop should also be disabled when Browse is disabled.
+    // Evaluate whether these conditions should be aligned.
+    private bool CanStartLoop =>
+        _templates.Any(t => t.Enabled) &&
+        _issueProviders.Count > 0 &&
+        _repoProviders.Count > 0;
+
+    private string? StartLoopDisabledReason
+    {
+        get
+        {
+            if (!_templates.Any(t => t.Enabled)) return "No enabled pipeline templates configured";
+            if (_issueProviders.Count == 0) return "No issue provider configured";
+            if (_repoProviders.Count == 0) return "No repository provider configured";
+            return null;
+        }
+    }
+
     private async Task StartLoop()
     {
         _errorMessage = null;

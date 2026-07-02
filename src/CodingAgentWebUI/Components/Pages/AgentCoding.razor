@@ -126,7 +126,7 @@
                             <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                                 @if (!LoopService.IsLoopActive)
                                 {
-                                    <button class="btn-save" @onclick="StartLoop" disabled="@(_templates.Count == 0)"><Icon Name="play" Size="16" /> Start Loop</button>
+                                    <button class="btn-save" @onclick="StartLoop" disabled="@(!CanStartLoop)" title="@(!CanStartLoop ? StartLoopDisabledReason : null)"><Icon Name="play" Size="16" /> Start Loop</button>
                                 }
                                 else
                                 {
