@@ -11,6 +11,7 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using Moq;
@@ -67,6 +68,11 @@ public class AgentMonitoringPageComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
         Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
             Services.BuildServiceProvider().GetRequiredService<JobDispatcherService>()));
+
+        // InfrastructureHealthService — Legacy mode defaults (no DB, no Redis)
+        var emptyConfig = new ConfigurationBuilder().Build();
+        Services.AddSingleton(new InfrastructureHealthService(
+            new ServiceCollection().BuildServiceProvider(), emptyConfig));
     }
 
     [Fact]

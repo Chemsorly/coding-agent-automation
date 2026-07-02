@@ -11,6 +11,7 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using Moq;
@@ -68,6 +69,11 @@ public class FeedbackSectionComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
         Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
             Services.BuildServiceProvider().GetRequiredService<JobDispatcherService>()));
+
+        // InfrastructureHealthService is injected into AgentMonitoring — register with empty config (Legacy mode)
+        var emptyConfig = new ConfigurationBuilder().Build();
+        var emptyServiceProvider = new ServiceCollection().BuildServiceProvider();
+        Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig));
     }
 
     private static PipelineRunSummary CreateSummaryWithFeedback(RunFeedback? feedback)

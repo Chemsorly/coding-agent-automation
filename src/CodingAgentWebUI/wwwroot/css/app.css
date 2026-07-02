@@ -320,6 +320,13 @@ select option { background: var(--surface); color: var(--text); }
 .run-stats-label { font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
 .run-stats-divider { width: 1px; height: 28px; background: var(--border); }
 
+/* Infrastructure Health Indicators */
+.infra-health-bar { display: flex; align-items: center; gap: 14px; padding: 6px 16px; margin-bottom: 12px; }
+.infra-health-item { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-muted); cursor: default; }
+.infra-health-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.infra-health-dot.dot-healthy { background: var(--success); box-shadow: 0 0 4px var(--success); }
+.infra-health-dot.dot-unhealthy { background: var(--error); box-shadow: 0 0 4px var(--error); }
+
 .provider-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
 .provider-card { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: var(--bg); border-radius: var(--radius); border: 1px solid var(--border); }
 .provider-info { display: flex; align-items: center; gap: 10px; }
