@@ -926,14 +926,10 @@ public class DispatchOrchestrationService_RevertFailedDistribution_LifecycleTest
             new ReviewerResolver(),
             mockConfigStore.Object,
             _mockLogger.Object);
-        var orchestration = new PipelineOrchestrationService(
-            mockConfigStore.Object, mockProviderFactory.Object,
-            new IssueDescriptionParser(),
-            new Mock<IAgentPhaseExecutor>().Object,
-            new Mock<IQualityGateExecutor>().Object,
-            _mockLogger.Object,
-            brainUpdateService: new Mock<IBrainUpdateService>().Object,
-            historyService: new Mock<IPipelineRunHistoryService>().Object,
+        var orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: mockConfigStore.Object,
+            providerFactory: mockProviderFactory.Object,
+            logger: _mockLogger.Object,
             runService: _runService);
 
         _service = new DispatchOrchestrationService(
