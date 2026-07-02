@@ -91,6 +91,10 @@ public class OnboardingChecklistComponentTests : BunitContext
         Assert.Contains(links, l => l.GetAttribute("href") == "settings?section=providers-issue");
         Assert.Contains(links, l => l.GetAttribute("href") == "settings?section=providers-repository");
         Assert.Contains(links, l => l.GetAttribute("href") == "settings?section=projects");
+        Assert.Contains(links, l => l.GetAttribute("href") == "agent-coding");
+        // TODO: The template link uses @onclick:preventDefault so the href is never navigated on click.
+        // This assertion only validates the href attribute, not that clicking triggers OnAddTemplate.
+        // Consider adding a test that verifies the OnAddTemplate callback is invoked on click.
         Assert.Contains(links, l => l.GetAttribute("href") == "agent-monitoring");
     }
 
