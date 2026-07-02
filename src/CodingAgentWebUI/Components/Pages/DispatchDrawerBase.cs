@@ -17,6 +17,7 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     [Parameter, EditorRequired] public Func<string, bool> IsBeingProcessed { get; set; } = _ => false;
     [Parameter] public EventCallback OnClose { get; set; }
     [Parameter] public EventCallback<TItem> OnDispatch { get; set; }
+    [Parameter] public RenderFragment? HeaderPrefix { get; set; }
 
     protected string _filter = "";
     protected List<TItem> FilteredItems = new();

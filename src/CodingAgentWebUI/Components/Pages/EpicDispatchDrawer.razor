@@ -4,6 +4,7 @@
 
 <div class="dispatch-drawer-overlay @(IsOpen ? "open" : "")" @onclick="Close"></div>
 <aside class="dispatch-drawer @(IsOpen ? "open" : "")">
+    @if (HeaderPrefix != null) { @HeaderPrefix }
     <div class="agent-detail-header">
         <h3>Select Epic for Decomposition</h3>
         <button class="agent-detail-close" @onclick="Close" aria-label="Close drawer">✕</button>
