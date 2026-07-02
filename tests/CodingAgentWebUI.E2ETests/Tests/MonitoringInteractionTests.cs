@@ -279,4 +279,97 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         // Assert: agent shows "Busy" status (poll DOM until rendered — timer-driven refresh)
         await monitoringPage.WaitForAgentStatusAsync("status-agent-1", "Busy", timeoutMs: 15_000);
     }
+
+    [Fact]
+    public async Task Monitoring_UnassignedRun_ShowsInQueueOnly_NotActiveRuns()
+    {
+        // Arrange: seed template, issue, profile — but do NOT connect any agent
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-1",
+            Name = "Queue Only Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-e2e",
+            DisplayName = "E2E Agent Profile",
+            MatchLabels = new[] { "e2e" },
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "80",
+            Title = "Unassigned queue test",
+            Description = "Test issue for queue-only display",
+            Labels = new[] { "enhancement" }
+        });
+
+        // Act: dispatch the issue (no agent available → queued)
+        var codingPage = new AgentCodingPage(Page, BaseUrl);
+        await codingPage.NavigateAsync();
+        await codingPage.SelectTemplateAsync("Queue Only Template");
+        await codingPage.ClickBrowseIssuesAsync();
+        await codingPage.SelectIssueAsync("80");
+        await codingPage.ClickStartPipelineAsync();
+
+        // Wait for dispatch to complete (queued result is still "success" in the UI)
+        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
+
+        // Navigate to monitoring page
+        var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);
+        await monitoringPage.NavigateAsync();
+
+        // Assert: Active Runs should be 0 (no agent assigned)
+        var activeRunCount = await monitoringPage.GetActiveRunCountAsync();
+        Assert.Equal(0, activeRunCount);
+
+        // Assert: Job Queue should contain the issue
+        var jobQueueText = await Page.TextContentAsync("h2:has-text('Job Queue')");
+        Assert.NotNull(jobQueueText);
+        Assert.DoesNotContain("(0)", jobQueueText);
+
+        // Assert: issue #80 is NOT in Active Runs section
+        var activeRunsSection = await Page.QuerySelectorAsync("section:has(h2:has-text('Active Runs'))");
+        Assert.NotNull(activeRunsSection);
+        var activeRunsHtml = await activeRunsSection.InnerHTMLAsync();
+        Assert.DoesNotContain("#80", activeRunsHtml);
+
+        // Assert: issue #80 IS in Job Queue section
+        var jobQueueSection = await Page.QuerySelectorAsync("section:has(h2:has-text('Job Queue'))");
+        Assert.NotNull(jobQueueSection);
+        var jobQueueHtml = await jobQueueSection.InnerHTMLAsync();
+        Assert.Contains("#80", jobQueueHtml);
+
+        // Now connect an agent and verify the job moves to Active Runs
+        await using var fakeAgent = new FakeAgentClient("late-agent-1", "e2e");
+        await fakeAgent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+
+        // Wait for the agent to receive and accept the job
+        var assignment = await fakeAgent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await fakeAgent.AcceptJobAsync(assignment.JobId);
+        await fakeAgent.ReportStepAsync(assignment.JobId, PipelineStep.GeneratingCode);
+
+        // Wait for server state to reflect
+        var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
+        await WaitUntilAsync(() => runService.GetActiveRuns().Any(r =>
+            r.IssueIdentifier == "80" && r.AgentId == "late-agent-1"));
+
+        // Refresh monitoring page (wait for 2s refresh cycle)
+        await Page.WaitForTimeoutAsync(3000);
+
+        // Assert: Active Runs now shows the issue
+        var updatedActiveRunCount = await monitoringPage.GetActiveRunCountAsync();
+        Assert.True(updatedActiveRunCount >= 1,
+            $"Expected at least 1 active run after agent connected, got {updatedActiveRunCount}");
+
+        var updatedActiveSection = await Page.QuerySelectorAsync("section:has(h2:has-text('Active Runs'))");
+        var updatedActiveHtml = await updatedActiveSection!.InnerHTMLAsync();
+        Assert.Contains("#80", updatedActiveHtml);
+    }
 }

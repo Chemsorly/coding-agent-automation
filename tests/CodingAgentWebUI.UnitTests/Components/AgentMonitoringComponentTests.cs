@@ -156,6 +156,36 @@ public class AgentMonitoringComponentTests : BunitContext
     }
 
     [Fact]
+    public void ActiveRunsTable_ExcludesRuns_WithNullAgentId()
+    {
+        var unassigned = CreateRunSummary("Unassigned Issue") with { AgentId = null, RunId = "unassigned-run-id-0000-0000-000000000001" };
+        var assigned = CreateRunSummary("Assigned Issue") with { AgentId = "agent-1", RunId = "assigned-run-id-00000-0000-000000000002" };
+
+        _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { unassigned, assigned });
+
+        var cut = Render<AgentMonitoring>();
+
+        Assert.Contains("Assigned Issue", cut.Markup);
+        Assert.DoesNotContain("Unassigned Issue", cut.Markup);
+        Assert.Contains("Active Runs (1)", cut.Markup);
+    }
+
+    [Fact]
+    public void ActiveRunsTable_ExcludesRuns_WithEmptyAgentId()
+    {
+        var emptyAgent = CreateRunSummary("Empty Agent Issue") with { AgentId = "" };
+
+        _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { emptyAgent });
+
+        var cut = Render<AgentMonitoring>();
+
+        Assert.DoesNotContain("Empty Agent Issue", cut.Markup);
+        Assert.Contains("No active pipeline runs.", cut.Markup);
+    }
+
+    [Fact]
     public void RemoveFromQueue_Button_RemovesJobAndUpdatesUI()
     {
         // Arrange: enqueue a job
@@ -251,7 +281,7 @@ public class AgentMonitoringComponentTests : BunitContext
         IssueIdentifier = "194",
         IssueTitle = issueTitle,
         RunType = PipelineRunType.Implementation,
-        AgentId = null,
+        AgentId = "agent-dotnet-1",
         StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
         ProjectName = null,
         CurrentStep = PipelineStep.GeneratingCode

@@ -26,6 +26,7 @@ COPY src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj src/CodingAgentWeb
 COPY src/CodingAgentWebUI.Agent.KiroCli/CodingAgentWebUI.Agent.KiroCli.csproj src/CodingAgentWebUI.Agent.KiroCli/
 COPY src/CodingAgentWebUI.Agent.OpenCode/CodingAgentWebUI.Agent.OpenCode.csproj src/CodingAgentWebUI.Agent.OpenCode/
 COPY tests/CodingAgentWebUI.E2ETests/CodingAgentWebUI.E2ETests.csproj tests/CodingAgentWebUI.E2ETests/
+COPY tests/CodingAgentWebUI.TestUtilities/CodingAgentWebUI.TestUtilities.csproj tests/CodingAgentWebUI.TestUtilities/
 RUN dotnet restore tests/CodingAgentWebUI.E2ETests/CodingAgentWebUI.E2ETests.csproj
 
 # Copy source and build

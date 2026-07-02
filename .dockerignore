@@ -30,6 +30,7 @@ README.md
 tests/
 # But allow E2E tests (needed by e2e-tests.Dockerfile)
 !tests/CodingAgentWebUI.E2ETests/
+!tests/CodingAgentWebUI.TestUtilities/
 
 # Config — all runtime-mounted, not needed in build context
 config/

@@ -845,7 +845,9 @@
 
     private async Task RefreshDataAsync(bool includeConsolidation = false)
     {
-        _activeRuns = await ActiveRunQuery.GetActiveRunsAsync();
+        _activeRuns = (await ActiveRunQuery.GetActiveRunsAsync())
+            .Where(r => !string.IsNullOrEmpty(r.AgentId))
+            .ToList();
         _agents = Registry.GetAllAgents();
         _runHistory = PipelineService.GetRunHistory();
         _queuedJobs = await PendingWorkQuery.GetPendingJobsAsync();
