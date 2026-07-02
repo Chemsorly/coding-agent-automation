@@ -230,7 +230,6 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
             _mockRunService.Object,
             _transitionService,
             _mockPendingWorkQuery.Object,
-            _mockProjectStore.Object,
             _mockLabelSwapper.Object,
             NullLogger<PendingWorkItemDrainService>.Instance);
     }

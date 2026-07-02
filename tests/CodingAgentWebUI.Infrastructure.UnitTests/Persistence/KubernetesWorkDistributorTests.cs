@@ -57,6 +57,7 @@ public class KubernetesWorkDistributorTests : IDisposable
         var result = await _distributor.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeTrue();
+        result.Queued.Should().BeTrue();
         result.WorkItemId.Should().NotBeNullOrEmpty();
         result.ErrorMessage.Should().BeNull();
 

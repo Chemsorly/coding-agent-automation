@@ -68,4 +68,14 @@ public interface IDispatchOrchestrationService
     /// <param name="request">The request that was prepared but failed to distribute.</param>
     /// <param name="ct">Cancellation token.</param>
     Task RevertFailedDistributionAsync(JobDistributionRequest request, CancellationToken ct);
+
+    /// <summary>
+    /// Confirms the distribution was successful by swapping the issue label to
+    /// <c>agent:in-progress</c>. Call this when <see cref="IWorkDistributor.DistributeAsync"/>
+    /// returns <c>Success = true</c> AND <see cref="DistributionResult.Queued"/> is <c>false</c>
+    /// (agent actually accepted the job, not just queued as Pending).
+    /// </summary>
+    /// <param name="request">The request that was successfully distributed.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task ConfirmDistributionLabelAsync(JobDistributionRequest request, CancellationToken ct);
 }

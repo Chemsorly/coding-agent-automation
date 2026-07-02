@@ -105,6 +105,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
 
         // Assert — queued successfully (will be drained when agent becomes idle)
         result.Success.Should().BeTrue();
+        result.Queued.Should().BeTrue();
         result.WorkItemId.Should().NotBeNullOrEmpty();
         result.ErrorMessage.Should().Contain("Queued");
 
@@ -562,6 +563,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
 
         // Assert: WorkItem row has AssignedAgentId set
         result.Success.Should().BeTrue();
+        result.Queued.Should().BeFalse();
         await using var db = new InMemoryPipelineDbContext(_dbOptions);
         var workItem = await db.WorkItems.FindAsync(Guid.Parse(result.WorkItemId!));
         workItem.Should().NotBeNull();

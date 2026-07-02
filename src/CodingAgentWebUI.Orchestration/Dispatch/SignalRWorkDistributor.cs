@@ -140,7 +140,7 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
                     run.AgentId = null;
             }
 
-            return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available");
+            return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available", Queued: true);
         }
 
         var connectionId = resolveResult.ConnectionId;
@@ -180,6 +180,10 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             }
             else
             {
+                // TODO: (#997 review) Legacy fallback only sets ActiveJobId via AssignJob but does NOT
+                //       transition the agent to Busy status. If IRunLifecycleManager registration is ever
+                //       missing, HeartbeatMonitor may treat the agent as Idle and assign a second job.
+                //       Consider adding _agentResolver.TransitionStatus(agentId, Busy) here as safety net.
                 // Legacy fallback (no lifecycle manager in tests without it)
                 _agentResolver.AssignJob(resolvedAgentId, workItemId.ToString());
             }

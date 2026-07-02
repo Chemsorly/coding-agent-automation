@@ -22,15 +22,13 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private readonly DispatchInfrastructure _infra;
     private readonly IDispatchRunCreator _orchestration;
     private readonly IOrchestratorRunService _runService;
-    private readonly IRunLifecycleManager? _lifecycleManager;
     private readonly ILogger _logger;
 
     public DispatchOrchestrationService(
         DispatchInfrastructure infra,
         IDispatchRunCreator orchestration,
         IOrchestratorRunService runService,
-        ILogger logger,
-        IRunLifecycleManager? lifecycleManager = null)
+        ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(orchestration);
@@ -41,7 +39,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         _orchestration = orchestration;
         _runService = runService;
         _logger = logger;
-        _lifecycleManager = lifecycleManager;
     }
 
     /// <summary>
@@ -237,10 +234,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 : allComments;
         }
 
-        // NOTE: Label swap to agent:in-progress is NOT done here.
-        // In DB mode, the label is only swapped when an agent actually accepts the job
-        // (in SignalRWorkDistributor after successful AssignJobAsync, or in DrainService).
-        // This prevents issues from appearing "in progress" when sitting in the Pending queue.
+        // NOTE: Label swap to agent:in-progress is intentionally NOT done here.
+        // It is deferred to ConfirmDistributionLabelAsync, called only after an agent
+        // actually accepts the job (fixes #997 — stale labels on Pending items).
 
         // Detect existing analysis and rework state from comments
         string? existingAnalysis = null;
@@ -519,6 +515,32 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     }
 
     /// <inheritdoc />
+    public async Task ConfirmDistributionLabelAsync(JobDistributionRequest request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        // Best-effort: the agent already has the job at this point. If the label swap fails
+        // (GitHub API error), we log a warning but do NOT propagate the exception — otherwise
+        // PipelineLoopService treats it as a failed dispatch (FailedCount++) even though the
+        // agent is actively working. Note: IRunLifecycleManager.AgentAcceptedRunAsync also
+        // performs this swap (best-effort) in the SignalR direct-dispatch path, so this call
+        // is a safety net / idempotent confirmation.
+        try
+        {
+            _logger.Information(
+                "Orchestration: confirming distribution — swapping label to agent:in-progress for issue {IssueIdentifier}",
+                request.IssueIdentifier);
+            await _infra.LabelSwapper.SwapLabelAsync(
+                request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex,
+                "Orchestration: failed to swap label to agent:in-progress for issue {IssueIdentifier} (non-fatal — agent already has the job)",
+                request.IssueIdentifier);
+        }
+    }
+
     public async Task RevertFailedDistributionAsync(JobDistributionRequest request, CancellationToken ct)
     {
         try
@@ -535,7 +557,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 request.IssueIdentifier);
         }
 
-        string? removedRunId = null;
         try
         {
             // Remove the dangling run that was created during PrepareAsync
@@ -545,7 +566,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 r.IssueProviderConfigId == request.IssueProviderConfigId);
             if (danglingRun is not null)
             {
-                removedRunId = danglingRun.RunId;
                 _runService.RemoveRun(danglingRun.RunId);
                 _logger.Information("Removed dangling run {RunId} for issue {IssueIdentifier} after distribution failure",
                     danglingRun.RunId, request.IssueIdentifier);
@@ -554,22 +574,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         catch (Exception ex)
         {
             _logger.Error(ex, "Failed to remove dangling run for issue {IssueIdentifier} after distribution failure",
-                request.IssueIdentifier);
-        }
-
-        // Transition the DB WorkItem to Failed immediately (prevents 5-min stuck detection delay)
-        try
-        {
-            var runIdForDb = removedRunId ?? request.RunId;
-            if (!string.IsNullOrEmpty(runIdForDb) && _lifecycleManager is not null)
-            {
-                await _lifecycleManager.TransitionWorkItemToFailedAsync(runIdForDb, ct);
-                _logger.Information("Transitioned WorkItem {RunId} to Failed after distribution failure", runIdForDb);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Failed to transition WorkItem to Failed for issue {IssueIdentifier} after distribution failure",
                 request.IssueIdentifier);
         }
     }

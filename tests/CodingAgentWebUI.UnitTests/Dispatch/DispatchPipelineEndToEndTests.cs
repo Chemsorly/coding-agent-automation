@@ -368,6 +368,59 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         run.AgentId.Should().Be("agent-dotnet-1");
     }
 
+    [Fact]
+    public async Task FullDispatch_AgentAccepts_LabelSwapsToInProgressAfterDistribute()
+    {
+        // Verify: label is NOT swapped during PrepareDistributionRequestAsync,
+        // and IS swapped after DistributeAsync succeeds with Queued=false.
+        var orchestration = CreateOrchestrationService();
+        var distributor = CreateDistributor();
+
+        var request = await orchestration.PrepareDistributionRequestAsync(
+            "org/repo#42", "issue-1", "repo-1", null, null,
+            "loop", TestProject, ct: CancellationToken.None);
+
+        // After prepare: no label swap happened
+        _mockLabelSwapper.Verify(
+            l => l.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Distribute successfully (agent available)
+        var result = await distributor.DistributeAsync(request!, CancellationToken.None);
+        result.Success.Should().BeTrue();
+        result.Queued.Should().BeFalse();
+
+        // Now confirm label
+        await orchestration.ConfirmDistributionLabelAsync(request!, CancellationToken.None);
+
+        _mockLabelSwapper.Verify(
+            l => l.SwapLabelAsync("issue-1", "org/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task FullDispatch_NoIdleAgent_LabelRemainsUnchanged()
+    {
+        // Verify: when no agent is available, label is never swapped to agent:in-progress
+        _mockResolver.Setup(r => r.ResolveAgent(It.IsAny<string>())).Returns((AgentResolveResult?)null);
+
+        var orchestration = CreateOrchestrationService();
+        var distributor = CreateDistributor();
+
+        var request = await orchestration.PrepareDistributionRequestAsync(
+            "org/repo#42", "issue-1", "repo-1", null, null,
+            "loop", TestProject, ct: CancellationToken.None);
+
+        var result = await distributor.DistributeAsync(request!, CancellationToken.None);
+        result.Success.Should().BeTrue();
+        result.Queued.Should().BeTrue();
+
+        // Label was never swapped to in-progress
+        _mockLabelSwapper.Verify(
+            l => l.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // Test infrastructure
     // ═══════════════════════════════════════════════════════════════════════

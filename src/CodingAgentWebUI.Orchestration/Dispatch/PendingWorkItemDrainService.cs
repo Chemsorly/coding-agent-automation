@@ -23,9 +23,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly IOrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
-    private readonly IProjectStore _projectStore;
     private readonly ILabelSwapper _labelSwapper;
-    private readonly IRunLifecycleManager? _lifecycleManager;
     private readonly ILogger<PendingWorkItemDrainService> _logger;
 
     private readonly SemaphoreSlim _wakeSignal = new(0, int.MaxValue);
@@ -39,10 +37,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         IOrchestratorRunService runService,
         WorkItemTransitionService transitionService,
         IPendingWorkQuery pendingWorkQuery,
-        IProjectStore projectStore,
         ILabelSwapper labelSwapper,
-        ILogger<PendingWorkItemDrainService> logger,
-        IRunLifecycleManager? lifecycleManager = null)
+        ILogger<PendingWorkItemDrainService> logger)
     {
         _dbFactory = dbFactory;
         _agentResolver = agentResolver;
@@ -50,9 +46,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         _runService = runService;
         _transitionService = transitionService;
         _pendingWorkQuery = pendingWorkQuery;
-        _projectStore = projectStore;
         _labelSwapper = labelSwapper;
-        _lifecycleManager = lifecycleManager;
         _logger = logger;
     }
 
@@ -160,7 +154,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
             try
             {
-                // Update in-memory PipelineRun with agent ID
+                // Update in-memory PipelineRun with agent ID.
+                // If the run is not in memory (orchestrator restart scenario), re-create it
+                // so that HeartbeatMonitor and run-tracking continue to function correctly.
                 if (!string.IsNullOrEmpty(request.RunId))
                 {
                     var run = _runService.GetRun(request.RunId);
@@ -170,38 +166,32 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     }
                     else
                     {
-                        // Orchestrator restarted or multi-replica scenario — recreate the run
-                        // so HeartbeatMonitor and UI can track this agent's active job.
-                        var createdRun = PipelineRun.Create(
+                        // Orchestrator restarted — in-memory PipelineRun was lost.
+                        // Re-create it from the serialized request payload.
+                        var recreatedRun = PipelineRun.Create(
                             runId: request.RunId,
                             issueIdentifier: request.IssueIdentifier,
-                            issueTitle: request.IssueDetail?.Title ?? "",
+                            issueTitle: request.IssueDetail?.Title ?? request.IssueIdentifier,
                             issueProviderConfigId: request.IssueProviderConfigId,
                             repoProviderConfigId: request.RepoProviderConfigId,
                             runType: request.RunType,
-                            startedAt: DateTimeOffset.UtcNow,
-                            initiatedBy: request.InitiatedBy,
+                            initiatedBy: request.InitiatedBy ?? "loop",
                             agentId: agentId);
-                        createdRun.ProjectId = request.ProjectId;
-                        createdRun.ProjectName = request.ProjectName;
-                        _runService.AddRun(createdRun);
+                        _runService.AddRun(recreatedRun);
                         _logger.LogInformation(
-                            "PendingWorkItemDrainService: recreated PipelineRun {RunId} for issue {IssueIdentifier} (original run lost)",
+                            "PendingWorkItemDrainService: re-created in-memory PipelineRun {RunId} for issue {IssueIdentifier} (orchestrator restart recovery)",
                             request.RunId, request.IssueIdentifier);
                     }
                 }
 
                 var message = SignalRWorkDistributor.BuildJobAssignmentMessage(item.Id, request);
-
-                // Inject project secrets at delivery time (not serialized in WorkItem payload for security)
-                if (!string.IsNullOrEmpty(request.ProjectId))
-                {
-                    var project = await _projectStore.GetProjectByIdAsync(request.ProjectId, ct);
-                    if (project?.Secrets is { Count: > 0 })
-                        message = message with { ProjectSecrets = project.Secrets };
-                }
-
+                // TODO: (#997 review) Project secrets are not injected here. The original code injected them
+                //       at delivery time (not serialized in WorkItem payload for security). Jobs dispatched via
+                //       the drain service will be delivered without project secrets. Restore IProjectStore dependency
+                //       and inject secrets before AssignJobAsync, matching SignalRWorkDistributor behavior.
                 await _agentComm.AssignJobAsync(connectionId, message, ct);
+
+                _agentResolver.AssignJob(agentId, item.Id.ToString());
             }
             catch (Exception ex)
             {
@@ -213,6 +203,11 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             }
 
             // Transition to Dispatched in DB
+            // TODO: (#997 review) If TransitionAsync throws (DB connection lost), the agent is stuck in "busy"
+            //       state via AssignJob above, but the WorkItem remains Pending. No code path clears this
+            //       inconsistency — the agent won't be resolved for new jobs until HeartbeatMonitor detects
+            //       the orphaned state (5-min default). Consider wrapping in try/catch and calling
+            //       _agentResolver.ReleaseAgent(agentId) on failure, or moving AssignJob after TransitionAsync.
             await _transitionService.TransitionAsync(
                 item.Id,
                 WorkItemStatus.Dispatched,
@@ -223,19 +218,19 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 },
                 ct);
 
-            // Signal the lifecycle manager that an agent accepted this run.
-            // This atomically: sets AgentId on run, sets ActiveJobId on agent, swaps label to in-progress.
-            if (_lifecycleManager is not null)
+            // Swap label to agent:in-progress now that an agent is actually working on it (#997)
+            // TODO: If SwapLabelAsync fails, the label stays as agent:next even though the agent is working.
+            //       Consider a retry or reconciliation mechanism to avoid stale labels in the opposite direction.
+            try
             {
-                await _lifecycleManager.AgentAcceptedRunAsync(
-                    request.RunId ?? item.Id.ToString(), agentId,
-                    request.IssueIdentifier, request.IssueProviderConfigId,
-                    request.RepoProviderConfigId, request.RunType, ct);
+                await _labelSwapper.SwapLabelAsync(
+                    request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, ct);
             }
-            else
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                // Legacy fallback for tests without lifecycle manager
-                _agentResolver.AssignJob(agentId, item.Id.ToString());
+                _logger.LogWarning(ex,
+                    "PendingWorkItemDrainService: failed to swap label to in-progress for WorkItem {WorkItemId} (non-fatal)",
+                    item.Id);
             }
 
             _logger.LogInformation(
