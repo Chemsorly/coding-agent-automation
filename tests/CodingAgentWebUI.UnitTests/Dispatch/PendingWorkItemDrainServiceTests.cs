@@ -85,12 +85,26 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         _mockAgentComm.Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
+        // Use a completion signal to know when the label swap has been invoked
+        var labelSwapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockLabelSwapper
+            .Setup(l => l.SwapLabelAsync("issue-provider-1", "org/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => labelSwapCalled.TrySetResult());
+
         var service = CreateService();
 
-        // Act: trigger a single drain cycle
-        await InvokeDrainAsync(service);
+        // Act: trigger a single drain cycle and wait for label swap (with timeout)
+        service.Signal();
+        var task = service.StartAsync(CancellationToken.None);
+        var completed = await Task.WhenAny(labelSwapCalled.Task, Task.Delay(10_000));
 
-        // Assert: label was swapped to in-progress
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        try { await service.StopAsync(cts.Token); } catch (OperationCanceledException) { }
+
+        // Assert: label swap was actually called (not a timeout)
+        completed.Should().BeSameAs(labelSwapCalled.Task, "label swap should have been called within timeout");
         _mockLabelSwapper.Verify(
             l => l.SwapLabelAsync("issue-provider-1", "org/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Once);
@@ -215,6 +229,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
     /// Invokes the internal DrainPendingItemsAsync method via the BackgroundService's
     /// ExecuteAsync using a short-lived cancellation token.
     /// PendingWorkItemDrainService is a BackgroundService so we start it and let one cycle run.
+    /// Uses a generous timeout to accommodate slow CI runners.
     /// </summary>
     private static async Task InvokeDrainAsync(PendingWorkItemDrainService service)
     {
@@ -223,10 +238,8 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         service.Signal();
         // Start the service and let it run one cycle then cancel
         var task = service.StartAsync(cts.Token);
-        // TODO: Replace Task.Delay with a completion signal (e.g., TaskCompletionSource) to avoid
-        //       timing-dependent flakiness on slow CI machines (#997 review)
-        // Give it time to process
-        await Task.Delay(500);
+        // Give it enough time to process — needs to be generous for slow CI runners (ARM, etc.)
+        await Task.Delay(3000);
         cts.Cancel();
         try { await task; } catch (OperationCanceledException) { }
         await service.StopAsync(CancellationToken.None);
