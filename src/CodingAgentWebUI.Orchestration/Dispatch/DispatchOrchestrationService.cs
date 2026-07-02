@@ -519,11 +519,26 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        _logger.Information(
-            "Orchestration: confirming distribution — swapping label to agent:in-progress for issue {IssueIdentifier}",
-            request.IssueIdentifier);
-        await _infra.LabelSwapper.SwapLabelAsync(
-            request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, ct);
+        // Best-effort: the agent already has the job at this point. If the label swap fails
+        // (GitHub API error), we log a warning but do NOT propagate the exception — otherwise
+        // PipelineLoopService treats it as a failed dispatch (FailedCount++) even though the
+        // agent is actively working. Note: IRunLifecycleManager.AgentAcceptedRunAsync also
+        // performs this swap (best-effort) in the SignalR direct-dispatch path, so this call
+        // is a safety net / idempotent confirmation.
+        try
+        {
+            _logger.Information(
+                "Orchestration: confirming distribution — swapping label to agent:in-progress for issue {IssueIdentifier}",
+                request.IssueIdentifier);
+            await _infra.LabelSwapper.SwapLabelAsync(
+                request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex,
+                "Orchestration: failed to swap label to agent:in-progress for issue {IssueIdentifier} (non-fatal — agent already has the job)",
+                request.IssueIdentifier);
+        }
     }
 
     public async Task RevertFailedDistributionAsync(JobDistributionRequest request, CancellationToken ct)

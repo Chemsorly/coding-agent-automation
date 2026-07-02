@@ -154,15 +154,41 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
             try
             {
-                // Update in-memory PipelineRun with agent ID
+                // Update in-memory PipelineRun with agent ID.
+                // If the run is not in memory (orchestrator restart scenario), re-create it
+                // so that HeartbeatMonitor and run-tracking continue to function correctly.
                 if (!string.IsNullOrEmpty(request.RunId))
                 {
                     var run = _runService.GetRun(request.RunId);
                     if (run is not null)
+                    {
                         run.AgentId = agentId;
+                    }
+                    else
+                    {
+                        // Orchestrator restarted — in-memory PipelineRun was lost.
+                        // Re-create it from the serialized request payload.
+                        var recreatedRun = PipelineRun.Create(
+                            runId: request.RunId,
+                            issueIdentifier: request.IssueIdentifier,
+                            issueTitle: request.IssueDetail?.Title ?? request.IssueIdentifier,
+                            issueProviderConfigId: request.IssueProviderConfigId,
+                            repoProviderConfigId: request.RepoProviderConfigId,
+                            runType: request.RunType,
+                            initiatedBy: request.InitiatedBy ?? "loop",
+                            agentId: agentId);
+                        _runService.AddRun(recreatedRun);
+                        _logger.LogInformation(
+                            "PendingWorkItemDrainService: re-created in-memory PipelineRun {RunId} for issue {IssueIdentifier} (orchestrator restart recovery)",
+                            request.RunId, request.IssueIdentifier);
+                    }
                 }
 
                 var message = SignalRWorkDistributor.BuildJobAssignmentMessage(item.Id, request);
+                // TODO: (#997 review) Project secrets are not injected here. The original code injected them
+                //       at delivery time (not serialized in WorkItem payload for security). Jobs dispatched via
+                //       the drain service will be delivered without project secrets. Restore IProjectStore dependency
+                //       and inject secrets before AssignJobAsync, matching SignalRWorkDistributor behavior.
                 await _agentComm.AssignJobAsync(connectionId, message, ct);
 
                 _agentResolver.AssignJob(agentId, item.Id.ToString());
@@ -177,6 +203,11 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             }
 
             // Transition to Dispatched in DB
+            // TODO: (#997 review) If TransitionAsync throws (DB connection lost), the agent is stuck in "busy"
+            //       state via AssignJob above, but the WorkItem remains Pending. No code path clears this
+            //       inconsistency — the agent won't be resolved for new jobs until HeartbeatMonitor detects
+            //       the orphaned state (5-min default). Consider wrapping in try/catch and calling
+            //       _agentResolver.ReleaseAgent(agentId) on failure, or moving AssignJob after TransitionAsync.
             await _transitionService.TransitionAsync(
                 item.Id,
                 WorkItemStatus.Dispatched,

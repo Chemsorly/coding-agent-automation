@@ -1036,6 +1036,10 @@ public sealed partial class PipelineLoopService
                                 {
                                     var result = await _workDistributor!.DistributeAsync(request, stoppingToken);
                                     dispatched = result.Success;
+                                    if (!dispatched)
+                                        await _dispatchOrchestration.RevertFailedDistributionAsync(request, stoppingToken);
+                                    else if (!result.Queued)
+                                        await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, stoppingToken);
                                 }
                                 else
                                 {

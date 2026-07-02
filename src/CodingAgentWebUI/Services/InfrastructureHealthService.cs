@@ -20,6 +20,12 @@ public sealed class InfrastructureHealthService
         ArgumentNullException.ThrowIfNull(configuration);
 
         _dbHealth = serviceProvider.GetService<DatabaseHealthState>();
+        // TODO: (#997 review) IConnectionMultiplexer is no longer registered as a DI singleton after the
+        //       Redis backplane refactoring (ConnectionMultiplexer is now created inside the async ConnectionFactory
+        //       delegate in ConfigureSignalRRedisBackplane). This will always resolve to null, causing
+        //       RedisConnected to report null ("not configured") even when Redis IS configured and healthy.
+        //       Fix: either re-register IConnectionMultiplexer as a singleton, or use an alternative health
+        //       signal (e.g., a dedicated Redis health check service).
         _redis = serviceProvider.GetService<IConnectionMultiplexer>();
 
         // DB mode is active when Database:Host is configured
