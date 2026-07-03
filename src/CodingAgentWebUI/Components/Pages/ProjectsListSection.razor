@@ -151,7 +151,6 @@
             _confirmingDelete = null;
             await LoadProjectsAsync();
             await OnProjectsChanged.InvokeAsync();
-            // TODO: This was missing — sidebar indicator would go stale after project deletion.
             ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Project deleted.", false));
         }
