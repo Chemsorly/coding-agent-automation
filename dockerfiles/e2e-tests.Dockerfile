@@ -34,7 +34,7 @@ RUN dotnet restore tests/CodingAgentWebUI.E2ETests/CodingAgentWebUI.E2ETests.csp
 # Blazor framework static web assets (blazor.web.js). Letting build do its own restore
 # ensures the staticwebassets.runtime.json manifest includes the NuGet _framework/ path.
 COPY . .
-RUN dotnet build tests/CodingAgentWebUI.E2ETests/ -c Debug
+RUN dotnet build tests/CodingAgentWebUI.E2ETests/ -c Debug -p:IsTestProject=true
 
 # Ensure the test host runs in Development mode so static web assets
 # (including _framework/blazor.web.js from NuGet packages) are resolved correctly.
@@ -55,4 +55,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN pwsh tests/CodingAgentWebUI.E2ETests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium
 
 # Run E2E tests (use --ipc=host when running the container for Chromium stability)
-ENTRYPOINT ["dotnet", "test", "tests/CodingAgentWebUI.E2ETests/", "-c", "Debug", "--no-build", "--filter", "Category=E2E", "--logger", "trx", "--results-directory", "/src/TestResults"]
+# NOTE: We use 'dotnet vstest' targeting the DLL directly because the .csproj has
+# IsTestProject=false (to exclude from solution-level test runs). The 'dotnet test'
+# command with --no-build skips projects where IsTestProject=false in .NET 10+.
+ENTRYPOINT ["dotnet", "vstest", "tests/CodingAgentWebUI.E2ETests/bin/Debug/net10.0/CodingAgentWebUI.E2ETests.dll", "--TestCaseFilter:Category=E2E", "--logger:trx", "--ResultsDirectory:/src/TestResults"]

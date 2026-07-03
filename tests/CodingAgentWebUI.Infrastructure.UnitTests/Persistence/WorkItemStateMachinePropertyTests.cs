@@ -204,8 +204,8 @@ public class WorkItemStateMachineReachabilityPropertyTests
 /// <summary>
 /// Compile-time guard: asserts that WorkItemStatus terminal-state ordinals match
 /// the partial unique index filter in PipelineDbContext's OnModelCreating.
-/// If this test fails, the migration filter "Status" NOT IN (3, 4, 5) is stale
-/// and must be regenerated.
+/// Note: Detailed ordinal assertions live in WorkItemStatusOrdinalStabilityTests.cs.
+/// This guard provides a minimal check co-located with the property tests.
 /// </summary>
 public class WorkItemStatusOrdinalGuardTests
 {
@@ -218,15 +218,5 @@ public class WorkItemStatusOrdinalGuardTests
         Assert.Equal(3, (int)WorkItemStatus.Succeeded);
         Assert.Equal(4, (int)WorkItemStatus.Failed);
         Assert.Equal(5, (int)WorkItemStatus.Cancelled);
-    }
-
-    [Fact]
-    public void NonTerminalStatusOrdinals_AreBelow3()
-    {
-        // Sanity: non-terminal statuses must have ordinals < 3
-        // to NOT be excluded by the partial unique index.
-        Assert.Equal(0, (int)WorkItemStatus.Pending);
-        Assert.Equal(1, (int)WorkItemStatus.Dispatched);
-        Assert.Equal(2, (int)WorkItemStatus.Running);
     }
 }

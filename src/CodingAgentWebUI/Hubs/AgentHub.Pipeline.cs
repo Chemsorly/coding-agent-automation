@@ -158,9 +158,12 @@ public sealed partial class AgentHub
             activity?.SetTag("success", payload.FinalStep == PipelineStep.Completed);
 
             // Determine terminal WorkItem status
-            var workItemStatus = payload.FinalStep == PipelineStep.Completed
-                ? WorkItemStatus.Succeeded
-                : WorkItemStatus.Failed;
+            var workItemStatus = payload.FinalStep switch
+            {
+                PipelineStep.Completed => WorkItemStatus.Succeeded,
+                PipelineStep.Cancelled => WorkItemStatus.Cancelled,
+                _ => WorkItemStatus.Failed
+            };
 
             // Use lifecycle manager to atomically: remove run, transition DB WorkItem,
             // persist history, and mark issue complete in dedup tracker.

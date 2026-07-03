@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.Services;
 /// </summary>
 public class AgentCodingPageService
 {
-    private readonly PipelineLoopService _loopService;
+    private readonly IPipelineLoopService _loopService;
     private readonly IWorkDistributor _workDistributor;
     private readonly IAgentRegistryService _agentRegistry;
     private readonly IConfigurationStore _configStore;
@@ -25,7 +25,7 @@ public class AgentCodingPageService
     private readonly IDispatchOrchestrationService? _dispatchOrchestration;
 
     public AgentCodingPageService(
-        PipelineLoopService loopService,
+        IPipelineLoopService loopService,
         IWorkDistributor workDistributor,
         IAgentRegistryService agentRegistry,
         IConfigurationStore configStore,

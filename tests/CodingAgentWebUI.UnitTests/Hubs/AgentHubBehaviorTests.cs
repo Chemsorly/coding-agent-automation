@@ -914,6 +914,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.CurrentStep = PipelineStep.RunningQualityGates;
         run.LastStepChangeAt = DateTimeOffset.UtcNow.AddMinutes(-50); // Nearly timed out
 
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
@@ -942,6 +943,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var originalTimestamp = DateTimeOffset.UtcNow.AddMinutes(-50);
         run.LastStepChangeAt = originalTimestamp;
 
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
@@ -970,6 +972,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var originalTimestamp = DateTimeOffset.UtcNow.AddMinutes(-50);
         run.LastStepChangeAt = originalTimestamp;
 
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
@@ -997,6 +1000,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.CurrentStep = PipelineStep.RunningQualityGates;
         run.LastStepChangeAt = DateTimeOffset.UtcNow.AddMinutes(-50);
 
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
@@ -1021,6 +1025,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var agent = CreateAgent();
         agent.ActiveJobId = null; // No active job
 
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetByAgentId("agent-1")).Returns(agent);
 
         var hub = CreateHub();

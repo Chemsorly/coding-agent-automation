@@ -151,11 +151,12 @@ public static class ServiceCollectionExtensions
             sp.GetService<IWorkDistributor>(),
             sp.GetService<IDispatchOrchestrationService>(),
             sp.GetRequiredService<IDependencyChecker>()));
+        services.AddSingleton<IPipelineLoopService>(sp => sp.GetRequiredService<PipelineLoopService>());
         services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
 
         // Loop state persistence: auto-resumes loop after pod restart if previously active
         services.AddSingleton(sp => new LoopStatePersistenceService(
-            sp.GetRequiredService<PipelineLoopService>(),
+            sp.GetRequiredService<IPipelineLoopService>(),
             Log.Logger,
             sp.GetRequiredService<ILoopStateStore>()));
         services.AddHostedService(sp => sp.GetRequiredService<LoopStatePersistenceService>());

@@ -19,7 +19,7 @@ public partial class AgentCoding : IDisposable
     private const string JsScrollActiveStep = "scrollActiveStepIntoView";
 
     [Inject] private PipelineOrchestrationService PipelineService { get; set; } = default!;
-    [Inject] private PipelineLoopService LoopService { get; set; } = default!;
+    [Inject] private IPipelineLoopService LoopService { get; set; } = default!;
     [Inject] private OrchestratorRunService RunService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
     [Inject] private JobDispatcherService Dispatcher { get; set; } = default!;

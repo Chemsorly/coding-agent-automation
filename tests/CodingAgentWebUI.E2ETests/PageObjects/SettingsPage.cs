@@ -30,15 +30,32 @@ public sealed class SettingsPage
         await _page.WaitForTimeoutAsync(3000);
     }
 
-    /// <summary>Clicks a tree node by its visible text content (e.g., "Agent", "Issue", "Pipeline").</summary>
+    /// <summary>Clicks a tree node by its visible text content (e.g., "Agent", "Issue", "General").</summary>
     public async Task SelectTreeNodeAsync(string nodeText)
     {
-        // Tree nodes are div.tree-node elements with text content
+        // Tree nodes are inside collapsible groups. If the node isn't visible,
+        // expand all collapsed groups first.
         var node = _page.Locator($"div.tree-node:has-text('{nodeText}')").First;
+        if (!await node.IsVisibleAsync())
+        {
+            // Click all collapsed group headers to expand them
+            var headers = _page.Locator("div.tree-group-header[aria-expanded='false']");
+            var count = await headers.CountAsync();
+            for (var i = 0; i < count; i++)
+            {
+                await headers.Nth(i).ClickAsync();
+                await _page.WaitForTimeoutAsync(300);
+            }
+        }
+
         await node.ClickAsync();
 
-        // Wait for Blazor to process the selection and render the new content panel
-        await _page.WaitForTimeoutAsync(1000);
+        // Wait for the node to become active (confirms Blazor processed the click)
+        await _page.WaitForSelectorAsync($"div.tree-node.active:has-text('{nodeText}')",
+            new() { Timeout = 5_000 });
+
+        // Allow Blazor Server to render the new content panel
+        await _page.WaitForTimeoutAsync(1500);
     }
 
     /// <summary>Clicks the "+ Add Agent Provider" button (class btn-add).</summary>
@@ -84,12 +101,17 @@ public sealed class SettingsPage
         return names;
     }
 
-    /// <summary>Clicks the Delete button on the provider card with the given display name.</summary>
+    /// <summary>Clicks the Delete button on the provider card with the given display name, then confirms.</summary>
     public async Task ClickDeleteProviderAsync(string displayName)
     {
         // Find the provider card containing the display name, then click its delete button
         var card = _page.Locator($"div.provider-card:has(strong:has-text('{displayName}'))");
         await card.Locator("button.btn-delete").ClickAsync();
+
+        // Wait for the confirmation dialog to appear and click the confirm Delete button
+        var confirmDialog = _page.Locator("div.agent-detail-confirm, div.delete-confirm");
+        await confirmDialog.WaitForAsync(new() { Timeout = 3_000 });
+        await confirmDialog.Locator("button.btn-delete").ClickAsync();
 
         // Wait for Blazor to process the deletion and re-render
         await _page.WaitForTimeoutAsync(1500);
@@ -98,7 +120,8 @@ public sealed class SettingsPage
     /// <summary>Checks if a status message containing the specified text is visible.</summary>
     public async Task<bool> IsStatusMessageVisibleAsync(string containsText)
     {
-        var status = _page.Locator("div.settings-status");
+        // Settings page uses InlineStatus component (class: inline-status) for save confirmations
+        var status = _page.Locator("div.inline-status, div.settings-status");
         var count = await status.CountAsync();
         for (var i = 0; i < count; i++)
         {
@@ -107,5 +130,23 @@ public sealed class SettingsPage
                 return true;
         }
         return false;
+    }
+
+    /// <summary>Expands any "Advanced settings" toggle sections on the current page.</summary>
+    public async Task ExpandAdvancedSectionsAsync()
+    {
+        var toggles = _page.Locator("div.advanced-toggle");
+        var count = await toggles.CountAsync();
+        for (var i = 0; i < count; i++)
+        {
+            // Only click if not already expanded (check for "expanded" class on chevron)
+            var chevron = toggles.Nth(i).Locator("span.toggle-chevron");
+            var classes = await chevron.GetAttributeAsync("class") ?? "";
+            if (!classes.Contains("expanded"))
+            {
+                await toggles.Nth(i).ClickAsync();
+                await _page.WaitForTimeoutAsync(500);
+            }
+        }
     }
 }

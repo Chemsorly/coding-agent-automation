@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
-using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.Extensions.Hosting;
 
 namespace CodingAgentWebUI.Services;
@@ -19,7 +18,7 @@ namespace CodingAgentWebUI.Services;
 /// </summary>
 public sealed class LoopStatePersistenceService : IHostedLifecycleService, IDisposable
 {
-    private readonly PipelineLoopService _loopService;
+    private readonly IPipelineLoopService _loopService;
     private readonly Serilog.ILogger _logger;
     private readonly ILoopStateStore _stateStore;
     private readonly TimeSpan _startupDelay;
@@ -34,7 +33,7 @@ public sealed class LoopStatePersistenceService : IHostedLifecycleService, IDisp
     public int ResumeCountdownSeconds { get; private set; }
 
     public LoopStatePersistenceService(
-        PipelineLoopService loopService,
+        IPipelineLoopService loopService,
         Serilog.ILogger logger,
         ILoopStateStore stateStore,
         TimeSpan? startupDelay = null)

@@ -22,16 +22,16 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     }
 
     /// <summary>
-    /// Executes the refactoring detection workflow:
-    /// 1. Clone code repo into temp workspace
-    /// 2. Optionally clone brain repo for architectural context
-    /// 3. Build holistic analysis prompt
-    /// 4. Execute agent — expects .agent/refactoring-proposals.json in workspace
-    /// 5. Parse proposals JSON from workspace file
-    /// 6. If no proposals: return success with "No refactoring opportunities identified"
-    /// 7. Adversarial review (if enabled and proposals non-empty)
-    /// 8. Create GitHub issues via issueProvider.CreateIssueAsync() for each proposal (max 3)
-    /// 9. Return summary with issue count and identifiers
+    /// Executes the phased refactoring detection workflow:
+    /// 1. Clone code repo + brain into temp workspace
+    /// 2. Hotspot analysis (git log)
+    /// 3. Phase 0: Context extraction (project conventions)
+    /// 4. Phase 1: Parallel focused detection (3 sub-agents: structural, correctness, design)
+    /// 5. Phase 2: Aggregation + prioritization → produces proposals JSON
+    /// 6. If no proposals: return success
+    /// 7. Adversarial review (if enabled)
+    /// 8. Create GitHub issues (capped at MaxRefactoringProposals)
+    /// 9. Return summary
     /// </summary>
     public async Task<ConsolidationJobResult> ExecuteAsync(
         ConsolidationJobMessage job,
@@ -63,7 +63,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             {
                 await repoProvider.CloneAsync(workspacePath, ct);
 
-                // 2. Optionally clone brain repo for architectural context
+                // 1b. Optionally clone brain repo for architectural context
                 if (brainProvider is not null)
                 {
                     var brainPath = Path.Combine(workspacePath, ".brain");
@@ -79,13 +79,13 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 }
             });
 
-            // 3. Hotspot analysis — run git log to identify frequently-changed files
+            // 2. Hotspot analysis — run git log to identify frequently-changed files
             await RunWithTracingAsync("RefactoringDetection.HotspotAnalysis", job.JobId, async _ =>
             {
                 await WriteHotspotAnalysisAsync(workspacePath, job.PipelineConfiguration.HotspotAnalysisLookback, ct);
             });
 
-            // 3.5. Query open issues for deduplication context
+            // 2b. Query open issues for deduplication context
             string? issueContext = null;
             try
             {
@@ -111,11 +111,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                 Logger.Warning(ex, "Failed to query open issues for context in run {RunId}, continuing without", job.JobId);
             }
 
-            // 4. Build prompt
-            var prompt = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(job.PipelineConfiguration.MaxRefactoringProposals, issueContext);
-
-            // 4b. Query past proposal outcomes for feedback context
-            IReadOnlyList<IssueSummary> closedRefactoringIssues = Array.Empty<IssueSummary>();
+            // 2c. Query past proposal outcomes for feedback context
+            string outcomeContext = string.Empty;
             try
             {
                 var since = DateTime.UtcNow - job.PipelineConfiguration.RefactoringOutcomeLookback;
@@ -123,120 +120,236 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
                     page: 1, pageSize: 20,
                     labels: new[] { AgentLabels.Generated },
                     since: since, ct);
-                closedRefactoringIssues = closedResult.Items;
+                outcomeContext = ConsolidationPromptBuilder.BuildProposalOutcomeContext(closedResult.Items);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 Logger.Warning(ex, "Failed to query closed issues for feedback context in run {RunId}", job.JobId);
             }
 
-            var outcomeContext = ConsolidationPromptBuilder.BuildProposalOutcomeContext(closedRefactoringIssues);
-            if (outcomeContext.Length > 0)
-                prompt += outcomeContext;
+            // ── Phased Refactoring Detection ──
+            var phasedResult = await ExecutePhasedRefactoringAsync(
+                job, agentProvider, workspacePath, issueContext, outcomeContext, onOutputLine, ct);
+            if (!phasedResult.Success) return phasedResult;
 
-            // 5. Execute agent
-            Logger.Information("Executing refactoring detection agent for run {RunId}", job.JobId);
-            AgentResult agentResult;
-            ConsolidationJobResult? failure;
-            (agentResult, failure) = await RunWithTracingAsync("RefactoringDetection.AgentExecution", job.JobId, async _ =>
+            // Phased path wrote proposals to workspace — finalize with review + issue creation
+            return await FinalizeProposalsAsync(job, agentProvider, issueProvider, workspacePath, onOutputLine, ct);
+        }, ct);
+    }
+
+    /// <summary>
+    /// Phased multi-agent refactoring path.
+    /// Phase 0 → Phase 1 (3 parallel) → Phase 2 (aggregation) → finalize.
+    /// </summary>
+    private async Task<ConsolidationJobResult> ExecutePhasedRefactoringAsync(
+        ConsolidationJobMessage job,
+        IAgentProvider agentProvider,
+        string workspacePath,
+        string? issueContext,
+        string outcomeContext,
+        Action<string>? onOutputLine,
+        CancellationToken ct)
+    {
+        ConsolidationJobResult? failure;
+
+        // Phase 0: Context Extraction
+        Logger.Information("Phase 0: Extracting project conventions for run {RunId}", job.JobId);
+
+        (_, failure) = await RunWithTracingAsync("RefactoringDetection.Phase0.ContextExtraction", job.JobId, async _ =>
+        {
+            return await ExecuteAgentAndCheckAsync(
+                agentProvider,
+                new AgentRequest
+                {
+                    Prompt = ConsolidationPromptBuilder.BuildRefactoringContextExtractionPrompt(),
+                    WorkspacePath = workspacePath,
+                    Timeout = job.PipelineConfiguration.AgentTimeout
+                },
+                job.JobId,
+                ct);
+        });
+
+        if (failure is not null) return failure;
+
+        // Phase 1: Parallel Focused Detection (3 sub-agents)
+        Logger.Information("Phase 1: Dispatching 3 parallel analysis agents for run {RunId}", job.JobId);
+
+        var phase1Tasks = new[]
+        {
+            RunWithTracingAsync("RefactoringDetection.Phase1.StructuralDebt", job.JobId, async _ =>
             {
                 return await ExecuteAgentAndCheckAsync(
                     agentProvider,
                     new AgentRequest
                     {
-                        Prompt = prompt,
+                        Prompt = ConsolidationPromptBuilder.BuildRefactoringStructuralDebtPrompt(),
                         WorkspacePath = workspacePath,
                         Timeout = job.PipelineConfiguration.AgentTimeout
                     },
                     job.JobId,
                     ct);
-            });
-
-            if (failure is not null) return failure;
-
-            // 5. Parse proposals JSON from workspace file
-            var proposalsFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.RefactoringProposalsFilePath);
-            var proposals = await ParseProposalsAsync(proposalsFilePath, ct);
-
-            if (proposals is null)
+            }),
+            RunWithTracingAsync("RefactoringDetection.Phase1.Correctness", job.JobId, async _ =>
             {
-                // Malformed JSON — mark as failed
-                return CreateFailureResult(job.JobId, "Failed to parse refactoring proposals JSON from agent output");
-            }
-
-            // 6. If no proposals: return success (skip review)
-            if (proposals.Count == 0)
-            {
-                Logger.Information("No refactoring opportunities identified in run {RunId}", job.JobId);
-                return new ConsolidationJobResult
-                {
-                    JobId = job.JobId,
-                    Success = true,
-                    Summary = "No refactoring opportunities identified"
-                };
-            }
-
-            // 7. Adversarial review (if enabled and proposals non-empty)
-            AdversarialReviewResult reviewResult;
-            reviewResult = await RunWithTracingAsync("RefactoringDetection.AdversarialReview", job.JobId, async _ =>
-            {
-                return await AdversarialReviewHelper.ExecuteReviewAsync(
+                return await ExecuteAgentAndCheckAsync(
                     agentProvider,
-                    workspacePath,
-                    ConsolidationPromptBuilder.BuildRefactoringReviewPrompt(),
-                    ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt(),
-                    AgentWorkspacePaths.RefactoringReviewFilePath,
-                    new AdversarialReviewConfig
+                    new AgentRequest
                     {
-                        Enabled = job.PipelineConfiguration.RefactoringReviewEnabled,
-                        AgentTimeout = job.PipelineConfiguration.AgentTimeout
+                        Prompt = ConsolidationPromptBuilder.BuildRefactoringCorrectnessPrompt(),
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout
                     },
-                    onOutputLine,
-                    Logger,
+                    job.JobId,
                     ct);
-            });
-
-            // If refinement was triggered, re-read and re-parse proposals
-            if (reviewResult.RefinementTriggered)
+            }),
+            RunWithTracingAsync("RefactoringDetection.Phase1.DesignConsistency", job.JobId, async _ =>
             {
-                var refinedProposals = await ParseProposalsAsync(proposalsFilePath, ct);
-                if (refinedProposals is null)
+                return await ExecuteAgentAndCheckAsync(
+                    agentProvider,
+                    new AgentRequest
+                    {
+                        Prompt = ConsolidationPromptBuilder.BuildRefactoringDesignConsistencyPrompt(),
+                        WorkspacePath = workspacePath,
+                        Timeout = job.PipelineConfiguration.AgentTimeout
+                    },
+                    job.JobId,
+                    ct);
+            })
+        };
+
+        var phase1Results = await Task.WhenAll(phase1Tasks);
+
+        // Check for failures — log but continue if at least one agent succeeded
+        var phase1Failures = phase1Results.Where(r => r.Failure is not null).ToList();
+        if (phase1Failures.Count == phase1Results.Length)
+        {
+            return CreateFailureResult(job.JobId, "All Phase 1 analysis agents failed");
+        }
+
+        if (phase1Failures.Count > 0)
+        {
+            Logger.Warning("{FailCount}/{TotalCount} Phase 1 agents failed in run {RunId}, continuing with partial results",
+                phase1Failures.Count, phase1Results.Length, job.JobId);
+        }
+
+        // Phase 2: Aggregation & Prioritization
+        Logger.Information("Phase 2: Aggregating and prioritizing findings for run {RunId}", job.JobId);
+
+        var aggregationPrompt = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt(
+            job.PipelineConfiguration.MaxRefactoringProposals,
+            issueContext,
+            outcomeContext.Length > 0 ? outcomeContext : null);
+
+        (_, failure) = await RunWithTracingAsync("RefactoringDetection.Phase2.Aggregation", job.JobId, async _ =>
+        {
+            return await ExecuteAgentAndCheckAsync(
+                agentProvider,
+                new AgentRequest
                 {
-                    Logger.Warning("Refined proposals file is malformed in run {RunId}, keeping original proposals", job.JobId);
-                    // Keep original proposals — don't overwrite
-                }
-                else
-                {
-                    proposals = refinedProposals;
-                    Logger.Information("Using refined proposals ({Count} proposals) in run {RunId}",
-                        proposals.Count, job.JobId);
-                }
-            }
+                    Prompt = aggregationPrompt,
+                    WorkspacePath = workspacePath,
+                    Timeout = job.PipelineConfiguration.AgentTimeout
+                },
+                job.JobId,
+                ct);
+        });
 
-            // 8. Create GitHub issues (capped at MaxRefactoringProposals)
-            IReadOnlyList<CreatedIssueInfo> createdIssues;
-            createdIssues = await RunWithTracingAsync("RefactoringDetection.CreateIssues", job.JobId, async activity =>
-            {
-                activity?.SetTag("pipeline.proposal_count", proposals.Count);
-                return await CreateIssuesAsync(proposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, ct);
-            });
+        if (failure is not null) return failure;
 
-            // 9. Return summary — distinguish between "no proposals" and "proposals found but issues failed"
-            var summary = FormatRefactoringSummary(createdIssues, proposals.Count);
-            Logger.Information("{ExecutorName} run {RunId} completed: {Summary}", ExecutorName, job.JobId, summary);
+        // Proposals are now at .agent/refactoring-proposals.json — return success
+        // (the caller will finalize with review + issue creation)
+        return new ConsolidationJobResult { JobId = job.JobId, Success = true, Summary = "Phased analysis complete" };
+    }
 
+    /// <summary>
+    /// Shared finalization: parse proposals → adversarial review → create GitHub issues.
+    /// Used by both phased and legacy paths.
+    /// </summary>
+    private async Task<ConsolidationJobResult> FinalizeProposalsAsync(
+        ConsolidationJobMessage job,
+        IAgentProvider agentProvider,
+        IIssueProvider issueProvider,
+        string workspacePath,
+        Action<string>? onOutputLine,
+        CancellationToken ct)
+    {
+        var proposalsFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.RefactoringProposalsFilePath);
+        var proposals = await ParseProposalsAsync(proposalsFilePath, ct);
+
+        if (proposals is null)
+        {
+            return CreateFailureResult(job.JobId, "Failed to parse refactoring proposals JSON from agent output");
+        }
+
+        if (proposals.Count == 0)
+        {
+            Logger.Information("No refactoring opportunities identified in run {RunId}", job.JobId);
             return new ConsolidationJobResult
             {
                 JobId = job.JobId,
                 Success = true,
-                Summary = summary,
-                CreatedIssues = createdIssues,
-                ReviewTokenUsage = reviewResult.ReviewTokenUsage,
-                RefinementTokenUsage = reviewResult.RefinementTokenUsage
+                Summary = "No refactoring opportunities identified"
             };
-        }, ct);
+        }
+
+        // Adversarial review (if enabled and proposals non-empty)
+        AdversarialReviewResult reviewResult;
+        reviewResult = await RunWithTracingAsync("RefactoringDetection.AdversarialReview", job.JobId, async _ =>
+        {
+            return await AdversarialReviewHelper.ExecuteReviewAsync(
+                agentProvider,
+                workspacePath,
+                ConsolidationPromptBuilder.BuildRefactoringReviewPrompt(),
+                ConsolidationPromptBuilder.BuildRefactoringRefinementPrompt(),
+                AgentWorkspacePaths.RefactoringReviewFilePath,
+                new AdversarialReviewConfig
+                {
+                    Enabled = job.PipelineConfiguration.RefactoringReviewEnabled,
+                    AgentTimeout = job.PipelineConfiguration.AgentTimeout
+                },
+                onOutputLine,
+                Logger,
+                ct);
+        });
+
+        if (reviewResult.RefinementTriggered)
+        {
+            var refinedProposals = await ParseProposalsAsync(proposalsFilePath, ct);
+            if (refinedProposals is null)
+            {
+                Logger.Warning("Refined proposals file is malformed in run {RunId}, keeping original proposals", job.JobId);
+            }
+            else
+            {
+                proposals = refinedProposals;
+                Logger.Information("Using refined proposals ({Count} proposals) in run {RunId}",
+                    proposals.Count, job.JobId);
+            }
+        }
+
+        // Create GitHub issues (capped at MaxRefactoringProposals)
+        IReadOnlyList<CreatedIssueInfo> createdIssues;
+        createdIssues = await RunWithTracingAsync("RefactoringDetection.CreateIssues", job.JobId, async activity =>
+        {
+            activity?.SetTag("pipeline.proposal_count", proposals.Count);
+            return await CreateIssuesAsync(proposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, ct);
+        });
+
+        var summary = FormatRefactoringSummary(createdIssues, proposals.Count);
+        Logger.Information("{ExecutorName} run {RunId} completed: {Summary}", ExecutorName, job.JobId, summary);
+
+        return new ConsolidationJobResult
+        {
+            JobId = job.JobId,
+            Success = true,
+            Summary = summary,
+            CreatedIssues = createdIssues,
+            ReviewTokenUsage = reviewResult.ReviewTokenUsage,
+            RefinementTokenUsage = reviewResult.RefinementTokenUsage
+        };
     }
 
+    /// <summary>
     /// <summary>
     /// Runs git log to identify frequently-changed files and writes a hotspot summary.
     /// Gracefully degrades on any failure — logs a warning and continues without the file.
@@ -411,6 +524,16 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         sb.AppendLine();
         sb.AppendLine(affectedFiles);
         sb.AppendLine();
+
+        if (proposal.EvidenceSources is { Count: > 0 })
+        {
+            sb.AppendLine("## Evidence");
+            sb.AppendLine();
+            foreach (var source in proposal.EvidenceSources.Where(s => s is not null))
+                sb.AppendLine($"- `{SanitizeMarkdown(source)}`");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## Suggested Approach");
         sb.AppendLine();
         sb.AppendLine(sanitizedRationale);

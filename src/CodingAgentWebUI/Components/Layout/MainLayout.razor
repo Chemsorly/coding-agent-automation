@@ -1,8 +1,9 @@
 @inherits LayoutComponentBase
 @implements IAsyncDisposable
+@using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Services
-@inject PipelineLoopService LoopService
+@inject IPipelineLoopService LoopService
 @inject ConsolidationBadgeService BadgeService
 @inject IJSRuntime JS
 

@@ -70,9 +70,11 @@ public abstract class DbModeE2ETestBase : IAsyncLifetime
             ct: ct);
 
         if (request is null)
-            throw new InvalidOperationException(
-                $"PrepareDistributionRequestAsync returned null for issue '{issueIdentifier}'. " +
-                "Check that the issue exists in IssueProvider and an AgentProfile is configured.");
+            return new DistributionResult(
+                Success: false,
+                WorkItemId: null,
+                ErrorMessage: $"Orchestration failed for issue '{issueIdentifier}' " +
+                    "(issue not found, no matching profile, or dedup guard rejected).");
 
         var distResult = await distributor.DistributeAsync(request, ct);
         return distResult;

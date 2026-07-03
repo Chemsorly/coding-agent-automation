@@ -43,16 +43,24 @@ public sealed class ShutdownService : IHostedLifecycleService
     /// <summary>
     /// Async shutdown logic with 15-second timeout. Cancels active pipeline and agent runs,
     /// then proceeds with shutdown even if label swaps haven't completed.
+    /// Uses a linked CancellationToken so abandoned work is cancelled when the timeout fires.
     /// </summary>
     public async Task StoppingAsync(CancellationToken cancellationToken)
     {
         _logger.Information("Graceful shutdown initiated — cancelling active runs (timeout: {Timeout}s)", _shutdownTimeout.TotalSeconds);
 
+        // Link a timeout-based CTS with the host cancellation token so that
+        // ExecuteShutdownAsync is cancelled both on timeout AND host abort.
+        // This prevents abandoned tasks from racing against DI container disposal.
+        using var timeoutCts = new CancellationTokenSource(_shutdownTimeout);
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+            timeoutCts.Token, cancellationToken);
+
         try
         {
-            await ExecuteShutdownAsync().WaitAsync(_shutdownTimeout, cancellationToken);
+            await ExecuteShutdownAsync(linkedCts.Token);
         }
-        catch (TimeoutException)
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
             _logger.Warning("Graceful shutdown timed out after {Timeout}s — proceeding with shutdown", _shutdownTimeout.TotalSeconds);
         }
@@ -66,7 +74,7 @@ public sealed class ShutdownService : IHostedLifecycleService
         }
     }
 
-    private async Task ExecuteShutdownAsync()
+    private async Task ExecuteShutdownAsync(CancellationToken ct)
     {
         // Signal shutdown FIRST — prevents drain service from dispatching new jobs
         // that would immediately get cancelled by the label-swap pass below.
@@ -78,8 +86,12 @@ public sealed class ShutdownService : IHostedLifecycleService
         {
             try
             {
-                await _lifecycle.CancelPipelineAsync();
+                await _lifecycle.CancelPipelineAsync().WaitAsync(ct);
                 _logger.Information("Pipeline cancellation completed");
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                _logger.Warning("Pipeline cancellation aborted — shutdown timeout reached");
             }
             catch (Exception ex)
             {
@@ -90,8 +102,12 @@ public sealed class ShutdownService : IHostedLifecycleService
         // Cancel active agent runs and perform label swaps
         try
         {
-            await _orchestration.CancelActiveAgentRunsAsync();
+            await _orchestration.CancelActiveAgentRunsAsync().WaitAsync(ct);
             _logger.Information("Agent run cancellation completed");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _logger.Warning("Agent run cancellation aborted — shutdown timeout reached");
         }
         catch (Exception ex)
         {

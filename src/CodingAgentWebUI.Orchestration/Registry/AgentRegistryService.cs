@@ -12,6 +12,7 @@ namespace CodingAgentWebUI.Orchestration.Registry;
 public sealed class AgentRegistryService : IAgentRegistryService
 {
     private readonly ConcurrentDictionary<string, AgentEntry> _agents = new();
+    private readonly ConcurrentDictionary<string, AgentEntry> _connectionIndex = new();
     private readonly ILogger _logger;
 
     public AgentRegistryService(ILogger logger)
@@ -58,6 +59,9 @@ public sealed class AgentRegistryService : IAgentRegistryService
             {
                 lock (existing.SyncRoot)
                 {
+                    // Remove old connectionId from index before updating
+                    _connectionIndex.TryRemove(existing.ConnectionId, out AgentEntry? _);
+
                     existing.ConnectionId = connectionId;
                     existing.LastHeartbeatAt = now;
                     existing.DisconnectedAt = null;
@@ -92,6 +96,9 @@ public sealed class AgentRegistryService : IAgentRegistryService
                 return existing;
             });
 
+        // Update connection index (add factory path + update factory path converge here)
+        _connectionIndex[connectionId] = entry;
+
         return entry;
     }
 
@@ -104,6 +111,7 @@ public sealed class AgentRegistryService : IAgentRegistryService
 
         if (_agents.TryRemove(agentId, out var removed))
         {
+            _connectionIndex.TryRemove(removed.ConnectionId, out AgentEntry? _);
             _logger.Information("Agent {AgentId} deregistered", agentId);
             return true;
         }
@@ -122,11 +130,12 @@ public sealed class AgentRegistryService : IAgentRegistryService
 
     /// <summary>
     /// Looks up an agent by its current SignalR connection ID.
+    /// Uses an O(1) reverse-lookup index maintained by Register/Deregister.
     /// </summary>
     public AgentEntry? GetByConnectionId(string connectionId)
     {
         ArgumentNullException.ThrowIfNull(connectionId);
-        return _agents.Values.FirstOrDefault(a => a.ConnectionId == connectionId);
+        return _connectionIndex.TryGetValue(connectionId, out var entry) ? entry : null;
     }
 
     /// <summary>
@@ -224,5 +233,9 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// <summary>
     /// Clears all registered agents. Used by E2E tests for state isolation.
     /// </summary>
-    internal void Reset() => _agents.Clear();
+    internal void Reset()
+    {
+        _agents.Clear();
+        _connectionIndex.Clear();
+    }
 }

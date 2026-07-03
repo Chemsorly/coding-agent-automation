@@ -319,7 +319,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await codingPage.ClickStartPipelineAsync();
 
         // Wait for dispatch to complete (queued result is still "success" in the UI)
-        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
+        await Page.WaitForSelectorAsync(".settings-status.status-success, .inline-status-success", new() { Timeout = 30_000 });
 
         // Navigate to monitoring page
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);

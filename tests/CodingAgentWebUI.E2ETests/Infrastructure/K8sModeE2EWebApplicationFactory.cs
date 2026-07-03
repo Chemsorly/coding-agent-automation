@@ -1,9 +1,7 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
@@ -14,51 +12,51 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace CodingAgentWebUI.E2ETests.Infrastructure;
 
 /// <summary>
-/// WebApplicationFactory for DB-mode E2E tests. Boots the app with:
-/// - Database env vars (triggers SignalR + DB code paths in Program.cs)
+/// WebApplicationFactory for K8s-mode E2E tests. Boots the app with:
+/// - Database env vars set to Kubernetes mode
 /// - InMemory EF Core (replaces real Npgsql)
-/// - Real SignalRWorkDistributor, PendingWorkItemDrainService, DispatchOrchestrationService,
-///   RunLifecycleManager, WorkItemTransitionService, HeartbeatMonitorService
-/// - Fake external providers (IProviderFactory, IConfigurationStore, IQualityGateValidator)
-/// - Real Kestrel on a random port for FakeAgentClient SignalR connections
+/// - FakeKubernetesJobClient (replaces real K8s API calls)
+/// - FakeLeaderElectionService (always elected)
+/// - Real DispatchService (polls Pending WorkItems, creates K8s Jobs via fake)
+/// - Real KubernetesWorkDistributor (inserts WorkItem rows)
+/// - Fake external providers (IProviderFactory, IConfigurationStore)
+/// - NO SignalR agents (K8s mode uses pod-based agents, not SignalR)
+/// - NO HeartbeatMonitorService (K8s mode uses ReconciliationService)
 /// </summary>
-public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Program>
+public sealed class K8sModeE2EWebApplicationFactory : WebApplicationFactory<Program>
 {
-    public const string TestApiKey = "db-e2e-test-key";
+    public const string TestApiKey = "k8s-e2e-test-key";
 
-    private readonly string _dbName = $"DbModeE2E-{Guid.NewGuid()}";
+    private readonly string _dbName = $"K8sModeE2E-{Guid.NewGuid()}";
 
     // Shared fake instances for seeding and assertions
     public InMemoryConfigurationStore ConfigStore { get; } = new();
     public FakeProviderFactory FakeProviders { get; } = new();
     public ConfigurableQualityGateValidator QualityGateValidator { get; } = new();
     public InMemoryPipelineRunHistoryService HistoryService { get; } = new();
-
-    public DbModeE2EWebApplicationFactory()
-    {
-        // Real Kestrel on random port for SignalR connections
-        UseKestrel(0);
-    }
+    public FakeKubernetesJobClient FakeK8sClient { get; } = new();
 
     /// <summary>The base address of the running Kestrel server.</summary>
     public string ServerAddress => ClientOptions.BaseAddress.ToString().TrimEnd('/');
 
-    /// <summary>
-    /// Provides access to the InMemory DbContextFactory for test assertions against WorkItem state.
-    /// </summary>
+    /// <summary>InMemory DbContextFactory for test assertions.</summary>
     public IDbContextFactory<PipelineDbContext> DbContextFactory =>
         Services.GetRequiredService<IDbContextFactory<PipelineDbContext>>();
+
+    public K8sModeE2EWebApplicationFactory()
+    {
+        UseKestrel(0);
+    }
 
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
-            // Clean up process-global env vars so subsequent test factories
-            // (which run serially due to DisableTestParallelization) start clean.
             Environment.SetEnvironmentVariable("Database__Host", null);
             Environment.SetEnvironmentVariable("Database__Port", null);
             Environment.SetEnvironmentVariable("Database__Username", null);
@@ -70,13 +68,13 @@ public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Progr
             Environment.SetEnvironmentVariable("WorkDistribution__Mode", null);
             Environment.SetEnvironmentVariable("AGENT_API_KEY", null);
         }
-
         base.Dispose(disposing);
     }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        // Set env vars BEFORE host builds — these trigger DB mode in Program.cs
+        // Env vars to trigger DB mode (NOT Kubernetes — we manually register K8s services)
+        // Using SignalR mode to avoid InClusterConfig() failure, then replacing services
         Environment.SetEnvironmentVariable("Database__Host", "localhost");
         Environment.SetEnvironmentVariable("Database__Port", "5432");
         Environment.SetEnvironmentVariable("Database__Username", "test");
@@ -92,7 +90,6 @@ public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Progr
 
         builder.ConfigureServices(services =>
         {
-            // Seed default test data
             ConfigStore.SeedDefaults();
 
             // ── Replace external providers with fakes ──────────────────────────
@@ -123,22 +120,31 @@ public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Progr
             // ── Register no-op IDatabaseProbe ─────────────────────────────────
             services.AddSingleton<IDatabaseProbe>(new NoOpDatabaseProbe());
 
-            // ── Disable PipelineLoopService (no background polling) ───────────
+            // ── Replace IWorkDistributor with KubernetesWorkDistributor ────────
+            // (SignalR mode registers SignalRWorkDistributor — replace with K8s version)
+            services.RemoveAll<IWorkDistributor>();
+            services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<CodingAgentWebUI.Infrastructure.Persistence.Services.WorkItemTransitionService>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILoggerFactory>()
+                    .CreateLogger<KubernetesWorkDistributor>()));
+
+            // ── Replace IKubernetesJobClient with fake ────────────────────────
+            services.RemoveAll<IKubernetesJobClient>();
+            services.AddSingleton<IKubernetesJobClient>(FakeK8sClient);
+
+            // ── Disable PipelineLoopService ───────────────────────────────────
             RemoveHostedService<PipelineLoopService>(services);
 
-            // ── Keep PendingWorkItemDrainService running (needed for drain tests)
-            // ── Keep HeartbeatMonitorService running (needed for disconnect tests)
-            // These are registered by AddWorkDistribution / AddOrchestrationServices
-            // and use the InMemory DB via the factory.
+            // ── Disable PendingWorkItemDrainService (K8s uses DispatchService instead) ──
+            RemoveHostedService<PendingWorkItemDrainService>(services);
 
-            // ── Reduce shutdown timeout for faster test teardown ──────────────
+            // ── Reduce shutdown timeout ───────────────────────────────────────
             services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
         });
     }
 
-    /// <summary>
-    /// Resets all fakes and clears the InMemory database for test isolation.
-    /// </summary>
+    /// <summary>Resets all fakes and clears the InMemory database.</summary>
     public void ResetAll()
     {
         ConfigStore.Reset();
@@ -146,36 +152,11 @@ public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Progr
         FakeProviders.Reset();
         QualityGateValidator.Reset();
         HistoryService.Reset();
+        FakeK8sClient.Reset();
 
-        // Clear the InMemory database
         using var db = DbContextFactory.CreateDbContext();
         db.WorkItems.RemoveRange(db.WorkItems);
         db.SaveChanges();
-
-        // Reset agent registry
-        var registry = Services.GetRequiredService<AgentRegistryService>();
-        registry.Reset();
-
-        // Reset run service
-        var runService = Services.GetRequiredService<OrchestratorRunService>();
-        runService.Reset();
-
-        // Reset job dispatcher
-        var dispatcher = Services.GetRequiredService<JobDispatcherService>();
-        dispatcher.Reset();
-
-        // Reset consolidation badge
-        var badgeService = Services.GetRequiredService<ConsolidationBadgeService>();
-        badgeService.Reset();
-
-        // Reset consolidation service
-        var consolidationService = Services.GetRequiredService<IConsolidationService>();
-        if (consolidationService is ConsolidationService cs)
-            cs.Reset();
-
-        // Reset consolidation queue
-        var queueService = Services.GetRequiredService<ConsolidationQueueService>();
-        queueService.Reset();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
@@ -191,8 +172,15 @@ public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Progr
     {
         var descriptors = services.Where(d =>
             d.ServiceType == typeof(IHostedService) &&
-            d.ImplementationType == typeof(T)).ToList();
+            (d.ImplementationType == typeof(T) ||
+             d.ImplementationFactory?.Method.ReturnType == typeof(T))).ToList();
         foreach (var d in descriptors) services.Remove(d);
+
+        // NOTE: Do NOT remove typed singleton registrations (d.ServiceType == typeof(T)).
+        // Other services (e.g., IPipelineLoopService → PipelineLoopService forwarding,
+        // LoopStatePersistenceService → IPipelineLoopService) depend on the singleton
+        // remaining in DI. Removing only the IHostedService entry prevents the background
+        // loop from executing without breaking the DI graph.
     }
 
     private static void RemoveDbContextRegistrations(IServiceCollection services)
@@ -236,37 +224,23 @@ public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Progr
         }
     }
 
-    /// <summary>
-    /// PipelineDbContext subclass that disables Postgres-specific features
-    /// (RowVersion concurrency tokens, filtered indexes) for InMemory compatibility.
-    /// </summary>
     private sealed class TestPipelineDbContext : PipelineDbContext
     {
         public TestPipelineDbContext(DbContextOptions<PipelineDbContext> options) : base(options) { }
-
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
-
-            // Remove RowVersion concurrency token config (InMemory doesn't support xmin)
+            // Remove xmin concurrency token (InMemory doesn't support it)
+            modelBuilder.Entity<CodingAgentWebUI.Infrastructure.Persistence.Entities.WorkItemEntity>()
+                .Property(e => e.RowVersion).IsConcurrencyToken(false);
+            // Remove filtered index (InMemory doesn't support HasFilter)
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
-                var rowVersionProp = entityType.FindProperty("RowVersion");
-                if (rowVersionProp != null)
+                foreach (var index in entityType.GetIndexes().ToList())
                 {
-                    rowVersionProp.IsConcurrencyToken = false;
-                    rowVersionProp.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
+                    if (index.GetFilter() is not null)
+                        index.SetFilter(null);
                 }
-            }
-
-            // Remove filter-based unique indexes (not supported by InMemory)
-            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
-            {
-                var indexesToRemove = entityType.GetIndexes()
-                    .Where(i => i.GetFilter() != null)
-                    .ToList();
-                foreach (var index in indexesToRemove)
-                    entityType.RemoveIndex(index);
             }
         }
     }
