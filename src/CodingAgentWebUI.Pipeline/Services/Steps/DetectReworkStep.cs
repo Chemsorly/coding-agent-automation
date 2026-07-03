@@ -3,7 +3,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// <summary>
 /// Detects existing agent pull requests for the issue (rework mode detection). Non-fatal on failure.
 /// </summary>
-internal sealed class DetectReworkStep : IPipelineStep
+public sealed class DetectReworkStep : IPipelineStep
 {
     public string StepName => "DetectRework";
 

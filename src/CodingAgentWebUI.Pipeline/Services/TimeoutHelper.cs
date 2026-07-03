@@ -5,7 +5,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// create a linked CTS with timeout, execute work, and discriminate timeout
 /// from caller cancellation via the <c>when</c> clause.
 /// </summary>
-internal static class TimeoutHelper
+public static class TimeoutHelper
 {
     /// <summary>
     /// Executes <paramref name="work"/> with a timeout. If the timeout fires before work completes

@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// Resolves reviewer configurations and delegates to
 /// <see cref="AgentPhaseExecutor.ExecuteCodeReviewAsync"/>.
 /// </summary>
-internal sealed class ReviewCodeStep : IPipelineStep
+public sealed class ReviewCodeStep : IPipelineStep
 {
     public string StepName => "ReviewCode";
 

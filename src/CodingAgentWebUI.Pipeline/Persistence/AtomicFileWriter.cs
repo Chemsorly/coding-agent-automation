@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Persistence;
 /// Guarantees file integrity on process crash — the target file is either the old content
 /// or the new content, never a partial write.
 /// </summary>
-internal static class AtomicFileWriter
+public static class AtomicFileWriter
 {
     /// <summary>
     /// Atomically writes content to the target path.

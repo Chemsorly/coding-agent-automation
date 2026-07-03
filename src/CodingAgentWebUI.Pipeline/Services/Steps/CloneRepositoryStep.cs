@@ -6,7 +6,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// <summary>
 /// Creates the workspace directory, clones the repository, and swaps the agent label to in-progress.
 /// </summary>
-internal sealed class CloneRepositoryStep : IPipelineStep
+public sealed class CloneRepositoryStep : IPipelineStep
 {
     public string StepName => "CloneRepository";
 

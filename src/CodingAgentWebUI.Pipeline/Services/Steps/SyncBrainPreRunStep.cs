@@ -6,7 +6,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// <summary>
 /// Syncs the brain repository into the workspace (pre-run). Non-fatal on failure.
 /// </summary>
-internal sealed class SyncBrainPreRunStep : IPipelineStep
+public sealed class SyncBrainPreRunStep : IPipelineStep
 {
     public string StepName => "SyncBrainPreRun";
 

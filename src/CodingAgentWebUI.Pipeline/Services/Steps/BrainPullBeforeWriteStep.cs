@@ -3,7 +3,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// <summary>
 /// Pulls the latest brain repo state before the agent writes to it. Non-fatal on failure.
 /// </summary>
-internal sealed class BrainPullBeforeWriteStep : IPipelineStep
+public sealed class BrainPullBeforeWriteStep : IPipelineStep
 {
     public string StepName => "BrainPullBeforeWrite";
 

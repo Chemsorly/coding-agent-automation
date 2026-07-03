@@ -5,7 +5,7 @@ using CodingAgentWebUI.Pipeline.Services.Prompts;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
-internal partial class AgentPhaseExecutor
+public partial class AgentPhaseExecutor
 {
     /// <summary>
     /// Executes the analysis phase: checks for existing analysis, runs agent analysis if needed,
@@ -327,7 +327,7 @@ internal partial class AgentPhaseExecutor
         }
     }
 
-    internal static string BuildNotReadyComment(AnalysisAssessment assessment)
+    public static string BuildNotReadyComment(AnalysisAssessment assessment)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("## ⚠️ Analysis Gate: Needs Refinement");
@@ -359,7 +359,7 @@ internal partial class AgentPhaseExecutor
         return sb.ToString().TrimEnd();
     }
 
-    internal static string BuildWontDoComment(AnalysisAssessment assessment)
+    public static string BuildWontDoComment(AnalysisAssessment assessment)
     {
         var sb = new System.Text.StringBuilder();
         sb.AppendLine("## 🚫 Analysis Gate: Won't Do");

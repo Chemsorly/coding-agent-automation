@@ -4,7 +4,7 @@ using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
-internal partial class QualityGateExecutor
+public partial class QualityGateExecutor
 {
     /// <summary>
     /// Determines which ValidateAsync overload to call based on the QGC context:

@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// with their names, repository descriptions, and decomposition eligibility.
 /// Only runs when the decomposition was triggered from a project-level EpicIssueProviderId.
 /// </summary>
-internal sealed class WriteProjectContextStep : IPipelineStep
+public sealed class WriteProjectContextStep : IPipelineStep
 {
     public string StepName => "WriteProjectContext";
 

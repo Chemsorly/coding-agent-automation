@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// Phase 2: Synthesizes IssueDetail and ParsedIssue on the context so ReviewCodeStep works unchanged.
 /// Phase 3: Fetches and writes PR conversation context for review agents.
 /// </summary>
-internal sealed class ExtractLinkedIssuesStep : IPipelineStep
+public sealed class ExtractLinkedIssuesStep : IPipelineStep
 {
     public string StepName => "ExtractLinkedIssues";
 

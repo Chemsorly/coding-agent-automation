@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// Delegates to <see cref="AgentPhaseExecutor.ExecuteAnalysisPhaseAsync"/>.
 /// Returns <see cref="StepResult.Stop"/> if the confidence gate rejects the issue.
 /// </summary>
-internal sealed class AnalyzeCodeStep : IPipelineStep
+public sealed class AnalyzeCodeStep : IPipelineStep
 {
     public string StepName => "AnalyzeCode";
 

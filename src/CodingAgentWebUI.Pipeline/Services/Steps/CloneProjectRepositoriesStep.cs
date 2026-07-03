@@ -19,7 +19,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// Clones run in parallel (up to 3 concurrent) to minimize startup latency.
 /// A per-repo timeout of 120 seconds prevents one slow clone from blocking the pipeline.
 /// </summary>
-internal sealed class CloneProjectRepositoriesStep : IPipelineStep
+public sealed class CloneProjectRepositoriesStep : IPipelineStep
 {
     public string StepName => "CloneProjectRepositories";
 

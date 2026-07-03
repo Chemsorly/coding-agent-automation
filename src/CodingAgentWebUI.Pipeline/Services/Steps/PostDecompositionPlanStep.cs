@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 ///
 /// On posting failure: sets error on context and returns <see cref="StepResult.Stop"/>.
 /// </summary>
-internal sealed class PostDecompositionPlanStep : IPipelineStep
+public sealed class PostDecompositionPlanStep : IPipelineStep
 {
     public string StepName => "PostDecompositionPlan";
 

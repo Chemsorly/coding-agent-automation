@@ -6,7 +6,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// <summary>
 /// Creates a new branch (new-issue flow) or checks out an existing branch and merges from base (rework flow).
 /// </summary>
-internal sealed class CreateBranchStep : IPipelineStep
+public sealed class CreateBranchStep : IPipelineStep
 {
     public string StepName => "CreateBranch";
 

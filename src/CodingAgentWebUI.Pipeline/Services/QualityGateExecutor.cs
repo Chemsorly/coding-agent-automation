@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Extracted from PipelineOrchestrationService.
 /// Split into partial classes by concern for maintainability.
 /// </summary>
-internal partial class QualityGateExecutor : IQualityGateExecutor
+public partial class QualityGateExecutor : IQualityGateExecutor
 {
     private readonly IQualityGateValidator _qualityGateValidator;
     private readonly CiLogWriter _ciLogWriter;

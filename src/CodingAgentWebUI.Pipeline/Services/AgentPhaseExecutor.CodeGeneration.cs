@@ -5,7 +5,7 @@ using KiroCliLib.Core;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
-internal partial class AgentPhaseExecutor
+public partial class AgentPhaseExecutor
 {
     /// <summary>
     /// Executes the code generation phase with stall monitoring.

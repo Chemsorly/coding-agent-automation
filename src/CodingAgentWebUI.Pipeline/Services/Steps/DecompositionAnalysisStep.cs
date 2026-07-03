@@ -19,7 +19,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// 8. Execute adversarial review via AdversarialReviewHelper.ExecuteReviewAsync
 /// 9. Return StepResult.Continue on success or StepResult.Stop on failure
 /// </summary>
-internal sealed class DecompositionAnalysisStep : IPipelineStep
+public sealed class DecompositionAnalysisStep : IPipelineStep
 {
     public string StepName => "DecompositionAnalysis";
 

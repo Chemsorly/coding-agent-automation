@@ -5,7 +5,7 @@ using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
-internal partial class QualityGateExecutor
+public partial class QualityGateExecutor
 {
     /// <summary>
     /// Runs quality gate validation with retry logic and PR creation.

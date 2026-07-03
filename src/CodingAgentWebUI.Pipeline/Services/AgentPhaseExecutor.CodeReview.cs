@@ -8,7 +8,7 @@ using Serilog.Context;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
-internal partial class AgentPhaseExecutor
+public partial class AgentPhaseExecutor
 {
     /// <inheritdoc />
     public async Task<string> ExecuteFollowUpAsync(

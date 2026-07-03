@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// Prevents accidental agent metadata (MCP configs, prompt files, analysis output)
 /// from being committed by the agent or appearing in diffs.
 /// </summary>
-internal sealed class EnsureAgentGitignoreStep : IPipelineStep
+public sealed class EnsureAgentGitignoreStep : IPipelineStep
 {
     public string StepName => "EnsureAgentGitignore";
 

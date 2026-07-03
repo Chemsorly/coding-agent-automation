@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// Loads quality gate configurations, builds the <see cref="QualityGateContext"/>,
 /// and delegates to <see cref="QualityGateExecutor.ProceedToQualityGatesAsync"/>.
 /// </summary>
-internal sealed class RunQualityGatesStep : IPipelineStep
+public sealed class RunQualityGatesStep : IPipelineStep
 {
     public string StepName => "RunQualityGates";
 

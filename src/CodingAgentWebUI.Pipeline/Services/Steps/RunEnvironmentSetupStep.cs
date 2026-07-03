@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// Only runs on Linux — skipped with a debug log on non-Linux orchestrators.
 /// Secrets from the repo config are injected as environment variables into each setup step process.
 /// </summary>
-internal sealed class RunEnvironmentSetupStep : IPipelineStep
+public sealed class RunEnvironmentSetupStep : IPipelineStep
 {
     public string StepName => "RunEnvironmentSetup";
 

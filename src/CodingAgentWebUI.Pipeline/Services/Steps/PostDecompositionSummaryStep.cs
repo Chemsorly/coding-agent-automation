@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// 
 /// Summary post failure is non-fatal: the step logs the error and proceeds with the label swap.
 /// </summary>
-internal sealed class PostDecompositionSummaryStep : IPipelineStep
+public sealed class PostDecompositionSummaryStep : IPipelineStep
 {
     public string StepName => "PostDecompositionSummary";
 
