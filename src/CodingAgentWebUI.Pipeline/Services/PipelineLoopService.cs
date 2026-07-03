@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// if no distributor is available, issues are skipped.
 /// Starts dormant and is activated via <see cref="StartLoop"/>. Survives page navigation.
 /// </summary>
-public sealed partial class PipelineLoopService : BackgroundService
+public sealed partial class PipelineLoopService : BackgroundService, IPipelineLoopService
 {
     private readonly IDispatchRunCreator _orchestration;
     private readonly IProviderFactory _providerFactory;

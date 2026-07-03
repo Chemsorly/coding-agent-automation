@@ -280,7 +280,7 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await monitoringPage.WaitForAgentStatusAsync("status-agent-1", "Busy", timeoutMs: 15_000);
     }
 
-    [Fact]
+    [Fact(Skip = "Requires DB/SignalR mode (pending queue). Legacy mode fails dispatch immediately when no agent is available.")]
     public async Task Monitoring_UnassignedRun_ShowsInQueueOnly_NotActiveRuns()
     {
         // Arrange: seed template, issue, profile — but do NOT connect any agent
@@ -318,8 +318,9 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await codingPage.SelectIssueAsync("80");
         await codingPage.ClickStartPipelineAsync();
 
-        // Wait for dispatch to complete (queued result is still "success" in the UI)
-        await Page.WaitForSelectorAsync(".settings-status.status-success", new() { Timeout = 10_000 });
+        // Wait for dispatch to complete — success message auto-dismisses after 3s,
+        // so instead wait for the drawer overlay to become hidden (dispatch closes drawer on success).
+        await Page.WaitForSelectorAsync("div.dispatch-drawer-overlay.open", new() { State = Microsoft.Playwright.WaitForSelectorState.Hidden, Timeout = 30_000 });
 
         // Navigate to monitoring page
         var monitoringPage = new AgentMonitoringPage(Page, BaseUrl);

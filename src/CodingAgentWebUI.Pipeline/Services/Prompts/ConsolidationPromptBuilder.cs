@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Prompts;
 /// Builds prompts for the three consolidation loop types:
 /// brain consolidation, refactoring detection, and harness suggestions.
 /// </summary>
-public static class ConsolidationPromptBuilder
+public static partial class ConsolidationPromptBuilder
 {
     /// <summary>
     /// Builds the 4-phase brain consolidation prompt.
@@ -167,148 +167,6 @@ public static class ConsolidationPromptBuilder
     }
 
     /// <summary>
-    /// Builds the holistic refactoring analysis prompt.
-    /// Instructs agent to produce bounded proposals as JSON.
-    /// </summary>
-    /// <param name="maxProposals">Maximum number of proposals the agent should produce.</param>
-    public static string BuildRefactoringDetectionPrompt(int maxProposals = 3, string? issueContext = null)
-    {
-        var sb = new StringBuilder();
-
-        sb.AppendLine("# Holistic Refactoring Analysis");
-        sb.AppendLine();
-        sb.AppendLine("You are performing a holistic analysis of the codebase to identify refactoring opportunities.");
-        sb.AppendLine("Explore the repository structure, read key files, and identify areas where incremental changes have created global incoherence.");
-        sb.AppendLine();
-        sb.AppendLine("**Design principles to enforce:** KISS (keep it simple), DRY (don't repeat yourself), and reducing cognitive load.");
-        sb.AppendLine("When in doubt, prefer removing abstractions over adding them. Simpler code with fewer indirections is better than \"clean\" code with many layers.");
-        sb.AppendLine();
-
-        // What to look for
-        sb.AppendLine("## What to Look For");
-        sb.AppendLine();
-        sb.AppendLine("Analyze the codebase for the following categories of technical debt:");
-        sb.AppendLine();
-        sb.AppendLine("1. **TODO comments** — Left by previous agent runs or developers, indicating incomplete work");
-        sb.AppendLine("2. **Duplicated logic** — Similar code patterns repeated across multiple files that could be extracted");
-        sb.AppendLine("3. **Naming inconsistencies** — Classes, methods, or variables that don't follow the project's conventions");
-        sb.AppendLine("4. **Structural drift** — Areas where the architecture has diverged from the intended design due to incremental changes");
-        sb.AppendLine("5. **Overly complex areas** — Methods or classes that have grown too large or have too many responsibilities");
-        sb.AppendLine("6. **Dead code & unused artifacts** — Unreferenced methods, properties, classes, or interfaces that are never called; orphaned files from removed features; unused using directives beyond IDE cleanup");
-        sb.AppendLine("7. **Obvious bugs** — High-confidence correctness issues: null dereference risks, off-by-one errors, unreachable code paths, resource leaks (opened but never disposed), logic errors (conditions always true/false), race conditions in shared state. Only flag issues where you have strong evidence the code is wrong, not merely suboptimal");
-        sb.AppendLine("8. **Stale documentation & misleading comments** — XML doc comments describing behavior the code no longer exhibits; README sections referencing removed features; comments explaining \"why\" that reference conditions no longer true; parameter descriptions that don't match actual parameters");
-        sb.AppendLine("9. **Primitive obsession** — String or int parameters representing domain concepts (emails, URLs, IDs, file paths) without validation or type safety; magic numbers/strings without named constants; repeated validation logic for the same concept scattered across multiple call sites");
-        sb.AppendLine("10. **Over-engineering & unnecessary abstraction** — Interfaces with only one implementation that add indirection without value; wrapper classes that pass-through without adding logic; configuration options nobody uses; builder/factory patterns where a constructor would suffice; layers of indirection that increase cognitive load without enabling extension points actually used in the codebase");
-        sb.AppendLine();
-
-        // How to explore
-        sb.AppendLine("## Exploration Strategy");
-        sb.AppendLine();
-        sb.AppendLine("1. **Orient first** (do this yourself):");
-        sb.AppendLine("   - Understand the project structure (solution file, project files, directory layout)");
-        sb.AppendLine("   - Read key architectural files (README, design docs, brain knowledge if available)");
-        sb.AppendLine();
-        sb.AppendLine("2. **Delegate parallel investigations** using sub-agents to cover more ground:");
-        sb.AppendLine("   - Assign different project areas to different sub-agents (e.g., one for the Pipeline project, one for Infrastructure, one for the Agent project)");
-        sb.AppendLine("   - Or assign different detection categories to different sub-agents (e.g., one hunting dead code, another checking documentation freshness, another looking for bugs)");
-        sb.AppendLine("   - Each sub-agent should report back with specific file paths, line numbers, and evidence");
-        sb.AppendLine("   - This produces a more thorough analysis than a single-threaded read-through");
-        sb.AppendLine();
-        sb.AppendLine("3. **Aggregate and prioritize** — collect findings from sub-agents, deduplicate, and select the highest-impact proposals for the output file");
-        sb.AppendLine();
-
-        // Insert issue context between Exploration Strategy and Prioritization Data
-        if (!string.IsNullOrEmpty(issueContext))
-        {
-            sb.Append(issueContext);
-            sb.AppendLine();
-        }
-
-        // Prioritization data
-        sb.AppendLine("## Prioritization Data");
-        sb.AppendLine();
-        sb.AppendLine("Consult `.agent/hotspot-analysis.txt` for git change frequency data.");
-        sb.AppendLine("Files with high change counts are actively developed — refactoring these areas delivers more value because improvements benefit more future changes.");
-        sb.AppendLine("Prioritize proposals that affect frequently-changed files over rarely-touched code.");
-        sb.AppendLine("If the hotspot file does not exist, prioritize based on your own judgment of code quality and impact.");
-        sb.AppendLine();
-
-        // Output format
-        sb.AppendLine("## Output Format");
-        sb.AppendLine();
-        sb.AppendLine("Produce your findings as a JSON file at `.agent/refactoring-proposals.json`.");
-        sb.AppendLine($"The file must contain an array of proposal objects (maximum {maxProposals} proposals).");
-        sb.AppendLine();
-        sb.AppendLine("Each proposal must follow this schema:");
-        sb.AppendLine();
-        sb.AppendLine("```json");
-        sb.AppendLine("[");
-        sb.AppendLine("  {");
-        sb.AppendLine("    \"title\": \"Short descriptive title of the refactoring opportunity\",");
-        sb.AppendLine("    \"category\": \"refactoring\",");
-        sb.AppendLine("    \"affectedFiles\": [\"src/path/to/File1.cs\", \"src/path/to/File2.cs\"],");
-        sb.AppendLine("    \"description\": \"Detailed description of what should be changed and how\",");
-        sb.AppendLine("    \"rationale\": \"Why this refactoring would improve the codebase (maintainability, readability, performance, etc.)\",");
-        sb.AppendLine("    \"prerequisites\": [\"Add characterization tests for X before refactoring\"],");
-        sb.AppendLine("    \"estimatedEffort\": \"small\",");
-        sb.AppendLine("    \"riskLevel\": \"low\",");
-        sb.AppendLine("    \"technique\": \"Extract Method\"");
-        sb.AppendLine("  }");
-        sb.AppendLine("]");
-        sb.AppendLine("```");
-        sb.AppendLine();
-        sb.AppendLine("### Optional Field Definitions");
-        sb.AppendLine();
-        sb.AppendLine("The following fields are optional. Include them when you can assess them confidently:");
-        sb.AppendLine();
-        sb.AppendLine("- **prerequisites** — List of prep work needed before the refactoring can be safely applied (e.g., \"Add characterization tests for X\"). If affected files have no test coverage, include a prerequisite like \"Add characterization tests for X before refactoring\".");
-        sb.AppendLine("- **estimatedEffort** — `small` (<5 files, mechanical changes), `medium` (5-15 files with logic changes), or `large` (15-30 files or architectural changes).");
-        sb.AppendLine("- **riskLevel** — `low` (rename/move), `medium` (extract/restructure), or `high` (interface changes affecting consumers).");
-        sb.AppendLine("- **technique** — Named refactoring pattern if applicable (e.g., Extract Method, Strangler Fig, Branch by Abstraction, Inline Class, Move Method).");
-        sb.AppendLine("- **category** — `refactoring` (structural improvements, default if omitted), `simplification` (removing unnecessary abstractions/complexity), `bug` (correctness issues), `documentation` (stale/misleading docs or comments), or `dead-code` (unused artifacts to remove).");
-        sb.AppendLine();
-
-        // Constraints
-        sb.AppendLine("## Constraints");
-        sb.AppendLine();
-        sb.AppendLine($"- Produce at most **{maxProposals} proposals** per analysis, prioritized by impact");
-        sb.AppendLine("- Each proposal must address **one concern** — do not bundle unrelated changes");
-        sb.AppendLine("- Include specific file paths in `affectedFiles` — do not use wildcards or vague references");
-        sb.AppendLine("- The `rationale` must reference concrete evidence found during exploration");
-        sb.AppendLine("- Do NOT modify any source code — only produce the proposals JSON file");
-        sb.AppendLine("- If no refactoring opportunities are found, produce an empty array `[]`");
-        sb.AppendLine();
-
-        // Scope constraints
-        sb.AppendLine("## Scope Requirements");
-        sb.AppendLine();
-        sb.AppendLine("Each proposal MUST be achievable by a single agent in one run. This means:");
-        sb.AppendLine();
-        sb.AppendLine("- **Maximum ~30 affected files** (source + test) per proposal");
-        sb.AppendLine("- If a refactoring would touch more files, **split it** into independent, self-contained phases that can each be completed alone");
-        sb.AppendLine("- Each phase must leave the codebase in a valid, buildable state");
-        sb.AppendLine("- Prefer proposals that are mechanical and low-risk (file moves, renames, extractions) over sweeping architectural changes");
-        sb.AppendLine("- Do NOT propose changes that require coordinated modifications across serialization boundaries (e.g., JSON schema + MessagePack wire format + all consumers simultaneously)");
-        sb.AppendLine("- If a large refactoring is warranted, propose only the smallest first step that delivers value independently");
-        sb.AppendLine();
-
-        // Exploration depth requirements
-        sb.AppendLine("## Exploration Depth Requirements");
-        sb.AppendLine();
-        sb.AppendLine("Before producing proposals, you MUST:");
-        sb.AppendLine();
-        sb.AppendLine("- Read at least **20 source files** (not just listing/grepping — actually read content and understand the code)");
-        sb.AppendLine("- For each proposal, cite **specific line numbers or code snippets** as evidence");
-        sb.AppendLine("- Cross-reference **at least 2 files** per proposal (showing the pattern repeats, the dependency exists, or the inconsistency spans multiple locations)");
-        sb.AppendLine();
-        sb.AppendLine("Include a `## Files Analyzed` section in a separate file at `.agent/refactoring-analysis.md` listing every file you read with a one-line note on what you found (or \"no issues\"). This demonstrates thoroughness and helps the reviewer verify your claims.");
-        sb.AppendLine();
-        sb.AppendLine("The reviewer WILL reject proposals that lack specific evidence. Vague descriptions like \"this file is complex\" without citing which methods, what the complexity is, or how it manifests are insufficient.");
-
-        return sb.ToString();
-    }
-
-    /// <summary>
     /// Builds a prompt section listing open issues to prevent duplicate proposals.
     /// Returns empty string if both lists are empty.
     /// </summary>
@@ -434,24 +292,34 @@ public static class ConsolidationPromptBuilder
     /// <summary>
     /// Review prompt for refactoring proposals.
     /// Instructs discriminator to read .agent/refactoring-proposals.json and write
-    /// findings to .agent/refactoring-review.md.
+    /// findings to .agent/refactoring-review.md. Strengthened with research-backed
+    /// criteria: evidence corroboration, actual blast radius, failure mode commitment.
     /// </summary>
     public static string BuildRefactoringReviewPrompt()
     {
         return BuildAdversarialReviewPrompt(
             "Refactoring Proposals Review",
             "refactoring proposals",
-            "the proposals file and the actual codebase",
-            $"Read the proposals file at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` and the analysis report at `.agent/refactoring-analysis.md` from the workspace.",
+            "the proposals file, the analysis report, the sub-agent findings files, and the actual codebase",
+            $"""
+            Read the proposals file at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` and the analysis report at `.agent/refactoring-analysis.md`.
+            Also read the sub-agent findings for cross-reference:
+            - `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` (Agent A)
+            - `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` (Agent B)
+            - `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` (Agent C)
+            - `{AgentWorkspacePaths.RefactoringConventionsFilePath}` (project conventions)
+            """,
             AgentWorkspacePaths.RefactoringReviewFilePath,
             [
                 "Non-existent `affectedFiles` paths — verify the referenced files actually exist in the repository",
-                "Proposals not supported by evidence in the codebase",
+                "**Evidence corroboration failure** — proposals with only a single `evidenceSources` entry, especially `code-reading:` only. Multi-source evidence (tool + hotspot + code reading) is expected for high-quality proposals. Single-source proposals should be flagged [WARNING]",
+                "**Actual blast radius understated** — count the REAL affected files: not just `affectedFiles` but also their test files, their consumers (files importing them), and shared configuration. If the true blast radius exceeds 30 files, flag [CRITICAL]",
+                "**Failure mode not committed** — rationales that say \"could lead to issues\" or \"might cause confusion\" without stating WHAT specifically goes wrong. A valid rationale commits: \"X causes Y because Z.\" Hedged language indicates low confidence — flag [WARNING]",
+                "**Convention contradiction** — proposals that flag patterns listed in `intentionalPatterns` or `knownDebt` from conventions.json. The aggregation step should have caught these, but verify. Flag [CRITICAL] if found",
                 "Bundled concerns that should be separate proposals",
-                "Abstract rationales lacking concrete code references",
-                "**Scope exceeding single-agent capacity** — proposals touching more than ~30 files (source + test), spanning multiple serialization boundaries, or requiring coordinated breaking changes across projects should be flagged as [CRITICAL] with a suggestion to split into smaller phases",
-                "**Insufficient evidence depth** — proposals citing only file paths without line numbers, code snippets, or cross-references between files. A proposal that says \"File X is complex\" without citing which methods or what makes them complex should be flagged [WARNING]",
-                "**Shallow exploration** — if `.agent/refactoring-analysis.md` is missing or lists fewer than 15 files, flag as [CRITICAL] because the analysis is superficial and likely missed significant opportunities",
+                "**Scope exceeding single-agent capacity** — proposals touching more than ~30 files (source + test), spanning multiple serialization boundaries, or requiring coordinated breaking changes across projects. Flag [CRITICAL] with a suggestion to split",
+                "**Shallow exploration** — if `.agent/refactoring-analysis.md` is missing or shows fewer than 15 total findings were received from sub-agents, flag [CRITICAL] because the analysis pipeline produced insufficient coverage",
+                "**Overlap with existing issues** — check if any proposal substantially duplicates an issue listed in the \"Existing Open Issues\" section of the analysis. Flag [WARNING] if overlap detected",
             ],
             "each proposal",
             "proposals",

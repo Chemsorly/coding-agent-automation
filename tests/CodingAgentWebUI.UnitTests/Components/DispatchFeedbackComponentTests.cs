@@ -53,7 +53,7 @@ public class DispatchFeedbackComponentTests : BunitContext
         Services.AddSingleton(pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        Services.AddSingleton(new PipelineLoopService(pipelineService, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, mockLogger.Object));
+        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(pipelineService, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, mockLogger.Object));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 
         Services.AddSingleton<IProjectStore>(_mockStore.Object);

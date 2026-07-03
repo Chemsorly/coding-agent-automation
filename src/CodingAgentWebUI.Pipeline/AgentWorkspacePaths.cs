@@ -105,6 +105,27 @@ public static class AgentWorkspacePaths
     public const string HotspotAnalysisFilePath = ".agent/hotspot-analysis.txt";
 
     /// <summary>
+    /// The file path (relative to workspace) where Phase 0 context extraction writes
+    /// project conventions for downstream refactoring sub-agents.
+    /// </summary>
+    public const string RefactoringConventionsFilePath = ".agent/refactoring-conventions.json";
+
+    /// <summary>
+    /// The file path (relative to workspace) where Agent A (structural debt) writes its findings.
+    /// </summary>
+    public const string RefactoringStructuralFindingsFilePath = ".agent/refactoring-structural-findings.json";
+
+    /// <summary>
+    /// The file path (relative to workspace) where Agent B (correctness) writes its findings.
+    /// </summary>
+    public const string RefactoringCorrectnessFindingsFilePath = ".agent/refactoring-correctness-findings.json";
+
+    /// <summary>
+    /// The file path (relative to workspace) where Agent C (design consistency) writes its findings.
+    /// </summary>
+    public const string RefactoringDesignFindingsFilePath = ".agent/refactoring-design-findings.json";
+
+    /// <summary>
     /// The directory (relative to workspace) where open issue context files are written
     /// for the agent to consult during decomposition and refactoring detection.
     /// </summary>

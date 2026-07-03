@@ -94,7 +94,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// Registers an agent in the registry. Validates that the <c>agentId</c> in the message
     /// matches the <c>agentId</c> query parameter from the connection and the authenticated identity.
     /// </summary>
-    public Task RegisterAgent(AgentRegistrationMessage message)
+    public async Task RegisterAgent(AgentRegistrationMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
 
@@ -116,6 +116,25 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 "RegisterAgent rejected — authenticated as '{AuthenticatedAgentId}' but registering as '{MessageAgentId}'",
                 authenticatedAgentId, message.AgentId);
             throw new HubException($"AgentId mismatch: authenticated as '{authenticatedAgentId}' but registering as '{message.AgentId}'");
+        }
+
+        // If an agent with the same ID is already connected with a different connectionId,
+        // force-disconnect the old connection before re-registering.
+        var existingEntry = _facade.GetByAgentId(message.AgentId);
+        if (existingEntry is not null && existingEntry.ConnectionId != Context.ConnectionId
+            && existingEntry.Status != AgentStatus.Disconnected)
+        {
+            _logger.Information("Agent {AgentId} re-registered (connection={NewConn}), force-disconnecting old connection {OldConn}",
+                message.AgentId, Context.ConnectionId, existingEntry.ConnectionId);
+            try
+            {
+                await Clients.Client(existingEntry.ConnectionId).ForceDisconnect();
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to send ForceDisconnect to old connection {OldConn} for agent {AgentId}",
+                    existingEntry.ConnectionId, message.AgentId);
+            }
         }
 
         _facade.Register(message, Context.ConnectionId);
@@ -191,25 +210,29 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
             var orphanedRuns = _facade.GetActiveRunsByAgent(message.AgentId);
             if (orphanedRuns.Count > 0)
             {
-                // Re-check: another thread (DrainService) may have assigned a job between
-                // the Register call and now. If so, don't overwrite.
-                if (entry.ActiveJobId is not null)
+                // Restore the most recent orphaned run as the active job so the
+                // disconnect grace period timer applies. If the agent truly lost the job,
+                // the HeartbeatMonitor will fail it after the grace period expires.
+                var mostRecent = orphanedRuns[^1];
+                lock (entry.SyncRoot)
                 {
-                    _logger.Information(
-                        "Agent {AgentId} acquired job {ActiveJobId} between registration and orphan check, skipping orphan restoration",
-                        message.AgentId, entry.ActiveJobId);
-                }
-                else
-                {
-                    // Restore the most recent orphaned run as the active job so the
-                    // disconnect grace period timer applies. If the agent truly lost the job,
-                    // the HeartbeatMonitor will fail it after the grace period expires.
-                    var mostRecent = orphanedRuns[^1];
-                    lock (entry.SyncRoot)
+                    // Atomic check-and-set under lock: if DrainService assigned a job
+                    // between GetActiveRunsByAgent and this lock acquisition, don't overwrite.
+                    if (entry.ActiveJobId is not null)
+                    {
+                        _logger.Information(
+                            "Agent {AgentId} acquired job {ActiveJobId} between registration and orphan check, skipping orphan restoration",
+                            message.AgentId, entry.ActiveJobId);
+                    }
+                    else
                     {
                         entry.ActiveJobId = mostRecent.RunId;
                         entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
                     }
+                }
+
+                if (entry.ActiveJobId == mostRecent.RunId)
+                {
                     _facade.TransitionStatus(message.AgentId, AgentStatus.Busy);
 
                     _logger.Warning(
@@ -250,16 +273,26 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                     message.AgentId, entry.ActiveJobId, entry.Status);
             }
         }
-
-        return Task.CompletedTask;
     }
 
     /// <summary>
     /// Deregisters an agent from the registry.
+    /// Only allows the caller to deregister their own agent identity.
     /// </summary>
     public Task DeregisterAgent(string agentId)
     {
         ArgumentNullException.ThrowIfNull(agentId);
+
+        // Security: verify caller owns this agentId (prevents cross-agent deregistration)
+        var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId, StringComparison.Ordinal))
+        {
+            _logger.Warning(
+                "DeregisterAgent rejected — caller connection {ConnectionId} does not own agent {AgentId}",
+                Context.ConnectionId, agentId);
+            return Task.CompletedTask;
+        }
+
         _facade.Deregister(agentId);
         return Task.CompletedTask;
     }
@@ -276,6 +309,17 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     public Task Heartbeat(HeartbeatMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
+
+        // Security: verify caller owns this agentId (prevents heartbeat spoofing)
+        var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, message.AgentId, StringComparison.Ordinal))
+        {
+            _logger.Warning(
+                "Heartbeat rejected — caller connection {ConnectionId} does not own agent {AgentId}",
+                Context.ConnectionId, message.AgentId);
+            return Task.CompletedTask;
+        }
+
         _facade.UpdateHeartbeat(message.AgentId, message.Timestamp);
 
         // If the agent reports an active pipeline step, treat as progress evidence.
@@ -308,10 +352,13 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     {
         ArgumentNullException.ThrowIfNull(agentId);
 
-        var agent = _facade.GetByAgentId(agentId);
-        if (agent is null)
+        // Security: verify caller owns this agentId (prevents spurious drain signals)
+        var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId, StringComparison.Ordinal))
         {
-            _logger.Warning("AgentReady received for unknown agent {AgentId}", agentId);
+            _logger.Warning(
+                "AgentReady rejected — caller connection {ConnectionId} does not own agent {AgentId}",
+                Context.ConnectionId, agentId);
             return Task.CompletedTask;
         }
 

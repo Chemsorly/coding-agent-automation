@@ -34,7 +34,7 @@ public class MainLayoutComponentTests : BunitContext
             providerFactory: mockFactory.Object,
             historyService: mockHistory.Object);
 
-        Services.AddSingleton(new PipelineLoopService(pipelineService, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object));
+        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(pipelineService, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object));
         Services.AddSingleton(new ConsolidationBadgeService());
         Services.AddSingleton(_jsMock.Object);
     }

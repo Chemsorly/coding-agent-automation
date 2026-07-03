@@ -23,6 +23,10 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
 
         // Verify key fields render
         await Page.WaitForSelectorAsync("text=Max Retries", new() { Timeout = 5_000 });
+
+        // Expand "Advanced settings" to reveal hidden fields
+        await settingsPage.ExpandAdvancedSectionsAsync();
+
         var markup = await Page.ContentAsync();
         Assert.Contains("Max Retries", markup);
         Assert.Contains("Max Analysis Retries", markup);
@@ -39,7 +43,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await Page.WaitForTimeoutAsync(1500);
 
         // Verify success status
-        var status = await Page.Locator("div.settings-status").TextContentAsync();
+        var status = await Page.Locator("div.inline-status, div.settings-status").First.TextContentAsync();
         Assert.Contains("saved", status, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -51,6 +55,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await settingsPage.SelectTreeNodeAsync("Pipeline Loop");
 
         await Page.WaitForSelectorAsync("text=Poll Interval", new() { Timeout = 5_000 });
+        await settingsPage.ExpandAdvancedSectionsAsync();
         var markup = await Page.ContentAsync();
         Assert.Contains("Poll Interval", markup);
         Assert.Contains("Max Runs Per Cycle", markup);
@@ -63,7 +68,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await saveBtn.ClickAsync();
         await Page.WaitForTimeoutAsync(1500);
 
-        var status = await Page.Locator("div.settings-status").TextContentAsync();
+        var status = await Page.Locator("div.inline-status, div.settings-status").First.TextContentAsync();
         Assert.Contains("saved", status, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -75,6 +80,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await settingsPage.SelectTreeNodeAsync("Prompts");
 
         await Page.WaitForSelectorAsync("text=Analysis Prompt", new() { Timeout = 5_000 });
+        await settingsPage.ExpandAdvancedSectionsAsync();
         var markup = await Page.ContentAsync();
         Assert.Contains("Analysis Prompt", markup);
         Assert.Contains("Implementation Prompt", markup);
@@ -90,7 +96,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await saveBtn.ClickAsync();
         await Page.WaitForTimeoutAsync(1500);
 
-        var status = await Page.Locator("div.settings-status").TextContentAsync();
+        var status = await Page.Locator("div.inline-status, div.settings-status").First.TextContentAsync();
         Assert.Contains("saved", status, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -102,6 +108,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await settingsPage.SelectTreeNodeAsync("Decomposition");
 
         await Page.WaitForSelectorAsync("text=Max Sub-Issues", new() { Timeout = 5_000 });
+        await settingsPage.ExpandAdvancedSectionsAsync();
         var markup = await Page.ContentAsync();
         Assert.Contains("Max Sub-Issues Per Epic", markup);
         Assert.Contains("Max Concurrent Decompositions", markup);
@@ -112,7 +119,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await saveBtn.ClickAsync();
         await Page.WaitForTimeoutAsync(1500);
 
-        var status = await Page.Locator("div.settings-status").TextContentAsync();
+        var status = await Page.Locator("div.inline-status, div.settings-status").First.TextContentAsync();
         Assert.Contains("saved", status, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -124,6 +131,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await settingsPage.SelectTreeNodeAsync("Implementation");
 
         await Page.WaitForSelectorAsync("text=Agent Code Review", new() { Timeout = 5_000 });
+        await settingsPage.ExpandAdvancedSectionsAsync();
         var markup = await Page.ContentAsync();
         Assert.Contains("Agent Code Review Enabled", markup);
         Assert.Contains("Max Review Iterations", markup);
@@ -133,7 +141,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await saveBtn.ClickAsync();
         await Page.WaitForTimeoutAsync(1500);
 
-        var status = await Page.Locator("div.settings-status").TextContentAsync();
+        var status = await Page.Locator("div.inline-status, div.settings-status").First.TextContentAsync();
         Assert.Contains("saved", status, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -145,6 +153,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await settingsPage.SelectTreeNodeAsync("Review");
 
         await Page.WaitForSelectorAsync("text=Enable Inline Review Comments", new() { Timeout = 5_000 });
+        await settingsPage.ExpandAdvancedSectionsAsync();
         var markup = await Page.ContentAsync();
         Assert.Contains("Enable Inline Review Comments", markup);
         Assert.Contains("Minimum Severity", markup);
@@ -156,7 +165,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await saveBtn.ClickAsync();
         await Page.WaitForTimeoutAsync(1500);
 
-        var status = await Page.Locator("div.settings-status").TextContentAsync();
+        var status = await Page.Locator("div.inline-status, div.settings-status").First.TextContentAsync();
         Assert.Contains("saved", status, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -168,6 +177,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await settingsPage.SelectTreeNodeAsync("Consolidation");
 
         await Page.WaitForSelectorAsync("text=Max Refactoring Proposals", new() { Timeout = 5_000 });
+        await settingsPage.ExpandAdvancedSectionsAsync();
         var markup = await Page.ContentAsync();
         Assert.Contains("Max Refactoring Proposals", markup);
         Assert.Contains("Hotspot Analysis Lookback", markup);
@@ -180,7 +190,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await saveBtn.ClickAsync();
         await Page.WaitForTimeoutAsync(1500);
 
-        var status = await Page.Locator("div.settings-status").TextContentAsync();
+        var status = await Page.Locator("div.inline-status, div.settings-status").First.TextContentAsync();
         Assert.Contains("saved", status, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -207,7 +217,7 @@ public sealed class SettingsGlobalDefaultsTests : E2ETestBase, IClassFixture<E2E
         await saveBtn.ClickAsync();
         await Page.WaitForTimeoutAsync(1500);
 
-        var status = await Page.Locator("div.settings-status").TextContentAsync();
+        var status = await Page.Locator("div.inline-status, div.settings-status").First.TextContentAsync();
         Assert.Contains("saved", status, StringComparison.OrdinalIgnoreCase);
     }
 

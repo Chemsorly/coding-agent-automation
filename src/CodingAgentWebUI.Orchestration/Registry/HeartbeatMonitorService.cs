@@ -410,7 +410,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     /// Routes to repo provider for PR review runs, issue provider for all others.
     /// Failures are logged but do not propagate — label swap is best-effort during cleanup.
     /// </summary>
-    private Task TrySwapLabelToErrorAsync(PipelineRun run, CancellationToken ct)
+    private async Task TrySwapLabelToErrorAsync(PipelineRun run, CancellationToken ct)
     {
         var targetKind = run.RunType == PipelineRunType.Review
             ? LabelTargetKind.PullRequest
@@ -424,6 +424,20 @@ public sealed class HeartbeatMonitorService : BackgroundService
             "HeartbeatMonitor swapping label to agent:error for run {RunId} (issue={IssueIdentifier}, agent={AgentId}, reason={FailureReason})",
             run.RunId, run.IssueIdentifier, run.AgentId, run.FailureReason);
 
-        return _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, AgentLabels.Error, targetKind, ct);
+        try
+        {
+            await _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, AgentLabels.Error, targetKind, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // Propagate cancellation — caller (SweepAsync) handles shutdown
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex,
+                "HeartbeatMonitor failed to swap label to agent:error for run {RunId} (issue={IssueIdentifier}) — label may be stale",
+                run.RunId, run.IssueIdentifier);
+        }
     }
 }

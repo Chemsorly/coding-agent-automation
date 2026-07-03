@@ -41,6 +41,13 @@ public class PipelineTelemetryAgentMetricsTests : IDisposable
         PipelineTelemetry.AgentJobsRejected.Add(0);
         PipelineTelemetry.AgentHeartbeatFailures.Add(0);
         PipelineTelemetry.AgentReconnections.Add(0);
+
+        // Verify warm-up succeeded — instruments were observed
+        if (_measurements.Count == 0)
+            throw new InvalidOperationException(
+                "MeterListener warm-up failed: no instruments observed. " +
+                "If counter names changed in PipelineTelemetry, update this warm-up block.");
+
         _measurements.Clear();
     }
 

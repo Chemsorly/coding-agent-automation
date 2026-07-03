@@ -54,43 +54,6 @@ public class ConsolidationPromptBuilderTests
     }
 
     /// <summary>
-    /// Refactoring detection prompt instructs JSON output format.
-    /// **Validates: Requirements 5.2**
-    /// </summary>
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_InstructsJsonOutput()
-    {
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
-
-        result.Should().Contain("JSON");
-        result.Should().Contain(".agent/refactoring-proposals.json");
-    }
-
-    /// <summary>
-    /// Refactoring detection prompt specifies maximum proposals based on parameter.
-    /// **Validates: Requirements 5.4**
-    /// </summary>
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_SpecifiesMaxThreeProposals()
-    {
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
-
-        result.Should().Contain("3 proposals");
-    }
-
-    /// <summary>
-    /// Refactoring detection prompt respects custom max proposals parameter.
-    /// </summary>
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_RespectsCustomMaxProposals()
-    {
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(5);
-
-        result.Should().Contain("5 proposals");
-        result.Should().NotContain("3 proposals");
-    }
-
-    /// <summary>
     /// Harness suggestion prompt includes feedback count and success rate.
     /// **Validates: Requirements 7.3**
     /// </summary>
@@ -141,26 +104,6 @@ public class ConsolidationPromptBuilderTests
         result.Should().Contain("Entries merged");
         result.Should().Contain("Contradictions resolved");
         result.Should().Contain("Entries pruned");
-    }
-
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_ContainsNewSchemaFields()
-    {
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
-
-        result.Should().Contain("prerequisites");
-        result.Should().Contain("estimatedEffort");
-        result.Should().Contain("riskLevel");
-        result.Should().Contain("technique");
-    }
-
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_ContainsHotspotFileReference()
-    {
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
-
-        result.Should().Contain("hotspot-analysis.txt");
-        result.Should().Contain("Prioritization Data");
     }
 
     [Fact]
@@ -218,73 +161,6 @@ public class ConsolidationPromptBuilderTests
 
         result.Should().NotContain("Open Refactoring Issues");
         result.Should().Contain("Other Recent Open Issues");
-    }
-
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_WithIssueContext_InsertsBeforeOutputFormat()
-    {
-        var context = "## Existing Open Issues — Do Not Duplicate\n\n- #1 \"Test\"\n";
-
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(3, context);
-
-        var contextIndex = result.IndexOf("Do Not Duplicate");
-        var outputFormatIndex = result.IndexOf("## Output Format");
-        var explorationIndex = result.IndexOf("## Exploration Strategy");
-
-        contextIndex.Should().BeGreaterThan(explorationIndex);
-        contextIndex.Should().BeLessThan(outputFormatIndex);
-    }
-
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_WithNullIssueContext_NoExtraSection()
-    {
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt(3, null);
-
-        result.Should().NotContain("Do Not Duplicate");
-    }
-
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_ContainsAllNineCategories()
-    {
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
-
-        result.Should().Contain("TODO comments");
-        result.Should().Contain("Duplicated logic");
-        result.Should().Contain("Naming inconsistencies");
-        result.Should().Contain("Structural drift");
-        result.Should().Contain("Overly complex areas");
-        result.Should().Contain("Dead code & unused artifacts");
-        result.Should().Contain("Obvious bugs");
-        result.Should().Contain("Stale documentation & misleading comments");
-        result.Should().Contain("Primitive obsession");
-    }
-
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_BugCategoryIncludesConfidenceConstraint()
-    {
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
-
-        result.Should().Contain("strong evidence the code is wrong, not merely suboptimal");
-    }
-
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_ContainsCategoryField()
-    {
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
-
-        result.Should().Contain("\"category\"");
-        result.Should().Contain("`refactoring`");
-        result.Should().Contain("`bug`");
-        result.Should().Contain("`documentation`");
-        result.Should().Contain("`dead-code`");
-    }
-
-    [Fact]
-    public void BuildRefactoringDetectionPrompt_ContainsSubAgentInstruction()
-    {
-        var result = ConsolidationPromptBuilder.BuildRefactoringDetectionPrompt();
-
-        result.Should().Contain("sub-agent");
     }
 
     [Fact]

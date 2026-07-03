@@ -227,6 +227,24 @@ builder.Services.AddOpenTelemetry()
 
 var app = builder.Build();
 
+// ── Shutdown budget validation ──────────────────────────────────────────────
+// Warn if configured drain delay + shutdown timeout exceeds host ShutdownTimeout budget.
+// Default budget: drain (15s) + ShutdownService (15s) + buffer (10s) = 40s.
+{
+    var drainDelay = ReadinessDrainService.ResolveDrainDelay();
+    const int shutdownServiceTimeout = 15; // ShutdownService default
+    const int hostShutdownTimeout = 40;    // HostOptions.ShutdownTimeout value set above
+    const int requiredBuffer = 5;          // Minimum buffer for host finalization
+    var totalRequired = drainDelay.TotalSeconds + shutdownServiceTimeout + requiredBuffer;
+    if (totalRequired > hostShutdownTimeout)
+    {
+        Log.Warning(
+            "Shutdown budget exceeded: drain ({DrainDelay}s) + ShutdownService ({ShutdownTimeout}s) + buffer ({Buffer}s) = {Total}s > HostShutdownTimeout ({HostTimeout}s). " +
+            "ShutdownService may be force-killed before completing. Reduce READINESS_DRAIN_DELAY_SECONDS or increase HostOptions.ShutdownTimeout.",
+            drainDelay.TotalSeconds, shutdownServiceTimeout, requiredBuffer, totalRequired, hostShutdownTimeout);
+    }
+}
+
 // Database startup: connection retry + migration/verification (blocks until ready)
 await app.InitializeDatabaseAsync();
 

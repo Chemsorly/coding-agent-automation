@@ -182,7 +182,8 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
         await agent.DisposeAsync();
 
         // Wait for HeartbeatMonitor to detect disconnect and fail the run
-        // Grace period is 1s, sweep interval is 5s, so total could be up to ~7s
+        // HeartbeatSweepIntervalSeconds=5 (set in InMemoryConfigurationStore defaults),
+        // grace period is 1s, so detection takes at most ~12s.
         var failed = await WaitForWorkItemStatusAsync(
             workItemId, WorkItemStatus.Failed, TimeSpan.FromSeconds(20));
         Assert.Equal(WorkItemStatus.Failed, failed.Status);

@@ -35,7 +35,8 @@ public class PipelineConfigurationOverridePropertyTests
         return once.MaxRetries == twice.MaxRetries
             && once.AnalysisReviewEnabled == twice.AnalysisReviewEnabled
             && once.AgentTimeout == twice.AgentTimeout
-            && ReferenceEquals(once.CodeReview, twice.CodeReview) || once.CodeReview?.MaxIterations == twice.CodeReview?.MaxIterations;
+            && (ReferenceEquals(once.CodeReview, twice.CodeReview)
+                || once.CodeReview?.MaxIterations == twice.CodeReview?.MaxIterations);
     }
 
     /// <summary>
