@@ -63,31 +63,60 @@ public sealed class ReconciliationService : BackgroundService
     {
         Log.Information("ReconciliationService started — waiting for leader election");
 
-        while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
+        while (!stoppingToken.IsCancellationRequested)
         {
-            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            // Wait for leadership
+            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            }
+
+            if (stoppingToken.IsCancellationRequested) break;
+
+            Log.Information("ReconciliationService: leader acquired, running startup reconciliation");
+
+            // Reset watch state for new leadership term (avoids 410 Gone with stale resourceVersion)
+            _lastResourceVersion = null;
+
+            // Create linked token: cancels on EITHER host stop OR leadership loss
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken, _leaderElection.LeaderToken);
+            var ct = linked.Token;
+
+            try
+            {
+                await RunStartupReconciliationAsync(ct);
+
+                // Run Watch and Poll concurrently
+                var watchTask = RunWatchLoopAsync(ct);
+                var pollTask = RunPollLoopAsync(ct);
+
+                // Exit when leadership lost or stopping
+                // TODO: If RunWatchLoopAsync or RunPollLoopAsync throws a non-OCE exception,
+                // Task.WhenAny returns the faulted task, then Task.WhenAll re-throws it unhandled
+                // out of ExecuteAsync, causing a BackgroundService fault. This matches pre-existing
+                // behavior but could be hardened with a catch-all that logs and re-enters the wait loop.
+                await Task.WhenAny(watchTask, pollTask);
+
+                // If neither stoppingToken nor LeaderToken caused the exit, cancel manually
+                if (!ct.IsCancellationRequested)
+                    await linked.CancelAsync();
+
+                try { await Task.WhenAll(watchTask, pollTask); }
+                catch (OperationCanceledException) { /* expected */ }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
+            {
+                // Leadership lost during startup reconciliation or work loop — fall through to re-enter wait loop
+            }
+
+            if (!stoppingToken.IsCancellationRequested)
+            {
+                Log.Information("ReconciliationService: leadership lost, re-entering wait loop");
+            }
         }
 
-        if (stoppingToken.IsCancellationRequested) return;
-
-        Log.Information("ReconciliationService: leader acquired, running startup reconciliation");
-
-        await RunStartupReconciliationAsync(stoppingToken);
-
-        // Run Watch and Poll concurrently
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-
-        var watchTask = RunWatchLoopAsync(cts.Token);
-        var pollTask = RunPollLoopAsync(cts.Token);
-
-        // Exit when leadership lost or stopping
-        await Task.WhenAny(watchTask, pollTask);
-        await cts.CancelAsync();
-
-        try { await Task.WhenAll(watchTask, pollTask); }
-        catch (OperationCanceledException) { /* expected */ }
-
-        Log.Information("ReconciliationService: exiting (lost leadership or stopping)");
+        Log.Information("ReconciliationService: exiting (stopping)");
     }
 
     // ── Startup Reconciliation ───────────────────────────────────────────
