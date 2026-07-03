@@ -24,6 +24,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly WorkItemTransitionService _transitionService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly ILabelSwapper _labelSwapper;
+    private readonly IProjectStore? _projectStore;
     private readonly ILogger<PendingWorkItemDrainService> _logger;
 
     private readonly SemaphoreSlim _wakeSignal = new(0, int.MaxValue);
@@ -38,7 +39,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         WorkItemTransitionService transitionService,
         IPendingWorkQuery pendingWorkQuery,
         ILabelSwapper labelSwapper,
-        ILogger<PendingWorkItemDrainService> logger)
+        ILogger<PendingWorkItemDrainService> logger,
+        IProjectStore? projectStore = null)
     {
         _dbFactory = dbFactory;
         _agentResolver = agentResolver;
@@ -48,6 +50,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         _pendingWorkQuery = pendingWorkQuery;
         _labelSwapper = labelSwapper;
         _logger = logger;
+        _projectStore = projectStore;
     }
 
     /// <summary>
@@ -184,11 +187,29 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     }
                 }
 
+                // Transition to Dispatched in DB BEFORE sending via SignalR.
+                // This ensures the agent's JobAccepted → Running transition is valid
+                // (Dispatched → Running, not Pending → Running which is rejected).
+                await _transitionService.TransitionAsync(
+                    item.Id,
+                    WorkItemStatus.Dispatched,
+                    entity =>
+                    {
+                        entity.DispatchedAt = DateTimeOffset.UtcNow;
+                        entity.AssignedAgentId = agentId;
+                    },
+                    ct);
+
                 var message = SignalRWorkDistributor.BuildJobAssignmentMessage(item.Id, request);
-                // TODO: (#997 review) Project secrets are not injected here. The original code injected them
-                //       at delivery time (not serialized in WorkItem payload for security). Jobs dispatched via
-                //       the drain service will be delivered without project secrets. Restore IProjectStore dependency
-                //       and inject secrets before AssignJobAsync, matching SignalRWorkDistributor behavior.
+
+                // Inject project secrets at delivery time (not serialized in WorkItem payload for security)
+                if (_projectStore is not null && !string.IsNullOrEmpty(request.ProjectId))
+                {
+                    var project = await _projectStore.GetProjectByIdAsync(request.ProjectId, ct);
+                    if (project?.Secrets is { Count: > 0 })
+                        message = message with { ProjectSecrets = project.Secrets };
+                }
+
                 await _agentComm.AssignJobAsync(connectionId, message, ct);
 
                 _agentResolver.AssignJob(agentId, item.Id.ToString());
@@ -201,22 +222,6 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 _agentResolver.ReleaseAgent(agentId);
                 continue;
             }
-
-            // Transition to Dispatched in DB
-            // TODO: (#997 review) If TransitionAsync throws (DB connection lost), the agent is stuck in "busy"
-            //       state via AssignJob above, but the WorkItem remains Pending. No code path clears this
-            //       inconsistency — the agent won't be resolved for new jobs until HeartbeatMonitor detects
-            //       the orphaned state (5-min default). Consider wrapping in try/catch and calling
-            //       _agentResolver.ReleaseAgent(agentId) on failure, or moving AssignJob after TransitionAsync.
-            await _transitionService.TransitionAsync(
-                item.Id,
-                WorkItemStatus.Dispatched,
-                entity =>
-                {
-                    entity.DispatchedAt = DateTimeOffset.UtcNow;
-                    entity.AssignedAgentId = agentId;
-                },
-                ct);
 
             // Swap label to agent:in-progress now that an agent is actually working on it (#997)
             // TODO: If SwapLabelAsync fails, the label stays as agent:next even though the agent is working.

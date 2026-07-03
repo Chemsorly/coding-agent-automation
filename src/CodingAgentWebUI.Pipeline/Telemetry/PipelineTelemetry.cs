@@ -25,7 +25,7 @@ public static class PipelineTelemetry
         "pipeline.jobs.duration", "s", "Duration of pipeline jobs in seconds",
         advice: new InstrumentAdvice<double>
         {
-            HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200]
+            HistogramBucketBoundaries = [30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600]
         });
 
     public static readonly Counter<long> SubIssuesCreated = Meter.CreateCounter<long>("pipeline.decomposition.sub_issues.created");
@@ -34,7 +34,11 @@ public static class PipelineTelemetry
         "pipeline.decomposition.duration", "s", "Duration of decomposition phases in seconds");
 
     public static readonly Histogram<double> StepDuration = Meter.CreateHistogram<double>(
-        "pipeline.step.duration", "s", "Duration of individual pipeline steps");
+        "pipeline.step.duration", "s", "Duration of individual pipeline steps",
+        advice: new InstrumentAdvice<double>
+        {
+            HistogramBucketBoundaries = [5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600]
+        });
     public static readonly Counter<long> StepCount = Meter.CreateCounter<long>(
         "pipeline.step.count", "{step}", "Pipeline step execution count");
     public static readonly Counter<long> TokensUsed = Meter.CreateCounter<long>(

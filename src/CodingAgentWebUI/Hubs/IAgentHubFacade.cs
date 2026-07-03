@@ -105,6 +105,19 @@ public interface IAgentHubFacade
     /// </summary>
     void Signal();
 
+    /// <summary>
+    /// Gets the current retry count for a work item (how many times it has been rejected and re-queued).
+    /// Returns 0 if the work item doesn't exist or has no retries.
+    /// </summary>
+    Task<int> GetWorkItemRetryCountAsync(string jobId, CancellationToken ct);
+
+    /// <summary>
+    /// Re-queues a rejected work item: transitions it back to Pending status,
+    /// increments RetryCount, clears DispatchedAt and AssignedAgentId.
+    /// The drain service will pick it up again on the next cycle.
+    /// </summary>
+    Task RequeueWorkItemAsync(string jobId, CancellationToken ct);
+
     // ── History ─────────────────────────────────────────────────────────
 
     /// <summary>

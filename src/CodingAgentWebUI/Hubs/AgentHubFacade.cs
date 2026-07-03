@@ -204,6 +204,33 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _pendingDrainService?.Signal();
     }
 
+    /// <inheritdoc />
+    public async Task<int> GetWorkItemRetryCountAsync(string jobId, CancellationToken ct)
+    {
+        if (_workItemTransition is null || !Guid.TryParse(jobId, out var workItemId))
+            return 0;
+
+        try
+        {
+            return await _workItemTransition.GetRetryCountAsync(workItemId, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to get RetryCount for WorkItem {WorkItemId}", workItemId);
+            return 0;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task RequeueWorkItemAsync(string jobId, CancellationToken ct)
+    {
+        if (_workItemTransition is null || !Guid.TryParse(jobId, out var workItemId))
+            return;
+
+        await _workItemTransition.RequeueAsync(workItemId, ct);
+        _logger.LogInformation("WorkItem {WorkItemId} re-queued as Pending (retry after rejection)", workItemId);
+    }
+
     // ── History ─────────────────────────────────────────────────────────
 
     /// <inheritdoc />

@@ -28,6 +28,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
     private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
+    private readonly Mock<IProjectStore> _mockProjectStore = new();
     private readonly OrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
 
@@ -222,7 +223,8 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
             _transitionService,
             _mockPendingWork.Object,
             _mockLabelSwapper.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance);
+            NullLogger<PendingWorkItemDrainService>.Instance,
+            _mockProjectStore.Object);
     }
 
     /// <summary>
@@ -243,6 +245,140 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         cts.Cancel();
         try { await task; } catch (OperationCanceledException) { }
         await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task DrainPendingItems_TransitionsToDispatched_BeforeSendingViaSIgnalR()
+    {
+        // Reproduction: DrainService called AssignJobAsync BEFORE TransitionAsync(Dispatched).
+        // This caused the agent's JobAccepted → "Pending → Running" transition to fail
+        // because the DB row was still Status=Pending when the agent reported acceptance.
+        //
+        // The fix: TransitionAsync(Dispatched) must run BEFORE AssignJobAsync so the
+        // DB state is Dispatched by the time the agent receives and accepts the job.
+        var workItemId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "org/repo#100",
+            IssueProviderConfigId = "issue-provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            RunId = workItemId.ToString(),
+            TimeoutSeconds = 3600
+        };
+        var payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#100",
+                IssueProviderConfigId = "issue-provider-1",
+                Status = WorkItemStatus.Pending,
+                Payload = payload,
+                AgentSelector = "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Track the order of operations
+        var operationOrder = new List<string>();
+
+        _mockResolver.Setup(r => r.ResolveAgent(""))
+            .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockAgentComm.Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => operationOrder.Add("AssignJobAsync"));
+
+        var service = CreateService();
+
+        // Act: invoke drain — need to check DB state WHEN AssignJobAsync is called
+        WorkItemStatus? statusAtAssignTime = null;
+        _mockAgentComm.Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(async () =>
+            {
+                // At the moment AssignJobAsync is called, check what the DB status is
+                await using var checkDb = await _dbFactory.CreateDbContextAsync();
+                var item = await checkDb.WorkItems.FindAsync(workItemId);
+                statusAtAssignTime = item?.Status;
+            });
+
+        await InvokeDrainAsync(service);
+
+        // Assert: the WorkItem must already be Dispatched when AssignJobAsync fires
+        statusAtAssignTime.Should().Be(WorkItemStatus.Dispatched,
+            "WorkItem must be transitioned to Dispatched BEFORE sending via SignalR, " +
+            "otherwise the agent's JobAccepted → Running transition fails with 'Invalid transition: Pending → Running'");
+    }
+
+    [Fact]
+    public async Task DrainPendingItems_WithProjectId_InjectsProjectSecrets()
+    {
+        // Reproduction: DrainService dispatched jobs WITHOUT project secrets.
+        // SignalRWorkDistributor injected them at delivery time, but the drain path
+        // skipped this step entirely. Agents running jobs dispatched via drain had
+        // no access to project-level secrets (API keys, tokens).
+        var workItemId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "org/repo#200",
+            IssueProviderConfigId = "issue-provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            RunId = workItemId.ToString(),
+            TimeoutSeconds = 3600,
+            ProjectId = "project-42"
+        };
+        var payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#200",
+                IssueProviderConfigId = "issue-provider-1",
+                Status = WorkItemStatus.Pending,
+                Payload = payload,
+                AgentSelector = "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600,
+                ProjectId = "project-42"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        _mockResolver.Setup(r => r.ResolveAgent(""))
+            .Returns(new AgentResolveResult("conn-1", "agent-1"));
+
+        // Setup: project store returns secrets for project-42
+        var secrets = new Dictionary<string, string> { ["API_KEY"] = "secret-value-123" };
+        _mockProjectStore.Setup(p => p.GetProjectByIdAsync("project-42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineProject { Id = "project-42", Name = "Test", Secrets = secrets });
+
+        // Capture the message sent to AssignJobAsync
+        JobAssignmentMessage? capturedMessage = null;
+        _mockAgentComm.Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback<string, JobAssignmentMessage, CancellationToken>((_, msg, _) => capturedMessage = msg);
+
+        var service = CreateService();
+        await InvokeDrainAsync(service);
+
+        // Assert: the message must contain project secrets
+        capturedMessage.Should().NotBeNull("AssignJobAsync should have been called");
+        capturedMessage!.ProjectSecrets.Should().NotBeNull("project secrets must be injected");
+        capturedMessage.ProjectSecrets.Should().ContainKey("API_KEY");
+        capturedMessage.ProjectSecrets!["API_KEY"].Should().Be("secret-value-123");
     }
 
     public void Dispose()

@@ -39,6 +39,13 @@ public sealed class ConsolidationService : IConsolidationService
         return _runningRuns.Values.Any(r => r.RunId == runId);
     }
 
+    /// <inheritdoc />
+    public DateTimeOffset? GetActiveRunStartedAt(string runId)
+    {
+        var run = _runningRuns.Values.FirstOrDefault(r => r.RunId == runId);
+        return run?.StartedAtUtc;
+    }
+
     public ConsolidationService(
         ILogger logger,
         PipelineConfiguration config,

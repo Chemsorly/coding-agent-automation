@@ -936,6 +936,119 @@ public class HeartbeatMonitorServiceTests : IDisposable
         monitor.Dispose();
     }
 
+    [Fact]
+    public async Task SweepAsync_ConsolidationRunExceedsProgressTimeout_FailsRunAndResetsAgent()
+    {
+        // Arrange: Agent is busy with a consolidation run that has exceeded the progress timeout.
+        // The consolidation service should be called to fail the timed-out run.
+        var mockConsolidationService = new Mock<IConsolidationService>();
+        var dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                AgentBusyProgressTimeout = TimeSpan.FromMinutes(60)
+            });
+
+        var monitorWithConsolidation = new HeartbeatMonitorService(
+            _registry,
+            _runService,
+            _mockHistoryService.Object,
+            dispatcher,
+            _mockLabelSwapper.Object,
+            _mockConfigStore.Object,
+            _mockLogger.Object,
+            consolidationService: mockConsolidationService.Object);
+
+        var entry = RegisterAgent("agent-consol", "conn-consol");
+        entry.ActiveJobId = "consol-run-1";
+        _registry.TransitionStatus("agent-consol", AgentStatus.Busy);
+
+        // IsRunActive returns true — this is a consolidation run
+        mockConsolidationService
+            .Setup(c => c.IsRunActive("consol-run-1"))
+            .Returns(true);
+
+        // GetActiveRunStartedAt returns a time well past the progress timeout
+        mockConsolidationService
+            .Setup(c => c.GetActiveRunStartedAt("consol-run-1"))
+            .Returns(DateTimeOffset.UtcNow.AddHours(-2)); // 2 hours ago, timeout is 1 hour
+
+        await monitorWithConsolidation.SweepAsync(CancellationToken.None);
+
+        // Assert: consolidation run should be failed via UpdateRunAsync
+        mockConsolidationService.Verify(c => c.UpdateRunAsync(
+            "consol-run-1",
+            ConsolidationRunStatus.Failed,
+            It.Is<string>(s => s.Contains("timeout")),
+            It.IsAny<CancellationToken>(),
+            It.IsAny<long>()), Times.Once);
+
+        // Assert: agent should be reset to Idle
+        var agent = _registry.GetByAgentId("agent-consol");
+        agent!.Status.Should().Be(AgentStatus.Idle);
+        agent.ActiveJobId.Should().BeNull();
+
+        monitorWithConsolidation.Dispose();
+    }
+
+    [Fact]
+    public async Task SweepAsync_ConsolidationRunWithinTimeout_AgentStaysBusy()
+    {
+        // Arrange: Agent is busy with a consolidation run that is within the progress timeout.
+        var mockConsolidationService = new Mock<IConsolidationService>();
+        var dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                AgentBusyProgressTimeout = TimeSpan.FromMinutes(60)
+            });
+
+        var monitorWithConsolidation = new HeartbeatMonitorService(
+            _registry,
+            _runService,
+            _mockHistoryService.Object,
+            dispatcher,
+            _mockLabelSwapper.Object,
+            _mockConfigStore.Object,
+            _mockLogger.Object,
+            consolidationService: mockConsolidationService.Object);
+
+        var entry = RegisterAgent("agent-consol", "conn-consol");
+        entry.ActiveJobId = "consol-run-2";
+        _registry.TransitionStatus("agent-consol", AgentStatus.Busy);
+
+        // IsRunActive returns true — this is a consolidation run
+        mockConsolidationService
+            .Setup(c => c.IsRunActive("consol-run-2"))
+            .Returns(true);
+
+        // Started 10 minutes ago — well within 60-minute timeout
+        mockConsolidationService
+            .Setup(c => c.GetActiveRunStartedAt("consol-run-2"))
+            .Returns(DateTimeOffset.UtcNow.AddMinutes(-10));
+
+        await monitorWithConsolidation.SweepAsync(CancellationToken.None);
+
+        // Assert: consolidation run should NOT be failed
+        mockConsolidationService.Verify(c => c.UpdateRunAsync(
+            It.IsAny<string>(),
+            It.IsAny<ConsolidationRunStatus>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>(),
+            It.IsAny<long>()), Times.Never);
+
+        // Assert: agent should still be Busy
+        var agent = _registry.GetByAgentId("agent-consol");
+        agent!.Status.Should().Be(AgentStatus.Busy);
+        agent.ActiveJobId.Should().Be("consol-run-2");
+
+        monitorWithConsolidation.Dispose();
+    }
+
     private AgentEntry RegisterAgent(string agentId, string connectionId)
     {
         return _registry.Register(new AgentRegistrationMessage

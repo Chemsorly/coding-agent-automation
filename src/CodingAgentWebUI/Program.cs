@@ -128,7 +128,11 @@ builder.Services.AddScoped<CodingAgentWebUI.Services.AgentCodingPageService>();
 builder.Services.AddScoped<CodingAgentWebUI.Services.NotificationService>();
 
 // SignalR — hub services with MessagePack protocol
-builder.Services.AddSignalR()
+builder.Services.AddSignalR(options =>
+    {
+        // Agents may send output chunks or large payloads; default 32KB is too restrictive.
+        options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
+    })
     .AddMessagePackProtocol();
 
 // SignalR — hub filter for agent authorization
@@ -248,6 +252,9 @@ if (!string.IsNullOrEmpty(dbConnectionString))
         catch { cachedMeasurements = []; }
     }, null, TimeSpan.Zero, TimeSpan.FromSeconds(10));
 
+    // Dispose the timer on application shutdown to avoid firing into a closed DB pool
+    app.Lifetime.ApplicationStopping.Register(() => updateTimer.Dispose());
+
     CodingAgentWebUI.Orchestration.Telemetry.WorkDistributionTelemetry.RegisterWorkItemsByStatusCallback(() => cachedMeasurements);
 }
 
@@ -268,15 +275,10 @@ _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
 
 
 // Kubernetes-style health probes — anonymous, no auth required
-app.MapGet("/healthz", async (CancellationToken ct) =>
+app.MapGet("/healthz", () =>
 {
-    var dbMonitor = app.Services.GetService<CodingAgentWebUI.Services.DatabaseReadinessMonitor>();
-    if (dbMonitor is not null)
-    {
-        var dbHealthy = await dbMonitor.CheckHealthAsync(ct);
-        if (!dbHealthy)
-            return Results.Json(new { status = "unhealthy", reason = "database_unreachable", timestamp = DateTime.UtcNow }, statusCode: 503);
-    }
+    // Pure liveness: proves the process is alive and can handle requests.
+    // Database health is checked in /readyz only (readiness concern, not liveness).
     return Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow });
 })
     .AllowAnonymous();

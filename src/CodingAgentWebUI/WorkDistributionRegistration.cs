@@ -363,16 +363,20 @@ public static class WorkDistributionRegistration
         if (string.IsNullOrEmpty(redisConnectionString))
             return;
 
+        // Shared config and connection reference — used by both the SignalR factory and DI registration.
+        var config = ConfigurationOptions.Parse(redisConnectionString);
+        config.ChannelPrefix = RedisChannel.Literal("caa");
+        config.AbortOnConnectFail = false;
+        config.ConnectRetry = 5;
+        config.ReconnectRetryPolicy = new ExponentialRetry(5000, 55000);
+
+        IConnectionMultiplexer? sharedConnection = null;
+        var connectionLock = new object();
+
         // Replace the default AddSignalR() registration with Redis backplane.
         // Note: AddSignalR() is already called in Program.cs. AddStackExchangeRedis extends it.
         services.AddSignalR().AddStackExchangeRedis(options =>
         {
-            var config = ConfigurationOptions.Parse(redisConnectionString);
-            config.ChannelPrefix = RedisChannel.Literal("caa");
-            config.AbortOnConnectFail = false;
-            config.ConnectRetry = 5;
-            config.ReconnectRetryPolicy = new ExponentialRetry(5000, 55000);
-
             options.Configuration = config;
 
             options.ConnectionFactory = async (writer) =>
@@ -386,8 +390,25 @@ public static class WorkDistributionRegistration
                         e.FailureType, e.Exception?.Message);
                 connection.ConnectionRestored += (_, e) =>
                     Log.Information("Redis backplane connection restored: {EndPoint}", e.EndPoint);
+
+                // Capture the connection for DI health checks (single assignment, no awaits in lock)
+                lock (connectionLock) { sharedConnection = connection; }
+
                 return connection;
             };
+        });
+
+        // Register IConnectionMultiplexer as a lazy singleton so InfrastructureHealthService
+        // can resolve it for health checks. The factory delegate above sets sharedConnection
+        // when SignalR first creates the Redis connection. Fallback uses the same resilient config
+        // (AbortOnConnectFail=false) to avoid throwing on transient Redis unavailability.
+        services.AddSingleton<IConnectionMultiplexer>(sp =>
+        {
+            lock (connectionLock)
+            {
+                return sharedConnection
+                    ?? ConnectionMultiplexer.Connect(config);
+            }
         });
 
         Log.Information("WorkDistribution: SignalR Redis backplane configured with AbortOnConnectFail=false");

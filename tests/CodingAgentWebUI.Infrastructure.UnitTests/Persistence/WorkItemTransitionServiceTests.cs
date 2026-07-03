@@ -20,7 +20,7 @@ public class WorkItemTransitionServiceTests
     [InlineData(WorkItemStatus.Dispatched, WorkItemStatus.Failed, true)]
     [InlineData(WorkItemStatus.Dispatched, WorkItemStatus.Cancelled, true)]
     [InlineData(WorkItemStatus.Dispatched, WorkItemStatus.Succeeded, false)]
-    [InlineData(WorkItemStatus.Dispatched, WorkItemStatus.Pending, false)]
+    [InlineData(WorkItemStatus.Dispatched, WorkItemStatus.Pending, true)]
     [InlineData(WorkItemStatus.Running, WorkItemStatus.Succeeded, true)]
     [InlineData(WorkItemStatus.Running, WorkItemStatus.Failed, true)]
     [InlineData(WorkItemStatus.Running, WorkItemStatus.Cancelled, true)]
