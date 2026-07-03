@@ -1049,6 +1049,45 @@ public class HeartbeatMonitorServiceTests : IDisposable
         monitorWithConsolidation.Dispose();
     }
 
+    [Fact]
+    public async Task SweepAsync_BusyAgentWithRunRemovedByReplay_NoFalseStuckFailure()
+    {
+        // Scenario: Agent completed a job during a network partition. On reconnection,
+        // the buffered ReportJobCompleted was replayed successfully, which removed the run
+        // from the run service. When HeartbeatMonitor sweeps, it should NOT produce a
+        // false "agent stuck" failure — it should detect that the run is gone (already
+        // processed) and reset the agent to Idle without marking anything as Failed.
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                AgentBusyProgressTimeout = TimeSpan.FromMinutes(60)
+            });
+
+        var entry = RegisterAgent("agent-partition", "conn-partition");
+        entry.ActiveJobId = "completed-during-partition";
+        _registry.TransitionStatus("agent-partition", AgentStatus.Busy);
+
+        // The run has already been removed by the replayed ReportJobCompleted
+        // (simulating: agent reconnected → buffer drained → ReportJobCompleted processed
+        //  → run moved to history). The run service has no entry for this jobId.
+        _runService.GetRun("completed-during-partition").Should().BeNull(
+            "precondition: run was already removed by replayed completion");
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Assert: HeartbeatMonitor should NOT have called AddRunToHistory with a Failed status
+        // (no false "stuck" failure)
+        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+            r.RunId == "completed-during-partition" &&
+            r.CurrentStep == PipelineStep.Failed)), Times.Never);
+
+        // Assert: agent should be transitioned to Idle (run not found → reset)
+        var agent = _registry.GetByAgentId("agent-partition");
+        agent!.Status.Should().Be(AgentStatus.Idle);
+        agent.ActiveJobId.Should().BeNull("slot should be cleared since the run is gone");
+    }
+
     private AgentEntry RegisterAgent(string agentId, string connectionId)
     {
         return _registry.Register(new AgentRegistrationMessage
