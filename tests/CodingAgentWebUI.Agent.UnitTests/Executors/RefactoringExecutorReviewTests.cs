@@ -30,6 +30,14 @@ public class RefactoringExecutorReviewTests : IDisposable
         _mockIssueProvider
             .Setup(x => x.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(emptyResult);
+        _mockIssueProvider
+            .Setup(x => x.ListClosedIssuesAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(emptyResult);
+
+        // Default: GetLatestSessionIdAsync returns a fake session ID (needed by AdversarialReviewHelper)
+        _mockAgentProvider
+            .Setup(x => x.GetLatestSessionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("fake-session-id");
     }
 
     public void Dispose()
@@ -118,9 +126,9 @@ public class RefactoringExecutorReviewTests : IDisposable
             .ReturnsAsync((AgentRequest req, CancellationToken _, Action<string>? _) =>
             {
                 callCount++;
-                if (callCount == 1)
+                if (callCount <= 5)
                 {
-                    // Generator call — proposals already written by clone callback
+                    // Phased detection calls (Phase 0 + 3× Phase 1 + Phase 2)
                     return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
                 }
                 // Discriminator call — write review file with only suggestions (no refinement triggered)
@@ -134,11 +142,11 @@ public class RefactoringExecutorReviewTests : IDisposable
         var result = await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // Assert — at least 2 agent calls (generator + discriminator)
+        // Assert — at least 6 agent calls (5 phased + discriminator)
         result.Success.Should().BeTrue();
         _mockAgentProvider.Verify(
             x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.AtLeast(2));
+            Times.AtLeast(6));
     }
 
     /// <summary>
@@ -160,12 +168,12 @@ public class RefactoringExecutorReviewTests : IDisposable
         var result = await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // Assert — only 1 agent call (generator), no discriminator
+        // Assert — only phased calls (5), no discriminator since proposals are empty
         result.Success.Should().BeTrue();
         result.Summary.Should().Contain("No refactoring opportunities identified");
         _mockAgentProvider.Verify(
             x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Once);
+            Times.Exactly(5));
     }
 
     /// <summary>
@@ -188,11 +196,11 @@ public class RefactoringExecutorReviewTests : IDisposable
         var result = await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // Assert — only 1 agent call (generator), no discriminator or refinement
+        // Assert — only phased calls (5), no discriminator or refinement since review is disabled
         result.Success.Should().BeTrue();
         _mockAgentProvider.Verify(
             x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Once);
+            Times.Exactly(5));
     }
 
     /// <summary>
@@ -213,12 +221,12 @@ public class RefactoringExecutorReviewTests : IDisposable
             .ReturnsAsync((AgentRequest req, CancellationToken _, Action<string>? _) =>
             {
                 callCount++;
-                if (callCount == 1)
+                if (callCount <= 5)
                 {
-                    // Generator call
+                    // Phased detection calls (Phase 0 + 3× Phase 1 + Phase 2)
                     return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
                 }
-                if (callCount == 2)
+                if (callCount == 6)
                 {
                     // Discriminator call — write CRITICAL finding to trigger refinement
                     var reviewPath = Path.Combine(req.WorkspacePath!, AgentWorkspacePaths.RefactoringReviewFilePath);
@@ -246,11 +254,11 @@ public class RefactoringExecutorReviewTests : IDisposable
         var result = await executor.ExecuteAsync(
             job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
 
-        // Assert — 3 agent calls (generator + discriminator + refinement)
+        // Assert — 7 agent calls (5 phased + discriminator + refinement)
         result.Success.Should().BeTrue();
         _mockAgentProvider.Verify(
             x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
-            Times.Exactly(3));
+            Times.Exactly(7));
 
         // Issue should be created with the refined title
         _mockIssueProvider.Verify(
@@ -280,12 +288,12 @@ public class RefactoringExecutorReviewTests : IDisposable
             .ReturnsAsync((AgentRequest req, CancellationToken _, Action<string>? _) =>
             {
                 callCount++;
-                if (callCount == 1)
+                if (callCount <= 5)
                 {
-                    // Generator call
+                    // Phased detection calls
                     return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
                 }
-                if (callCount == 2)
+                if (callCount == 6)
                 {
                     // Discriminator call — write CRITICAL finding to trigger refinement
                     var reviewPath = Path.Combine(req.WorkspacePath!, AgentWorkspacePaths.RefactoringReviewFilePath);
@@ -337,12 +345,12 @@ public class RefactoringExecutorReviewTests : IDisposable
             .ReturnsAsync((AgentRequest req, CancellationToken _, Action<string>? _) =>
             {
                 callCount++;
-                if (callCount == 1)
+                if (callCount <= 5)
                 {
-                    // Generator call
+                    // Phased detection calls
                     return new AgentResult { ExitCode = 0, OutputLines = ["Done."] };
                 }
-                if (callCount == 2)
+                if (callCount == 6)
                 {
                     // Discriminator call — write CRITICAL finding to trigger refinement
                     var reviewPath = Path.Combine(req.WorkspacePath!, AgentWorkspacePaths.RefactoringReviewFilePath);
