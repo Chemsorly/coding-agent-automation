@@ -1,6 +1,8 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Services
 @using System.Text.RegularExpressions
+@inject ProjectChangeNotifier ProjectNotifier
 
 <section class="settings-section">
     <h2>@_project.Name</h2>
@@ -504,6 +506,7 @@
 
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
+            ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Project overview saved.", false));
         }
         catch (Exception ex)
@@ -569,6 +572,7 @@
 
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
+            ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Project settings saved.", false));
         }
         catch (Exception ex)
@@ -583,6 +587,7 @@
         {
             await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
             await OnProjectSaved.InvokeAsync();
+            ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Project updated.", false));
         }
         catch (Exception ex)

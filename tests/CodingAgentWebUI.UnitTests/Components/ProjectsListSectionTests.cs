@@ -1,8 +1,10 @@
 using Bunit;
 using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.DependencyInjection;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Services;
 using Moq;
 
 namespace CodingAgentWebUI.UnitTests.Components;
@@ -24,6 +26,8 @@ public class ProjectsListSectionTests : BunitContext
             .Returns(Task.CompletedTask);
         _mockStore.Setup(s => s.DeleteProjectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+
+        Services.AddSingleton(new ProjectChangeNotifier());
     }
 
     // ═══ Rendering ═══
