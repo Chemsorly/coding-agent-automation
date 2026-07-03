@@ -25,10 +25,13 @@ public sealed record AgentEntry
     [IgnoreMember]
     private readonly object _syncRoot = new();
 
+    // TODO: Exposing SyncRoot as public allows external callers to acquire the lock,
+    // risking deadlocks if they hold it while Pipeline code also locks on SyncRoot.
+    // Consider exposing a narrower locking interface or documenting the lock-ordering contract.
     /// <summary>Lock object for synchronizing access to mutable properties of this entry.</summary>
     [JsonIgnore]
     [IgnoreMember]
-    internal object SyncRoot => _syncRoot;
+    public object SyncRoot => _syncRoot;
 
     public required string AgentId { get; init; }
 

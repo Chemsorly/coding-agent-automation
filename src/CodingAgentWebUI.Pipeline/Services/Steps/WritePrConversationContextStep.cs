@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// This enables review agents to see prior human feedback and review comments during the code review phase.
 /// Non-fatal: if fetching or writing fails, the pipeline continues without conversation context.
 /// </summary>
-internal sealed class WritePrConversationContextStep : IPipelineStep
+public sealed class WritePrConversationContextStep : IPipelineStep
 {
     public string StepName => "WritePrConversationContext";
 

@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// Composes and executes an ordered list of pipeline steps.
 /// The step list is explicit and configurable — callers build the list based on run context.
 /// </summary>
-internal static class PipelineStepRunner
+public static class PipelineStepRunner
 {
     /// <summary>
     /// Executes the given steps in order. Stops on the first <see cref="StepResult.Stop"/>.

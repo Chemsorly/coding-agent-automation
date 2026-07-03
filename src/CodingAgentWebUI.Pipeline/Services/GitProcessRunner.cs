@@ -2,12 +2,15 @@ using System.Diagnostics;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
+// TODO: GitProcessRunner.RunAsync is now public and accepts arbitrary git arguments.
+// Callers must not interpolate user-controlled strings into the arguments parameter
+// without validation. If used in less-trusted contexts, add input sanitization.
 /// <summary>
 /// Shared utility for running git commands as external processes with timeout handling.
 /// </summary>
-internal static class GitProcessRunner
+public static class GitProcessRunner
 {
-    internal static async Task<string> RunAsync(
+    public static async Task<string> RunAsync(
         string workingDirectory,
         string arguments,
         CancellationToken ct,

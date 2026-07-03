@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// and code review iterations. Extracted from PipelineOrchestrationService.
 /// Split into partial classes by phase for maintainability.
 /// </summary>
-internal partial class AgentPhaseExecutor : IAgentPhaseExecutor
+public partial class AgentPhaseExecutor : IAgentPhaseExecutor
 {
     /// <summary>Minimum length in bytes for analysis.md to be considered valid.</summary>
     internal const int MinAnalysisLength = PipelineConstants.MinAnalysisLength;

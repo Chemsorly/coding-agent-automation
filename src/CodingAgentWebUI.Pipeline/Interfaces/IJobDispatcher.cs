@@ -2,12 +2,15 @@ using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
+// TODO: XML doc still says "Internal abstraction" and "External code should use IWorkDistributor instead"
+// but this interface is now public. Update documentation to reflect public status and clarify
+// when direct use of IJobDispatcher vs IWorkDistributor is appropriate.
 /// <summary>
 /// Internal abstraction for dispatching pipeline jobs to remote agents.
 /// Consumed only by <c>LegacyWorkDistributor</c> and <c>JobQueueDrainService</c> (same assembly).
 /// External code should use <see cref="IWorkDistributor"/> instead.
 /// </summary>
-internal interface IJobDispatcher
+public interface IJobDispatcher
 {
     /// <summary>
     /// Attempts to dispatch an issue to an available agent.

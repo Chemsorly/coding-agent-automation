@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// 
 /// Non-fatal on all failures — the step always returns <see cref="StepResult.Continue"/>.
 /// </summary>
-internal sealed class PostReviewFindingsStep : IPipelineStep
+public sealed class PostReviewFindingsStep : IPipelineStep
 {
     public string StepName => "PostReviewFindings";
 

@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// (quality gates) before code generation begins. Agent environment failure is fatal; workspace
 /// failure is non-fatal.
 /// </summary>
-internal sealed class VerifyBaselineStep : IPipelineStep
+public sealed class VerifyBaselineStep : IPipelineStep
 {
     public string StepName => "VerifyBaseline";
 

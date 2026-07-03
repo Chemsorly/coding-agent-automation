@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// The mutable design avoids reconstructing the entire context after each step completes.
 /// </para>
 /// </remarks>
-internal sealed class PipelineStepContext
+public sealed class PipelineStepContext
 {
     public required PipelineRun Run { get; init; }
     public required PipelineConfiguration Config { get; init; }

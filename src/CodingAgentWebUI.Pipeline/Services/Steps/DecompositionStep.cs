@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// produce sub-issue JSON files at <c>.agent/sub-issues/</c>, and validates that the
 /// plan comment exists in the epic's comment thread.
 /// </summary>
-internal sealed class DecompositionStep : IPipelineStep
+public sealed class DecompositionStep : IPipelineStep
 {
     public string StepName => "Decomposition";
 

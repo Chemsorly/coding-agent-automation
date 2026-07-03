@@ -651,20 +651,20 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// Notifies subscribers that chat response lines were received for a session.
     /// Delegates to lifecycle service.
     /// </summary>
-    internal void NotifyChatResponse(string sessionId, IReadOnlyList<string> lines)
+    public void NotifyChatResponse(string sessionId, IReadOnlyList<string> lines)
         => _lifecycle.NotifyChatResponse(sessionId, lines);
 
     /// <summary>
     /// Notifies subscribers that a chat session has completed.
     /// Delegates to lifecycle service.
     /// </summary>
-    internal void NotifyChatCompleted(string sessionId, int exitCode, string? error)
+    public void NotifyChatCompleted(string sessionId, int exitCode, string? error)
         => _lifecycle.NotifyChatCompleted(sessionId, exitCode, error);
 
     /// <summary>
     /// Notifies subscribers of a state change. Delegates to lifecycle service.
     /// Called by AgentHub for agent-dispatched run state updates.
     /// </summary>
-    internal void NotifyChange() => _lifecycle.NotifyChange();
+    public void NotifyChange() => _lifecycle.NotifyChange();
 
 }

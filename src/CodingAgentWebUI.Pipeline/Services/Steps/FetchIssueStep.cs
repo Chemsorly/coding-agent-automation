@@ -6,7 +6,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// Fetches the issue from the provider, validates it, parses the description,
 /// and fetches issue comments. Skipped on the agent side where issue data is pre-populated.
 /// </summary>
-internal sealed class FetchIssueStep : IPipelineStep
+public sealed class FetchIssueStep : IPipelineStep
 {
     public string StepName => "FetchIssue";
 

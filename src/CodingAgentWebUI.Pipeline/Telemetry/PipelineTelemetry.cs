@@ -117,7 +117,7 @@ public static class PipelineTelemetry
         public const string SkippedFilteredByLabel = "skipped_filtered_by_label";
     }
 
-    internal static class AgentRejectionReasons
+    public static class AgentRejectionReasons
     {
         public const string Busy = "busy";
         public const string ShuttingDown = "shutting_down";

@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// for agent deduplication. Uses <see cref="IOpenIssueContextWriter"/> (which proxies
 /// through <see cref="IAgentIssueOperations"/> via SignalR) — not IIssueProvider directly.
 /// </summary>
-internal sealed class WriteOpenIssueContextStep : IPipelineStep
+public sealed class WriteOpenIssueContextStep : IPipelineStep
 {
     public string StepName => "WriteOpenIssueContext";
 

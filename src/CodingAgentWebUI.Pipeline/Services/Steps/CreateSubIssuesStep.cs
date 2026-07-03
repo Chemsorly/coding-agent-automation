@@ -14,7 +14,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// a proposal specifies a <c>TargetRepository</c>, the issue is routed to that template's
 /// issue provider instead of the dispatching template's default provider.
 /// </summary>
-internal sealed class CreateSubIssuesStep : IPipelineStep
+public sealed class CreateSubIssuesStep : IPipelineStep
 {
     public string StepName => "CreateSubIssues";
 

@@ -4,7 +4,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 /// Represents a discrete step in the pipeline execution flow.
 /// Each step is independently testable and composable.
 /// </summary>
-internal interface IPipelineStep
+public interface IPipelineStep
 {
     /// <summary>
     /// A stable identifier for this step, used as a metric tag value.
@@ -23,7 +23,7 @@ internal interface IPipelineStep
 /// <summary>
 /// Result of a pipeline step execution.
 /// </summary>
-internal enum StepResult
+public enum StepResult
 {
     /// <summary>Proceed to the next step.</summary>
     Continue,

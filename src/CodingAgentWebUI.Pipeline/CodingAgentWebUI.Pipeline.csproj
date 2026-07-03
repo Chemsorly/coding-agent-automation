@@ -11,15 +11,12 @@
     <NoWarn>$(NoWarn);MsgPack017;CS0436</NoWarn>
   </PropertyGroup>
 
+  <!-- TODO: Issue #987 targeted ≤3 InternalsVisibleTo entries, but that count assumed only 1 test project existed.
+       All 6 production assembly entries have been removed. The remaining entries are DynamicProxy (Moq) + test projects,
+       which the issue explicitly allows: "Test project entries are acceptable and should remain." -->
   <ItemGroup>
     <InternalsVisibleTo Include="DynamicProxyGenAssembly2" />
-    <InternalsVisibleTo Include="CodingAgentWebUI" />
-    <InternalsVisibleTo Include="CodingAgentWebUI.Agent" />
-    <InternalsVisibleTo Include="CodingAgentWebUI.Agent.KiroCli" />
-    <InternalsVisibleTo Include="CodingAgentWebUI.Agent.OpenCode" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Agent.UnitTests" />
-    <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure" />
-    <InternalsVisibleTo Include="CodingAgentWebUI.Orchestration" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Pipeline.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.Infrastructure.UnitTests" />
     <InternalsVisibleTo Include="CodingAgentWebUI.E2ETests" />
