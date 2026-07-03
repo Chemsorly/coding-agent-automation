@@ -186,6 +186,32 @@ public class AgentCodingPageComponentTests : BunitContext
     }
 
     [Fact]
+    public void AgentCoding_WhenNoTemplates_ShowsExplanatoryDescription()
+    {
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration
+            {
+                WorkspaceBaseDirectory = Path.GetTempPath(),
+            });
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>());
+
+        var component = Render<AgentCoding>();
+
+        // TODO: Consider asserting on a longer substring or combining with CSS class check to detect truncated/garbled messages
+        Assert.Contains("Templates define how the pipeline processes issues", component.Markup);
+    }
+
+    [Fact]
+    public void AgentCoding_WhenTemplatesExist_HidesExplanatoryDescription()
+    {
+        // TODO: Explicitly set up non-empty template list in this test body for clarity, rather than relying on default mock setup from constructor
+        var component = Render<AgentCoding>();
+
+        Assert.DoesNotContain("Templates define how the pipeline processes issues", component.Markup);
+    }
+
+    [Fact]
     public void AgentCoding_WhenNoTemplates_StartLoopDisabled()
     {
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))

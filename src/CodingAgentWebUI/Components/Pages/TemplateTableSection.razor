@@ -6,6 +6,7 @@
     <h2>Pipeline Job Templates</h2>
     @if (Templates.Count == 0)
     {
+        <p class="section-description">Templates define how the pipeline processes issues — which providers to use, quality gates to apply, and dispatch rules.</p>
         <div class="monitoring-empty">No pipeline job templates configured. Add at least one template to enable the multi-repo loop.</div>
     }
     else
