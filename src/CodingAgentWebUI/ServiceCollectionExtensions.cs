@@ -138,6 +138,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IProviderConfigStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<IPipelineConfigStore>(),
             Log.Logger));
 
         services.AddSingleton<IDependencyChecker>(sp => new DependencyChecker(Log.Logger));

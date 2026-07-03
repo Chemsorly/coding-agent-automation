@@ -55,6 +55,7 @@ public static class TestPipelineConfig
         ChatHistoryCapacity = 200,
         QualityGateHistoryCapacity = 50,
         RetryErrorsCapacity = 100,
+        OrphanedLabelSweepIntervalMinutes = 30,
     };
 
     /// <summary>
@@ -100,6 +101,7 @@ public static class TestPipelineConfig
         ChatHistoryCapacity = 200,
         QualityGateHistoryCapacity = 50,
         RetryErrorsCapacity = 100,
+        OrphanedLabelSweepIntervalMinutes = 30,
     };
 
     /// <summary>

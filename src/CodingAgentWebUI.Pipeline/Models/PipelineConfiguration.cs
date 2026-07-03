@@ -617,6 +617,17 @@ public sealed record PipelineConfiguration
         init => Agent = Agent with { HeartbeatTimeoutSeconds = value };
     }
 
+    /// <summary>
+    /// Interval in minutes between orphaned label recovery sweeps.
+    /// Default: 30.
+    /// </summary>
+    [Key(55)]
+    public int OrphanedLabelSweepIntervalMinutes
+    {
+        get => Agent.OrphanedLabelSweepIntervalMinutes;
+        init => Agent = Agent with { OrphanedLabelSweepIntervalMinutes = value };
+    }
+
     // ── Multi-repo pipeline loop ────────────────────────────────────────
 
     // Key(45): retired (was PipelineJobTemplates) — do NOT reuse this Key index

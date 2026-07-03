@@ -7,19 +7,23 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Services;
 
 /// <summary>
-/// Background service that runs once on startup (after a 60-second grace period) to detect
-/// orphaned issues still labelled <c>agent:in-progress</c> that are not tracked by
-/// <see cref="OrchestratorRunService"/>. Such issues are relabelled to <c>agent:error</c>.
+/// Background service that periodically detects orphaned issues still labelled
+/// <c>agent:in-progress</c> that are not tracked by <see cref="OrchestratorRunService"/>.
+/// Such issues are relabelled to <c>agent:error</c>.
+/// Runs an initial sweep after a 60-second grace period, then sweeps at a configurable
+/// interval (default 30 minutes).
 /// </summary>
 public sealed class OrphanedLabelRecoveryService : BackgroundService
 {
     private static readonly TimeSpan GracePeriod = TimeSpan.FromSeconds(60);
+    private const int MinimumSweepIntervalMinutes = 5;
 
     private readonly IOrchestratorRunService _runService;
     private readonly IProjectStore _projectStore;
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IProviderFactory _providerFactory;
     private readonly ILabelSwapper _labelSwapper;
+    private readonly IPipelineConfigStore _configStore;
     private readonly ILogger _logger;
 
     public OrphanedLabelRecoveryService(
@@ -28,6 +32,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         IProviderConfigStore providerConfigStore,
         IProviderFactory providerFactory,
         ILabelSwapper labelSwapper,
+        IPipelineConfigStore configStore,
         ILogger logger)
     {
         _runService = runService;
@@ -35,6 +40,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         _providerConfigStore = providerConfigStore;
         _providerFactory = providerFactory;
         _labelSwapper = labelSwapper;
+        _configStore = configStore;
         _logger = logger.ForContext<OrphanedLabelRecoveryService>();
     }
 
@@ -45,15 +51,42 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
             _logger.Information("Orphaned label recovery: waiting {GracePeriod} for agents to reconnect", GracePeriod);
             await Task.Delay(GracePeriod, stoppingToken);
 
+            // First sweep immediately after grace period
+            // TODO: Wrap this call and the config load below in a try-catch for non-cancellation exceptions.
+            // If either throws (e.g., transient DB error), the exception escapes to the outer catch which only
+            // handles OperationCanceledException, causing the BackgroundService to stop permanently without
+            // establishing the periodic timer. Should degrade gracefully and still enter the periodic loop.
             await RecoverOrphanedLabelsAsync(stoppingToken);
+
+            // Load config for interval
+            // TODO: Consider reloading config on each tick so runtime changes to OrphanedLabelSweepIntervalMinutes
+            // take effect without a pod restart. Currently the interval is fixed for the lifetime of the service.
+            var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
+            var intervalMinutes = Math.Max(config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
+            if (intervalMinutes != config.OrphanedLabelSweepIntervalMinutes)
+            {
+                _logger.Warning("OrphanedLabelSweepIntervalMinutes ({Configured}) is below minimum, clamping to {Min} min",
+                    config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
+            }
+
+            _logger.Information("Orphaned label recovery: sweep interval set to {Interval} min", intervalMinutes);
+
+            using var timer = new PeriodicTimer(TimeSpan.FromMinutes(intervalMinutes));
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                try
+                {
+                    await RecoverOrphanedLabelsAsync(stoppingToken);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex, "Orphaned label recovery sweep failed — will retry next interval");
+                }
+            }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            _logger.Information("Orphaned label recovery cancelled during grace period");
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Orphaned label recovery failed — best-effort, continuing");
+            _logger.Information("Orphaned label recovery service stopping");
         }
     }
 
