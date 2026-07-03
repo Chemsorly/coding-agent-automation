@@ -4,6 +4,8 @@
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Services
+// TODO: Revert to IPipelineLoopService — concrete injection breaks the abstraction used everywhere else
+// in the codebase (AgentCoding.razor.cs, LoopStatePersistenceService, AgentCodingPageService).
 @inject PipelineLoopService LoopService
 @inject ConsolidationBadgeService BadgeService
 @inject IProjectStore ProjectStore
@@ -218,6 +220,10 @@
 
     private async void HandleProjectsChanged()
     {
+        // TODO: Broaden catch to Exception (with logging) — if LoadProjectIndicatorAsync throws
+        // something other than ObjectDisposedException (e.g., IOException), the exception is
+        // unobserved from async void and can crash the process. This is the root layout so
+        // resilience matters.
         try
         {
             await InvokeAsync(async () =>
