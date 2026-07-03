@@ -1,10 +1,12 @@
 using Bunit;
 using CodingAgentWebUI.Components.Layout;
+using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using Microsoft.JSInterop.Infrastructure;
@@ -37,6 +39,12 @@ public class MainLayoutComponentTests : BunitContext
         Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(pipelineService, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object));
         Services.AddSingleton(new ConsolidationBadgeService());
         Services.AddSingleton(_jsMock.Object);
+
+        // Health indicators component dependencies
+        var emptyConfig = new ConfigurationBuilder().Build();
+        var emptyServiceProvider = new ServiceCollection().BuildServiceProvider();
+        Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig));
+        Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
     }
 
     [Fact]

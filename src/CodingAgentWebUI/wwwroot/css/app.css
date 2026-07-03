@@ -83,6 +83,10 @@ select option { background: var(--surface); color: var(--text); }
 .sidebar.collapsed .sidebar-bottom-actions { flex-direction: column; }
 .sidebar.collapsed .sidebar-bottom-actions .sidebar-theme-toggle { border-right: none; border-bottom: 1px solid var(--border); }
 .sidebar.collapsed .sidebar-toggle { padding: 8px 12px; }
+.sidebar.collapsed .sidebar-health-label { display: none; }
+.sidebar.collapsed .sidebar-health-title { display: none; }
+.sidebar.collapsed .sidebar-health { padding: 8px 4px; }
+.sidebar.collapsed .sidebar-health-item { justify-content: center; }
 
 .sidebar-brand {
     padding: 16px 20px; font-size: 1.25rem; font-weight: 700; color: var(--accent-light);
@@ -125,6 +129,21 @@ select option { background: var(--surface); color: var(--text); }
     display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 899;
 }
 
+/* Sidebar Health Indicators */
+/* TODO: margin-top:auto here conflicts with .sidebar-bottom-actions margin-top:auto — both siblings compete for flex space, causing an unintended gap on taller viewports. Consider removing margin-top:auto from .sidebar-health and letting .sidebar-bottom-actions anchor both to the bottom. */
+.sidebar-health {
+    margin-top: auto; padding: 12px 16px 8px; border-top: 1px solid var(--border);
+    display: flex; flex-direction: column; gap: 6px; font-size: 0.8rem;
+}
+.sidebar-health-title {
+    font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase;
+    letter-spacing: 0.05em; margin-bottom: 2px;
+}
+.sidebar-health-item { display: flex; align-items: center; gap: 8px; color: var(--text-muted); cursor: default; }
+.sidebar-health-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot-inactive { background: var(--text-muted); opacity: 0.4; }
+.dot-warning { background: var(--warning, #f59e0b); box-shadow: 0 0 4px var(--warning, #f59e0b); }
+
 /* Responsive: auto-collapse nav sidebar at 900px */
 @media (max-width: 900px) {
     .sidebar { width: 48px; min-width: 48px; }
@@ -135,6 +154,10 @@ select option { background: var(--surface); color: var(--text); }
     .sidebar .sidebar-bottom-actions { flex-direction: column; }
     .sidebar .sidebar-bottom-actions .sidebar-theme-toggle { border-right: none; border-bottom: 1px solid var(--border); }
     .sidebar .sidebar-toggle { padding: 8px 12px; }
+    .sidebar .sidebar-health-label { display: none; }
+    .sidebar .sidebar-health-title { display: none; }
+    .sidebar .sidebar-health { padding: 8px 4px; }
+    .sidebar .sidebar-health-item { justify-content: center; }
 }
 
 /* Responsive: hamburger overlay at 600px */

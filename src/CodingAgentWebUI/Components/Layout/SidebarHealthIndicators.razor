@@ -1,0 +1,108 @@
+@implements IDisposable
+@using CodingAgentWebUI.Services
+@using CodingAgentWebUI.Orchestration.Registry
+@using CodingAgentWebUI.Pipeline.Models
+@inject InfrastructureHealthService InfraHealth
+@inject IAgentRegistryService Registry
+
+@if (_sectionVisible)
+{
+    <div class="sidebar-health">
+        <span class="sidebar-health-title">HEALTH</span>
+        @if (_dbStatus is not null)
+        {
+            <span class="sidebar-health-item" title="@DbTooltip">
+                <span class="infra-health-dot @DbDotClass"></span>
+                <span class="sidebar-health-label">Database</span>
+            </span>
+        }
+        <span class="sidebar-health-item" title="@RedisTooltip">
+            <span class="infra-health-dot @RedisDotClass"></span>
+            <span class="sidebar-health-label">Redis</span>
+        </span>
+        @if (_totalCount > 0 || _dbStatus is not null || _redisStatus is not null)
+        {
+            <span class="sidebar-health-item" title="@AgentTooltip">
+                <span class="infra-health-dot @AgentDotClass"></span>
+                <span class="sidebar-health-label">Agents: @_connectedCount/@_totalCount</span>
+            </span>
+        }
+    </div>
+}
+
+@code {
+    private System.Threading.Timer? _refreshTimer;
+    private bool _disposed;
+
+    private bool? _dbStatus;
+    private bool? _redisStatus;
+    private int _connectedCount;
+    private int _totalCount;
+
+    /// <summary>
+    /// Section is visible when at least one indicator has data (DB configured, Redis configured, or agents registered).
+    /// In full legacy mode (nothing configured, no agents), the section is hidden entirely.
+    /// </summary>
+    private bool _sectionVisible;
+
+    private string DbDotClass => _dbStatus == true ? "dot-healthy" : "dot-unhealthy";
+    private string DbTooltip => _dbStatus == true ? "Database: Connected" : "Database: Disconnected";
+
+    private string RedisDotClass => _redisStatus == true ? "dot-healthy" : _redisStatus == false ? "dot-unhealthy" : "dot-inactive";
+    private string RedisTooltip => _redisStatus == true ? "Redis: Connected" : _redisStatus == false ? "Redis: Disconnected" : "Redis: Not configured";
+
+    private string AgentDotClass => _totalCount == 0 ? "dot-inactive"
+        : _connectedCount == _totalCount ? "dot-healthy"
+        : _connectedCount == 0 ? "dot-unhealthy"
+        : "dot-warning";
+    private string AgentTooltip => $"Agents: {_connectedCount} connected, {_totalCount - _connectedCount} disconnected";
+
+    protected override void OnInitialized()
+    {
+        RefreshState();
+        _refreshTimer = new System.Threading.Timer(RefreshTick, null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+    }
+
+    private void RefreshState()
+    {
+        try
+        {
+            _dbStatus = InfraHealth.DatabaseConnected;
+            _redisStatus = InfraHealth.RedisConnected;
+
+            var agents = Registry.GetAllAgents();
+            _totalCount = agents.Count;
+            _connectedCount = agents.Count(a => a.Status != AgentStatus.Disconnected);
+
+            _sectionVisible = _dbStatus is not null || _redisStatus is not null || _totalCount > 0;
+        }
+        catch
+        {
+            // Graceful degradation — don't crash the sidebar render
+        }
+    }
+
+    private async void RefreshTick(object? state)
+    {
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(() =>
+            {
+                if (_disposed) return;
+                RefreshState();
+                StateHasChanged();
+            });
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    // TODO: Consider switching to IAsyncDisposable with await _refreshTimer.DisposeAsync() to guarantee
+    // no timer callbacks are in-flight after disposal completes, eliminating the race window where
+    // InvokeAsync could throw ObjectDisposedException between the _disposed check and the call.
+    public void Dispose()
+    {
+        _disposed = true;
+        _refreshTimer?.Dispose();
+    }
+}
