@@ -37,6 +37,7 @@ public class SettingsPageComponentTests : BunitContext
             new Mock<IAgentCommunication>().Object,
             Serilog.Log.Logger));
         Services.AddScoped<NotificationService>();
+        Services.AddSingleton(new ProjectChangeNotifier());
         Services.AddSingleton(new FeatureFlags { IsDatabaseMode = false });
     }
 

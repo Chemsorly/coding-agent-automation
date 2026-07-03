@@ -1,8 +1,10 @@
 using Bunit;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Services;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 
@@ -17,6 +19,8 @@ public class ProjectDetailSectionComponentTests : BunitContext
     {
         _mockStore = new Mock<IConfigurationStore>();
         SetupDefaults();
+
+        Services.AddSingleton(new ProjectChangeNotifier());
     }
 
     private void SetupDefaults()

@@ -93,6 +93,12 @@ select option { background: var(--surface); color: var(--text); }
     border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px;
     white-space: nowrap; overflow: hidden;
 }
+.sidebar-project-indicator {
+    display: flex; align-items: center; gap: 8px; padding: 4px 20px 8px;
+    font-size: 0.75rem; color: var(--text-muted); border-bottom: 1px solid var(--border);
+    white-space: nowrap; overflow: hidden;
+}
+.sidebar-project-indicator .sidebar-label { text-overflow: ellipsis; overflow: hidden; }
 .sidebar-link {
     display: flex; align-items: center; gap: 10px; padding: 12px 20px;
     color: var(--text-muted); text-decoration: none; font-size: 0.9rem; font-weight: 400;

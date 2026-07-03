@@ -322,6 +322,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IConsolidationDispatcher>()));
 
         services.AddSingleton<ConsolidationBadgeService>();
+        services.AddSingleton<ProjectChangeNotifier>();
 
         return services;
     }

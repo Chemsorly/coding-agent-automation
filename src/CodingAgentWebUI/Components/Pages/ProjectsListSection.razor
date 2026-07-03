@@ -1,5 +1,7 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Services
+@inject ProjectChangeNotifier ProjectNotifier
 
 <section class="settings-section">
     <h2>Projects</h2>
@@ -119,6 +121,7 @@
             var updated = project with { Enabled = enabled };
             await ConfigStore.SaveProjectAsync(updated, CancellationToken.None);
             await LoadProjectsAsync();
+            ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(($"Project {(enabled ? "enabled" : "disabled")}.", false));
         }
         catch (Exception ex)
@@ -148,6 +151,7 @@
             _confirmingDelete = null;
             await LoadProjectsAsync();
             await OnProjectsChanged.InvokeAsync();
+            ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Project deleted.", false));
         }
         catch (Exception ex)
