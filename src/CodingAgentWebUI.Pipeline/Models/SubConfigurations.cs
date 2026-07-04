@@ -125,6 +125,7 @@ public sealed record AgentConfiguration
     public bool BrainReadOnly { get; init; } = false;
     public int HeartbeatSweepIntervalSeconds { get; init; } = PipelineConstants.DefaultHeartbeatSweepIntervalSeconds;
     public int HeartbeatTimeoutSeconds { get; init; } = PipelineConstants.DefaultHeartbeatTimeoutSeconds;
+    public int OrphanedLabelSweepIntervalMinutes { get; init; } = PipelineConstants.DefaultOrphanedLabelSweepIntervalMinutes;
 }
 
 /// <summary>

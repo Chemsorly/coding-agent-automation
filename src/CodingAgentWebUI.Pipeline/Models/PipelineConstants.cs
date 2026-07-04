@@ -131,4 +131,7 @@ public static class PipelineConstants
 
     /// <summary>Default seconds without a heartbeat before an agent is considered stale.</summary>
     public const int DefaultHeartbeatTimeoutSeconds = 90;
+
+    /// <summary>Default interval in minutes between orphaned label recovery sweeps.</summary>
+    public const int DefaultOrphanedLabelSweepIntervalMinutes = 30;
 }
