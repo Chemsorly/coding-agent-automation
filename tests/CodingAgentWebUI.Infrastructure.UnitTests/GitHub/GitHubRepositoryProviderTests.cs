@@ -71,15 +71,17 @@ public class GitHubRepositoryProviderTests
             new("Modified", "src/Existing.cs")
         };
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#42",
-            testsPassed: 10,
-            testsFailed: 2,
-            testsSkipped: 1,
-            coveragePercent: 87.3,
-            fileChanges: fileChanges,
-            issueTitle: "Add new feature",
-            closeReference: "Closes #42");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 2,
+                TestsSkipped = 1,
+                CoveragePercent = 87.3,
+                FileChanges = fileChanges,
+                IssueTitle = "Add new feature",
+                CloseReference = "Closes #42",
+            });
 
         body.Should().Contain("## Issue Context");
         body.Should().Contain("Add new feature");
@@ -101,14 +103,16 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GeneratePrBody_WithNullCoverage_ShowsNotAvailable()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1",
-            testsPassed: 5,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: null,
-            fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Fix bug");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 5,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+            });
 
         body.Should().Contain("Not available");
     }
@@ -116,16 +120,18 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GeneratePrBody_DraftPr_IncludesWarning()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#10",
-            testsPassed: 3,
-            testsFailed: 5,
-            testsSkipped: 0,
-            coveragePercent: 40.0,
-            fileChanges: new[] { new FileChangeSummary("Modified", "src/Foo.cs") },
-            issueTitle: "Partial feature",
-            isDraft: true,
-            closeReference: "Closes #10");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#10",
+                TestsPassed = 3,
+                TestsFailed = 5,
+                TestsSkipped = 0,
+                CoveragePercent = 40.0,
+                FileChanges = new[] { new FileChangeSummary("Modified", "src/Foo.cs") },
+                IssueTitle = "Partial feature",
+                IsDraft = true,
+                CloseReference = "Closes #10",
+            });
 
         body.Should().Contain("draft PR");
         body.Should().Contain("incomplete");
@@ -141,10 +147,17 @@ public class GitHubRepositoryProviderTests
             new() { Id = "2", Body = "Also update the docs", Author = "bob", CreatedAt = new DateTime(2026, 4, 11, 9, 0, 0, DateTimeKind.Utc) },
         };
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#42", testsPassed: 5, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: 90.0, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Feature", isDraft: false, comments: comments);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 5,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = 90.0,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Feature",
+                Comments = comments,
+            });
 
         body.Should().Contain("## Input Comments");
         body.Should().Contain("@alice");
@@ -157,10 +170,16 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GeneratePrBody_WithNoComments_OmitsInputCommentsSection()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Bug",
+            });
 
         body.Should().NotContain("## Input Comments");
     }
@@ -174,10 +193,17 @@ public class GitHubRepositoryProviderTests
             new() { Id = "2", Body = "## 🤖 Agent Analysis\n\nPlanned approach...", Author = "bot", CreatedAt = DateTime.UtcNow },
         };
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "5", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Test", isDraft: false, comments: comments);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "5",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Test",
+                Comments = comments,
+            });
 
         body.Should().Contain("@alice");
         body.Should().Contain("Real feedback");
@@ -194,10 +220,17 @@ public class GitHubRepositoryProviderTests
             new() { Id = "1", Body = longBody, Author = "alice", CreatedAt = DateTime.UtcNow },
         };
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 0, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "T", isDraft: false, comments: comments);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 0,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "T",
+                Comments = comments,
+            });
 
         body.Should().Contain("…");
         body.Should().NotContain(longBody);
@@ -241,15 +274,17 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GeneratePrBody_WithModelName_IncludesModelInFooter()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#42",
-            testsPassed: 5,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: 90.0,
-            fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Test",
-            modelName: "claude-sonnet-4.6");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 5,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = 90.0,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Test",
+                ModelName = "claude-sonnet-4.6",
+            });
 
         body.Should().Contain("Model: claude-sonnet-4.6");
     }
@@ -257,14 +292,16 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GeneratePrBody_WithoutModelName_UsesDefaultFooter()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#42",
-            testsPassed: 5,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: 90.0,
-            fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Test");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 5,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = 90.0,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Test",
+            });
 
         body.Should().Contain("Automated implementation via pipeline");
         body.Should().NotContain("Model:");
@@ -275,11 +312,16 @@ public class GitHubRepositoryProviderTests
     [Fact]
     public void GeneratePrBody_CodeReviewDisabled_OmitsSection()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug",
-            codeReviewSummary: null);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Bug",
+            });
 
         body.Should().NotContain("AI Code Review Findings");
     }
@@ -292,11 +334,17 @@ public class GitHubRepositoryProviderTests
             CriticalCount: 0, WarningCount: 0, SuggestionCount: 0,
             AgentFindings: Array.Empty<AgentFindings>());
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug",
-            codeReviewSummary: summary);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Bug",
+                CodeReviewSummary = summary,
+            });
 
         body.Should().Contain("## AI Code Review Findings");
         body.Should().Contain("Code review: no findings");
@@ -310,11 +358,17 @@ public class GitHubRepositoryProviderTests
             CriticalCount: 1, WarningCount: 2, SuggestionCount: 3,
             AgentFindings: new[] { new AgentFindings("Correctness", "[1] [CRITICAL] Null ref") });
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug",
-            codeReviewSummary: summary);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Bug",
+                CodeReviewSummary = summary,
+            });
 
         body.Should().Contain("**Agents**: Correctness, DotNetSpecialist");
     }
@@ -327,11 +381,17 @@ public class GitHubRepositoryProviderTests
             CriticalCount: 2, WarningCount: 3, SuggestionCount: 1,
             AgentFindings: new[] { new AgentFindings("Correctness", "[1] [CRITICAL] Issue") });
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug",
-            codeReviewSummary: summary);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Bug",
+                CodeReviewSummary = summary,
+            });
 
         body.Should().Contain("| CRITICAL | 2 | Fixed |");
         body.Should().Contain("| WARNING | 3 | Reported (TODO comments added) |");
@@ -351,11 +411,17 @@ public class GitHubRepositoryProviderTests
                 new AgentFindings("DotNetSpecialist", "[1] [WARNING] Missing using statement")
             });
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug",
-            codeReviewSummary: summary);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Bug",
+                CodeReviewSummary = summary,
+            });
 
         body.Should().Contain("<details>");
         body.Should().Contain("<summary>Correctness</summary>");
@@ -374,11 +440,17 @@ public class GitHubRepositoryProviderTests
             CriticalCount: 1, WarningCount: 0, SuggestionCount: 0,
             AgentFindings: new[] { new AgentFindings("Correctness", longFindings) });
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug",
-            codeReviewSummary: summary);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Bug",
+                CodeReviewSummary = summary,
+            });
 
         body.Should().NotContain(longFindings);
         body.Should().Contain("…");
@@ -392,11 +464,17 @@ public class GitHubRepositoryProviderTests
             CriticalCount: 0, WarningCount: 2, SuggestionCount: 0,
             AgentFindings: new[] { new AgentFindings("Correctness", "[1] [WARNING] Issue") });
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug",
-            codeReviewSummary: summary);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Bug",
+                CodeReviewSummary = summary,
+            });
 
         body.Should().NotContain("CRITICAL");
         body.Should().Contain("| WARNING | 2 | Reported (TODO comments added) |");
@@ -411,11 +489,17 @@ public class GitHubRepositoryProviderTests
             CriticalCount: 1, WarningCount: 0, SuggestionCount: 0,
             AgentFindings: new[] { new AgentFindings("Review", "[1] [CRITICAL] Issue") });
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug",
-            codeReviewSummary: summary);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Bug",
+                CodeReviewSummary = summary,
+            });
 
         body.Should().NotContain("**Agents**");
     }
