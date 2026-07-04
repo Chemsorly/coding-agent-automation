@@ -644,7 +644,20 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 <!-- Decisions about UI/UX choices, user-facing behavior -->
 
-### AgentCoding component ↔ PageService boundary: render-lifecycle vs. async workflows
+### AgentCoding page is configure + dispatch only — no pipeline progress
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** The Agent Coding page is exclusively for configuring templates and dispatching work. It does NOT show pipeline progress, output terminals, or run summaries. That was wrongly implemented (likely a leftover from before the remote agent model existed) and is being removed (#1059). The page always shows the same view regardless of whether runs are active — template table, loop controls, manual dispatch. Pipeline observation belongs on Agent Monitoring.
+
+**Context:** `PipelineService.ActiveRun` is set by `PipelineRunLifecycleService` — there is no locally-executing pipeline in the intended architecture. Agents execute pipelines remotely via SignalR/K8s. The inline progress view on Agent Coding was dead code that never triggered correctly in production deployments.
+
+**Alternatives considered:** Keep the progress view for "quick glance" (wrong — monitoring page exists for this purpose).
+
+**Reassess when:** Never. Clear page responsibility boundary.
+
+---
 
 **Date:** 2026-07-04
 **Category:** ux
@@ -814,7 +827,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Date:** 2026-07-04
 **Category:** ux
 
-**Decision:** When a pipeline is active, showing BOTH the structured PipelineSidebar (phased steps: Preparation → Analysis → Code Generation) AND the raw OutputTerminal (agent logs) simultaneously is intentional. The sidebar answers "where am I in the pipeline?" — the terminal answers "what's happening right now?" They serve different cognitive needs for an operator watching a run. The pipeline is a structured process (known phases, known steps); the terminal provides raw transparency into the agent's execution.
+**Decision:** When a pipeline is active, showing BOTH the structured PipelineSidebar (phased steps: Preparation → Analysis → Code Generation) AND the raw OutputTerminal (agent logs) simultaneously is intentional. The sidebar answers "where am I in the pipeline?" — the terminal answers "what's happening right now?" They serve different cognitive needs for an operator watching a run. The pipeline is a structured process (known phases, known steps); the terminal provides raw transparency into the agent's execution. **This view belongs on Agent Monitoring, NOT Agent Coding.** The Agent Coding page wrongly contained an inline progress view triggered by `PipelineService.ActiveRun` — this was never intended and is being removed (#1059). Agent Coding is purely configure + dispatch.
 
 **Context:** No comparable system uses this exact dual-panel approach. GitHub Actions merges structure and output (expandable log groups). Argo uses DAG + per-step logs (similar concept, different layout). The side-by-side layout leverages the operator's screen width — desktop-only assumption is acceptable for this tool.
 
