@@ -305,24 +305,7 @@ _ = PipelineTelemetry.Meter.CreateObservableGauge("agent.connections.total",
 
 
 // Kubernetes-style health probes — anonymous, no auth required
-app.MapGet("/healthz", () =>
-{
-    // Pure liveness: proves the process is alive and can handle requests.
-    // Database health is checked in /readyz only (readiness concern, not liveness).
-    return Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow });
-})
-    .AllowAnonymous();
-app.MapGet("/readyz", (HttpContext httpContext) =>
-{
-    var readiness = httpContext.RequestServices.GetRequiredService<CodingAgentWebUI.Services.ReadinessState>();
-    var dbHealth = httpContext.RequestServices.GetService<CodingAgentWebUI.Services.DatabaseHealthState>();
-    if (!readiness.IsReady)
-        return Results.Json(new { status = "draining", timestamp = DateTime.UtcNow }, statusCode: 503);
-    if (dbHealth is not null && !dbHealth.IsDatabaseHealthy)
-        return Results.Json(new { status = "unhealthy", reason = "database_unreachable", timestamp = DateTime.UtcNow }, statusCode: 503);
-    return Results.Ok(new { status = "ready", timestamp = DateTime.UtcNow });
-})
-    .AllowAnonymous();
+app.MapHealthEndpoints();
 
 // Redirect root "/" to the main page (relative redirect — works behind any reverse proxy)
 app.MapGet("/", () => Results.Redirect("agent-coding"))

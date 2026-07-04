@@ -25,6 +25,18 @@ public sealed class AnalyzeCodeStep : IPipelineStep
         var shouldContinue = await context.AgentExecution.ExecuteAnalysisPhaseAsync(
             phaseContext, context.IssueComments ?? Array.Empty<IssueComment>(), ct);
 
+        // Capture session ID for trace correlation
+        try
+        {
+            var sessionId = await context.AgentProvider.GetLatestSessionIdAsync(context.Run.WorkspacePath!, ct);
+            if (sessionId is not null)
+                activity?.SetTag("pipeline.session_id", sessionId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Non-critical — don't fail the pipeline for telemetry
+        }
+
         activity?.SetTag("pipeline.analysis.continue", shouldContinue);
         return shouldContinue ? StepResult.Continue : StepResult.Stop;
     }

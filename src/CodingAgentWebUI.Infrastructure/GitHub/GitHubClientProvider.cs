@@ -32,6 +32,7 @@ internal class GitHubClientProvider
     private readonly string? _apiUrl;
     private readonly string? _staticToken;
     private readonly Func<CancellationToken, Task<string>>? _tokenProvider;
+    private readonly TimeProvider _timeProvider;
 
     // Token cache fields (only used with dynamic token provider)
     private string? _cachedToken;
@@ -47,25 +48,27 @@ internal class GitHubClientProvider
     /// <summary>
     /// Creates a provider with a dynamic token provider (for GitHub App auth via <see cref="Services.GitHubAppAuthService"/>).
     /// </summary>
-    public GitHubClientProvider(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider)
+    public GitHubClientProvider(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(apiUrl);
         ArgumentNullException.ThrowIfNull(tokenProvider);
 
         _apiUrl = apiUrl;
         _tokenProvider = tokenProvider;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
     /// Creates a provider with a static token (backward compatible).
     /// </summary>
-    public GitHubClientProvider(string apiUrl, string token)
+    public GitHubClientProvider(string apiUrl, string token, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(apiUrl);
         ArgumentNullException.ThrowIfNull(token);
 
         _apiUrl = apiUrl;
         _staticToken = token;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _staticClient = new GitHubClient(AppProductHeader, new Uri(apiUrl))
         {
             Credentials = new Credentials(token)
@@ -76,12 +79,13 @@ internal class GitHubClientProvider
     /// Creates a provider with a pre-built client for testing.
     /// Optionally accepts a token for providers that need raw token access (e.g., LibGit2Sharp operations).
     /// </summary>
-    public GitHubClientProvider(IGitHubClient staticClient, string? token = null)
+    public GitHubClientProvider(IGitHubClient staticClient, string? token = null, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(staticClient);
 
         _staticClient = staticClient;
         _staticToken = token;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -134,7 +138,7 @@ internal class GitHubClientProvider
                 return _cachedToken;
 
             _cachedToken = await _tokenProvider!(ct);
-            _cachedTokenFetchedAt = DateTimeOffset.UtcNow;
+            _cachedTokenFetchedAt = _timeProvider.GetUtcNow();
             return _cachedToken;
         }
         finally
@@ -145,7 +149,7 @@ internal class GitHubClientProvider
 
     private bool IsTokenNearExpiry()
     {
-        var elapsed = DateTimeOffset.UtcNow - _cachedTokenFetchedAt;
+        var elapsed = _timeProvider.GetUtcNow() - _cachedTokenFetchedAt;
         return elapsed >= AssumedTokenLifetime - RefreshBuffer;
     }
 }

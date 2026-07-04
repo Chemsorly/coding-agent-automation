@@ -1,8 +1,10 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Prompts;
+using CodingAgentWebUI.Pipeline.Telemetry;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -94,6 +96,7 @@ public partial class AgentPhaseExecutor
 
                         var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, context.Issue, context.ParsedIssue, brainContextWrittenForAnalysis);
                         _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
+                        Activity.Current?.SetTag("pipeline.prompt_length_chars", analysisPrompt.Length);
 
                         var analysisResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
                             context.AgentProvider,
@@ -107,7 +110,7 @@ public partial class AgentPhaseExecutor
                             run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
                             line => context.Callbacks.EmitOutputLine(line));
 
-                        run.AccumulateTokenUsage(analysisResult);
+                        run.AccumulateTokenUsage(analysisResult, phase: "analysis");
 
                         _logger.Information("Pipeline {RunId} analysis agent completed with exit code {ExitCode}, output lines: {LineCount}",
                             run.RunId, analysisResult.ExitCode, analysisResult.OutputLines.Count);
@@ -234,6 +237,9 @@ public partial class AgentPhaseExecutor
             run.AnalysisRecommendation = ParseRecommendation(assessment?.Recommendation);
             run.AnalysisConcerns = assessment?.Concerns ?? Array.Empty<string>();
             run.AnalysisBlockingIssues = assessment?.BlockingIssues ?? Array.Empty<string>();
+
+            if (run.AnalysisRecommendation is not null)
+                PipelineTelemetry.RecordAnalysisGateOutcome(run.AnalysisRecommendation.Value, run);
 
             // isNotReady is checked first: non-empty blockingIssues forces not_ready regardless of recommendation
             var isNotReady = assessment != null && (

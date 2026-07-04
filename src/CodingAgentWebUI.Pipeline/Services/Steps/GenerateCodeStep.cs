@@ -50,6 +50,9 @@ public sealed class GenerateCodeStep : IPipelineStep
         var shouldContinue = await context.AgentExecution.ExecuteCodeGenerationAsync(
             phaseContext, ct, promptOverride: reworkPromptOverride);
 
+        if (context.Run.CodegenSessionId is not null)
+            activity?.SetTag("pipeline.session_id", context.Run.CodegenSessionId);
+
         return shouldContinue ? StepResult.Continue : StepResult.Stop;
     }
 }

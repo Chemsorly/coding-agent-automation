@@ -166,6 +166,9 @@ public static class PipelineTelemetry
         activity?.SetTag("pipeline.project_name", projectName ?? "unknown");
     }
 
+    public static readonly Counter<long> AnalysisGateOutcomes = Meter.CreateCounter<long>(
+        "pipeline.analysis.gate_outcome", "{outcome}", "Analysis gate decision outcomes");
+
     /// <summary>
     /// Builds a <see cref="TagList"/> containing run_type, project_id, and project_name tags.
     /// Use this when recording metrics that should include project context.
@@ -177,6 +180,40 @@ public static class PipelineTelemetry
             ProjectIdTag(projectId),
             ProjectNameTag(projectName)
         ]);
+
+    /// <summary>
+    /// Builds a <see cref="TagList"/> with an additional phase tag for per-phase attribution.
+    /// </summary>
+    public static TagList BuildTagsWithPhase(PipelineRunType runType, string? projectId, string? projectName, string phase) =>
+        new(
+        [
+            RunTypeTag(runType),
+            ProjectIdTag(projectId),
+            ProjectNameTag(projectName),
+            new KeyValuePair<string, object?>("phase", phase)
+        ]);
+
+    /// <summary>
+    /// Records an analysis gate outcome (ready/not_ready/wont_do) as a counter metric.
+    /// </summary>
+    public static void RecordAnalysisGateOutcome(AnalysisGateResult outcome, PipelineRun run)
+    {
+        var outcomeTag = outcome switch
+        {
+            AnalysisGateResult.Ready => "ready",
+            AnalysisGateResult.NotReady => "not_ready",
+            AnalysisGateResult.WontDo => "wont_do",
+            _ => "unknown"
+        };
+
+        AnalysisGateOutcomes.Add(1, new TagList
+        {
+            new("outcome", outcomeTag),
+            RunTypeTag(run.RunType),
+            ProjectIdTag(run.ProjectId),
+            ProjectNameTag(run.ProjectName)
+        });
+    }
 
     /// <summary>
     /// Records an error on the given <see cref="Activity"/>. For graceful cancellation

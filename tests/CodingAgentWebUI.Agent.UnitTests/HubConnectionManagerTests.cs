@@ -47,36 +47,20 @@ public class HubConnectionManagerTests : IAsyncDisposable
 
     private readonly List<HubConnectionManager> _managers = new();
 
-    [Fact]
-    public void Constructor_NullOrchestratorUrl_ThrowsArgumentNullException()
+    [Theory]
+    [InlineData(0, "orchestratorUrl")]
+    [InlineData(1, "agentId")]
+    [InlineData(2, "apiKey")]
+    [InlineData(3, "logger")]
+    public void Constructor_NullParameter_ThrowsArgumentNullException(int nullIndex, string expectedParamName)
     {
-        var act = () => new HubConnectionManager(null!, "agent-1", "api-key", _mockLogger.Object);
+        var args = new object?[] { "http://localhost", "agent-1", "api-key", _mockLogger.Object };
+        args[nullIndex] = null;
 
-        act.Should().Throw<ArgumentNullException>().WithParameterName("orchestratorUrl");
-    }
+        var act = () => new HubConnectionManager(
+            (string)args[0]!, (string)args[1]!, (string)args[2]!, (Serilog.ILogger)args[3]!);
 
-    [Fact]
-    public void Constructor_NullAgentId_ThrowsArgumentNullException()
-    {
-        var act = () => new HubConnectionManager("http://localhost", null!, "api-key", _mockLogger.Object);
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("agentId");
-    }
-
-    [Fact]
-    public void Constructor_NullApiKey_ThrowsArgumentNullException()
-    {
-        var act = () => new HubConnectionManager("http://localhost", "agent-1", null!, _mockLogger.Object);
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("apiKey");
-    }
-
-    [Fact]
-    public void Constructor_NullLogger_ThrowsArgumentNullException()
-    {
-        var act = () => new HubConnectionManager("http://localhost", "agent-1", "api-key", null!);
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
+        act.Should().Throw<ArgumentNullException>().WithParameterName(expectedParamName);
     }
 
     [Fact]

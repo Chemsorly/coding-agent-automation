@@ -155,7 +155,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
                             }
                             else
                             {
-                                var run = _runService.GetRun(orphanedJobId);
+                                // Legacy path: use RemoveRun as atomic claim (same pattern as Phase 1.6)
+                                var run = _runService.RemoveRun(orphanedJobId);
                                 if (run is not null)
                                 {
                                     run.FailureReason = "Agent did not resume orphaned job within grace period";
@@ -163,7 +164,6 @@ public sealed class HeartbeatMonitorService : BackgroundService
                                     run.CurrentStep = PipelineStep.Failed;
 
                                     _historyService.AddRunToHistory(run);
-                                    _runService.RemoveRun(orphanedJobId);
                                     _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
                                     await TrySwapLabelToErrorAsync(run, ct);
@@ -352,17 +352,16 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 }
                 else
                 {
-                    // Agent had an active job — mark the run as failed
-                    var run = _runService.GetRun(agent.ActiveJobId);
+                    // Legacy path: use RemoveRun as atomic claim to prevent duplicate processing
+                    var run = _runService.RemoveRun(agent.ActiveJobId);
                     if (run is not null)
                     {
                         run.FailureReason = "Agent disconnected";
                         run.MarkCompleted();
                         run.CurrentStep = PipelineStep.Failed;
 
-                        // Persist to history and remove from active runs
+                        // Persist to history
                         _historyService.AddRunToHistory(run);
-                        _runService.RemoveRun(agent.ActiveJobId);
 
                         // Mark issue as no longer processing in the dispatcher
                         _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);

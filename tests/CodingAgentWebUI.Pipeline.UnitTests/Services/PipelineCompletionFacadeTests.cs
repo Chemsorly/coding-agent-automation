@@ -50,21 +50,4 @@ public class PipelineCompletionFacadeTests
                 null!));
     }
 
-    [Fact]
-    // TODO: This test is tautological — it asserts auto-properties return constructor-assigned values,
-    // which is guaranteed by C# compiler behavior. Consider replacing with a behavioral test.
-    public void Properties_ExposeInjectedDependencies()
-    {
-        var prOrchestrator = new PullRequestOrchestrator(Mock.Of<Serilog.ILogger>());
-        var finalization = new PullRequestFinalizationService(Mock.Of<Serilog.ILogger>());
-        var feedback = new FeedbackService(Mock.Of<Serilog.ILogger>());
-        var history = Mock.Of<IPipelineRunHistoryService>();
-
-        var facade = new PipelineCompletionFacade(prOrchestrator, finalization, feedback, history);
-
-        Assert.Same(prOrchestrator, facade.PrOrchestrator);
-        Assert.Same(finalization, facade.Finalization);
-        Assert.Same(feedback, facade.FeedbackService);
-        Assert.Same(history, facade.HistoryService);
-    }
 }

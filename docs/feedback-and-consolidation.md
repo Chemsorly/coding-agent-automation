@@ -50,25 +50,33 @@ Configuration: `BrainConsolidationReviewEnabled` (default: `true`) controls whet
 
 ### Refactoring Detection (per template)
 
-Dispatches an agent to analyze the codebase holistically for architectural drift. Produces up to `MaxRefactoringProposals` (default: 3) GitHub issues with bounded refactoring proposals. Each issue includes:
+Dispatches agents to analyze the codebase holistically for architectural drift using a multi-phase, multi-agent pipeline. Produces up to `MaxRefactoringProposals` (default: 3) GitHub issues with bounded refactoring proposals. Each issue includes:
 
 - Summary of the problem
-- Affected files
-- Suggested approach
+- Affected files with evidence
+- Suggested approach with named refactoring technique
+- Estimated effort and risk level
+- Prerequisites (e.g., "add characterization tests before refactoring")
 - Labels: `agent:generated`
 
-The agent looks for: TODO comments, duplicated logic, naming inconsistencies, structural drift from incremental changes, and overly complex areas.
+**Execution flow (phased):**
 
-**Execution flow:**
 1. Clone code repo (+ brain repo for architectural context if configured)
-2. Run git hotspot analysis (frequently-changed files)
+2. Run git hotspot analysis (frequently-changed files within `HotspotAnalysisLookback` window, default 90 days)
 3. Query open `agent:generated` issues and recent open issues for deduplication context
-4. Query closed refactoring issues (last 90 days) for outcome feedback — helps the agent learn from implemented/rejected history
-5. Execute agent with refactoring detection prompt
-6. **Adversarial review** — evaluates proposals for non-existent file paths, unsupported claims, scope exceeding single-agent capacity (>30 files), and bundled concerns. If CRITICAL/WARNING found, refinement re-generates proposals.
-7. Create GitHub issues (capped at `MaxRefactoringProposals`)
+4. Query closed refactoring issues (within `RefactoringOutcomeLookback`, default 90 days) for outcome feedback — categorizes past proposals as implemented (`agent:done`) or rejected (`agent:wont-do`/`agent:cancelled`) so the agent learns from history
+5. **Phase 0: Context Extraction** — Agent extracts project conventions, layer rules, intentional patterns, and known debt into `.agent/refactoring-conventions.json`. This grounds subsequent phases and prevents flagging idiomatic patterns as smells.
+6. **Phase 1: Parallel Focused Detection** — Three sub-agents run concurrently:
+   - **Agent A (Structural Debt)** — Duplicated logic, structural drift, complexity, over-engineering
+   - **Agent B (Correctness & Hygiene)** — TODOs/FIXMEs, dead code, obvious bugs, stale documentation
+   - **Agent C (Design Consistency)** — Naming inconsistencies, primitive obsession
+7. **Phase 2: Aggregation** — Synthesizes findings from all three agents: deduplicates, filters against project conventions, ranks by hotspot frequency × evidence strength × scope feasibility, and produces final ranked proposals (capped at `MaxRefactoringProposals`)
+8. **Adversarial review** (if `RefactoringReviewEnabled`) — Evaluates proposals for non-existent file paths, unsupported claims, scope exceeding single-agent capacity (>30 files), and bundled concerns. If CRITICAL/WARNING found, refinement re-generates proposals.
+9. Create GitHub issues (capped at `MaxRefactoringProposals`)
 
-Configuration: `RefactoringReviewEnabled` (default: `true`) controls the adversarial review step. `MaxRefactoringProposals` (default: 3, per-project overridable) caps both the prompt instruction and issue creation count.
+**Partial failure handling:** If some Phase 1 agents fail but at least one succeeds, the pipeline continues with partial results. If ALL Phase 1 agents fail, the run fails.
+
+Configuration: `RefactoringReviewEnabled` (default: `true`) controls the adversarial review step. `MaxRefactoringProposals` (default: 3, per-project overridable) caps both the prompt instruction and issue creation count. `HotspotAnalysisLookback` (default: 90 days) controls the git history window for hotspot analysis. `RefactoringOutcomeLookback` (default: 90 days) controls the window for querying past proposal outcomes.
 
 ### Harness Suggestions (global)
 

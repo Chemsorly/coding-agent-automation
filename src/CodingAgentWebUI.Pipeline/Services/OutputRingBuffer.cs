@@ -11,7 +11,7 @@ public sealed class OutputRingBuffer
     private readonly string[] _buffer;
     private int _head;
     private int _count;
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     public OutputRingBuffer(int capacity = PipelineConstants.DefaultOutputBufferCapacity)
     {

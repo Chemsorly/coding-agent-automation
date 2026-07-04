@@ -86,7 +86,8 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
         Serilog.ILogger logger,
         CancellationToken ct,
         bool recordOutputToHistory = true,
-        string? resumeSessionId = null)
+        string? resumeSessionId = null,
+        string? phase = null)
     {
         try
         {
@@ -103,7 +104,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
                 run, config, description, callbacks.NotifyChange, logger, ct,
                 line => callbacks.EmitOutputLine(line));
 
-            run.AccumulateTokenUsage(agentResult);
+            run.AccumulateTokenUsage(agentResult, phase: phase);
 
             if (recordOutputToHistory)
             {

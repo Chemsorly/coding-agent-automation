@@ -71,8 +71,8 @@ stateDiagram-v2
     Failed --> [*]
     Cancelled --> [*]
 
-    note right of CloningRepository
-        Label swapped to agent in-progress
+    note right of Created
+        Label swapped to agent in-progress on job acceptance
     end note
     note right of ConfidenceGate
         blockingIssues non-empty forces not_ready
@@ -105,8 +105,8 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 
 | Step | What Happens |
 |------|-------------|
-| **Created** | Run initialized, providers resolved and validated |
-| **CloningRepository** | Repository cloned to a fresh workspace directory. Label swapped to `agent:in-progress` |
+| **Created** | Run initialized, providers resolved and validated. Label swapped to `agent:in-progress` when the agent accepts the job (before any pipeline steps execute) |
+| **CloningRepository** | Repository cloned to a fresh workspace directory |
 | **RunningEnvironmentSetup** | Executes provider-defined setup steps (e.g., package restore, auth configuration) with injected secrets. Non-fatal steps abort the run on non-zero exit |
 | **SyncingBrainRepoPreRun** | Brain repository synced into workspace (if configured). Non-fatal on failure |
 | **CreatingBranch** | Feature branch created from default branch (format: `feature/auto-{issueNumber}-{slug}-{runId}`) |
@@ -216,6 +216,43 @@ Any step can transition to `Failed` on error. The pipeline catches exceptions at
 - **Blacklisted files** — excluded from commits with a warning logged
 - **External CI timeout** — treated as gate failure, enters retry loop
 - **Cancellation** — `OperationCanceledException` caught at top level, label set to `agent:cancelled`
+
+## Orphaned Label Recovery
+
+The `OrphanedLabelRecoveryService` is a background service that detects issues stuck with the `agent:in-progress` label when no corresponding active run exists in the orchestrator. This can happen when:
+
+- The orchestrator crashes mid-run and restarts
+- A run is cleaned up from memory but the label swap to a terminal state fails
+- An agent disconnects and the run expires after `agentDisconnectGracePeriod` but label cleanup didn't complete
+
+### Behavior
+
+1. **Grace period** — On startup, waits 60 seconds before the first sweep to allow agents to reconnect after a pod restart
+2. **Initial sweep** — Runs immediately after the grace period
+3. **Periodic sweeps** — Repeats at the configured `orphanedLabelSweepIntervalMinutes` interval (default: 30 min, minimum: 5 min)
+
+### Sweep Logic
+
+Each sweep:
+1. Loads all pipeline job templates to identify issue provider configurations
+2. Deduplicates issue provider IDs across templates
+3. For each issue provider, queries for open issues with the `agent:in-progress` label
+4. Checks each issue against `OrchestratorRunService.IsIssueBeingProcessed()`
+5. If the issue is NOT tracked by any active run → swaps label to `agent:error`
+
+### Error Handling
+
+- Individual sweep failures are logged as warnings and retried on the next interval
+- Individual issue label-swap failures are logged and skipped (other issues continue processing)
+- Provider configuration lookup failures are logged and the provider is skipped
+
+### Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `orphanedLabelSweepIntervalMinutes` | 30 | Minutes between recovery sweeps (minimum: 5) |
+
+See [Configuration](configuration.md) for the full settings reference.
 
 ---
 

@@ -59,7 +59,15 @@ All metrics are emitted from the `CodingAgent.Pipeline` meter, defined in `Pipel
 
 ### Histogram Bucket Boundaries
 
-The `pipeline.jobs.duration` and other histogram metrics use the OpenTelemetry SDK's default bucket boundaries. No custom bucket views are configured.
+Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instrument creation time:
+
+| Metric | Boundaries (seconds) |
+|--------|---------------------|
+| `pipeline.jobs.duration` | 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
+| `pipeline.step.duration` | 5, 15, 30, 60, 120, 300, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200, 10800, 14400, 18000, 21600 |
+| `dispatch.queue.wait_time` | 5, 10, 30, 60, 120, 300, 600, 1200, 1800, 3600 |
+
+Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use the OpenTelemetry SDK's default bucket boundaries.
 
 ## Traces
 

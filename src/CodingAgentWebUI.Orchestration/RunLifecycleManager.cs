@@ -76,8 +76,15 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // 2. Transition WorkItem in DB (no-op in Legacy mode)
         await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct);
 
-        // 3. Persist to history
-        await _historyService.AddRunToHistoryAsync(run, ct);
+        // 3. Persist to history — wrapped in try/catch so downstream cleanup still runs
+        try
+        {
+            await _historyService.AddRunToHistoryAsync(run, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Error(ex, "FailRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
+        }
 
         // 4. Mark issue complete in dedup tracker
         _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
@@ -110,8 +117,15 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // 1. Transition WorkItem in DB
         await TransitionWorkItemAsync(runId, terminalStatus, ct);
 
-        // 2. Persist to history
-        await _historyService.AddRunToHistoryAsync(run, ct);
+        // 2. Persist to history — wrapped in try/catch so downstream cleanup still runs
+        try
+        {
+            await _historyService.AddRunToHistoryAsync(run, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Error(ex, "CompleteRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
+        }
 
         // 3. Mark issue complete in dedup tracker
         _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
@@ -142,8 +156,15 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // 2. Transition WorkItem in DB
         await TransitionWorkItemAsync(runId, WorkItemStatus.Cancelled, ct);
 
-        // 3. Persist to history
-        await _historyService.AddRunToHistoryAsync(run, ct);
+        // 3. Persist to history — wrapped in try/catch so downstream cleanup still runs
+        try
+        {
+            await _historyService.AddRunToHistoryAsync(run, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Error(ex, "CancelRunAsync: failed to persist run {RunId} to history (run data may be lost)", runId);
+        }
 
         // 4. Mark issue complete in dedup tracker
         _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);

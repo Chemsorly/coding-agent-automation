@@ -38,36 +38,16 @@ public class DependencyParserTests
 
     // ─── 2. Pattern recognition ─────────────────────────────────────────────────
 
-    [Fact]
-    public void Parse_BlockedByPattern_ReturnsIssueNumber()
+    [Theory]
+    [InlineData("Blocked by #123", 123)]
+    [InlineData("Depends on #456", 456)]
+    [InlineData("Requires #789", 789)]
+    [InlineData("After #42", 42)]
+    public void Parse_RecognizedPattern_ReturnsIssueNumber(string body, int expectedIssue)
     {
-        var result = DependencyParser.Parse("Blocked by #123");
+        var result = DependencyParser.Parse(body);
 
-        result.Should().BeEquivalentTo(new[] { 123 });
-    }
-
-    [Fact]
-    public void Parse_DependsOnPattern_ReturnsIssueNumber()
-    {
-        var result = DependencyParser.Parse("Depends on #456");
-
-        result.Should().BeEquivalentTo(new[] { 456 });
-    }
-
-    [Fact]
-    public void Parse_RequiresPattern_ReturnsIssueNumber()
-    {
-        var result = DependencyParser.Parse("Requires #789");
-
-        result.Should().BeEquivalentTo(new[] { 789 });
-    }
-
-    [Fact]
-    public void Parse_AfterPattern_ReturnsIssueNumber()
-    {
-        var result = DependencyParser.Parse("After #42");
-
-        result.Should().BeEquivalentTo(new[] { 42 });
+        result.Should().BeEquivalentTo(new[] { expectedIssue });
     }
 
     // ─── 3. Case-insensitive matching ───────────────────────────────────────────
@@ -168,31 +148,12 @@ public class DependencyParserTests
 
     // ─── 8. Word boundary — false positive prevention ───────────────────────────
 
-    [Fact]
-    public void Parse_HereafterPattern_DoesNotMatch()
+    [Theory]
+    [InlineData("I fixed this hereafter #123 was reported")]
+    [InlineData("The prerequires #456 step is done")]
+    [InlineData("thereafter #789 was completed")]
+    public void Parse_WordContainingKeyword_DoesNotMatch(string body)
     {
-        var body = "I fixed this hereafter #123 was reported";
-
-        var result = DependencyParser.Parse(body);
-
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void Parse_PrerequiresPattern_DoesNotMatch()
-    {
-        var body = "The prerequires #456 step is done";
-
-        var result = DependencyParser.Parse(body);
-
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void Parse_ThereafterPattern_DoesNotMatch()
-    {
-        var body = "thereafter #789 was completed";
-
         var result = DependencyParser.Parse(body);
 
         result.Should().BeEmpty();
@@ -200,24 +161,14 @@ public class DependencyParserTests
 
     // ─── 9. Patterns embedded in larger text ────────────────────────────────────
 
-    [Fact]
-    public void Parse_PatternInMiddleOfSentence_Matches()
+    [Theory]
+    [InlineData("This task is blocked by #15 and should wait.", 15)]
+    [InlineData("Blocked by #7\nSome other text", 7)]
+    public void Parse_PatternEmbeddedInText_Matches(string body, int expectedIssue)
     {
-        var body = "This task is blocked by #15 and should wait.";
-
         var result = DependencyParser.Parse(body);
 
-        result.Should().BeEquivalentTo(new[] { 15 });
-    }
-
-    [Fact]
-    public void Parse_PatternAtStartOfLine_Matches()
-    {
-        var body = "Blocked by #7\nSome other text";
-
-        var result = DependencyParser.Parse(body);
-
-        result.Should().BeEquivalentTo(new[] { 7 });
+        result.Should().BeEquivalentTo(new[] { expectedIssue });
     }
 
     // ─── 10. Malformed references ───────────────────────────────────────────────
@@ -244,23 +195,13 @@ public class DependencyParserTests
 
     // ─── 11. Whitespace flexibility ─────────────────────────────────────────────
 
-    [Fact]
-    public void Parse_MultipleSpacesBetweenKeywords_Matches()
+    [Theory]
+    [InlineData("Blocked  by  #100", 100)]
+    [InlineData("Depends\ton\t#200", 200)]
+    public void Parse_FlexibleWhitespace_Matches(string body, int expectedIssue)
     {
-        var body = "Blocked  by  #100";
-
         var result = DependencyParser.Parse(body);
 
-        result.Should().BeEquivalentTo(new[] { 100 });
-    }
-
-    [Fact]
-    public void Parse_TabBetweenKeywords_Matches()
-    {
-        var body = "Depends\ton\t#200";
-
-        var result = DependencyParser.Parse(body);
-
-        result.Should().BeEquivalentTo(new[] { 200 });
+        result.Should().BeEquivalentTo(new[] { expectedIssue });
     }
 }

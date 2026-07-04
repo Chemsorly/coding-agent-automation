@@ -117,7 +117,7 @@ public sealed class DecompositionStep : IPipelineStep
             return StepResult.Stop;
         }
 
-        run.AccumulateTokenUsage(agentResult);
+        run.AccumulateTokenUsage(agentResult, phase: "decomposition");
 
         if (!agentResult.Success)
         {

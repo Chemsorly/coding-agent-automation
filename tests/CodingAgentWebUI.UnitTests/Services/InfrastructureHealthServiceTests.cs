@@ -47,6 +47,18 @@ public class InfrastructureHealthServiceTests
     // Should document whether the service returns null or false in that scenario.
 
     [Fact]
+    public void DatabaseConnected_ReturnsNull_WhenDbModeActiveButHealthStateNotRegistered()
+    {
+        // dbModeActive=true, but DatabaseHealthState is NOT in DI.
+        // _dbHealth is null → null-propagation returns null (not false).
+        // This represents a DI misconfiguration where DB mode is enabled but the
+        // health monitoring background service hasn't registered DatabaseHealthState.
+        var service = CreateService(dbHealth: null, dbModeActive: true);
+
+        Assert.Null(service.DatabaseConnected);
+    }
+
+    [Fact]
     public void DatabaseConnected_ReturnsTrue_WhenDbHealthy()
     {
         var dbHealth = new DatabaseHealthState();
@@ -75,6 +87,18 @@ public class InfrastructureHealthServiceTests
 
     // TODO: Add test for when redisConfigured=true but IConnectionMultiplexer is not registered in DI.
     // Should document whether the service returns null or false in that scenario.
+
+    [Fact]
+    public void RedisConnected_ReturnsNull_WhenRedisConfiguredButMultiplexerNotRegistered()
+    {
+        // redisConfigured=true, but IConnectionMultiplexer is NOT in DI.
+        // _redis is null → null-propagation returns null (not false).
+        // This represents a startup race where Redis config exists but the
+        // ConnectionMultiplexer hasn't been created yet (e.g., connection failure).
+        var service = CreateService(redis: null, redisConfigured: true);
+
+        Assert.Null(service.RedisConnected);
+    }
 
     [Fact]
     public void RedisConnected_ReturnsTrue_WhenMultiplexerConnected()

@@ -22,6 +22,10 @@ services:
       - ./config/pipeline:/app/config/pipeline
     environment:
       - AGENT_API_KEY=${AGENT_API_KEY}
+      - LOG_LEVEL=${LOG_LEVEL:-Information}
+      - DB_LOG_LEVEL=${DB_LOG_LEVEL:-Warning}
+      - PIPELINE_LOOP_STARTUP_DELAY_SECONDS=${PIPELINE_LOOP_STARTUP_DELAY_SECONDS:-90}
+      - READINESS_DRAIN_DELAY_SECONDS=${READINESS_DRAIN_DELAY_SECONDS:-15}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
       - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
@@ -194,6 +198,7 @@ services:
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-opencode-python
+      - AGENT_PROVIDER_TYPE=OpenCode
       - AGENT_LABELS=opencode,python,python312
       - AGENT_API_KEY=${AGENT_API_KEY}
       - OPENCODE_CONFIG_CONTENT=${OPENCODE_CONFIG_CONTENT}
@@ -223,6 +228,7 @@ services:
     environment:
       - ORCHESTRATOR_URL=http://orchestrator:8080
       - AGENT_ID=agent-opencode-java
+      - AGENT_PROVIDER_TYPE=OpenCode
       - AGENT_LABELS=opencode,java,java21
       - AGENT_API_KEY=${AGENT_API_KEY}
       - OPENCODE_CONFIG_CONTENT=${OPENCODE_CONFIG_CONTENT}

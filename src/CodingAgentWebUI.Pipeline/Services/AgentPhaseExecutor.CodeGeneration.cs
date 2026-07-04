@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Prompts;
@@ -30,6 +31,7 @@ public partial class AgentPhaseExecutor
             var prompt = promptOverride
                 ?? PromptBuilder.BuildPrompt(config.ImplementationPrompt, context.Issue, context.ParsedIssue, brainWriteInstructions, brainContextWritten);
             _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
+            Activity.Current?.SetTag("pipeline.prompt_length_chars", prompt.Length);
 
             AgentResult agentResult;
             agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
@@ -44,7 +46,7 @@ public partial class AgentPhaseExecutor
                 run, config, "Code generation agent", context.Callbacks.NotifyChange, _logger, ct,
                 line => context.Callbacks.EmitOutputLine(line));
 
-            run.AccumulateTokenUsage(agentResult);
+            run.AccumulateTokenUsage(agentResult, phase: "codegen");
 
             var outputSummary = agentResult.OutputLines.Count > 0
                 ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))

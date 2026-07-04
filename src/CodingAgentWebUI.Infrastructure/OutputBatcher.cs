@@ -20,7 +20,7 @@ namespace CodingAgentWebUI.Infrastructure;
 /// </remarks>
 public sealed class OutputBatcher : IAsyncDisposable
 {
-    private readonly List<string> _buffer = new();
+    private readonly List<string> _buffer = [];
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly SemaphoreSlim _flushGate = new(1, 1);
     private readonly PeriodicTimer _timer;

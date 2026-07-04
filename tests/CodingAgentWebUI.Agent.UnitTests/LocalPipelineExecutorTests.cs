@@ -43,49 +43,36 @@ public class LocalPipelineExecutorTests : IDisposable
 
     // ── Constructor Null Guards ──────────────────────────────────────────
 
-    [Fact]
-    public void Constructor_NullOrchestrator_ThrowsArgumentNullException()
+    [Theory]
+    [MemberData(nameof(NullConstructorArgs))]
+    public void Constructor_NullParameter_ThrowsArgumentNullException(
+        IKiroCliOrchestrator? orchestrator,
+        IHttpClientFactory? httpClientFactory,
+        PipelineConfiguration? defaultPipelineConfig,
+        IQualityGateValidator? qualityGateValidator,
+        Serilog.ILogger? logger,
+        string expectedParamName)
     {
         var act = () => new LocalPipelineExecutor(
-            null!, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentIdentity("test-agent"));
+            orchestrator!, httpClientFactory!, defaultPipelineConfig!, qualityGateValidator!, logger!,
+            agentIdentity: new AgentIdentity("test-agent"));
 
-        act.Should().Throw<ArgumentNullException>().WithParameterName("orchestrator");
+        act.Should().Throw<ArgumentNullException>().WithParameterName(expectedParamName);
     }
 
-    [Fact]
-    public void Constructor_NullHttpClientFactory_ThrowsArgumentNullException()
+    public static IEnumerable<object?[]> NullConstructorArgs()
     {
-        var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, null!, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentIdentity("test-agent"));
+        var orch = new Mock<IKiroCliOrchestrator>().Object;
+        var http = new Mock<IHttpClientFactory>().Object;
+        var config = new PipelineConfiguration();
+        var qg = new Mock<IQualityGateValidator>().Object;
+        var log = new Mock<Serilog.ILogger>().Object;
 
-        act.Should().Throw<ArgumentNullException>().WithParameterName("httpClientFactory");
-    }
-
-    [Fact]
-    public void Constructor_NullDefaultPipelineConfig_ThrowsArgumentNullException()
-    {
-        var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, null!, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentIdentity("test-agent"));
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("defaultPipelineConfig");
-    }
-
-    [Fact]
-    public void Constructor_NullQualityGateValidator_ThrowsArgumentNullException()
-    {
-        var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, null!, _mockLogger.Object, agentIdentity: new AgentIdentity("test-agent"));
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("qualityGateValidator");
-    }
-
-    [Fact]
-    public void Constructor_NullLogger_ThrowsArgumentNullException()
-    {
-        var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, null!, agentIdentity: new AgentIdentity("test-agent"));
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
+        yield return new object?[] { null, http, config, qg, log, "orchestrator" };
+        yield return new object?[] { orch, null, config, qg, log, "httpClientFactory" };
+        yield return new object?[] { orch, http, null, qg, log, "defaultPipelineConfig" };
+        yield return new object?[] { orch, http, config, null, log, "qualityGateValidator" };
+        yield return new object?[] { orch, http, config, qg, null, "logger" };
     }
 
     [Fact]
@@ -1664,6 +1651,34 @@ public class LocalPipelineExecutorTests : IDisposable
         await Task.WhenAll(tasks);
 
         executionOrder.Should().BeInAscendingOrder();
+    }
+
+    [Fact]
+    public async Task SerializedSendAsync_ConcurrentCalls_ExecuteSequentially()
+    {
+        // Regression test for #791: verifies that the production SerializedSendAsync method
+        // guarantees sequential execution even when 10 callers race concurrently.
+        using var signalrLock = new SemaphoreSlim(1, 1);
+        var executionOrder = new List<int>();
+
+        // Fire 10 concurrent sends via the real production method
+        var tasks = Enumerable.Range(0, 10).Select(i =>
+            LocalPipelineExecutor.SerializedSendAsync(
+                signalrLock,
+                async () =>
+                {
+                    // Vary delays: later items are faster. If ordering breaks, we'd see them jump ahead.
+                    await Task.Delay(10 - i);
+                    lock (executionOrder) { executionOrder.Add(i); }
+                },
+                CancellationToken.None)).ToArray();
+
+        await Task.WhenAll(tasks);
+
+        // Items must appear in the order they acquired the semaphore (FIFO under no contention at start)
+        executionOrder.Should().HaveCount(10);
+        executionOrder.Should().BeInAscendingOrder(
+            "SerializedSendAsync must guarantee that concurrent calls execute sequentially in arrival order");
     }
 
     [Fact]

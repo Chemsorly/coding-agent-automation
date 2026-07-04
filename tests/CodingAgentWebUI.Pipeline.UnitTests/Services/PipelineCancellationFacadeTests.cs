@@ -31,17 +31,4 @@ public class PipelineCancellationFacadeTests
         Assert.Null(facade.AgentCancellation);
     }
 
-    [Fact]
-    // TODO: This test is tautological — it asserts auto-properties return constructor-assigned values,
-    // which is guaranteed by C# compiler behavior. Consider replacing with a behavioral test.
-    public void Properties_ExposeInjectedDependencies()
-    {
-        var dedupGuard = Mock.Of<IJobDeduplicationGuard>();
-        var agentCancellation = Mock.Of<IAgentCancellationSender>();
-
-        var facade = new PipelineCancellationFacade(dedupGuard, agentCancellation);
-
-        Assert.Same(dedupGuard, facade.DedupGuard);
-        Assert.Same(agentCancellation, facade.AgentCancellation);
-    }
 }

@@ -16,7 +16,7 @@ flowchart TD
     F --> C
 ```
 
-The migration is idempotent — running it multiple times produces the same result. Templates remain stored in `pipeline-config.json` (Phase 1) — projects only hold ownership IDs referencing them.
+The migration is idempotent — running it multiple times produces the same result. In DB mode, templates are stored in the PostgreSQL database; in legacy file-based mode, they were stored in `config/pipeline/` JSON files. Projects hold ownership IDs referencing templates.
 
 ## Pipeline Loop Integration
 
@@ -51,7 +51,7 @@ Pipeline runs carry project metadata for filtering:
 
 ```mermaid
 flowchart LR
-    Global[pipeline-config.json] --> Resolve[Settings Resolution]
-    Project[project.json overrides] --> Resolve
+    Global[Global Config DB/JSON] --> Resolve[Settings Resolution]
+    Project[Project overrides] --> Resolve
     Resolve --> Run[PipelineRun with merged settings]
 ```

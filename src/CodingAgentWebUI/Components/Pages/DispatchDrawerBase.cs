@@ -20,7 +20,7 @@ public abstract class DispatchDrawerBase<TItem> : ComponentBase
     [Parameter] public RenderFragment? HeaderPrefix { get; set; }
 
     protected string _filter = "";
-    protected List<TItem> FilteredItems = new();
+    protected List<TItem> FilteredItems = [];
     protected TItem? SelectedItem;
     protected int _highlightedIndex = -1;
     protected IReadOnlyList<TItem> Items { get; set; } = [];

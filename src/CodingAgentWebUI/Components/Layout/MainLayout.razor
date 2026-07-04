@@ -1,15 +1,9 @@
 @inherits LayoutComponentBase
 @implements IAsyncDisposable
 @using CodingAgentWebUI.Pipeline.Interfaces
-@using CodingAgentWebUI.Pipeline.Models
-@using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Services
-// TODO: Revert to IPipelineLoopService — concrete injection breaks the abstraction used everywhere else
-// in the codebase (AgentCoding.razor.cs, LoopStatePersistenceService, AgentCodingPageService).
-@inject PipelineLoopService LoopService
+@inject IPipelineLoopService LoopService
 @inject ConsolidationBadgeService BadgeService
-@inject IProjectStore ProjectStore
-@inject ProjectChangeNotifier ProjectNotifier
 @inject IJSRuntime JS
 
 <div class="app-layout">
@@ -25,13 +19,7 @@
             <span class="sidebar-icon">🤖</span>
             <span class="sidebar-label">Coding Agent</span>
         </div>
-        @if (_projectDisplayName is not null)
-        {
-            <div class="sidebar-project-indicator" title="@_projectDisplayName">
-                <span class="sidebar-icon">📁</span>
-                <span class="sidebar-label">@_projectDisplayName</span>
-            </div>
-        }
+
         <NavLink href="agent-chat" class="sidebar-link">
             <span class="sidebar-icon">💬</span>
             <span class="sidebar-label">Agent Chat</span>
@@ -93,7 +81,6 @@
     private bool _overlayOpen;
     private bool _jsReady;
     private string _theme = "dark";
-    private string? _projectDisplayName;
 
     public event Action? OnEscapePressed;
 
@@ -104,29 +91,6 @@
     {
         LoopService.OnChange += HandleLoopChanged;
         BadgeService.OnBadgeChanged += HandleBadgeChanged;
-        ProjectNotifier.OnChange += HandleProjectsChanged;
-    }
-
-    protected override async Task OnInitializedAsync()
-    {
-        await LoadProjectIndicatorAsync();
-    }
-
-    private async Task LoadProjectIndicatorAsync()
-    {
-        // TODO: Add try/catch around store access — if LoadProjectsAsync throws (e.g., file I/O error),
-        // default _projectDisplayName to null so the layout degrades gracefully instead of breaking.
-        // TODO: Use a component-scoped CancellationTokenSource instead of CancellationToken.None,
-        // cancelled in DisposeAsync, to avoid in-flight operations after component disposal.
-        var projects = await ProjectStore.LoadProjectsAsync(CancellationToken.None);
-        var userProjects = projects.Where(p => p.Id != WellKnownIds.DefaultProjectId && p.Enabled).ToList();
-
-        _projectDisplayName = userProjects.Count switch
-        {
-            0 => null,
-            1 => userProjects[0].Name,
-            _ => string.Join(" / ", userProjects.Select(p => p.Name))
-        };
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -219,28 +183,10 @@
         catch (ObjectDisposedException) { }
     }
 
-    private async void HandleProjectsChanged()
-    {
-        // TODO: Broaden catch to Exception (with logging) — if LoadProjectIndicatorAsync throws
-        // something other than ObjectDisposedException (e.g., IOException), the exception is
-        // unobserved from async void and can crash the process. This is the root layout so
-        // resilience matters.
-        try
-        {
-            await InvokeAsync(async () =>
-            {
-                await LoadProjectIndicatorAsync();
-                StateHasChanged();
-            });
-        }
-        catch (ObjectDisposedException) { }
-    }
-
     public async ValueTask DisposeAsync()
     {
         LoopService.OnChange -= HandleLoopChanged;
         BadgeService.OnBadgeChanged -= HandleBadgeChanged;
-        ProjectNotifier.OnChange -= HandleProjectsChanged;
         try { await JS.InvokeVoidAsync("unregisterGlobalKeyboardHandler"); }
         catch (JSDisconnectedException) { }
         catch (InvalidOperationException) { }

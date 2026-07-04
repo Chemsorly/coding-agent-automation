@@ -19,6 +19,9 @@ public sealed class ReviewCodeStep : IPipelineStep
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
         PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
 
+        if (context.Run.CodegenSessionId is not null)
+            activity?.SetTag("pipeline.codegen_session_id", context.Run.CodegenSessionId);
+
         IReadOnlyList<ReviewerConfiguration> resolvedReviewers;
         if (context.PreResolvedReviewerConfigs is not null)
         {
