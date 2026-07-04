@@ -113,7 +113,7 @@ else
     builder.Services.AddInfrastructureServicesWithoutConfigStore();
 }
 builder.Services.AddPipelineServices(Serilog.Log.Logger);
-builder.Services.AddPipelineCoreServices();
+builder.Services.AddPipelineCoreServices(isDatabaseMode: !string.IsNullOrEmpty(dbConnectionString));
 builder.Services.AddOrchestrationServices(pipelineConfig,
     string.IsNullOrEmpty(dbConnectionString) ? null : (builder.Configuration.GetValue<string>("WorkDistribution:Mode") ?? "SignalR"));
 builder.Services.AddConsolidationServices(pipelineConfig);
@@ -247,6 +247,18 @@ var app = builder.Build();
 
 // Database startup: connection retry + migration/verification (blocks until ready)
 await app.InitializeDatabaseAsync();
+
+// ── DI wiring assertion ─────────────────────────────────────────────────────
+// Fail fast if DB mode resolved the wrong IPipelineRunHistoryService implementation.
+// Guards against accidental re-introduction of competing registrations.
+if (!string.IsNullOrEmpty(dbConnectionString))
+{
+    var historyService = app.Services.GetRequiredService<IPipelineRunHistoryService>();
+    if (historyService is not PostgresPipelineRunHistoryService)
+        throw new InvalidOperationException(
+            $"DB mode requires PostgresPipelineRunHistoryService but resolved {historyService.GetType().Name}. " +
+            "Check DI registration order in Program.cs.");
+}
 
 // Register workitems_by_status observable gauge callback (DB-backed, cached).
 // Uses a periodic timer instead of synchronous DB query in the metrics collection thread.
