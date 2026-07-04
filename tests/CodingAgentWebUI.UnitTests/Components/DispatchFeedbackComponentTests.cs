@@ -101,7 +101,10 @@ public class DispatchFeedbackComponentTests : BunitContext
         _mockStore.Setup(s => s.SavePipelineConfigAsync(It.IsAny<PipelineConfiguration>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineProject>());
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", Enabled = true, TemplateIds = new[] { "t-1", "t-2" } }
+            });
         _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>
             {
