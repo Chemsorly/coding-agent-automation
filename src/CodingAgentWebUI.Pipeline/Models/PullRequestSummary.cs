@@ -4,7 +4,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// Lightweight PR metadata returned by ListOpenPullRequestsAsync.
 /// Mirrors IssueSummary conventions (Identifier-based, label-aware).
 /// </summary>
-public sealed class PullRequestSummary
+public sealed class PullRequestSummary : IHasCreatedAt
 {
     public required int Number { get; init; }
     public required string Identifier { get; init; }  // PR number as string

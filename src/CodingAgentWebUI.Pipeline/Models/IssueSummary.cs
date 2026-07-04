@@ -1,6 +1,6 @@
 namespace CodingAgentWebUI.Pipeline.Models;
 
-public sealed class IssueSummary
+public sealed class IssueSummary : IHasCreatedAt
 {
     public required string Identifier { get; init; }  // e.g., "123"
     public required string Title { get; init; }
