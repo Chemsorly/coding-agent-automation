@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -353,7 +354,7 @@ public partial class AgentPhaseExecutor
         string footerText,
         string marker)
     {
-        var sb = new System.Text.StringBuilder();
+        var sb = new StringBuilder();
         sb.AppendLine(header);
         sb.AppendLine();
         if (!string.IsNullOrWhiteSpace(reason))
