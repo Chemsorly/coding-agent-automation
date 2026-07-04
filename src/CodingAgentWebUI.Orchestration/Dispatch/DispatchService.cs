@@ -75,39 +75,59 @@ public sealed class DispatchService : BackgroundService
     {
         Log.Information("DispatchService started — waiting for leader election");
 
-        while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
+        while (!stoppingToken.IsCancellationRequested)
         {
-            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            // Wait for leadership
+            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            }
+
+            if (stoppingToken.IsCancellationRequested) break;
+
+            Log.Information("DispatchService: leader acquired, entering poll loop");
+
+            // Create linked token: cancels on EITHER host stop OR leadership loss
+            // TODO: Race condition — between IsLeader returning true and reading LeaderToken,
+            // leadership could be lost causing the linked CTS to start cancelled. Functionally safe
+            // (re-enters wait loop) but could cause tight spin on rapid leadership toggling.
+            // Consider adding a short delay or ct.IsCancellationRequested check before the inner loop.
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken, _leaderElection.LeaderToken);
+            var ct = linked.Token;
+
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await PollAndDispatchAsync(ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "DispatchService: unhandled error in poll cycle");
+                }
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+
+            if (!stoppingToken.IsCancellationRequested)
+            {
+                Log.Information("DispatchService: leadership lost, re-entering wait loop");
+            }
         }
 
-        Log.Information("DispatchService: leader acquired, entering poll loop");
-
-        while (!stoppingToken.IsCancellationRequested && _leaderElection.IsLeader)
-        {
-            try
-            {
-                await PollAndDispatchAsync(stoppingToken);
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "DispatchService: unhandled error in poll cycle");
-            }
-
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), stoppingToken);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-        }
-
-        Log.Information("DispatchService: exiting (lost leadership or stopping)");
+        Log.Information("DispatchService: exiting (stopping)");
     }
 
     private async Task PollAndDispatchAsync(CancellationToken ct)

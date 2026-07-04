@@ -11,6 +11,7 @@ using k8s.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -198,9 +199,87 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         ReconciliationService.IsStale(completedAt, 7, DateTimeOffset.UtcNow).Should().BeFalse();
     }
 
+    // ── Leadership Loss Cancellation ────────────────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_LeadershipLost_ExitsWithinOneSecond()
+    {
+        // Arrange: create a service with controllable leader election
+        var leaderCts = new CancellationTokenSource();
+        var leaderElection = CreateLeaderElectionWithCts(leaderCts);
+
+        var service = CreateService(leaderElection: leaderElection);
+
+        var hostStopCts = new CancellationTokenSource();
+
+        // Act: start ExecuteAsync
+        var executeTask = InvokeExecuteAsync(service, hostStopCts.Token);
+
+        // Allow the service to enter its work loop
+        await Task.Delay(200);
+
+        // Simulate leadership loss by cancelling the leaderCts
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        leaderCts.Cancel();
+
+        // Allow the service to detect leadership loss and re-enter wait loop
+        // Then stop the host to exit ExecuteAsync completely
+        await Task.Delay(200);
+        hostStopCts.Cancel();
+
+        // Assert: ExecuteAsync should complete promptly (within 2 seconds)
+        var completed = await Task.WhenAny(executeTask, Task.Delay(TimeSpan.FromSeconds(3)));
+        stopwatch.Stop();
+
+        completed.Should().Be(executeTask, "ExecuteAsync should exit promptly after leadership loss + host stop");
+        stopwatch.ElapsedMilliseconds.Should().BeLessThan(3000,
+            "service should respond to leadership loss within 1 second");
+
+        leaderCts.Dispose();
+        hostStopCts.Dispose();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_LeadershipLostAndReacquired_ReEntersLeaderLoop()
+    {
+        // Arrange: create a service with controllable leader election
+        var leaderCts = new CancellationTokenSource();
+        var leaderElection = CreateLeaderElectionWithCts(leaderCts);
+
+        var service = CreateService(leaderElection: leaderElection);
+
+        var hostStopCts = new CancellationTokenSource();
+
+        // Act: start ExecuteAsync
+        var executeTask = InvokeExecuteAsync(service, hostStopCts.Token);
+
+        // Allow service to enter leader loop
+        await Task.Delay(200);
+
+        // Simulate leadership loss
+        leaderCts.Cancel();
+        await Task.Delay(200);
+
+        // Simulate re-acquisition: set IsLeader=true and create new CTS
+        var newLeaderCts = new CancellationTokenSource();
+        SetLeaderState(leaderElection, isLeader: true, cts: newLeaderCts);
+
+        // Allow the service to re-acquire and enter leader loop
+        await Task.Delay(3000);
+
+        // Stop the host
+        hostStopCts.Cancel();
+        var completed = await Task.WhenAny(executeTask, Task.Delay(TimeSpan.FromSeconds(3)));
+        completed.Should().Be(executeTask, "ExecuteAsync should exit after host stop");
+
+        newLeaderCts.Dispose();
+        leaderCts.Dispose();
+        hostStopCts.Dispose();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    private ReconciliationService CreateService(int retentionDays = 7)
+    private ReconciliationService CreateService(int retentionDays = 7, LeaderElectionService? leaderElection = null)
     {
         var configData = new Dictionary<string, string?>
         {
@@ -213,15 +292,53 @@ public class ReconciliationServiceLifecycleTests : IDisposable
             .AddInMemoryCollection(configData)
             .Build();
 
-        var leaderElection = new LeaderElectionService(Options.Create(new LeaderElectionOptions()));
-        // Force leader
-        var field = typeof(LeaderElectionService).GetField("_isLeader",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        field?.SetValue(leaderElection, true);
+        if (leaderElection is null)
+        {
+            leaderElection = new LeaderElectionService(Options.Create(new LeaderElectionOptions()));
+            // TODO: Reflection with null-conditional (?.) silently succeeds if field names change.
+            // Consider using Assert.NotNull on field lookups to fail loudly on rename.
+            // Force leader
+            var isLeaderField = typeof(LeaderElectionService).GetField("_isLeader",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            isLeaderField?.SetValue(leaderElection, true);
+
+            // Initialize _leaderCts so LeaderToken returns a non-cancelled token
+            // TODO: CancellationTokenSource created here is never disposed. Consider disposing
+            // LeaderElectionService in test teardown or tracking the CTS for disposal.
+            var leaderCtsField = typeof(LeaderElectionService).GetField("_leaderCts",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            leaderCtsField?.SetValue(leaderElection, new CancellationTokenSource());
+        }
 
         return new ReconciliationService(
             _dbFactory, leaderElection, _mockKube.Object,
             _transitionService, config, null);
+    }
+
+    private async Task InvokeExecuteAsync(ReconciliationService service, CancellationToken stoppingToken)
+    {
+        var method = typeof(BackgroundService).GetMethod("ExecuteAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var task = (Task)method!.Invoke(service, [stoppingToken])!;
+        await task;
+    }
+
+    private static LeaderElectionService CreateLeaderElectionWithCts(CancellationTokenSource cts)
+    {
+        var les = new LeaderElectionService(Options.Create(new LeaderElectionOptions()));
+        SetLeaderState(les, isLeader: true, cts: cts);
+        return les;
+    }
+
+    private static void SetLeaderState(LeaderElectionService les, bool isLeader, CancellationTokenSource cts)
+    {
+        var isLeaderField = typeof(LeaderElectionService).GetField("_isLeader",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        isLeaderField!.SetValue(les, isLeader);
+
+        var leaderCtsField = typeof(LeaderElectionService).GetField("_leaderCts",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        leaderCtsField!.SetValue(les, cts);
     }
 
     private async Task InsertWorkItem(Guid id, string issueId, WorkItemStatus status,

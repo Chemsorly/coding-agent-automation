@@ -476,10 +476,20 @@ public class K8sLifecycleIntegrationTests : IDisposable
 
     private static LeaderElectionService CreateAlwaysLeaderElection()
     {
+        // TODO: Reflection with null-conditional (?.) silently succeeds if field names change.
+        // Consider using Assert.NotNull on field lookups to fail loudly on rename.
         var les = new LeaderElectionService(Options.Create(new LeaderElectionOptions()));
-        var field = typeof(LeaderElectionService).GetField("_isLeader",
+        var isLeaderField = typeof(LeaderElectionService).GetField("_isLeader",
             BindingFlags.NonPublic | BindingFlags.Instance);
-        field?.SetValue(les, true);
+        isLeaderField?.SetValue(les, true);
+
+        // Initialize _leaderCts so LeaderToken returns a non-cancelled token
+        // TODO: CancellationTokenSource created here is never disposed. Consider disposing
+        // LeaderElectionService in test teardown or tracking the CTS for disposal.
+        var leaderCtsField = typeof(LeaderElectionService).GetField("_leaderCts",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        leaderCtsField?.SetValue(les, new CancellationTokenSource());
+
         return les;
     }
 
