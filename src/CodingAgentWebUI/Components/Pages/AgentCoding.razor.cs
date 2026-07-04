@@ -349,11 +349,11 @@ public partial class AgentCoding : IDisposable
         await InvokeAsync(StateHasChanged);
     }
 
-    // TODO: Dispatching spinner regression — StateHasChanged() is called before the service sets IssueDrawerDispatching = true,
-    // so the user never sees the disabled/spinner state during dispatch. Need to either set the flag before calling
-    // the service method, or call StateHasChanged after the service sets the flag.
+    // NOTE: Setting the dispatching flag before calling the service ensures StateHasChanged
+    // renders the spinner/disabled state. The service also sets it (idempotent).
     private async Task DispatchFromDrawer(IssueSummary issue)
     {
+        PageService.IssueDrawerDispatching = true;
         StateHasChanged();
         try
         {
@@ -408,10 +408,11 @@ public partial class AgentCoding : IDisposable
         if (error != null) _errorMessage = error;
     }
 
-    // TODO: Dispatching spinner regression — StateHasChanged() is called before the service sets PrDrawerDispatching = true,
-    // so the user never sees the disabled/spinner state during dispatch. Same issue as DispatchFromDrawer.
+    // NOTE: Setting the dispatching flag before calling the service ensures StateHasChanged
+    // renders the spinner/disabled state. The service also sets it (idempotent).
     private async Task DispatchPrReviewFromDrawer(PullRequestSummary pr)
     {
+        PageService.PrDrawerDispatching = true;
         StateHasChanged();
         try
         {
@@ -467,10 +468,11 @@ public partial class AgentCoding : IDisposable
         if (error != null) _errorMessage = error;
     }
 
-    // TODO: Dispatching spinner regression — StateHasChanged() is called before the service sets EpicDrawerDispatching = true,
-    // so the user never sees the disabled/spinner state during dispatch. Same issue as DispatchFromDrawer.
+    // NOTE: Setting the dispatching flag before calling the service ensures StateHasChanged
+    // renders the spinner/disabled state. The service also sets it (idempotent).
     private async Task DispatchDecompositionFromDrawer(IssueSummary issue)
     {
+        PageService.EpicDrawerDispatching = true;
         StateHasChanged();
         try
         {
