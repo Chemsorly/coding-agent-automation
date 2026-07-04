@@ -92,28 +92,10 @@ public partial class TemplateTableSection
                 groups.Add(new ProjectTemplateGroup { Project = project, Templates = projectTemplates });
         }
 
-        var allProjectTemplateIds = Projects.SelectMany(p => p.TemplateIds).ToHashSet();
-        var orphaned = Templates.Where(t => !allProjectTemplateIds.Contains(t.Id)).ToList();
-        if (orphaned.Count > 0)
-        {
-            var defaultProject = Projects.FirstOrDefault(p => p.Id == WellKnownIds.DefaultProjectId);
-            if (defaultProject != null)
-            {
-                var defaultGroup = groups.FirstOrDefault(g => g.Project.Id == WellKnownIds.DefaultProjectId);
-                if (defaultGroup != null)
-                    defaultGroup.Templates.AddRange(orphaned);
-                else
-                    groups.Insert(0, new ProjectTemplateGroup { Project = defaultProject, Templates = orphaned });
-            }
-            else
-            {
-                groups.Add(new ProjectTemplateGroup
-                {
-                    Project = new PipelineProject { Id = "", Name = "Unassigned" },
-                    Templates = orphaned
-                });
-            }
-        }
+        // Note: orphaned templates (on disk but not in any TemplateIds) are now claimed
+        // by the Default project at startup via ClaimOrphanedTemplates(). If any still
+        // appear here, it means a template was added to disk while the app was running.
+        // They'll be picked up on next restart. No silent visual patching needed.
 
         return groups;
     }

@@ -5,10 +5,16 @@ Internal reference for the dependency tracking mechanism in the dispatch loop.
 ## Regex Pattern
 
 ```
-\b(?:blocked by|depends on|requires|after)\s+#(\d+)
+\b(?:blocked\s+by|depends\s+on|requires|after)\s+(?:#(\d+)|([A-Za-z][\w-]*))
 ```
 
-Case-insensitive, word-boundary matched before the keyword.
+Case-insensitive, word-boundary matched before the keyword. Supports two reference formats:
+- `#N` — numeric issue reference (captured in group 1)
+- Alphanumeric identifier starting with a letter (e.g., `PROJ-123`) (captured in group 2)
+
+Only numeric references (from either group) are used for dispatch blocking. Non-numeric identifiers are ignored.
+
+Self-references are excluded via the optional `selfIdentifier` parameter.
 
 ## Stateless Body-Parsed Check
 

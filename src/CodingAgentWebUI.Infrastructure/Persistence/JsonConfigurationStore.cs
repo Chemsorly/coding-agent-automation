@@ -32,6 +32,7 @@ public class JsonConfigurationStore : IConfigurationStore
         _baseDirectory = baseDirectory;
         CleanupOrphanedTempFiles();
         EnsureDefaultProjectExists();
+        ClaimOrphanedTemplates();
     }
 
     /// <summary>
@@ -100,6 +101,94 @@ public class JsonConfigurationStore : IConfigurationStore
         catch (IOException)
         {
             // Another process/thread created the file first — that's fine
+        }
+    }
+
+    /// <summary>
+    /// Finds template files on disk that are not referenced by any project's TemplateIds
+    /// and adds them to the Default project. This repairs inconsistencies caused by
+    /// templates created before the SaveTemplateAsync auto-linking logic existed.
+    /// Runs synchronously at startup (same pattern as EnsureDefaultProjectExists).
+    /// </summary>
+    private void ClaimOrphanedTemplates()
+    {
+        var projectsDir = Path.Combine(_baseDirectory, "projects");
+        if (!Directory.Exists(projectsDir))
+            return;
+
+        try
+        {
+            // Collect all project files and their TemplateIds
+            var projectFiles = Directory.GetFiles(projectsDir, "*.json");
+            var projects = new List<(string Path, PipelineProject Project)>();
+            var allReferencedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var file in projectFiles)
+            {
+                try
+                {
+                    var json = File.ReadAllText(file);
+                    var project = JsonSerializer.Deserialize<PipelineProject>(json, JsonOptions);
+                    if (project is not null)
+                    {
+                        projects.Add((file, project));
+                        foreach (var id in project.TemplateIds)
+                            allReferencedIds.Add(id);
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or JsonException)
+                {
+                    _logger.Warning("Failed to read project file during orphan check: {Path}: {Error}", file, ex.Message);
+                }
+            }
+
+            // Scan all template directories for template IDs on disk
+            var allTemplateIdsOnDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var projDir in Directory.GetDirectories(projectsDir))
+            {
+                var templatesDir = Path.Combine(projDir, "templates");
+                if (!Directory.Exists(templatesDir))
+                    continue;
+                foreach (var templateFile in Directory.GetFiles(templatesDir, "*.json"))
+                {
+                    var templateId = Path.GetFileNameWithoutExtension(templateFile);
+                    if (IsValidGuidFormat(templateId))
+                        allTemplateIdsOnDisk.Add(templateId);
+                }
+            }
+
+            // Find orphans: on disk but not in any project's TemplateIds
+            var orphanedIds = allTemplateIdsOnDisk
+                .Where(id => !allReferencedIds.Contains(id))
+                .ToList();
+
+            if (orphanedIds.Count == 0)
+                return;
+
+            // Find the Default project and add orphans to its TemplateIds
+            var defaultEntry = projects.FirstOrDefault(p => p.Project.Id == WellKnownIds.DefaultProjectId);
+            if (defaultEntry.Project is null)
+                return;
+
+            var updatedIds = defaultEntry.Project.TemplateIds.ToList();
+            updatedIds.AddRange(orphanedIds);
+            var updated = defaultEntry.Project with { TemplateIds = updatedIds };
+            var updatedJson = JsonSerializer.Serialize(updated, JsonOptions);
+
+            // Atomic write: write to temp file then rename, consistent with the store's
+            // write discipline. Prevents partial/corrupt files if process is killed mid-write.
+            var tempPath = defaultEntry.Path + ".tmp";
+            File.WriteAllText(tempPath, updatedJson);
+            File.Move(tempPath, defaultEntry.Path, overwrite: true);
+
+            _logger.Information(
+                "Claimed {Count} orphaned template(s) into Default project: [{Ids}]",
+                orphanedIds.Count,
+                string.Join(", ", orphanedIds.Select(id => id[..8])));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            _logger.Warning("Failed to claim orphaned templates: {Error}", ex.Message);
         }
     }
 

@@ -24,6 +24,7 @@ Projects can override most general settings on a per-project basis using a nulla
 | `acceptanceCriteriaEnabled` | true | Enable acceptance criteria compliance check (runs in parallel with code reviewers, produces structured JSON report) |
 | `blacklistedPaths` | .agent, .brain | Paths excluded from agent commits |
 
+| `orphanedLabelSweepIntervalMinutes` | 30 | Minutes between orphaned label recovery sweeps (periodic background check for issues stuck with `agent:in-progress` label when no active run exists) |
 | `failedWorkspaceRetentionDays` | 7 | Days to keep failed workspaces before cleanup |
 | `stallWarningInterval` | 00:02:00 | Time without agent output before a stall warning is logged |
 | `stallPollInterval` | 00:00:30 | How often to check for agent silence |

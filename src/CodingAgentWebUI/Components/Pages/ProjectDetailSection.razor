@@ -226,6 +226,13 @@
                             <span class="template-order">@(index + 1).</span>
                             <span class="template-name">@displayName</span>
                             <div class="template-actions">
+                                <select class="template-move-select" @onchange="e => MoveTemplateToProject(templateId, e.Value?.ToString())">
+                                    <option value="">Move to…</option>
+                                    @foreach (var proj in _allProjects.Where(p => p.Id != _project.Id))
+                                    {
+                                        <option value="@proj.Id">@proj.Name</option>
+                                    }
+                                </select>
                                 <button class="btn-icon" disabled="@(index == 0)" @onclick="() => MoveTemplateUp(index)" title="Move up">▲</button>
                                 <button class="btn-icon" disabled="@(index == _project.TemplateIds.Count - 1)" @onclick="() => MoveTemplateDown(index)" title="Move down">▼</button>
                                 <button class="btn-icon btn-danger" @onclick="() => RemoveTemplate(index)" title="Remove">✕</button>
@@ -490,6 +497,24 @@
         _project = _project with { TemplateIds = newIds };
 
         await SaveProjectAsync();
+    }
+
+    private async Task MoveTemplateToProject(string templateId, string? targetProjectId)
+    {
+        if (string.IsNullOrEmpty(targetProjectId)) return;
+
+        try
+        {
+            await ConfigStore.MoveTemplateAsync(_project.Id, targetProjectId, templateId, CancellationToken.None);
+            await LoadDataAsync();
+            await OnProjectSaved.InvokeAsync();
+            ProjectNotifier.NotifyChanged();
+            await OnShowStatus.InvokeAsync(("Template moved to another project.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to move template: {ex.Message}", true));
+        }
     }
 
     private async Task SaveOverviewAsync()
