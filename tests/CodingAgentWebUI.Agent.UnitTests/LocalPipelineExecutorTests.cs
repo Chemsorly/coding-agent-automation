@@ -1667,6 +1667,34 @@ public class LocalPipelineExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task SerializedSendAsync_ConcurrentCalls_ExecuteSequentially()
+    {
+        // Regression test for #791: verifies that the production SerializedSendAsync method
+        // guarantees sequential execution even when 10 callers race concurrently.
+        using var signalrLock = new SemaphoreSlim(1, 1);
+        var executionOrder = new List<int>();
+
+        // Fire 10 concurrent sends via the real production method
+        var tasks = Enumerable.Range(0, 10).Select(i =>
+            LocalPipelineExecutor.SerializedSendAsync(
+                signalrLock,
+                async () =>
+                {
+                    // Vary delays: later items are faster. If ordering breaks, we'd see them jump ahead.
+                    await Task.Delay(10 - i);
+                    lock (executionOrder) { executionOrder.Add(i); }
+                },
+                CancellationToken.None)).ToArray();
+
+        await Task.WhenAll(tasks);
+
+        // Items must appear in the order they acquired the semaphore (FIFO under no contention at start)
+        executionOrder.Should().HaveCount(10);
+        executionOrder.Should().BeInAscendingOrder(
+            "SerializedSendAsync must guarantee that concurrent calls execute sequentially in arrival order");
+    }
+
+    [Fact]
     public async Task SerializedSendAsync_WhenCancelled_DoesNotThrow()
     {
         using var signalrLock = new SemaphoreSlim(1, 1);

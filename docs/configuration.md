@@ -1,6 +1,6 @@
 # Pipeline Configuration
 
-Pipeline behavior is configured in `config/pipeline/pipeline-config.json`.
+Pipeline behavior is configured via the web UI (Settings page) or the database. In legacy file-based mode, configuration was stored in `config/pipeline/` JSON files; in DB mode, all configuration is persisted to PostgreSQL.
 
 See also: [Pipeline Orchestration](pipeline-orchestration.md) for how these settings affect the state machine, [Label Routing](label-routing.md) for per-stack quality gate and reviewer configuration, and [Projects](projects.md) for per-project settings inheritance.
 
@@ -16,7 +16,6 @@ Projects can override most general settings on a per-project basis using a nulla
 | `maxAnalysisRetries` | 2 | Max retry attempts for the analysis phase (assessment file missing, malformed JSON, or analysis too short) |
 | `issuePageSize` | 25 | Number of issues fetched per page when polling the issue provider |
 | `agentTimeout` | 00:30:00 | Maximum time for a single agent invocation |
-| `codeReview.maxIterations` | 2 | Max review → fix cycles |
 | `externalCiTimeout` | 00:15:00 | Max wait time for external CI completion (CI runs automatically when a Pipeline Provider is configured on the job template) |
 | `externalCiPollInterval` | 00:00:30 | How often to poll external CI for status updates |
 | `ciNotStartedTimeout` | 00:05:00 | How long to wait for CI runs to appear before concluding CI never started. Triggers re-push instead of burning the full `externalCiTimeout` |
@@ -34,6 +33,37 @@ Projects can override most general settings on a per-project basis using a nulla
 | `agentDisconnectGracePeriod` | 00:05:00 | How long to wait for a disconnected agent to reconnect before failing the run |
 | `agentBusyProgressTimeout` | 01:00:00 | How long a busy agent can go without reporting progress before being marked stuck |
 | `maxInfrastructureRetries` | 5 | Max retries for transient infrastructure failures (range: 0–10). These retries don't consume the agent's quality gate retry budget. |
+| `heartbeatSweepIntervalSeconds` | 60 | Seconds between heartbeat monitor sweeps |
+| `heartbeatTimeoutSeconds` | 90 | Seconds without a heartbeat before an agent is considered stale |
+
+### Feature Toggles
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `analysisReviewEnabled` | true | Enable adversarial analysis review — a second agent reviews the analysis and feeds findings back for refinement before implementation begins |
+| `baselineHealthCheckEnabled` | true | Run baseline health check (build + tests) on the default branch after branch creation and before code analysis. Catches broken base branches early |
+| `refactoringReviewEnabled` | true | Enable discriminator review of refactoring proposals before issues are created |
+| `brainConsolidationReviewEnabled` | true | Enable discriminator review of brain consolidation changes before they are committed |
+| `harnessSuggestionsReviewEnabled` | true | Enable discriminator review of harness suggestions before they are persisted |
+
+### Refactoring
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `maxRefactoringProposals` | 3 | Maximum refactoring proposals the agent produces per run. Controls both the prompt instruction and the issue creation cap |
+| `hotspotAnalysisLookback` | 90.00:00:00 | Time window for git hotspot analysis in refactoring detection. Only commits within this window are counted |
+| `refactoringOutcomeLookback` | 90.00:00:00 | Time window for querying past refactoring proposal outcomes. Only closed issues within this window are included in feedback context |
+
+### Buffer Capacities
+
+These control in-memory bounded data structures for each pipeline run. Rarely need adjustment unless running on constrained memory or needing deeper history.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `outputLinesCapacity` | 5000 | Max lines in the `PipelineRun.OutputLines` bounded queue (UI live output) |
+| `chatHistoryCapacity` | 200 | Max entries in the `PipelineRun.ChatHistory` bounded queue |
+| `qualityGateHistoryCapacity` | 50 | Max entries in the `PipelineRun.QualityGateHistory` bounded queue |
+| `retryErrorsCapacity` | 100 | Max entries in the `PipelineRun.RetryErrors` bounded queue |
 
 ### Decomposition
 
@@ -55,6 +85,28 @@ Quality gates are configured per-stack via Quality Gate Configurations (see [Lab
 | `coverageThreshold` | Minimum code coverage percentage (0-100). Set to `null` or `0` to disable coverage checks. |
 | `coverageReportFormat` | `cobertura` or `jacoco` — determines how coverage reports are parsed |
 | `coverageReportPaths` | Explicit file globs for coverage reports. When not specified, convention-based discovery is used. |
+
+## Code Review Settings
+
+Code review behavior is configured via the `codeReview` sub-object on the pipeline configuration.
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `codeReview.maxIterations` | 2 | Max review → fix cycles |
+| `codeReview.reviewIsolation` | `Isolated` | Controls whether review agents share the codegen session (`Shared`) or run in fresh isolated sessions (`Isolated`). Isolated mode eliminates self-attribution bias |
+| `codeReview.fixPrompt` | *(null)* | When set, review splits into find-then-fix: review agents report findings with severity markers, then this fix prompt runs only if `[CRITICAL]` findings exist. When null, falls back to single-pass behavior |
+
+### Inline Comments
+
+Inline comments post review findings directly on PR diff lines. Configured via `codeReview.inlineComments`:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `inlineComments.enabled` | true | Master switch for inline comment posting. When false, posts body-only reviews |
+| `inlineComments.maxInlineComments` | 15 | Maximum inline comments per review submission (range: 1–50). Excess findings appear only in the body summary |
+| `inlineComments.maxRetries` | 1 | Retry attempts when the review agent doesn't produce structured file:line output (range: 0–5). Each retry is an additional LLM API call per agent |
+| `inlineComments.orderBySeverity` | true | Sort inline comments by severity (Critical → Warning → Suggestion) when selecting within the limit |
+| `inlineComments.severityThreshold` | `Warning` | Minimum severity for inline posting. Findings below this threshold appear only in the body summary |
 
 ## Closed-Loop Mode
 
@@ -100,8 +152,8 @@ These environment variables are used by the Docker containers:
 | `Database__Port` | PostgreSQL port (default: `5432`) |
 | `Database__Username` | PostgreSQL username |
 | `Database__Password` | PostgreSQL password |
-| `Database__Name` | PostgreSQL database name (default: `coding_agent_automation`) |
-| `Database__SslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. Defaults to `Require` in production if not explicitly set. Use `Disable` for local/in-cluster Postgres without TLS. |
+| `Database__Name` | PostgreSQL database name (no application-level default; must be explicitly configured. `docker-compose.postgres.yml` uses `coding_agent_automation`) |
+| `Database__SslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. The application normalizes `Prefer` to `Require` in production environments when no explicit value is set. Use `Disable` for local/in-cluster Postgres without TLS. |
 | `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`). Disable if running migrations externally. |
 
 ### Config Import/Export
@@ -127,6 +179,28 @@ API endpoints:
 | `READINESS_DRAIN_DELAY_SECONDS` | Seconds to wait after marking `/readyz` as 503 before shutting down (default: 15). Used for zero-downtime rolling updates. |
 | `DB_LOG_LEVEL` | EF Core SQL command log level (default: `Warning`). Set to `Information` or `Debug` for SQL query diagnostics. |
 
+### SignalR Backplane (DB mode)
+
+| Variable | Description |
+|----------|-------------|
+| `SignalR__Redis__ConnectionString` | Redis connection string for SignalR backplane (required when running multiple orchestrator replicas in DB mode). Format: `host:port,password=xxx` |
+
+### Work Distribution
+
+| Variable | Description |
+|----------|-------------|
+| `WorkDistribution__Mode` | Dispatch mode: `SignalR` (default) or `Kubernetes`. Only applicable in DB mode. |
+
+### OpenTelemetry
+
+| Variable | Description |
+|----------|-------------|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP collector endpoint (e.g., `https://otlp-gateway.grafana.net/otlp`) |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol: `grpc` (default) or `http/protobuf` |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Authentication headers for OTLP endpoint (e.g., `Authorization=Basic xxx`) |
+| `OTEL_SERVICE_NAME` | Service name for telemetry (set per container in docker-compose) |
+| `OTEL_RESOURCE_ATTRIBUTES` | Additional resource attributes (e.g., `deployment.environment=production`) |
+
 ### Agent Containers
 
 | Variable | Description |
@@ -145,6 +219,8 @@ API endpoints:
 | `OPENAI_API_KEY` | OpenAI API key for LLM access (optional, for OpenAI-backed agents) |
 | `OPENROUTER_API_KEY` | OpenRouter API key for LLM access (optional, for OpenRouter-backed agents) |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
+
+> **Operator note:** The `docker-compose.yml` intentionally does not pass through sensitive credentials (`OPENCODE_SERVER_PASSWORD`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`) or optional tuning variables (`DB_LOG_LEVEL`, `PIPELINE_LOOP_STARTUP_DELAY_SECONDS`, `READINESS_DRAIN_DELAY_SECONDS`). If needed, add them manually to the relevant service's `environment` block or source them from your `.env` file. The Helm chart exposes these explicitly via `values.yaml`.
 
 ## Environment Setup Steps
 

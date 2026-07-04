@@ -253,3 +253,129 @@ public sealed class RunLifecycleManagerTests
         }, $"conn-{agentId}");
     }
 }
+
+/// <summary>
+/// Validates finding 1B-001: FailRunAsync must still clean up dedup tracker
+/// even if AddRunToHistoryAsync throws, preventing stale entries.
+/// </summary>
+public sealed class RunLifecycleManagerResilienceTests
+{
+    private readonly Mock<ILogger> _mockLogger = new();
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
+    private readonly AgentRegistryService _registry;
+    private readonly OrchestratorRunService _runService;
+    private readonly JobDispatcherService _dispatcher;
+    private readonly RunLifecycleManager _sut;
+
+    public RunLifecycleManagerResilienceTests()
+    {
+        _registry = new AgentRegistryService(_mockLogger.Object);
+        _runService = new OrchestratorRunService(_mockLogger.Object);
+        _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+
+        _sut = new RunLifecycleManager(
+            _runService,
+            _mockHistoryService.Object,
+            _registry,
+            _mockLabelSwapper.Object,
+            _dispatcher,
+            _mockLogger.Object,
+            workItemTransition: null);
+    }
+
+    [Fact]
+    public async Task FailRunAsync_WhenHistoryThrows_StillClearsDedupTracker()
+    {
+        // Arrange: set up a run that's "in-progress" in the dedup tracker
+        var run = CreateRun("run-fail-history-err");
+        run.AgentId = "agent-1";
+        _runService.AddRun(run);
+        _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "org/repo#1",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            RequiredLabels = new[] { "dotnet" },
+            InitiatedBy = "test"
+        });
+        // Dequeue to simulate "in processing" state
+        var entry = RegisterAgent("agent-1");
+        _dispatcher.DequeueForAgent(entry);
+
+        // Make history throw
+        _mockHistoryService
+            .Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB write failed"));
+
+        // Act
+        var result = await _sut.FailRunAsync("run-fail-history-err", "test failure", CancellationToken.None);
+
+        // Assert: run was still returned (claimed successfully)
+        result.Should().NotBeNull();
+
+        // Dedup tracker was cleared despite the history exception
+        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
+
+        // Agent state was cleared
+        var agent = _registry.GetByAgentId("agent-1");
+        agent!.ActiveJobId.Should().BeNull();
+        agent.Status.Should().Be(AgentStatus.Idle);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_WhenHistoryThrows_StillClearsDedupTracker()
+    {
+        // Arrange
+        var run = CreateRun("run-complete-err");
+        _runService.AddRun(run);
+        _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "org/repo#1",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            RequiredLabels = new[] { "dotnet" },
+            InitiatedBy = "test"
+        });
+        var entry = RegisterAgent("agent-1");
+        _dispatcher.DequeueForAgent(entry);
+
+        _mockHistoryService
+            .Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB write failed"));
+
+        // Act
+        var result = await _sut.CompleteRunAsync("run-complete-err", WorkItemStatus.Succeeded, CancellationToken.None);
+
+        // Assert: still returned the run
+        result.Should().NotBeNull();
+
+        // Dedup tracker was cleared
+        _dispatcher.IsIssueQueued("org/repo#1", "ip-1").Should().BeFalse();
+    }
+
+    private static PipelineRun CreateRun(string runId)
+    {
+        return new PipelineRun
+        {
+            RunId = runId,
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Test issue",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            RunType = PipelineRunType.Implementation
+        };
+    }
+
+    private AgentEntry RegisterAgent(string agentId)
+    {
+        return _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = agentId,
+            Hostname = $"host-{agentId}",
+            Labels = new[] { "dotnet" }
+        }, $"conn-{agentId}");
+    }
+}

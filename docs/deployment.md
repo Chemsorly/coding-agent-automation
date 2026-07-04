@@ -9,10 +9,12 @@ graph TB
     Browser[Web Browser]
     
     subgraph Orchestrator["Orchestrator Container"]
-        WebUI[WebUI<br/>Blazor Server]
-        Orch[Orchestration<br/>dispatch, tracking]
-        Infra[Infrastructure<br/>providers, config store]
-        Core[Pipeline Core<br/>interfaces, models]
+        WebUI[WebUI<br/>Blazor Server + Pages]
+        Orch[Orchestration<br/>dispatch, tracking, leader election]
+        Infra[Infrastructure<br/>providers, config store, resilience]
+        Pipeline[Pipeline<br/>orchestration logic, services, models]
+        CodeReview[Pipeline.CodeReview<br/>review findings, inline comments]
+        KiroLib[KiroCliLib<br/>CLI config parsing, shared utilities]
     end
     
     subgraph Agents["Agent Containers"]
@@ -27,12 +29,19 @@ graph TB
     Browser -->|HTTP/SignalR| WebUI
     WebUI --> Orch
     Orch --> Infra
-    Orch --> Core
-    Infra --> Core
-    Orch -->|SignalR<br/>job dispatch| Agents
+    Orch --> Pipeline
+    Infra --> Pipeline
+    Pipeline --> CodeReview
+    Pipeline --> KiroLib
+    Orch -->|SignalR / K8s Jobs<br/>work distribution| Agents
 ```
 
-- **Orchestrator** — Web UI + pipeline orchestration + job dispatch. Single instance.
+- **WebUI** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI, SignalR hub, API endpoints, background services (OrphanedLabelRecovery, LoopStatePersistence).
+- **Orchestration** (`CodingAgentWebUI.Orchestration`) — Dispatch logic (`DispatchService`, `ReconciliationService`, `SignalRWorkDistributor`, `KubernetesWorkDistributor`), agent registry, run lifecycle management, leader election, telemetry.
+- **Infrastructure** (`CodingAgentWebUI.Infrastructure`) — Provider implementations (GitHub, filesystem), config store, resilience pipelines, token vending.
+- **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline orchestration (`PipelineOrchestrationService`, facades, `PipelineLoopService`), step execution, models, interfaces, constants.
+- **Pipeline.CodeReview** (`CodingAgentWebUI.Pipeline.CodeReview`) — Review findings parsing, inline comment selection, severity filtering.
+- **KiroCliLib** — Shared library for Kiro CLI configuration parsing. Referenced by Pipeline, Agent.KiroCli, and Agent.OpenCode.
 - **Agent Containers** — Worker containers connecting via SignalR. Two backends: Kiro CLI (process) and OpenCode (HTTP API). Scale by adding containers.
 
 ## Docker Compose
@@ -230,3 +239,66 @@ The chart supports zero-downtime rolling updates:
 - Orchestrator uses `readinessDrainDelaySeconds` (default: 15s) to stop accepting traffic before terminating
 - `pipelineLoopStartupDelaySeconds` (Helm default: 30s, application default: 90s) prevents dispatching to agents that are mid-termination — must be greater than agent `terminationGracePeriodSeconds`. The Helm value overrides the application's built-in default via the `PIPELINE_LOOP_STARTUP_DELAY_SECONDS` env var.
 - Agent `terminationGracePeriodSeconds` defaults to 15s
+
+### Leader Election (Kubernetes Mode)
+
+In DB+Kubernetes mode, the orchestrator uses Kubernetes Lease-based leader election to ensure only one replica runs leader-dependent services. This prevents duplicate dispatches and conflicting reconciliation actions when running multiple orchestrator replicas.
+
+#### How It Works
+
+`LeaderElectionService` is a singleton `IHostedService` that performs Lease-based leader election using the `k8s.LeaderElection` library. It exposes:
+
+- **`IsLeader`** — `true` when this instance holds the lease
+- **`LeaderToken`** — a `CancellationToken` that is cancelled when leadership is lost, enabling dependent services to stop immediately
+
+#### Leader-Dependent Services
+
+| Service | Behavior When Leader | Behavior When Non-Leader |
+|---------|---------------------|--------------------------|
+| `DispatchService` | Polls for pending WorkItems and dispatches K8s Jobs | Waits (polls `IsLeader` every 2s) |
+| `ReconciliationService` | Runs startup reconciliation, watches K8s Jobs, enforces timeouts | Waits (polls `IsLeader` every 2s) |
+
+Both services create a linked `CancellationTokenSource` combining the host `stoppingToken` and `LeaderToken`. This ensures immediate stop on either graceful shutdown OR leadership loss — no stale work continues after failover.
+
+#### Leadership Lifecycle
+
+```
+Replica starts → polls for Lease → acquires → IsLeader=true, LeaderToken valid
+  → DispatchService + ReconciliationService enter work loops
+  → ...leadership lost (Lease expires, network partition, pod preempt)...
+  → LeaderToken cancelled → services exit work loops → re-enter wait state
+  → re-acquires Lease → fresh LeaderToken → services resume
+```
+
+#### Configuration
+
+Bound from the `LeaderElection` configuration section:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `LeaseName` | `caa-leader` | Name of the Kubernetes Lease resource |
+| `Namespace` | *(auto-detected)* | Namespace for the Lease. Auto-reads from `POD_NAMESPACE` env var or mounted service account namespace file |
+| `LeaseDuration` | 15s | Duration non-leaders wait before attempting acquisition |
+| `RenewDeadline` | 10s | Deadline for the leader to renew before the lease expires. Must be less than `LeaseDuration` |
+| `RetryPeriod` | 2s | Interval between acquisition/renewal attempts |
+| `Identity` | *(auto-detected)* | Pod identity. Auto-reads from `POD_NAME` → `HOSTNAME` → `MachineName` |
+| `FailOnNonKubernetesEnvironment` | false | If true, startup fails outside K8s. If false, logs a warning and remains non-leader (graceful degradation for local dev) |
+
+#### RBAC Requirements
+
+The orchestrator ServiceAccount needs Lease permissions. The Helm chart creates these automatically when `database.enabled=true` and `workDistribution.mode=Kubernetes`:
+
+```yaml
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "update"]
+```
+
+#### Non-Kubernetes Environments
+
+When `IKubernetes` client is not available (local dev, Docker Compose):
+- `IsLeader` remains `false`
+- `LeaderToken` starts cancelled
+- Leader-dependent services (DispatchService, ReconciliationService) never enter their work loops
+- This is correct for non-K8s environments where `PipelineLoopService` handles dispatch via the legacy or DB+SignalR path instead

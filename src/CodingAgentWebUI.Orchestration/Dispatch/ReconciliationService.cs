@@ -92,10 +92,6 @@ public sealed class ReconciliationService : BackgroundService
                 var pollTask = RunPollLoopAsync(ct);
 
                 // Exit when leadership lost or stopping
-                // TODO: If RunWatchLoopAsync or RunPollLoopAsync throws a non-OCE exception,
-                // Task.WhenAny returns the faulted task, then Task.WhenAll re-throws it unhandled
-                // out of ExecuteAsync, causing a BackgroundService fault. This matches pre-existing
-                // behavior but could be hardened with a catch-all that logs and re-enters the wait loop.
                 await Task.WhenAny(watchTask, pollTask);
 
                 // If neither stoppingToken nor LeaderToken caused the exit, cancel manually
@@ -104,6 +100,12 @@ public sealed class ReconciliationService : BackgroundService
 
                 try { await Task.WhenAll(watchTask, pollTask); }
                 catch (OperationCanceledException) { /* expected */ }
+                catch (Exception ex)
+                {
+                    // Catch non-OCE exceptions from WhenAll to prevent BackgroundService termination.
+                    // Log and re-enter the leader wait loop so reconciliation resumes on next leadership acquisition.
+                    Log.Error(ex, "ReconciliationService: watch/poll loop faulted unexpectedly — will re-enter leader wait loop");
+                }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
             {

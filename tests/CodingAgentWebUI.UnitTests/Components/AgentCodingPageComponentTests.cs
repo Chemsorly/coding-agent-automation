@@ -58,7 +58,10 @@ public class AgentCodingPageComponentTests : BunitContext
 
         _mockProjectStore = new Mock<IProjectStore>();
         _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Array.Empty<PipelineProject>());
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", Enabled = true, TemplateIds = new[] { "t-1" } }
+            });
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>
             {

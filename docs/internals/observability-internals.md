@@ -58,10 +58,11 @@ The `CodingAgent.WorkDistribution` meter (defined in `WorkDistributionTelemetry.
 | `workdistribution.dispatcher_last_poll_epoch_seconds` | ObservableGauge | s | Epoch seconds of the last DispatchService poll cycle (for stale-poll alerting) |
 | `workdistribution.credential_pool_available` | ObservableGauge | — | Available credential PVCs in the kiro pool (K8s mode) |
 | `workdistribution.credential_pool_claimed` | ObservableGauge | — | Claimed credential PVCs in the kiro pool (K8s mode) |
+| `workdistribution.workitems_by_status` | ObservableGauge | — | Count of work items grouped by status and agent_selector |
 
 ## CriticalMessageBuffer (Agent-Side)
 
-`CriticalMessageBuffer` buffers failed `ReportJobCompleted` messages on the agent side for replay after reconnection. This is invisible to external telemetry backends but affects the `agent.signalr.failures` counter — each failed delivery increments it before the message is buffered.
+`CriticalMessageBuffer` buffers failed `ReportJobCompleted` messages on the agent side for replay after reconnection. Failed deliveries are buffered silently — there is no dedicated metric counter for individual send failures; instead monitor `agent.reconnections` for connection instability.
 
 Drain behavior:
 - On reconnection, buffered messages are replayed (max 3 drain attempts per message)
