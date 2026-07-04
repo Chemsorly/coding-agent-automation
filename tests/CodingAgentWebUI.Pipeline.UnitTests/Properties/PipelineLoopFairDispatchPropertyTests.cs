@@ -107,7 +107,7 @@ public class PipelineLoopFairDispatchPropertyTests
         int prDispatched = 0;
         int decompDispatched = 0;
         int remaining = input.Budget;
-        int currentTurn = 0;
+        var currentTurn = DispatchTurn.Issues;
 
         while (remaining > 0)
         {
@@ -115,12 +115,12 @@ public class PipelineLoopFairDispatchPropertyTests
             bool hasPrs = prQueues.Any(q => q.Count > 0);
             bool hasDecomp = decompQueues.Any(q => q.Count > 0);
 
-            int startTurn = currentTurn;
+            var startTurn = currentTurn;
             bool foundTurn = false;
             for (int attempt = 0; attempt < 3; attempt++)
             {
-                int tryTurn = (startTurn + attempt) % 3;
-                if ((tryTurn == 0 && hasIssues) || (tryTurn == 1 && hasPrs) || (tryTurn == 2 && hasDecomp))
+                var tryTurn = (DispatchTurn)(((int)startTurn + attempt) % 3);
+                if ((tryTurn == DispatchTurn.Issues && hasIssues) || (tryTurn == DispatchTurn.PullRequests && hasPrs) || (tryTurn == DispatchTurn.Decomposition && hasDecomp))
                 {
                     currentTurn = tryTurn;
                     foundTurn = true;
@@ -129,18 +129,18 @@ public class PipelineLoopFairDispatchPropertyTests
             }
             if (!foundTurn) break;
 
-            var queues = currentTurn switch { 0 => issueQueues, 1 => prQueues, _ => decompQueues };
+            var queues = currentTurn switch { DispatchTurn.Issues => issueQueues, DispatchTurn.PullRequests => prQueues, _ => decompQueues };
             for (int t = 0; t < queues.Count && remaining > 0; t++)
             {
                 if (queues[t].Count > 0)
                 {
                     queues[t].RemoveAt(0);
                     remaining--;
-                    switch (currentTurn) { case 0: issueDispatched++; break; case 1: prDispatched++; break; default: decompDispatched++; break; }
+                    switch (currentTurn) { case DispatchTurn.Issues: issueDispatched++; break; case DispatchTurn.PullRequests: prDispatched++; break; default: decompDispatched++; break; }
                 }
             }
 
-            currentTurn = (currentTurn + 1) % 3;
+            currentTurn = NextTurn(currentTurn);
         }
 
         // Count non-empty queue types in original input
@@ -274,6 +274,15 @@ public class PipelineLoopFairDispatchPropertyTests
     // Simulation helpers
     // ══════════════════════════════════════════════════════════════════════
 
+    // TODO: This enum and NextTurn duplicate the production implementation. These tests simulate
+    // the round-robin algorithm rather than exercising the real DispatchFairRoundRobinAsync method,
+    // so a bug in production turn-cycling would be replicated here and never caught.
+    // Consider testing against the actual method or a testable extraction of it.
+    private enum DispatchTurn { Issues = 0, PullRequests = 1, Decomposition = 2 }
+
+    private static DispatchTurn NextTurn(DispatchTurn turn) =>
+        (DispatchTurn)(((int)turn + 1) % 3);
+
     /// <summary>
     /// Simulates the three-way round-robin dispatch from DispatchFairRoundRobinAsync.
     /// Returns total items dispatched.
@@ -285,7 +294,7 @@ public class PipelineLoopFairDispatchPropertyTests
         int budget)
     {
         int remaining = budget;
-        int currentTurn = 0;
+        var currentTurn = DispatchTurn.Issues;
 
         while (remaining > 0)
         {
@@ -293,12 +302,12 @@ public class PipelineLoopFairDispatchPropertyTests
             bool hasPrs = prQueues.Any(q => q.Count > 0);
             bool hasDecomp = decompQueues.Any(q => q.Count > 0);
 
-            int startTurn = currentTurn;
+            var startTurn = currentTurn;
             bool foundTurn = false;
             for (int attempt = 0; attempt < 3; attempt++)
             {
-                int tryTurn = (startTurn + attempt) % 3;
-                if ((tryTurn == 0 && hasIssues) || (tryTurn == 1 && hasPrs) || (tryTurn == 2 && hasDecomp))
+                var tryTurn = (DispatchTurn)(((int)startTurn + attempt) % 3);
+                if ((tryTurn == DispatchTurn.Issues && hasIssues) || (tryTurn == DispatchTurn.PullRequests && hasPrs) || (tryTurn == DispatchTurn.Decomposition && hasDecomp))
                 {
                     currentTurn = tryTurn;
                     foundTurn = true;
@@ -310,18 +319,18 @@ public class PipelineLoopFairDispatchPropertyTests
             // Dispatch one item per template from the current turn's queue type
             switch (currentTurn)
             {
-                case 0:
+                case DispatchTurn.Issues:
                     remaining -= DispatchRound(issueQueues, remaining);
                     break;
-                case 1:
+                case DispatchTurn.PullRequests:
                     remaining -= DispatchRound(prQueues, remaining);
                     break;
-                case 2:
+                case DispatchTurn.Decomposition:
                     remaining -= DispatchRound(decompQueues, remaining);
                     break;
             }
 
-            currentTurn = (currentTurn + 1) % 3;
+            currentTurn = NextTurn(currentTurn);
         }
 
         return budget - remaining;

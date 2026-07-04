@@ -13,6 +13,15 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Properties;
 /// </summary>
 public class DecompositionDispatchPropertyTests
 {
+    // TODO: This enum and NextTurn duplicate the production implementation. These tests simulate
+    // the round-robin algorithm rather than exercising the real DispatchFairRoundRobinAsync method,
+    // so a bug in production turn-cycling would be replicated here and never caught.
+    // Consider testing against the actual method or a testable extraction of it.
+    private enum DispatchTurn { Issues = 0, PullRequests = 1, Decomposition = 2 }
+
+    private static DispatchTurn NextTurn(DispatchTurn turn) =>
+        (DispatchTurn)(((int)turn + 1) % 3);
+
     /// <summary>
     /// Feature: 027-epic-decomposition-pipeline, Property 14: Fair Three-Way Alternation
     ///
@@ -35,7 +44,7 @@ public class DecompositionDispatchPropertyTests
         int prDispatched = 0;
         int decompDispatched = 0;
 
-        int currentTurn = 0; // 0=issues, 1=PRs, 2=decomposition
+        var currentTurn = DispatchTurn.Issues;
 
         while (remaining > 0)
         {
@@ -44,14 +53,14 @@ public class DecompositionDispatchPropertyTests
             bool hasDecomp = decompQueue.Count > 0;
 
             // Find next non-empty queue (same logic as PipelineLoopService)
-            int startTurn = currentTurn;
+            var startTurn = currentTurn;
             bool foundTurn = false;
             for (int attempt = 0; attempt < 3; attempt++)
             {
-                int tryTurn = (startTurn + attempt) % 3;
-                if ((tryTurn == 0 && hasIssues) ||
-                    (tryTurn == 1 && hasPrs) ||
-                    (tryTurn == 2 && hasDecomp))
+                var tryTurn = (DispatchTurn)(((int)startTurn + attempt) % 3);
+                if ((tryTurn == DispatchTurn.Issues && hasIssues) ||
+                    (tryTurn == DispatchTurn.PullRequests && hasPrs) ||
+                    (tryTurn == DispatchTurn.Decomposition && hasDecomp))
                 {
                     currentTurn = tryTurn;
                     foundTurn = true;
@@ -63,17 +72,17 @@ public class DecompositionDispatchPropertyTests
             // Dispatch from current turn's queue
             switch (currentTurn)
             {
-                case 0 when hasIssues:
+                case DispatchTurn.Issues when hasIssues:
                     issueQueue.Dequeue();
                     issueDispatched++;
                     remaining--;
                     break;
-                case 1 when hasPrs:
+                case DispatchTurn.PullRequests when hasPrs:
                     prQueue.Dequeue();
                     prDispatched++;
                     remaining--;
                     break;
-                case 2 when hasDecomp:
+                case DispatchTurn.Decomposition when hasDecomp:
                     decompQueue.Dequeue();
                     decompDispatched++;
                     remaining--;
@@ -81,7 +90,7 @@ public class DecompositionDispatchPropertyTests
             }
 
             // Advance turn for fair alternation
-            currentTurn = (currentTurn + 1) % 3;
+            currentTurn = NextTurn(currentTurn);
         }
 
         // Property: when budget >= 3 and all queues non-empty, no queue gets zero dispatches
