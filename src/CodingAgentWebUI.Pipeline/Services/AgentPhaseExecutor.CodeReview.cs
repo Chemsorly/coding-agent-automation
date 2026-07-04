@@ -260,26 +260,8 @@ public partial class AgentPhaseExecutor
                             run.RunId, i + 1, iterationCriticalCount, agents.Count);
                         context.Callbacks.EmitOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
 
-                        // Write concatenated findings from all agents to the file so the fix agent can read it
-                        var findingsFileForFix = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
-                        await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
-
-                        var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);
-                        _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
-
-                        await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
-                            context.AgentProvider, fixPrompt, run, config,
-                            $"Code review fix agent (iteration {i + 1})",
-                            context.Callbacks, _logger, ct,
-                            recordOutputToHistory: false,
-                            resumeSessionId: run.CodegenSessionId);
-
-                        run.ChatHistory.Enqueue(new ChatEntry
-                        {
-                            Role = ChatRole.Agent,
-                            Content = $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes"
-                        });
-                        context.Callbacks.NotifyChange();
+                        await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
+                            $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes", ct);
                     }
                     else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && !string.IsNullOrEmpty(iterationFindingsText))
                     {
@@ -290,25 +272,8 @@ public partial class AgentPhaseExecutor
                             run.RunId, i + 1);
                         context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
 
-                        var findingsFileForFix = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
-                        await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
-
-                        var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt);
-                        _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, i + 1, fixPrompt);
-
-                        await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
-                            context.AgentProvider, fixPrompt, run, config,
-                            $"Code review fix agent (iteration {i + 1})",
-                            context.Callbacks, _logger, ct,
-                            recordOutputToHistory: false,
-                            resumeSessionId: run.CodegenSessionId);
-
-                        run.ChatHistory.Enqueue(new ChatEntry
-                        {
-                            Role = ChatRole.Agent,
-                            Content = $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)"
-                        });
-                        context.Callbacks.NotifyChange();
+                        await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
+                            $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", ct);
                         break;
                     }
                     else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt))
@@ -363,6 +328,41 @@ public partial class AgentPhaseExecutor
             run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
                 run.WorkspacePath!, _logger, ct);
         }
+    }
+
+    /// <summary>
+    /// Writes review findings to the workspace file, builds and executes the fix prompt,
+    /// and records the fix action to chat history.
+    /// </summary>
+    private async Task SendFixPromptAsync(
+        AgentPhaseContext context,
+        PipelineRun run,
+        PipelineConfiguration config,
+        int iterationIndex,
+        string iterationFindingsText,
+        string fixDescription,
+        CancellationToken ct)
+    {
+        // Write concatenated findings from all agents to the file so the fix agent can read it
+        var findingsFileForFix = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
+        await File.WriteAllTextAsync(findingsFileForFix, iterationFindingsText, ct);
+
+        var fixPrompt = PromptBuilder.BuildFixPrompt(config.CodeReview.FixPrompt!);
+        _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, iterationIndex + 1, fixPrompt);
+
+        await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
+            context.AgentProvider, fixPrompt, run, config,
+            $"Code review fix agent (iteration {iterationIndex + 1})",
+            context.Callbacks, _logger, ct,
+            recordOutputToHistory: false,
+            resumeSessionId: run.CodegenSessionId);
+
+        run.ChatHistory.Enqueue(new ChatEntry
+        {
+            Role = ChatRole.Agent,
+            Content = fixDescription
+        });
+        context.Callbacks.NotifyChange();
     }
 
     /// <summary>
