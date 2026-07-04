@@ -342,26 +342,7 @@ public class PipelineFormattingTests
         result.Should().Contain("*Automated implementation via pipeline*");
     }
 
-    // TODO: Tautological test — GeneratePrBody never reads BlacklistedFilesDetected, so this assertion is vacuously true and cannot detect a regression.
-    [Fact]
-    public void GeneratePrBody_WithBlacklistedFiles_DoesNotShowWarningSection()
-    {
-        var blacklisted = new List<string> { ".github/workflows/ci.yml", "package-lock.json" };
 
-        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#1",
-                TestsPassed = 0,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                CoveragePercent = null,
-                FileChanges = [],
-                IssueTitle = "Test",
-                BlacklistedFilesDetected = blacklisted,
-            });
-
-        result.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
-    }
 
     [Fact]
     public void GeneratePrBody_WithCodeReview_ShowsReviewSection()

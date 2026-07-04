@@ -198,23 +198,7 @@ public class PipelineModelCoverageTests
         body.Should().Contain("user1");
     }
 
-    // TODO: Tautological test — GeneratePrBody never reads BlacklistedFilesDetected, so this assertion is vacuously true and cannot detect a regression.
-    [Fact]
-    public void GeneratePrBody_WithBlacklistedFiles_DoesNotIncludeWarning()
-    {
-        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
-            {
-                IssueReference = "#42",
-                TestsPassed = 10,
-                TestsFailed = 0,
-                TestsSkipped = 0,
-                CoveragePercent = null,
-                FileChanges = Array.Empty<FileChangeSummary>(),
-                IssueTitle = "Fix bug",
-                BlacklistedFilesDetected = new[] { ".agent/settings.json" },
-            });
-        body.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
-    }
+
 
     [Fact]
     public void GeneratePrBody_WithCoverage_IncludesCoveragePercent()

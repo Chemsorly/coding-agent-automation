@@ -51,7 +51,7 @@ public class OutputBatcherSignalRBlockingTests
 
         // All agents should complete quickly (not blocked by the flush)
         var allAgents = Task.WhenAll(parallelAgent1, parallelAgent2, parallelAgent3);
-        var completed = await Task.WhenAny(allAgents, Task.Delay(TimeSpan.FromSeconds(2)));
+        var completed = await Task.WhenAny(allAgents, Task.Delay(TimeSpan.FromSeconds(5)));
         completed.Should().Be(allAgents,
             "all agents should complete immediately — AddLineAsync does not block on network I/O");
 

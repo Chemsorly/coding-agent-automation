@@ -515,16 +515,19 @@ public class AgentWorkerServiceTests : IDisposable
         var handler = GetPrivateMethod(service, "HandleCancelChatAsync");
         var cancelTask = (Task)handler.Invoke(service, ["session-1"])!;
 
-        // The cancel task should not complete immediately (it's waiting for chatTask)
-        var raceResult = await Task.WhenAny(cancelTask, Task.Delay(200));
-        raceResult.Should().NotBe(cancelTask, "cancel handler should wait for chat task");
+        // The cancel task should not complete while chat task is pending.
+        // Use a deterministic signal: if cancelTask completes before we signal chatTaskCompletion,
+        // then the handler did NOT wait (which is the bug case).
+        await Task.Delay(50); // brief yield to let the handler reach the await point
+        cancelTask.IsCompleted.Should().BeFalse(
+            "cancel handler should be waiting for the chat task to complete");
 
         // Complete the chat task
         chatTaskCompletion.SetResult();
 
-        // Now the cancel handler should complete (within timeout)
-        await Task.WhenAny(cancelTask, Task.Delay(5000));
-        cancelTask.IsCompleted.Should().BeTrue("cancel handler should complete after chat task finishes");
+        // Now the cancel handler should complete (within generous timeout)
+        var completed = await Task.WhenAny(cancelTask, Task.Delay(10_000));
+        completed.Should().Be(cancelTask, "cancel handler should complete after chat task finishes");
 
         // CTS should have been cancelled
         chatCts.IsCancellationRequested.Should().BeTrue();

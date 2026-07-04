@@ -51,21 +51,4 @@ public class PipelineExecutionFacadeTests
         Assert.Null(facade.QualityGateValidator);
     }
 
-    [Fact]
-    // TODO: This test is tautological — it asserts auto-properties return constructor-assigned values,
-    // which is guaranteed by C# compiler behavior. Consider replacing with a behavioral test.
-    public void Properties_ExposeInjectedDependencies()
-    {
-        var agentExecution = Mock.Of<IAgentPhaseExecutor>();
-        var qualityGates = Mock.Of<IQualityGateExecutor>();
-        var validator = Mock.Of<IQualityGateValidator>();
-        var brainSync = Mock.Of<IBrainSyncService>();
-
-        var facade = new PipelineExecutionFacade(agentExecution, qualityGates, validator, brainSync);
-
-        Assert.Same(agentExecution, facade.AgentExecution);
-        Assert.Same(qualityGates, facade.QualityGates);
-        Assert.Same(validator, facade.QualityGateValidator);
-        Assert.Same(brainSync, facade.BrainSync);
-    }
 }

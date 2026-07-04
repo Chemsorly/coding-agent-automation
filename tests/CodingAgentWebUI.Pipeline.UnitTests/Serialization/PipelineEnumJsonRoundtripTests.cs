@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline;
@@ -10,6 +11,9 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Serialization;
 /// Guards against: renamed enum members losing their string representation, missing JsonStringEnumConverter,
 /// and new enum values that serialize to their numeric form instead of string form.
 /// 
+/// Uses reflection to auto-discover all public enums in the Pipeline assembly. When a new enum
+/// is added, it is automatically covered without requiring a new test method.
+/// 
 /// These tests exercise PipelineJsonOptions.Default (which includes JsonStringEnumConverter).
 /// If any enum value fails roundtrip, the serialized config files on disk become unreadable
 /// after a code change — a silent data corruption bug.
@@ -18,169 +22,59 @@ public class PipelineEnumJsonRoundtripTests
 {
     private static readonly JsonSerializerOptions Options = PipelineJsonOptions.Default;
 
+    /// <summary>
+    /// Discovers all public enum types in the Pipeline assembly and verifies every value
+    /// roundtrips correctly (serialize → deserialize == identity) and serializes as a
+    /// quoted string (not a bare integer).
+    /// </summary>
     [Theory]
-    [MemberData(nameof(AllPipelineStepValues))]
-    public void PipelineStep_AllValues_RoundtripAsString(PipelineStep value)
+    [MemberData(nameof(AllPipelineEnumValues))]
+    public void AllEnums_AllValues_RoundtripAsString(Type enumType, object value)
     {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
+        // Serialize
+        var json = JsonSerializer.Serialize(value, enumType, Options);
+
+        // Assert serializes as quoted string, not a bare number
+        json.Should().StartWith("\"",
+            $"{enumType.Name}.{value} should serialize as string, got: {json}");
+
+        // Deserialize and verify roundtrip
+        var deserialized = JsonSerializer.Deserialize(json, enumType, Options);
+        deserialized.Should().Be(value,
+            $"roundtrip failed for {enumType.Name}.{value}");
     }
 
-    [Theory]
-    [MemberData(nameof(AllAnalysisGateResultValues))]
-    public void AnalysisGateResult_AllValues_RoundtripAsString(AnalysisGateResult value)
+    /// <summary>
+    /// Guard: at least the 16 known enum types are discovered. If this count drops,
+    /// an enum was removed or moved out of the Pipeline assembly without updating consumers.
+    /// </summary>
+    [Fact]
+    public void Discovery_FindsAtLeastKnownEnumCount()
     {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
+        var enumTypes = GetPipelineEnumTypes();
+        enumTypes.Should().HaveCountGreaterThanOrEqualTo(16,
+            "expected at least 16 public enums in the Pipeline assembly (regression guard)");
     }
 
-    [Theory]
-    [MemberData(nameof(AllWorkItemStatusValues))]
-    public void WorkItemStatus_AllValues_RoundtripAsString(WorkItemStatus value)
+    // ── Data source ──────────────────────────────────────────────────────
+
+    public static IEnumerable<object[]> AllPipelineEnumValues()
     {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
+        foreach (var enumType in GetPipelineEnumTypes())
+        {
+            foreach (var value in Enum.GetValues(enumType))
+            {
+                yield return [enumType, value];
+            }
+        }
     }
 
-    [Theory]
-    [MemberData(nameof(AllWorkItemTaskTypeValues))]
-    public void WorkItemTaskType_AllValues_RoundtripAsString(WorkItemTaskType value)
+    private static IReadOnlyList<Type> GetPipelineEnumTypes()
     {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
+        var assembly = typeof(PipelineStep).Assembly;
+        return assembly.GetExportedTypes()
+            .Where(t => t.IsEnum)
+            .OrderBy(t => t.FullName)
+            .ToList();
     }
-
-    [Theory]
-    [MemberData(nameof(AllFailureReasonValues))]
-    public void FailureReason_AllValues_RoundtripAsString(FailureReason value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    [Theory]
-    [MemberData(nameof(AllPipelineRunStateValues))]
-    public void PipelineRunState_AllValues_RoundtripAsString(PipelineRunState value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    [Theory]
-    [MemberData(nameof(AllReviewIsolationValues))]
-    public void ReviewIsolation_AllValues_RoundtripAsString(ReviewIsolation value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    [Theory]
-    [MemberData(nameof(AllAgentStatusValues))]
-    public void AgentStatus_AllValues_RoundtripAsString(AgentStatus value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    [Theory]
-    [MemberData(nameof(AllConsolidationRunStatusValues))]
-    public void ConsolidationRunStatus_AllValues_RoundtripAsString(ConsolidationRunStatus value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    [Theory]
-    [MemberData(nameof(AllConsolidationRunTypeValues))]
-    public void ConsolidationRunType_AllValues_RoundtripAsString(ConsolidationRunType value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    [Theory]
-    [MemberData(nameof(AllJobDistributionStatusValues))]
-    public void JobDistributionStatus_AllValues_RoundtripAsString(JobDistributionStatus value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    [Theory]
-    [MemberData(nameof(AllAgentEffortLevelValues))]
-    public void AgentEffortLevel_AllValues_RoundtripAsString(AgentEffortLevel value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    [Theory]
-    [MemberData(nameof(AllPipelineRunTypeValues))]
-    public void PipelineRunType_AllValues_RoundtripAsString(PipelineRunType value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    [Theory]
-    [MemberData(nameof(AllCriterionStatusValues))]
-    public void CriterionStatus_AllValues_RoundtripAsString(CriterionStatus value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    [Theory]
-    [MemberData(nameof(AllProviderKindValues))]
-    public void ProviderKind_AllValues_RoundtripAsString(ProviderKind value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    [Theory]
-    [MemberData(nameof(AllChatRoleValues))]
-    public void ChatRole_AllValues_RoundtripAsString(ChatRole value)
-    {
-        AssertEnumRoundtrip(value);
-        AssertSerializesAsString(value);
-    }
-
-    // ── Helpers ──────────────────────────────────────────────────────────
-
-    private static void AssertEnumRoundtrip<T>(T value) where T : struct, Enum
-    {
-        var json = JsonSerializer.Serialize(value, Options);
-        var deserialized = JsonSerializer.Deserialize<T>(json, Options);
-        deserialized.Should().Be(value, $"roundtrip failed for {typeof(T).Name}.{value}");
-    }
-
-    private static void AssertSerializesAsString<T>(T value) where T : struct, Enum
-    {
-        var json = JsonSerializer.Serialize(value, Options);
-        // Should serialize as a quoted string, not a bare number
-        json.Should().StartWith("\"", $"{typeof(T).Name}.{value} should serialize as string, got: {json}");
-    }
-
-    // ── MemberData sources ───────────────────────────────────────────────
-
-    public static IEnumerable<object[]> AllPipelineStepValues() => EnumValues<PipelineStep>();
-    public static IEnumerable<object[]> AllAnalysisGateResultValues() => EnumValues<AnalysisGateResult>();
-    public static IEnumerable<object[]> AllWorkItemStatusValues() => EnumValues<WorkItemStatus>();
-    public static IEnumerable<object[]> AllWorkItemTaskTypeValues() => EnumValues<WorkItemTaskType>();
-    public static IEnumerable<object[]> AllFailureReasonValues() => EnumValues<FailureReason>();
-    public static IEnumerable<object[]> AllPipelineRunStateValues() => EnumValues<PipelineRunState>();
-    public static IEnumerable<object[]> AllReviewIsolationValues() => EnumValues<ReviewIsolation>();
-    public static IEnumerable<object[]> AllAgentStatusValues() => EnumValues<AgentStatus>();
-    public static IEnumerable<object[]> AllConsolidationRunStatusValues() => EnumValues<ConsolidationRunStatus>();
-    public static IEnumerable<object[]> AllConsolidationRunTypeValues() => EnumValues<ConsolidationRunType>();
-    public static IEnumerable<object[]> AllJobDistributionStatusValues() => EnumValues<JobDistributionStatus>();
-    public static IEnumerable<object[]> AllAgentEffortLevelValues() => EnumValues<AgentEffortLevel>();
-    public static IEnumerable<object[]> AllPipelineRunTypeValues() => EnumValues<PipelineRunType>();
-    public static IEnumerable<object[]> AllCriterionStatusValues() => EnumValues<CriterionStatus>();
-    public static IEnumerable<object[]> AllProviderKindValues() => EnumValues<ProviderKind>();
-    public static IEnumerable<object[]> AllChatRoleValues() => EnumValues<ChatRole>();
-
-    private static IEnumerable<object[]> EnumValues<T>() where T : struct, Enum
-        => Enum.GetValues<T>().Select(v => new object[] { v });
 }
