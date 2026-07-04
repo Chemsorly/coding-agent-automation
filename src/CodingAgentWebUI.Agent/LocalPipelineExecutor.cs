@@ -273,9 +273,6 @@ public sealed class LocalPipelineExecutor
         // Wrap EmitOutputLine so ALL output is masked once secrets are populated.
         // context.InjectedSecrets is null until RunEnvironmentSetupStep populates it,
         // so output before that step passes through unmasked (no secrets exist yet).
-        // TODO: EmitOutputLineInternalAsync is not serialized via signalrLock. If output lines and
-        // step transitions share the same SignalR connection, interleaving could affect perceived
-        // ordering at the orchestrator.
         void EmitOutputLine(string line)
         {
             var masked = MaskSecretsInOutput(line, context);
