@@ -78,7 +78,7 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         if (execResult == StepResult.Stop)
             return StepResult.Stop;
 
-        run.AccumulateTokenUsage(agentResult!);
+        run.AccumulateTokenUsage(agentResult!, phase: "decomposition_analysis");
 
         if (!agentResult!.Success)
         {

@@ -12,7 +12,6 @@ using StackExchange.Redis;
 namespace CodingAgentWebUI.UnitTests.Components;
 
 // TODO: Missing test coverage (review warnings):
-// - Test for "0 agents registered" showing inactive/grey dot when section is visible due to DB/Redis being configured
 // - Test for periodic timer refresh actually updating the UI when underlying service state changes
 // - Test for graceful degradation when injected services throw (verify catch block prevents render failures)
 public class SidebarHealthIndicatorsTests : BunitContext
@@ -310,5 +309,21 @@ public class SidebarHealthIndicatorsTests : BunitContext
         Assert.NotEmpty(cut.Markup.Trim());
         var items = cut.FindAll(".sidebar-health-item");
         Assert.Contains(items, i => i.TextContent.Contains("Agents"));
+    }
+
+    [Fact]
+    public void ShowsAgentInactiveDot_WhenZeroAgentsRegistered_ButSectionVisible()
+    {
+        // DB configured so section visible, but zero agents registered — inactive/grey dot
+        var registry = CreateRegistry(); // no agents registered
+        RegisterServices(CreateHealthService(dbConfigured: true, dbHealthy: true), registry);
+
+        var cut = Render<SidebarHealthIndicators>();
+
+        var items = cut.FindAll(".sidebar-health-item");
+        var agentItem = items.First(i => i.TextContent.Contains("Agents"));
+        var dot = agentItem.QuerySelector(".infra-health-dot")!;
+        Assert.Contains("dot-inactive", dot.ClassList.ToString());
+        Assert.Contains("0/0", agentItem.TextContent);
     }
 }

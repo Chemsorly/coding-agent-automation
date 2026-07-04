@@ -34,91 +34,44 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
 
     // ── Constructor Guard Clauses ────────────────────────────────────────
 
-    [Fact]
-    public void Constructor_NullWorkItemId_Throws()
+    [Theory]
+    [InlineData(0, "workItemId")]
+    [InlineData(1, "workItemClient")]
+    [InlineData(2, "hubManager")]
+    [InlineData(3, "hubManagerFactory")]
+    [InlineData(4, "executor")]
+    [InlineData(5, "consolidationExecutor")]
+    [InlineData(6, "agentIdentity")]
+    [InlineData(7, "lifetime")]
+    [InlineData(8, "logger")]
+    public void Constructor_NullParameter_Throws(int nullIndex, string expectedParamName)
     {
-        var act = () => CreateService(workItemId: null!);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("workItemId");
-    }
+        var args = new object?[]
+        {
+            "wi-1",
+            _workItemClient,
+            _hubManager,
+            _hubFactory,
+            CreateMinimalExecutor(),
+            CreateMinimalConsolidationExecutor(),
+            new AgentIdentity("agent-1"),
+            _mockLifetime.Object,
+            _mockLogger.Object
+        };
+        args[nullIndex] = null;
 
-    [Fact]
-    public void Constructor_NullWorkItemClient_Throws()
-    {
         var act = () => new WorkItemAgentService(
-            "wi-1", null!, _hubManager, _hubFactory,
-            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
-            new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("workItemClient");
-    }
+            (string)args[0]!,
+            (WorkItemHttpClient)args[1]!,
+            (HubConnectionManager)args[2]!,
+            (HubConnectionManagerFactory)args[3]!,
+            (LocalPipelineExecutor)args[4]!,
+            (LocalConsolidationExecutor)args[5]!,
+            (AgentIdentity)args[6]!,
+            (IHostApplicationLifetime)args[7]!,
+            (Serilog.ILogger)args[8]!);
 
-    [Fact]
-    public void Constructor_NullHubManager_Throws()
-    {
-        var act = () => new WorkItemAgentService(
-            "wi-1", _workItemClient, null!, _hubFactory,
-            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
-            new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("hubManager");
-    }
-
-    [Fact]
-    public void Constructor_NullHubManagerFactory_Throws()
-    {
-        var act = () => new WorkItemAgentService(
-            "wi-1", _workItemClient, _hubManager, null!,
-            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
-            new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("hubManagerFactory");
-    }
-
-    [Fact]
-    public void Constructor_NullExecutor_Throws()
-    {
-        var act = () => new WorkItemAgentService(
-            "wi-1", _workItemClient, _hubManager, _hubFactory,
-            null!, CreateMinimalConsolidationExecutor(),
-            new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("executor");
-    }
-
-    [Fact]
-    public void Constructor_NullConsolidationExecutor_Throws()
-    {
-        var act = () => new WorkItemAgentService(
-            "wi-1", _workItemClient, _hubManager, _hubFactory,
-            CreateMinimalExecutor(), null!,
-            new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("consolidationExecutor");
-    }
-
-    [Fact]
-    public void Constructor_NullAgentIdentity_Throws()
-    {
-        var act = () => new WorkItemAgentService(
-            "wi-1", _workItemClient, _hubManager, _hubFactory,
-            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
-            null!, _mockLifetime.Object, _mockLogger.Object);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("agentIdentity");
-    }
-
-    [Fact]
-    public void Constructor_NullLifetime_Throws()
-    {
-        var act = () => new WorkItemAgentService(
-            "wi-1", _workItemClient, _hubManager, _hubFactory,
-            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
-            new AgentIdentity("agent-1"), null!, _mockLogger.Object);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("lifetime");
-    }
-
-    [Fact]
-    public void Constructor_NullLogger_Throws()
-    {
-        var act = () => new WorkItemAgentService(
-            "wi-1", _workItemClient, _hubManager, _hubFactory,
-            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
-            new AgentIdentity("agent-1"), _mockLifetime.Object, null!);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
+        act.Should().Throw<ArgumentNullException>().WithParameterName(expectedParamName);
     }
 
     [Fact]

@@ -5,8 +5,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Usage:** Agents MUST read this file before proposing changes to understand constraints and deliberate choices. If a decision here contradicts what seems "obvious," the decision wins — the human made it for a reason.
 
 <!-- Intent Extraction Sessions -->
-<!-- Session: 5 | Last run: 2026-07-04 | Decisions captured: 25 -->
-<!-- Queued for next session: none — initial full extraction complete, run again after significant code changes -->
+<!-- Session: 6 | Last run: 2026-07-04 | Decisions captured: 37 -->
+<!-- Queued for next session: none — run again after significant code changes -->
 
 ---
 
@@ -644,6 +644,184 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 <!-- Decisions about UI/UX choices, user-facing behavior -->
 
+### AgentCoding component ↔ PageService boundary: render-lifecycle vs. async workflows
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** The split between `AgentCoding.razor.cs` and `AgentCodingPageService` grew organically and is NOT a deliberate architectural boundary. The formalized principle going forward (best practice for Blazor Server): **PageService owns all async workflows and persistent state. Component owns render-lifecycle concerns (timers, JS interop, event subscriptions, transient visibility flags like `_showAddForm`).** When touching this file, migrate behavioral state (e.g., `_recentlyToggled`) into PageService. No strong opinion from the human — adopting Blazor best practice as the default. Apply incrementally.
+
+**Context:** PR #1037 extracted drawer/dispatch logic but left several state fields in the component (`_recentlyToggled`, `_showAddForm`, `_showDeleteConfirm`, toast timers). The boundary is fuzzy. Comparable Blazor patterns (MudBlazor, Radzen) typically extract ALL mutable state to services — we accept a middle ground where render-lifecycle stays in the component.
+
+**Alternatives considered:** Full stateless component (all state in service — too many `Func<Task>` callbacks), keep as-is (continues organic growth).
+
+**Reassess when:** If adding a new feature requires modifying both the component AND the service for the same concern — that signals the boundary is wrong.
+
+---
+
+### Undo snackbar: always show for toggles, not loop-conditional
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** The undo snackbar should appear for ALL toggle operations (template enabled, implementation, review, decomposition) regardless of whether the loop is active. The current loop-conditional behavior and the inconsistency where `_recentlyToggled` is added unconditionally for some toggles but conditionally for others are both unintentional. Fix: make both `_recentlyToggled` and the undo snackbar unconditional for all toggle types. The cost is minimal (5-second snackbar) and it provides consistent UX.
+
+**Context:** The toggle-during-loop restriction was not a deliberate safety design — it grew from the initial implementation where only template-enabled toggling existed. When implementation/review/decomposition toggles were added, they copied the pattern inconsistently.
+
+**Alternatives considered:** Keep loop-only (saves visual noise in idle state but inconsistent), remove undo entirely (loses safety net).
+
+**Reassess when:** If user feedback indicates the snackbar is annoying in idle state, make it configurable or reduce timeout to 3 seconds.
+
+---
+
+### Drawer tabs: current three-component approach is acceptable, open to consolidation
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** The tabbed drawer approach (three separate components — `IssueDispatchDrawer`, `PrDispatchDrawer`, `EpicDispatchDrawer` — with tab navigation) is intentional but holds no strong commitment. The three-component pattern allows per-type customization (different columns, actions, data models). If a future contributor can achieve the same customization with a single generic `DispatchDrawer<T>` component without sacrificing readability, that's acceptable. The shared CancellationTokenSource across drawers is intentional — opening any drawer cancels pending work from the previous.
+
+**Context:** Implemented in PR #1013 ([UI-09]). The pattern matches GitLab CI's drawer+tabs approach. Adding a new work type (e.g., "Browse Feedback") should create a new component + tab unless the existing components can be generalized cleanly.
+
+**Alternatives considered:** Single generic component (less code but harder to customize per-type), fully independent drawers without tabs (more components, worse UX).
+
+**Reassess when:** A fourth work type is added — at that point, evaluate whether the per-type component pattern scales or whether a generic approach is needed.
+
+---
+
+### Error messages: sticky, no auto-dismiss, must have manual dismiss button
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** Error messages (`_errorMessage`) MUST be sticky — they never auto-dismiss. They SHOULD have a manual dismiss button (currently missing — known gap). Success messages auto-dismiss after 3 seconds. This asymmetry is intentional: errors represent actionable failures that the user must acknowledge; successes are confirmatory and transient. New code MUST NOT add auto-dismiss timers for error messages. The TODO in the Razor template ("Error messages need a manual dismiss mechanism") is a valid gap to fix.
+
+**Context:** Material Design guidelines and GitHub Actions both use persistent error messages with explicit dismiss. Auto-dismiss for errors is an anti-pattern — users may miss critical failures.
+
+**Alternatives considered:** Auto-dismiss errors after 10-15 seconds (risky — users miss problems), toast-style errors with queue (over-engineered for current complexity).
+
+**Reassess when:** If error accumulation becomes confusing (multiple errors stacking), consider showing only the most recent error with a "previous errors" expandable section.
+
+---
+
+### PipelineService event handling: extract state transitions to PageService, keep JS in component
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** The `HandleStateChanged` event handler in `AgentCoding.razor.cs` grew organically and mixes testable state-transition logic (`_lastRunId`, `_showCompletionOnly`, `_lastLoopStatus` detection) with untestable UI concerns (JS scroll interop, `StateHasChanged`). The target state: extract state-transition logic into `PageService.HandlePipelineStateChanged(PipelineRun? activeRun)` so it's unit-testable. The component handler becomes a thin wrapper: call PageService, then `StateHasChanged()`, then JS scroll. Issue #1053 tracks this work.
+
+**Context:** Post-extraction (#1037), the component still has non-trivial logic in event handlers that can't be tested without bUnit. The PageService was designed for user-initiated workflows but should also handle system-event state transitions.
+
+**Alternatives considered:** Keep all event handling in component (untestable), move JS interop to service via IJSRuntime injection (weird — services shouldn't own render concerns).
+
+**Reassess when:** After implementing this, if the PageService becomes too large (>1000 lines), consider splitting into sub-services per concern (DrawerService, LoopControlService, EventStateService).
+
+---
+
+### Output lines buffer: lock+snapshot is acceptable, Channel<string> is the future alternative
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** The `lock (_outputLock)` + `_outputLines.TakeLast(200).ToList()` pattern for streaming agent output works correctly at current output rates (~1-10 lines/second). It is NOT intentional design — it grew pragmatically. The lock is held during render which is theoretically suboptimal but unmeasurable at current throughput. The target migration is `Channel<string>` with a bounded buffer (lock-free write via `TryWrite`, drain-on-render via `TryRead` loop). Issue #1054 tracks this work.
+
+**Context:** Blazor Server docs recommend `InvokeAsync` for cross-thread updates (which is used), but the shared `List<string>` is still manually synchronized. `Channel<T>` is the .NET-native async producer/consumer pattern that eliminates lock contention. The 200-line cap prevents memory growth regardless of approach.
+
+**Alternatives considered:** `ConcurrentQueue<string>` (simpler than Channel but still needs periodic drain), `IObservable<string>` with Rx (over-engineered), keep current (works fine at current scale).
+
+**Reassess when:** Output rates exceed 50 lines/second, or profiling shows render thread contention from the output lock.
+
+---
+
+### Target user: single operator/power-user — no RBAC for now
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** The primary user is a single operator/power-user who configures, monitors, and manages the pipeline. This is NOT a developer-facing tool where casual users file issues and wait — it's an ops-facing tool for someone who understands the full system. Dispatch to agents is done via labels (external to this UI), so "submitting work" is already separate from "operating the pipeline." Future RBAC (Read/ReadWrite/Admin, similar to ArgoCD) is on the roadmap but not yet needed. UX should optimize for expertise (compact, dense, keyboard-shortcuts-as-bonus) rather than approachability.
+
+**Context:** The navigation flow (Agent Coding → Monitoring → Consolidation → Settings) assumes one person owns the entire pipeline lifecycle. ArgoCD's permission model (Read/ReadWrite/Admin) is the likely future direction. The onboarding checklist handles first-run learning; after that, the UI assumes expertise.
+
+**Alternatives considered:** Developer-facing tool (simpler UI, guided workflows), multi-persona split (admin vs viewer — premature).
+
+**Reassess when:** A second team member needs access, or when the system is deployed as a shared service. At that point, implement ArgoCD-style RBAC with read-only dashboard views.
+
+---
+
+### Visual design: dark-first, light theme exists for accessibility
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** Dark theme is the primary design. The CSS custom property system (`--bg`, `--surface`, `--accent`, etc.) defines dark as root defaults. Light theme exists via `[data-theme="light"]` override for accessibility/preference but is not the design priority. New UI features should be verified in dark theme; light theme is "should work" not "must look great." The deep purple accent (`#7c3aed`) is designed for dark backgrounds.
+
+**Context:** Developer tools are overwhelmingly dark-first (VS Code, GitHub, terminals). The light theme variables were defined for completeness but haven't received hand-tuning. The theme toggle persists via localStorage.
+
+**Alternatives considered:** Equal polish for both themes (doubles design work), remove light entirely (hurts accessibility for some users).
+
+**Reassess when:** User feedback specifically reports light theme visual issues. Don't proactively invest in light theme polish.
+
+---
+
+### Monitoring refresh: 5-second polling is the correct interval
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** The Agent Monitoring page should poll at 5-second intervals (not 2s). The current 2-second interval is too aggressive for a single-operator tool — 5 seconds provides adequate freshness without unnecessary server load. The freshness indicator transparency ("Refreshing every 5s") is intentional — it builds trust that data is current. Issue #1058 tracks the change from 2s → 5s.
+
+**Context:** Grafana defaults to 5-second refresh. GitHub Actions uses 5-10s. The 2-second interval was set without deliberation and generates unnecessary load. For a tool where the operator is watching (not automated alerting), 5 seconds is indistinguishable from real-time.
+
+**Alternatives considered:** Event-driven via SignalR (eliminates polling entirely — future possibility), configurable interval (over-engineering for single-operator use), keep 2s (wasteful).
+
+**Reassess when:** If event-driven monitoring is implemented (SignalR push from pipeline events to monitoring page), polling becomes a fallback only.
+
+---
+
+### Interaction model: mouse-first with keyboard as bonus layer
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** The primary interaction model is mouse-first. Keyboard shortcuts (Esc, ?, arrow keys in drawers) exist as a power-user layer introduced by an agent, not as a core design principle. They provide value for users who want them but are NOT the primary interaction path. Full keyboard-first navigation (tab trapping, roving tabindex, visible focus states in all components) is not a priority. Fix keyboard accessibility bugs when reported; don't proactively invest in keyboard-first features.
+
+**Context:** The `ShortcutHelpOverlay` and global keyboard handler were added by an agent as a UX improvement. The system owner is mouse-primary. WCAG keyboard accessibility is a separate concern from "keyboard-first design" — basic keyboard operability (tab order, focus-visible) should work, but advanced keyboard navigation is optional.
+
+**Alternatives considered:** Keyboard-first (VS Code model — too much investment for current user base), remove keyboard shortcuts entirely (loses the bonus value for power users who find them).
+
+**Reassess when:** Users report relying on keyboard navigation, or accessibility audit requires specific keyboard improvements.
+
+---
+
+### Information density: high for monitoring, open to redesign for other pages
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** The Agent Monitoring dashboard is intentionally high-density — operators need system state at a glance (Connected/Busy/Idle/Queued + run metrics in a single stats bar). This is correct and should not be reduced. HOWEVER, other pages (Agent Coding, Settings, Consolidation) are open to UX redesign. The Agent Coding page in particular has grown organically and could benefit from better information hierarchy, progressive disclosure, or layout restructuring. Agents proposing UX improvements to non-monitoring pages should feel free to suggest alternatives.
+
+**Context:** Agent Monitoring is an ops dashboard — high density is the genre standard (Grafana, Datadog). Agent Coding is more of a "control panel" — it could benefit from clearer separation of concerns (configuration vs. dispatch vs. active pipeline). The template table, loop controls, and manual dispatch section are all visible simultaneously regardless of what the user is doing.
+
+**Alternatives considered:** Reduce monitoring density (wrong for ops dashboards), apply same density to all pages (wrong — different pages serve different needs).
+
+**Reassess when:** A UX redesign proposal is created for the Agent Coding page. Consider: tabbed sections (Configure | Dispatch | Monitor), collapsible regions, or a "mode" switch that shows only the relevant section based on pipeline state.
+
+---
+
+### Pipeline progress: dual-panel (sidebar + terminal) is intentional
+
+**Date:** 2026-07-04
+**Category:** ux
+
+**Decision:** When a pipeline is active, showing BOTH the structured PipelineSidebar (phased steps: Preparation → Analysis → Code Generation) AND the raw OutputTerminal (agent logs) simultaneously is intentional. The sidebar answers "where am I in the pipeline?" — the terminal answers "what's happening right now?" They serve different cognitive needs for an operator watching a run. The pipeline is a structured process (known phases, known steps); the terminal provides raw transparency into the agent's execution.
+
+**Context:** No comparable system uses this exact dual-panel approach. GitHub Actions merges structure and output (expandable log groups). Argo uses DAG + per-step logs (similar concept, different layout). The side-by-side layout leverages the operator's screen width — desktop-only assumption is acceptable for this tool.
+
+**Alternatives considered:** Merged view with expandable log groups per step (GitHub Actions style — loses simultaneous visibility), terminal-only with progress bar (loses structured phase awareness), sidebar-only with expandable logs (too cramped).
+
+**Reassess when:** If the terminal output is rarely useful during a run (operators only check post-hoc), consider making it collapsible. Currently, seeing real-time agent output is part of the trust model — the operator knows the agent is actually working.
+
 ## Decision Map
 
 ### Relationships
@@ -663,11 +841,21 @@ Human-authored intent behind non-obvious design choices. This file is the author
 - "External CI re-push" scoped by "Partial failure contract" (CI is on the critical path — failure is retried, not ignored)
 - "Project overrides: deep-merge (#1044)" constrains "No schema versioning" (merge requires distinguishing "not set" from "set to default")
 - "LocalPipelineExecutor: accidental monolith" correlates with "Agent lifetime dual model" (executor grew as both modes added features)
+- "AgentCoding component ↔ PageService boundary" scoped by "PipelineService event handling" (event state transitions should migrate to PageService per the boundary principle)
+- "Undo snackbar: always show" correlates with "Error messages: sticky with dismiss" (both are feedback pattern decisions — success/undo are transient, errors are persistent)
+- "Drawer tabs: three-component approach" scoped by "AgentCoding component ↔ PageService boundary" (drawer state lives in PageService, rendering in components)
+- "Target user: single operator" scopes "Information density: high for monitoring" (operator expertise justifies dense dashboard)
+- "Target user: single operator" scopes "Monitoring refresh: 5-second polling" (single operator means low server load regardless)
+- "Visual design: dark-first" scopes "Information density: high for monitoring" (dark theme with purple accent designed for dense data display)
+- "Interaction model: mouse-first" constrains "Keyboard shortcuts" (shortcuts are bonus, not primary interaction path)
+- "Pipeline progress: dual-panel" scoped by "Target user: single operator" (desktop-assumed, screen-width-leveraging layout)
 
 ### Coverage Gaps (auto-detected)
-- Coverage is now comprehensive for core architecture and configuration decisions
-- Remaining undocumented areas are minor/operational (specific prompt content choices, UI layout decisions)
+- Coverage is now comprehensive for core architecture, configuration, UX interaction patterns, and visual design
+- Remaining undocumented areas: prompt engineering philosophy, acceptance criteria parsing strategy, feedback loop calibration, Agent Coding page layout redesign (flagged as open to suggestions)
 
 ### Queued Questions (for next session)
-- Run next intent extraction after significant architectural changes or new feature specs
-- Potential topics: prompt engineering philosophy, acceptance criteria parsing strategy, feedback loop calibration
+- Agent Coding page layout redesign proposals (user expressed openness to restructuring non-monitoring pages)
+- Prompt engineering philosophy (how prompts are structured/maintained)
+- Acceptance criteria parsing strategy
+- Feedback loop calibration mechanism design

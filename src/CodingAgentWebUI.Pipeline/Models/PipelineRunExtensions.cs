@@ -28,18 +28,21 @@ public static class PipelineRunExtensions
     /// <summary>
     /// Accumulates token usage and cost from an agent result into the pipeline run totals.
     /// </summary>
-    public static void AccumulateTokenUsage(this PipelineRun run, AgentResult? result)
+    public static void AccumulateTokenUsage(this PipelineRun run, AgentResult? result, string? phase = null)
     {
         if (result?.Usage is null) return;
         run.TotalTokens += result.Usage.TotalTokens;
+
+        var tags = phase is null
+            ? PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName)
+            : PipelineTelemetry.BuildTagsWithPhase(run.RunType, run.ProjectId, run.ProjectName, phase);
+
         if (result.Cost is not null)
         {
             run.TotalCost = (run.TotalCost ?? 0m) + result.Cost.Value;
-            PipelineTelemetry.CostUsd.Add((double)result.Cost.Value,
-                PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
+            PipelineTelemetry.CostUsd.Add((double)result.Cost.Value, tags);
         }
 
-        PipelineTelemetry.TokensUsed.Add(result.Usage.TotalTokens,
-            PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
+        PipelineTelemetry.TokensUsed.Add(result.Usage.TotalTokens, tags);
     }
 }

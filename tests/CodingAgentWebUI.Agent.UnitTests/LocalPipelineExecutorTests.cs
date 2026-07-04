@@ -43,49 +43,36 @@ public class LocalPipelineExecutorTests : IDisposable
 
     // ── Constructor Null Guards ──────────────────────────────────────────
 
-    [Fact]
-    public void Constructor_NullOrchestrator_ThrowsArgumentNullException()
+    [Theory]
+    [MemberData(nameof(NullConstructorArgs))]
+    public void Constructor_NullParameter_ThrowsArgumentNullException(
+        IKiroCliOrchestrator? orchestrator,
+        IHttpClientFactory? httpClientFactory,
+        PipelineConfiguration? defaultPipelineConfig,
+        IQualityGateValidator? qualityGateValidator,
+        Serilog.ILogger? logger,
+        string expectedParamName)
     {
         var act = () => new LocalPipelineExecutor(
-            null!, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentIdentity("test-agent"));
+            orchestrator!, httpClientFactory!, defaultPipelineConfig!, qualityGateValidator!, logger!,
+            agentIdentity: new AgentIdentity("test-agent"));
 
-        act.Should().Throw<ArgumentNullException>().WithParameterName("orchestrator");
+        act.Should().Throw<ArgumentNullException>().WithParameterName(expectedParamName);
     }
 
-    [Fact]
-    public void Constructor_NullHttpClientFactory_ThrowsArgumentNullException()
+    public static IEnumerable<object?[]> NullConstructorArgs()
     {
-        var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, null!, _defaultConfig, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentIdentity("test-agent"));
+        var orch = new Mock<IKiroCliOrchestrator>().Object;
+        var http = new Mock<IHttpClientFactory>().Object;
+        var config = new PipelineConfiguration();
+        var qg = new Mock<IQualityGateValidator>().Object;
+        var log = new Mock<Serilog.ILogger>().Object;
 
-        act.Should().Throw<ArgumentNullException>().WithParameterName("httpClientFactory");
-    }
-
-    [Fact]
-    public void Constructor_NullDefaultPipelineConfig_ThrowsArgumentNullException()
-    {
-        var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, null!, _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentIdentity("test-agent"));
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("defaultPipelineConfig");
-    }
-
-    [Fact]
-    public void Constructor_NullQualityGateValidator_ThrowsArgumentNullException()
-    {
-        var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, null!, _mockLogger.Object, agentIdentity: new AgentIdentity("test-agent"));
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("qualityGateValidator");
-    }
-
-    [Fact]
-    public void Constructor_NullLogger_ThrowsArgumentNullException()
-    {
-        var act = () => new LocalPipelineExecutor(
-            _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig, _mockQualityGateValidator.Object, null!, agentIdentity: new AgentIdentity("test-agent"));
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
+        yield return new object?[] { null, http, config, qg, log, "orchestrator" };
+        yield return new object?[] { orch, null, config, qg, log, "httpClientFactory" };
+        yield return new object?[] { orch, http, null, qg, log, "defaultPipelineConfig" };
+        yield return new object?[] { orch, http, config, null, log, "qualityGateValidator" };
+        yield return new object?[] { orch, http, config, qg, null, "logger" };
     }
 
     [Fact]

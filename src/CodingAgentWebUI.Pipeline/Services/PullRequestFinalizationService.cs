@@ -165,7 +165,7 @@ public sealed class PullRequestFinalizationService
                 ct,
                 line => emitOutputLine(line));
 
-            run.AccumulateTokenUsage(result);
+            run.AccumulateTokenUsage(result, phase: "pr_description");
 
             var description = string.Join("\n", result.OutputLines).Trim();
             if (string.IsNullOrWhiteSpace(description))
@@ -225,7 +225,7 @@ public sealed class PullRequestFinalizationService
                 ct,
                 line => emitOutputLine(line));
 
-            run.AccumulateTokenUsage(reflectionResult);
+            run.AccumulateTokenUsage(reflectionResult, phase: "reflection");
             _logger.Information("Pipeline {RunId} reflection step completed", run.RunId);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

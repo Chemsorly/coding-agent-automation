@@ -46,7 +46,7 @@ public partial class AgentPhaseExecutor
                 context.Callbacks.NotifyChange, _logger, ct,
                 line => context.Callbacks.EmitOutputLine(line));
 
-            run.AccumulateTokenUsage(agentResult);
+            run.AccumulateTokenUsage(agentResult, phase: $"follow_up_{reviewerConfig.DisplayName}");
 
             // Collect the agent's response text from output lines
             var responseText = agentResult.OutputLines.Count > 0
@@ -216,7 +216,7 @@ public partial class AgentPhaseExecutor
 
                         if (acResult is not null)
                         {
-                            run.AccumulateTokenUsage(acResult);
+                            run.AccumulateTokenUsage(acResult, phase: "acceptance_criteria");
                             run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
                                 run.WorkspacePath!, _logger, ct);
 
@@ -324,7 +324,7 @@ public partial class AgentPhaseExecutor
 
         if (!acceptanceCriteriaConsumed && acAgentResult is not null)
         {
-            run.AccumulateTokenUsage(acAgentResult);
+            run.AccumulateTokenUsage(acAgentResult, phase: "acceptance_criteria");
             run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
                 run.WorkspacePath!, _logger, ct);
         }
@@ -355,7 +355,8 @@ public partial class AgentPhaseExecutor
             $"Code review fix agent (iteration {iterationIndex + 1})",
             context.Callbacks, _logger, ct,
             recordOutputToHistory: false,
-            resumeSessionId: run.CodegenSessionId);
+            resumeSessionId: run.CodegenSessionId,
+            phase: "fix");
 
         run.ChatHistory.Enqueue(new ChatEntry
         {
@@ -399,7 +400,7 @@ public partial class AgentPhaseExecutor
             var result = await ExecuteSingleReviewAgentAsync(context, agent, iterationIndex, isolated, ct);
             agentsRun.Add(agent.Name);
 
-            run.AccumulateTokenUsage(result.AgentResult);
+            run.AccumulateTokenUsage(result.AgentResult, phase: $"review_{agent.Name}");
             run.AddCodeReviewCounts(result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
             criticalCount += result.Severity.Critical;
 
@@ -488,7 +489,7 @@ public partial class AgentPhaseExecutor
                 continue;
             }
 
-            run.AccumulateTokenUsage(result.AgentResult);
+            run.AccumulateTokenUsage(result.AgentResult, phase: $"review_{agent.Name}");
             run.AddCodeReviewCounts(result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
             localCriticalCount += result.Severity.Critical;
 
@@ -622,6 +623,7 @@ public partial class AgentPhaseExecutor
 
         var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, isolated: isolated, inlineCommentsEnabled: config.CodeReview.InlineComments.Enabled, hasLinkedPr: run.LinkedPullRequest is not null);
         _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, iterationIndex + 1, agent.Name, reviewPrompt);
+        activity?.SetTag("pipeline.prompt_length_chars", reviewPrompt.Length);
 
         var reviewResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
             context.AgentProvider,
