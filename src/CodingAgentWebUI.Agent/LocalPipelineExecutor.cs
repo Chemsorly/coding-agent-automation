@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Agent.KiroCli;
 using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -183,19 +184,9 @@ public sealed class LocalPipelineExecutor
             else
                 PipelineTelemetry.JobsCompleted.Add(1, tags);
 
-            if (repoProvider is IAsyncDisposable rd) await rd.DisposeAsync();
-            if (agentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
-            if (brainProvider is IAsyncDisposable brd) await brd.DisposeAsync();
-            if (pipelineProvider is IAsyncDisposable pd) await pd.DisposeAsync();
-
-            // Dispose additional repo providers used for cross-repo decomposition cloning
+            await ProviderDisposer.DisposeAllAsync(repoProvider, agentProvider, brainProvider, pipelineProvider);
             if (additionalRepoProviders is not null)
-            {
-                foreach (var (_, provider) in additionalRepoProviders)
-                {
-                    if (provider is IAsyncDisposable ard) await ard.DisposeAsync();
-                }
-            }
+                await ProviderDisposer.DisposeAllAsync(additionalRepoProviders.Select(p => p.Provider as IAsyncDisposable));
         }
     }
 

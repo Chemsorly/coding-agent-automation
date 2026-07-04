@@ -269,11 +269,8 @@ internal sealed class BrainConsolidationProviders : IAsyncDisposable
         AgentProvider = agentProvider;
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        if (BrainProvider is IAsyncDisposable bd) await bd.DisposeAsync();
-        if (AgentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
-    }
+    public async ValueTask DisposeAsync() =>
+        await ProviderDisposer.DisposeAllAsync(BrainProvider, AgentProvider);
 }
 
 /// <summary>
@@ -298,13 +295,8 @@ internal sealed class RefactoringProviders : IAsyncDisposable
         BrainProvider = brainProvider;
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        if (RepoProvider is IAsyncDisposable rd) await rd.DisposeAsync();
-        if (AgentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
-        if (IssueProvider is IAsyncDisposable id) await id.DisposeAsync();
-        if (BrainProvider is IAsyncDisposable bd) await bd.DisposeAsync();
-    }
+    public async ValueTask DisposeAsync() =>
+        await ProviderDisposer.DisposeAllAsync(RepoProvider, AgentProvider, IssueProvider, BrainProvider);
 }
 
 /// <summary>
@@ -319,8 +311,6 @@ internal sealed class HarnessProviders : IAsyncDisposable
         AgentProvider = agentProvider;
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        if (AgentProvider is IAsyncDisposable ad) await ad.DisposeAsync();
-    }
+    public async ValueTask DisposeAsync() =>
+        await ProviderDisposer.DisposeAllAsync(AgentProvider);
 }

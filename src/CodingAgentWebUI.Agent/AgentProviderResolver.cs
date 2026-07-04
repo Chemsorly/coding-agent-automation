@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -156,19 +157,9 @@ internal sealed class AgentProviderResolver
         IPipelineProvider? pipelineProvider,
         List<(string TemplateName, IRepositoryProvider Provider)>? additionalRepoProviders)
     {
-        if (repoProvider is not null)
-            try { await repoProvider.DisposeAsync(); } catch { /* best-effort cleanup */ }
-        if (agentProvider is not null)
-            try { await agentProvider.DisposeAsync(); } catch { /* best-effort cleanup */ }
-        if (brainProvider is not null)
-            try { await brainProvider.DisposeAsync(); } catch { /* best-effort cleanup */ }
-        if (pipelineProvider is not null)
-            try { await pipelineProvider.DisposeAsync(); } catch { /* best-effort cleanup */ }
+        await ProviderDisposer.DisposeAllAsync(repoProvider, agentProvider, brainProvider, pipelineProvider);
         if (additionalRepoProviders is not null)
-        {
-            foreach (var (_, provider) in additionalRepoProviders)
-                try { await provider.DisposeAsync(); } catch { /* best-effort cleanup */ }
-        }
+            await ProviderDisposer.DisposeAllAsync(additionalRepoProviders.Select(p => p.Provider as IAsyncDisposable));
     }
 }
 
