@@ -29,7 +29,7 @@ public partial class AgentCoding : IDisposable
     [CascadingParameter] private MainLayout? Layout { get; set; }
 
     private readonly object _outputLock = new();
-    private List<string> _outputLines = new();
+    private List<string> _outputLines = [];
 
     private string? _errorMessage;
     private string? _successMessage;

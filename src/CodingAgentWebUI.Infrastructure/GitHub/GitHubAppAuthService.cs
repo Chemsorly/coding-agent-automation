@@ -18,6 +18,7 @@ public sealed class GitHubAppAuthService
     private readonly ILogger _logger;
     private readonly SemaphoreSlim _semaphore = new(1, 1);
     private readonly TimeSpan _renewalBuffer = TimeSpan.FromMinutes(5);
+    private readonly TimeProvider _timeProvider;
 
     /// <summary>
     /// Factory for creating the IGitHubClient used to exchange JWTs for installation tokens.
@@ -46,12 +47,12 @@ public sealed class GitHubAppAuthService
         string privateKeyBase64,
         string apiUrl,
         ILogger logger)
-        : this(clientId, installationId, privateKeyBase64, apiUrl, logger, null)
+        : this(clientId, installationId, privateKeyBase64, apiUrl, logger, null, null)
     {
     }
 
     /// <summary>
-    /// Internal constructor that accepts an optional client factory for unit testing.
+    /// Internal constructor that accepts an optional client factory and time provider for unit testing.
     /// When clientFactory is null, defaults to creating real Octokit GitHubClient instances.
     /// </summary>
     /// <remarks>
@@ -70,7 +71,8 @@ public sealed class GitHubAppAuthService
         string privateKeyBase64,
         string apiUrl,
         ILogger logger,
-        Func<string, Uri, IGitHubClient>? clientFactory)
+        Func<string, Uri, IGitHubClient>? clientFactory,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(clientId);
         ArgumentNullException.ThrowIfNull(privateKeyBase64);
@@ -81,6 +83,7 @@ public sealed class GitHubAppAuthService
         _installationId = installationId;
         _apiUrl = apiUrl;
         _logger = logger;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _clientFactory = clientFactory ?? DefaultClientFactory;
 
         // Decode base64 to get the PEM string and validate it looks like a PEM key.
@@ -116,7 +119,7 @@ public sealed class GitHubAppAuthService
     public async Task<string> GetTokenAsync(CancellationToken ct)
     {
         // Fast path: return cached token if still valid with buffer
-        if (_cachedToken is not null && DateTimeOffset.UtcNow < _tokenExpiresAt - _renewalBuffer)
+        if (_cachedToken is not null && _timeProvider.GetUtcNow() < _tokenExpiresAt - _renewalBuffer)
         {
             return _cachedToken;
         }
@@ -125,7 +128,7 @@ public sealed class GitHubAppAuthService
         try
         {
             // Double-check after acquiring semaphore — another thread may have refreshed
-            if (_cachedToken is not null && DateTimeOffset.UtcNow < _tokenExpiresAt - _renewalBuffer)
+            if (_cachedToken is not null && _timeProvider.GetUtcNow() < _tokenExpiresAt - _renewalBuffer)
             {
                 return _cachedToken;
             }
@@ -150,7 +153,7 @@ public sealed class GitHubAppAuthService
             catch (Exception ex)
             {
                 // Graceful degradation: if we have a cached token that hasn't fully expired, use it
-                if (_cachedToken is not null && DateTimeOffset.UtcNow < _tokenExpiresAt)
+                if (_cachedToken is not null && _timeProvider.GetUtcNow() < _tokenExpiresAt)
                 {
                     _logger.Warning(
                         ex,

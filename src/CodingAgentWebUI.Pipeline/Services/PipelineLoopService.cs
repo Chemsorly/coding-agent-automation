@@ -24,7 +24,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     private readonly Serilog.ILogger _logger;
 
     private TaskCompletionSource _activationSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly object _lock = new();
+    private readonly Lock _lock = new();
 
     private volatile bool _stopRequested;
     private CancellationTokenSource? _loopCts;
@@ -42,7 +42,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     private readonly ConcurrentDictionary<string, ConfigStatusSnapshot> _templateStatuses = new();
 
     /// <summary>Validation errors from the last StartLoop() call.</summary>
-    private List<string> _validationErrors = new();
+    private List<string> _validationErrors = [];
 
     /// <summary>Fired when loop state changes, for UI binding.</summary>
     public event Action? OnChange;
@@ -175,7 +175,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
 
             var enabledTemplates = templates.Where(t => t.Enabled).ToList();
 
-            _validationErrors = new List<string>();
+            _validationErrors = [];
 
             if (enabledTemplates.Count == 0)
             {

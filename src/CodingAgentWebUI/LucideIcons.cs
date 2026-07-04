@@ -1,3 +1,5 @@
+using System.Collections.Frozen;
+
 namespace CodingAgentWebUI;
 
 /// <summary>
@@ -6,7 +8,7 @@ namespace CodingAgentWebUI;
 /// </summary>
 public static class LucideIcons
 {
-    public static readonly IReadOnlyDictionary<string, string> Icons = new Dictionary<string, string>
+    public static readonly FrozenDictionary<string, string> Icons = new Dictionary<string, string>
     {
         ["message-circle"] = """<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>""",
         ["bot"] = """<path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/>""",
@@ -42,5 +44,5 @@ public static class LucideIcons
         ["download"] = """<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>""",
         ["scroll-text"] = """<path d="M15 13h-5"/><path d="M15 9h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/>""",
         ["user"] = """<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>""",
-    };
+    }.ToFrozenDictionary();
 }

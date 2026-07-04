@@ -11,8 +11,8 @@ namespace CodingAgentWebUI.Infrastructure.Persistence;
 /// </summary>
 public class PipelineRunHistoryService : IPipelineRunHistoryService
 {
-    private readonly List<PipelineRunSummary> _runHistory = new();
-    private readonly object _lock = new();
+    private readonly List<PipelineRunSummary> _runHistory = [];
+    private readonly Lock _lock = new();
     private readonly string _runsDirectory;
     private readonly Serilog.ILogger _logger;
 

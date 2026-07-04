@@ -14,6 +14,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
 {
     private readonly GitHubClientProvider _clientProvider;
     private readonly ResiliencePipeline _resiliencePipeline;
+    private readonly TimeProvider _timeProvider;
 
     /// <summary>Repository owner.</summary>
     protected string Owner { get; }
@@ -29,6 +30,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
         Owner = connection.Owner;
         Repo = connection.Repo;
         _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
+        _timeProvider = TimeProvider.System;
     }
 
     protected GitHubProviderBase(GitHubConnectionInfo connection, Func<CancellationToken, Task<string>> tokenProvider)
@@ -39,6 +41,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
         Owner = connection.Owner;
         Repo = connection.Repo;
         _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
+        _timeProvider = TimeProvider.System;
     }
 
     protected GitHubProviderBase(GitHubConnectionInfo connection, IGitHubClient client)
@@ -49,6 +52,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
         Owner = connection.Owner;
         Repo = connection.Repo;
         _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
+        _timeProvider = TimeProvider.System;
     }
 
     protected GitHubProviderBase(GitHubConnectionInfo connection, IGitHubClient client, string token)
@@ -60,6 +64,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
         Owner = connection.Owner;
         Repo = connection.Repo;
         _resiliencePipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
+        _timeProvider = TimeProvider.System;
     }
 
     /// <summary>API base URL from the client provider.</summary>
@@ -135,8 +140,8 @@ public abstract class GitHubProviderBase : IAsyncDisposable
         catch (AbuseException ex)
         {
             var resetAt = ex.RetryAfterSeconds.HasValue
-                ? DateTimeOffset.UtcNow.AddSeconds(ex.RetryAfterSeconds.Value)
-                : DateTimeOffset.UtcNow.Add(DefaultRateLimitWait);
+                ? _timeProvider.GetUtcNow().AddSeconds(ex.RetryAfterSeconds.Value)
+                : _timeProvider.GetUtcNow().Add(DefaultRateLimitWait);
             throw new PipelineRateLimitExceededException(resetAt, ex);
         }
         finally
@@ -176,8 +181,8 @@ public abstract class GitHubProviderBase : IAsyncDisposable
         catch (AbuseException ex)
         {
             var resetAt = ex.RetryAfterSeconds.HasValue
-                ? DateTimeOffset.UtcNow.AddSeconds(ex.RetryAfterSeconds.Value)
-                : DateTimeOffset.UtcNow.Add(DefaultRateLimitWait);
+                ? _timeProvider.GetUtcNow().AddSeconds(ex.RetryAfterSeconds.Value)
+                : _timeProvider.GetUtcNow().Add(DefaultRateLimitWait);
             throw new PipelineRateLimitExceededException(resetAt, ex);
         }
     }
@@ -198,8 +203,8 @@ public abstract class GitHubProviderBase : IAsyncDisposable
         catch (AbuseException ex)
         {
             var resetAt = ex.RetryAfterSeconds.HasValue
-                ? DateTimeOffset.UtcNow.AddSeconds(ex.RetryAfterSeconds.Value)
-                : DateTimeOffset.UtcNow.Add(DefaultRateLimitWait);
+                ? _timeProvider.GetUtcNow().AddSeconds(ex.RetryAfterSeconds.Value)
+                : _timeProvider.GetUtcNow().Add(DefaultRateLimitWait);
             throw new PipelineRateLimitExceededException(resetAt, ex);
         }
     }

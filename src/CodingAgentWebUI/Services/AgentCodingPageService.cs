@@ -46,12 +46,12 @@ public class AgentCodingPageService
 
     // ── State ──
 
-    public List<PipelineJobTemplate> Templates { get; private set; } = new();
+    public List<PipelineJobTemplate> Templates { get; private set; } = [];
     public IReadOnlyList<PipelineProject> Projects { get; private set; } = [];
-    public List<ProviderConfig> IssueProviders { get; private set; } = new();
-    public List<ProviderConfig> RepoProviders { get; private set; } = new();
-    public List<ProviderConfig> PipelineProviders { get; private set; } = new();
-    public List<ProviderConfig> BrainProviders { get; private set; } = new();
+    public List<ProviderConfig> IssueProviders { get; private set; } = [];
+    public List<ProviderConfig> RepoProviders { get; private set; } = [];
+    public List<ProviderConfig> PipelineProviders { get; private set; } = [];
+    public List<ProviderConfig> BrainProviders { get; private set; } = [];
     public IReadOnlyList<QualityGateConfiguration> QualityGateConfigs { get; private set; } = [];
     public IReadOnlyList<ReviewerConfiguration> ReviewerConfigs { get; private set; } = [];
     public IReadOnlyList<AgentProfile> AgentProfiles { get; private set; } = [];

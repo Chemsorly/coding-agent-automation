@@ -11,12 +11,12 @@ public partial class TemplateTableSection
 {
     // TODO: These mutable collection parameter types (List<T>, HashSet<T>) should be IReadOnlyList<T>
     // and IReadOnlySet<T> to prevent child components from accidentally mutating parent state.
-    [Parameter, EditorRequired] public List<PipelineJobTemplate> Templates { get; set; } = new();
+    [Parameter, EditorRequired] public List<PipelineJobTemplate> Templates { get; set; } = [];
     [Parameter, EditorRequired] public IReadOnlyList<PipelineProject> Projects { get; set; } = [];
-    [Parameter, EditorRequired] public List<ProviderConfig> IssueProviders { get; set; } = new();
-    [Parameter, EditorRequired] public List<ProviderConfig> RepoProviders { get; set; } = new();
-    [Parameter, EditorRequired] public List<ProviderConfig> BrainProviders { get; set; } = new();
-    [Parameter, EditorRequired] public List<ProviderConfig> PipelineProviders { get; set; } = new();
+    [Parameter, EditorRequired] public List<ProviderConfig> IssueProviders { get; set; } = [];
+    [Parameter, EditorRequired] public List<ProviderConfig> RepoProviders { get; set; } = [];
+    [Parameter, EditorRequired] public List<ProviderConfig> BrainProviders { get; set; } = [];
+    [Parameter, EditorRequired] public List<ProviderConfig> PipelineProviders { get; set; } = [];
     [Parameter, EditorRequired] public bool IsLoopActive { get; set; }
     [Parameter, EditorRequired] public HashSet<string> RecentlyToggled { get; set; } = new();
     [Parameter, EditorRequired] public IReadOnlyDictionary<string, ConfigStatusSnapshot> TemplateStatuses { get; set; } = new Dictionary<string, ConfigStatusSnapshot>();
