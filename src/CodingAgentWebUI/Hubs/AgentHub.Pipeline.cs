@@ -188,6 +188,12 @@ public sealed partial class AgentHub
 
             _orchestration.NotifyChange();
         }
+        else
+        {
+            _logger.Debug(
+                "ReportJobCompleted for job {JobId} — run not found (already processed or replayed). No-op.",
+                jobId);
+        }
 
         // Transition agent to Idle BEFORE slow I/O operations (label swap, comment posting).
         // This ensures agent availability is not gated on external provider latency.

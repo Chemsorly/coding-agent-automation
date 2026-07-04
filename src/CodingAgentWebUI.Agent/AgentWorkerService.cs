@@ -66,6 +66,8 @@ public sealed class AgentWorkerService : BackgroundService
     private PipelineStep? _currentStep;
     private readonly object _busyLock = new();
 
+    private readonly CriticalMessageBuffer _criticalMessageBuffer = new();
+
     private volatile CancellationTokenSource? _chatCts;
     private Task? _activeChatTask;
     private string? _activeChatSessionId;
@@ -222,6 +224,7 @@ public sealed class AgentWorkerService : BackgroundService
                 await SafeDisposeAsync(oldManager);
 
                 _logger.Information("Agent {AgentId} reconnected and re-registered after terminal close", _agentId);
+                await DrainBufferAsync();
                 return;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -370,10 +373,21 @@ public sealed class AgentWorkerService : BackgroundService
                 {
                     completionActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
                     completionActivity?.AddException(ex);
-                    _logger.Error(ex, "Failed to report job completion for {JobId}", message.JobId);
+                    _logger.Error(ex, "Failed to report job completion for {JobId}, buffering for replay", message.JobId);
+                    if (completion is not null)
+                        _criticalMessageBuffer.Enqueue(new BufferedJobCompleted(message.JobId, completion, DateTimeOffset.UtcNow));
                 }
 
-                await ReleaseJobSlotAndSignalReadyAsync();
+                // Only release slot if buffer is empty — otherwise keep _activeJobId set
+                // so reconnection re-registers with ActiveJob state, allowing replay
+                // TODO: Potential double slot release if DrainBufferAsync (on reconnection thread)
+                // and this code path both call ReleaseJobSlotAndSignalReadyAsync concurrently.
+                // Not a crash (null-conditional on CTS, _busyLock guards _activeJobId), but could
+                // send duplicate AgentReady signals. Consider adding a guard or idempotent check.
+                if (!_criticalMessageBuffer.HasPendingMessages)
+                    await ReleaseJobSlotAndSignalReadyAsync();
+                else
+                    _logger.Warning("Job slot held for {JobId} — buffer has pending messages awaiting replay", message.JobId);
             }
         });
     }
@@ -609,6 +623,7 @@ public sealed class AgentWorkerService : BackgroundService
             await _signalRPipeline.ExecuteAsync(async token =>
                 await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), CancellationToken.None);
             _logger.Information("Agent {AgentId} re-registered successfully after reconnection", _agentId);
+            await DrainBufferAsync();
         }
         catch (Exception ex)
         {
@@ -621,6 +636,7 @@ public sealed class AgentWorkerService : BackgroundService
                 {
                     await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, CancellationToken.None);
                     _logger.Information("Agent {AgentId} re-registered on extended attempt {Attempt}", _agentId, i + 1);
+                    await DrainBufferAsync();
                     return;
                 }
                 catch (Exception retryEx)
@@ -847,6 +863,85 @@ public sealed class AgentWorkerService : BackgroundService
         {
             _logger.Warning(ex, "Failed to send AgentReady signal");
         }
+    }
+
+    /// <summary>
+    /// Drains the critical message buffer by replaying each buffered message over
+    /// the current SignalR connection. Called after successful reconnection/re-registration.
+    /// </summary>
+    /// <remarks>
+    /// If replay fails for a message, it is re-buffered with an incremented drain attempt
+    /// counter. Messages exceeding <see cref="MaxDrainAttempts"/> are dropped. After drain,
+    /// the job slot is released if the buffer is empty.
+    /// </remarks>
+    private async Task DrainBufferAsync()
+    {
+        if (!_criticalMessageBuffer.HasPendingMessages)
+            return;
+
+        const int maxDrainAttempts = 3;
+        var messages = _criticalMessageBuffer.DrainAll();
+        _logger.Information("Draining critical message buffer: {Count} message(s) pending", messages.Count);
+
+        for (var i = 0; i < messages.Count; i++)
+        {
+            var msg = messages[i];
+            if (msg.DrainAttempts >= maxDrainAttempts)
+            {
+                _logger.Warning(
+                    "Dropping buffered message after {MaxAttempts} drain attempts: {MessageType} for job {JobId}",
+                    maxDrainAttempts, msg.GetType().Name,
+                    (msg as BufferedJobCompleted)?.JobId ?? "unknown");
+                continue;
+            }
+
+            try
+            {
+                switch (msg)
+                {
+                    case BufferedJobCompleted completed:
+                        await _signalRPipeline.ExecuteAsync(async token =>
+                            await _hubManager.Connection.InvokeAsync(
+                                HubMethodNames.ReportJobCompleted, completed.JobId, completed.Payload, token),
+                            CancellationToken.None);
+                        _logger.Information("Successfully replayed buffered ReportJobCompleted for job {JobId}", completed.JobId);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex,
+                    "Failed to replay buffered message {MessageType} for job {JobId}, re-buffering (attempt {Attempt}/{Max})",
+                    msg.GetType().Name,
+                    (msg as BufferedJobCompleted)?.JobId ?? "unknown",
+                    msg.DrainAttempts + 1, maxDrainAttempts);
+
+                // TODO: The fallback arm (_ => msg) does not increment DrainAttempts. If a new
+                // BufferedCriticalMessage subtype is added without updating this switch, the message
+                // would retry indefinitely. Consider incrementing DrainAttempts on the base type.
+                var rebuffered = msg switch
+                {
+                    BufferedJobCompleted c => c with { DrainAttempts = c.DrainAttempts + 1 },
+                    _ => msg
+                };
+                _criticalMessageBuffer.Enqueue((BufferedCriticalMessage)rebuffered);
+
+                // Re-buffer all remaining unprocessed messages to prevent data loss.
+                // These were already dequeued by DrainAll() and would be lost if not re-buffered.
+                for (var j = i + 1; j < messages.Count; j++)
+                {
+                    _criticalMessageBuffer.Enqueue(messages[j]);
+                }
+
+                break; // Stop draining — will retry on next reconnection
+            }
+        }
+
+        // After drain, release slot if buffer is now empty
+        if (!_criticalMessageBuffer.HasPendingMessages)
+            await ReleaseJobSlotAndSignalReadyAsync();
+        else
+            _logger.Warning("Buffer still has pending messages after drain — job slot remains held");
     }
 
     private AgentRegistrationMessage BuildRegistrationMessage() => new()
