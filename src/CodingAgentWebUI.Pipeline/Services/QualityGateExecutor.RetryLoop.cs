@@ -94,32 +94,12 @@ public partial class QualityGateExecutor
                 }
                 else
                 {
-                    _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) exhausted after cleanup, finalizing as draft PR",
-                        run.RunId, config.MaxRetries);
-                    callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, leaving PR as draft");
-
-                    var finalErrorSummary = BuildQualityGateErrorSummary(report);
-                    run.RetryErrors.Enqueue(finalErrorSummary);
-
-                    // Collect failure feedback before finalizing draft PR
-                    await CollectFailureFeedbackAsync(context, run, report, linkedCt);
-
-                    await callbacks.FinalizePullRequest(run, report, true, linkedCt);
+                    await FinalizeDraftPrAsync(context, run, report, "exhausted after cleanup", linkedCt);
                 }
             }
             else
             {
-                _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) exhausted, finalizing as draft PR",
-                    run.RunId, config.MaxRetries);
-                callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, leaving PR as draft");
-
-                var errorSummary = BuildQualityGateErrorSummary(report);
-                run.RetryErrors.Enqueue(errorSummary);
-
-                // Collect failure feedback before finalizing draft PR
-                await CollectFailureFeedbackAsync(context, run, report, linkedCt);
-
-                await callbacks.FinalizePullRequest(run, report, true, linkedCt);
+                await FinalizeDraftPrAsync(context, run, report, "exhausted", linkedCt);
             }
         }
         catch (OperationCanceledException)
@@ -152,6 +132,32 @@ public partial class QualityGateExecutor
                 qgStopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
         }
+    }
+
+    /// <summary>
+    /// Encapsulates the draft-PR finalization pattern: log a warning, emit a UI line,
+    /// build and enqueue an error summary, collect failure feedback, then finalize as draft PR.
+    /// </summary>
+    private async Task FinalizeDraftPrAsync(
+        QualityGateContext context,
+        PipelineRun run,
+        QualityGateReport report,
+        string logContext,
+        CancellationToken ct)
+    {
+        var config = context.Config;
+        var callbacks = context.Callbacks;
+
+        _logger.Warning("Pipeline {RunId} max retries ({MaxRetries}) {LogContext}, finalizing as draft PR",
+            run.RunId, config.MaxRetries, logContext);
+        callbacks.EmitOutputLine($"⚠️ Quality gates failed after {config.MaxRetries} retries, leaving PR as draft");
+
+        var errorSummary = BuildQualityGateErrorSummary(report);
+        run.RetryErrors.Enqueue(errorSummary);
+
+        await CollectFailureFeedbackAsync(context, run, report, ct);
+
+        await callbacks.FinalizePullRequest(run, report, true, ct);
     }
 
     /// <summary>
