@@ -328,58 +328,58 @@ public partial class AgentPhaseExecutor
     }
 
     public static string BuildNotReadyComment(AnalysisAssessment assessment)
+        => BuildGateComment(
+            "## ⚠️ Analysis Gate: Needs Refinement",
+            assessment.Reason,
+            assessment.BlockingIssues,
+            assessment.Concerns,
+            "*The issue has been labeled `agent:needs-refinement`. Refine the issue description addressing the blocking issues above, then re-apply `agent:next` to retry.*",
+            CommentMarkers.GateRejection);
+
+    public static string BuildWontDoComment(AnalysisAssessment assessment)
+        => BuildGateComment(
+            "## 🚫 Analysis Gate: Won't Do",
+            assessment.Reason,
+            null,
+            assessment.Concerns,
+            "*The agent analyzed the codebase and determined no code changes are needed. The issue has been labeled `agent:wont-do`. If you disagree with this assessment, remove the label and re-apply `agent:next` to retry with a fresh analysis.*",
+            CommentMarkers.GateWontDo);
+
+    private static string BuildGateComment(
+        string header,
+        string? reason,
+        IReadOnlyList<string>? blockingIssues,
+        IReadOnlyList<string> concerns,
+        string footerText,
+        string marker)
     {
         var sb = new System.Text.StringBuilder();
-        sb.AppendLine("## ⚠️ Analysis Gate: Needs Refinement");
+        sb.AppendLine(header);
         sb.AppendLine();
-        if (!string.IsNullOrWhiteSpace(assessment.Reason))
-            sb.AppendLine(assessment.Reason);
+        if (!string.IsNullOrWhiteSpace(reason))
+            sb.AppendLine(reason);
 
-        if (assessment.BlockingIssues.Count > 0)
+        if (blockingIssues is { Count: > 0 })
         {
             sb.AppendLine();
             sb.AppendLine("### Blocking Issues");
-            foreach (var issue in assessment.BlockingIssues)
+            foreach (var issue in blockingIssues)
                 sb.AppendLine($"- {issue}");
         }
 
-        if (assessment.Concerns.Count > 0)
+        if (concerns.Count > 0)
         {
             sb.AppendLine();
             sb.AppendLine("### Concerns");
-            foreach (var concern in assessment.Concerns)
+            foreach (var concern in concerns)
                 sb.AppendLine($"- {concern}");
         }
 
         sb.AppendLine();
         sb.AppendLine("---");
-        sb.AppendLine("*The issue has been labeled `agent:needs-refinement`. Refine the issue description addressing the blocking issues above, then re-apply `agent:next` to retry.*");
+        sb.AppendLine(footerText);
         sb.AppendLine();
-        sb.AppendLine(CommentMarkers.GateRejection);
-        return sb.ToString().TrimEnd();
-    }
-
-    public static string BuildWontDoComment(AnalysisAssessment assessment)
-    {
-        var sb = new System.Text.StringBuilder();
-        sb.AppendLine("## 🚫 Analysis Gate: Won't Do");
-        sb.AppendLine();
-        if (!string.IsNullOrWhiteSpace(assessment.Reason))
-            sb.AppendLine(assessment.Reason);
-
-        if (assessment.Concerns.Count > 0)
-        {
-            sb.AppendLine();
-            sb.AppendLine("### Concerns");
-            foreach (var concern in assessment.Concerns)
-                sb.AppendLine($"- {concern}");
-        }
-
-        sb.AppendLine();
-        sb.AppendLine("---");
-        sb.AppendLine("*The agent analyzed the codebase and determined no code changes are needed. The issue has been labeled `agent:wont-do`. If you disagree with this assessment, remove the label and re-apply `agent:next` to retry with a fresh analysis.*");
-        sb.AppendLine();
-        sb.AppendLine(CommentMarkers.GateWontDo);
+        sb.AppendLine(marker);
         return sb.ToString().TrimEnd();
     }
 
