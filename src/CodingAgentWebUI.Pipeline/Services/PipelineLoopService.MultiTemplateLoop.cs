@@ -724,39 +724,17 @@ public sealed partial class PipelineLoopService
                     _logger.Information("Dispatching issue {Issue} with project '{ProjectName}' (id={ProjectId}, template={TemplateId})",
                         issue.Identifier, dispatchProject?.Name ?? "NULL", dispatchProject?.Id ?? "NULL", template.Id);
 
-                    bool dispatched;
-                    if (_dispatchOrchestration is not null)
-                    {
-                        // DB mode: full orchestration → build JobDistributionRequest → distribute
-                        var request = await _dispatchOrchestration.PrepareDistributionRequestAsync(
+                    var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
+                        async ct => await _dispatchOrchestration!.PrepareDistributionRequestAsync(
                             issue.Identifier,
                             template.IssueProviderId, template.RepoProviderId,
                             template.BrainProviderId, template.PipelineProviderId,
                             "loop", dispatchProject ?? new PipelineProject { Id = "", Name = "Unknown" },
-                            ct: stopToken);
-                        if (request is not null)
-                        {
-                            var result = await _workDistributor!.DistributeAsync(request, stopToken);
-                            dispatched = result.Success;
-                            if (!dispatched)
-                                await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
-                            else if (!result.Queued)
-                                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, stopToken);
-                        }
-                        else
-                        {
-                            dispatched = false;
-                        }
-                    }
-                    else
-                    {
-                        // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
-                        var minimalRequest = JobDistributionRequest.FromTemplate(
+                            ct: ct),
+                        () => JobDistributionRequest.FromTemplate(
                             template, issue, initiatedBy: "loop",
-                            projectId: dispatchProject?.Id, projectName: dispatchProject?.Name);
-                        var result = await _workDistributor!.DistributeAsync(minimalRequest, stopToken);
-                        dispatched = result.Success;
-                    }
+                            projectId: dispatchProject?.Id, projectName: dispatchProject?.Name),
+                        stopToken);
 
                     if (dispatched)
                         _logger.Information("Dispatched issue #{Issue} from template '{Template}'",
@@ -817,50 +795,29 @@ public sealed partial class PipelineLoopService
                     lock (_lock) { StatusMessage = $"🔄 Dispatching PR #{pr.Identifier} review from '{template.Name}'"; }
                     NotifyChange();
 
-                    bool dispatched;
-                    if (_dispatchOrchestration is not null)
-                    {
-                        // DB mode: full orchestration → build JobDistributionRequest → distribute
-                        var reviewDispatchReq = new ReviewDispatchRequest
+                    var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
+                        async ct =>
                         {
-                            PrIdentifier = pr.Identifier,
-                            PrBranchName = pr.BranchName,
-                            PrTitle = pr.Title,
-                            PrDescription = pr.Description,
-                            PrAuthor = pr.Author,
-                            PrUrl = pr.Url,
-                            PrTargetBranch = pr.TargetBranch,
-                            IssueProviderId = template.IssueProviderId,
-                            RepoProviderId = template.RepoProviderId,
-                            BrainProviderId = template.BrainProviderId,
-                            InitiatedBy = "loop"
-                        };
-                        var request = await _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
-                            reviewDispatchReq,
-                            templateProjectLookup[template.Id],
-                            stopToken);
-                        if (request is not null)
-                        {
-                            var result = await _workDistributor!.DistributeAsync(request, stopToken);
-                            dispatched = result.Success;
-                            if (!dispatched)
-                                await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
-                            else if (!result.Queued)
-                                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, stopToken);
-                        }
-                        else
-                        {
-                            dispatched = false;
-                        }
-                    }
-                    else
-                    {
-                        // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
-                        var minimalRequest = JobDistributionRequest.FromTemplate(
-                            template, pr, initiatedBy: "loop", useFullPrMetadata: false);
-                        var result = await _workDistributor!.DistributeAsync(minimalRequest, stopToken);
-                        dispatched = result.Success;
-                    }
+                            var reviewDispatchReq = new ReviewDispatchRequest
+                            {
+                                PrIdentifier = pr.Identifier,
+                                PrBranchName = pr.BranchName,
+                                PrTitle = pr.Title,
+                                PrDescription = pr.Description,
+                                PrAuthor = pr.Author,
+                                PrUrl = pr.Url,
+                                PrTargetBranch = pr.TargetBranch,
+                                IssueProviderId = template.IssueProviderId,
+                                RepoProviderId = template.RepoProviderId,
+                                BrainProviderId = template.BrainProviderId,
+                                InitiatedBy = "loop"
+                            };
+                            return await _dispatchOrchestration!.PrepareReviewDistributionRequestAsync(
+                                reviewDispatchReq, templateProjectLookup[template.Id], ct);
+                        },
+                        () => JobDistributionRequest.FromTemplate(
+                            template, pr, initiatedBy: "loop", useFullPrMetadata: false),
+                        stopToken);
 
                     if (dispatched)
                         _logger.Information("Dispatched PR #{PrIdentifier} review from template '{Template}'",
@@ -924,11 +881,8 @@ public sealed partial class PipelineLoopService
                     lock (_lock) { StatusMessage = $"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'"; }
                     NotifyChange();
 
-                    bool dispatched;
-                    if (_dispatchOrchestration is not null)
-                    {
-                        // DB mode: full orchestration → build JobDistributionRequest → distribute
-                        var request = await _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
+                    var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
+                        async ct => await _dispatchOrchestration!.PrepareDecompositionDistributionRequestAsync(
                             epicItem.Issue.Identifier,
                             epicItem.Issue.Title ?? "",
                             epicItem.Phase,
@@ -937,29 +891,10 @@ public sealed partial class PipelineLoopService
                             template.BrainProviderId,
                             "loop",
                             templateProjectLookup[template.Id],
-                            ct: stopToken);
-                        if (request is not null)
-                        {
-                            var result = await _workDistributor!.DistributeAsync(request, stopToken);
-                            dispatched = result.Success;
-                            if (!dispatched)
-                                await _dispatchOrchestration.RevertFailedDistributionAsync(request, stopToken);
-                            else if (!result.Queued)
-                                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, stopToken);
-                        }
-                        else
-                        {
-                            dispatched = false;
-                        }
-                    }
-                    else
-                    {
-                        // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
-                        var minimalRequest = JobDistributionRequest.FromTemplate(
-                            template, epicItem.Issue, epicItem.Phase, initiatedBy: "loop");
-                        var result = await _workDistributor!.DistributeAsync(minimalRequest, stopToken);
-                        dispatched = result.Success;
-                    }
+                            ct: ct),
+                        () => JobDistributionRequest.FromTemplate(
+                            template, epicItem.Issue, epicItem.Phase, initiatedBy: "loop"),
+                        stopToken);
 
                     if (dispatched)
                     {
@@ -1017,10 +952,8 @@ public sealed partial class PipelineLoopService
 
                         try
                         {
-                            bool dispatched;
-                            if (_dispatchOrchestration is not null)
-                            {
-                                var request = await _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
+                            var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
+                                async ct => await _dispatchOrchestration!.PrepareDecompositionDistributionRequestAsync(
                                     candidate.Issue.Identifier,
                                     candidate.Issue.Title ?? "",
                                     candidate.Phase,
@@ -1031,29 +964,11 @@ public sealed partial class PipelineLoopService
                                     templateProjectLookup.GetValueOrDefault(candidate.Template.Id)
                                         ?? new PipelineProject { Id = "", Name = "Unknown" },
                                     decompositionSource: "project-level",
-                                    ct: stoppingToken);
-                                if (request is not null)
-                                {
-                                    var result = await _workDistributor!.DistributeAsync(request, stoppingToken);
-                                    dispatched = result.Success;
-                                    if (!dispatched)
-                                        await _dispatchOrchestration.RevertFailedDistributionAsync(request, stoppingToken);
-                                    else if (!result.Queued)
-                                        await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, stoppingToken);
-                                }
-                                else
-                                {
-                                    dispatched = false;
-                                }
-                            }
-                            else
-                            {
-                                var minimalRequest = JobDistributionRequest.FromTemplate(
+                                    ct: ct),
+                                () => JobDistributionRequest.FromTemplate(
                                     candidate.Template, candidate.Issue, candidate.Phase,
-                                    initiatedBy: "loop", decompositionSource: "project-level");
-                                var result = await _workDistributor!.DistributeAsync(minimalRequest, stoppingToken);
-                                dispatched = result.Success;
-                            }
+                                    initiatedBy: "loop", decompositionSource: "project-level"),
+                                stoppingToken);
 
                             if (dispatched)
                             {
@@ -1190,6 +1105,40 @@ public sealed partial class PipelineLoopService
         }
 
         return (madeProgress, consumed);
+    }
+
+    /// <summary>
+    /// Shared helper that encapsulates the DB-vs-legacy dispatch branching.
+    /// In DB mode (when <see cref="_dispatchOrchestration"/> is not null): prepares a request via the
+    /// supplied delegate, distributes it, and handles revert-on-failure / confirm-on-success.
+    /// In legacy mode: builds a minimal request and distributes it directly.
+    /// </summary>
+    /// <returns><c>true</c> if the dispatch was successful; <c>false</c> otherwise.</returns>
+    private async Task<bool> DispatchViaOrchestrationOrLegacyAsync(
+        Func<CancellationToken, Task<JobDistributionRequest?>> prepareDbRequest,
+        Func<JobDistributionRequest> buildLegacyRequest,
+        CancellationToken ct)
+    {
+        if (_dispatchOrchestration is not null)
+        {
+            var request = await prepareDbRequest(ct);
+            if (request is not null)
+            {
+                var result = await _workDistributor!.DistributeAsync(request, ct);
+                if (!result.Success)
+                    await _dispatchOrchestration.RevertFailedDistributionAsync(request, ct);
+                else if (!result.Queued)
+                    await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, ct);
+                return result.Success;
+            }
+            return false;
+        }
+        else
+        {
+            var minimalRequest = buildLegacyRequest();
+            var result = await _workDistributor!.DistributeAsync(minimalRequest, ct);
+            return result.Success;
+        }
     }
 
     /// <summary>
