@@ -83,8 +83,16 @@ public class PipelineModelCoverageTests
             new("Modified", "src/Foo.cs"),
             new("Added", "src/Bar.cs")
         };
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, 80.0, fileChanges, "Fix bug");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = 80.0,
+                FileChanges = fileChanges,
+                IssueTitle = "Fix bug",
+            });
         body.Should().Contain("src/Foo.cs");
         body.Should().Contain("| Modified |");
     }
@@ -92,23 +100,39 @@ public class PipelineModelCoverageTests
     [Fact]
     public void GeneratePrBody_WithModelName_IncludesModelInFooter()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug",
-            modelName: "claude-sonnet-4");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+                ModelName = "claude-sonnet-4",
+            });
         body.Should().Contain("claude-sonnet-4");
     }
 
     [Fact]
     public void GeneratePrBody_WithCodeReviewSummary_IncludesReviewSection()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug",
-            codeReviewSummary: new CodeReviewSummary(
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+                CodeReviewSummary = new CodeReviewSummary(
                 AgentsRun: new[] { "reviewer-1" },
                 CriticalCount: 1,
                 WarningCount: 2,
                 SuggestionCount: 3,
-                AgentFindings: new[] { new AgentFindings("reviewer-1", "Found issue X") }));
+                AgentFindings: new[] { new AgentFindings("reviewer-1", "Found issue X") }),
+            });
         body.Should().Contain("Code Review");
         body.Should().Contain("reviewer-1");
     }
@@ -120,9 +144,17 @@ public class PipelineModelCoverageTests
         {
             new() { Id = "1", Author = "user1", Body = "Please fix this", CreatedAt = DateTime.UtcNow }
         };
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug",
-            comments: comments);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+                Comments = comments,
+            });
         body.Should().Contain("user1");
         body.Should().Contain("Please fix this");
     }
@@ -130,9 +162,17 @@ public class PipelineModelCoverageTests
     [Fact]
     public void GeneratePrBody_DraftPr_IncludesWarning()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug",
-            isDraft: true);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+                IsDraft = true,
+            });
         body.Should().Contain("draft");
     }
 
@@ -144,54 +184,103 @@ public class PipelineModelCoverageTests
         {
             new() { Id = "1", Author = "user1", Body = longBody, CreatedAt = DateTime.UtcNow }
         };
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug",
-            comments: comments);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+                Comments = comments,
+            });
         body.Should().Contain("user1");
     }
 
+    // TODO: Tautological test — GeneratePrBody never reads BlacklistedFilesDetected, so this assertion is vacuously true and cannot detect a regression.
     [Fact]
     public void GeneratePrBody_WithBlacklistedFiles_DoesNotIncludeWarning()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug",
-            blacklistedFilesDetected: new[] { ".agent/settings.json" });
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+                BlacklistedFilesDetected = new[] { ".agent/settings.json" },
+            });
         body.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
     }
 
     [Fact]
     public void GeneratePrBody_WithCoverage_IncludesCoveragePercent()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, 75.5, Array.Empty<FileChangeSummary>(), "Fix bug");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = 75.5,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+            });
         body.Should().Contain("75.5");
     }
 
     [Fact]
     public void GeneratePrBody_WithTestFailures_IncludesFailCount()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 8, 2, 1, null, Array.Empty<FileChangeSummary>(), "Fix bug");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 8,
+                TestsFailed = 2,
+                TestsSkipped = 1,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+            });
         body.Should().Contain("Failed: 2");
     }
 
     [Fact]
     public void GeneratePrBody_NoFileChanges_ShowsNoChangesMessage()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+            });
         body.Should().Contain("No file changes");
     }
 
     [Fact]
     public void GeneratePrBody_CodeReviewNoFindings_ShowsNoFindings()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug",
-            codeReviewSummary: new CodeReviewSummary(
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+                CodeReviewSummary = new CodeReviewSummary(
                 AgentsRun: Array.Empty<string>(),
                 CriticalCount: 0, WarningCount: 0, SuggestionCount: 0,
-                AgentFindings: Array.Empty<AgentFindings>()));
+                AgentFindings: Array.Empty<AgentFindings>()),
+            });
         body.Should().Contain("no findings");
     }
 
@@ -203,9 +292,17 @@ public class PipelineModelCoverageTests
             new() { Id = "1", Author = "bot", Body = "## 🤖 Agent Analysis\nSome analysis", CreatedAt = DateTime.UtcNow },
             new() { Id = "2", Author = "user1", Body = "Real comment", CreatedAt = DateTime.UtcNow }
         };
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug",
-            comments: comments);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+                Comments = comments,
+            });
         body.Should().Contain("Real comment");
         body.Should().NotContain("Agent Analysis");
     }
@@ -213,8 +310,16 @@ public class PipelineModelCoverageTests
     [Fact]
     public void GeneratePrBody_WithoutModelName_UsesDefaultFooter()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, null, Array.Empty<FileChangeSummary>(), "Fix bug");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Fix bug",
+            });
         body.Should().Contain("Automated implementation via pipeline");
         body.Should().NotContain("Model:");
     }
