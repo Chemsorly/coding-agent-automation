@@ -498,8 +498,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         // Loop should still be active (didn't crash)
         Assert.True(svc.IsLoopActive);
         Assert.True(callCount >= 2, $"Expected at least 2 poll attempts, got {callCount}");
-        // After success, consecutive failures should reset
-        Assert.Equal(0, svc.ConsecutivePollFailures);
 
         svc.StopLoop();
         deadline = DateTime.UtcNow.AddSeconds(5);
@@ -945,7 +943,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             await Task.Delay(50);
 
         // After success, consecutive failures should be reset
-        Assert.Equal(0, svc.ConsecutivePollFailures);
         Assert.Null(svc.LastPollError);
 
         svc.StopLoop();
@@ -1040,7 +1037,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         // Resume the loop
         svc.ResumeLoop();
         Assert.False(svc.IsCircuitBroken);
-        Assert.Equal(0, svc.ConsecutivePollFailures);
 
         // Wait for successful poll after resume
         deadline = DateTime.UtcNow.AddSeconds(5);
@@ -1145,7 +1141,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             await Task.Delay(50);
 
         Assert.False(svc.IsCircuitBroken);
-        Assert.Equal(0, svc.ConsecutivePollFailures);
         Assert.True(svc.IsLoopActive);
 
         // Verify polling continued after auto-resume
@@ -1201,7 +1196,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             await Task.Delay(50);
 
         // Rate limit should NOT count as a failure
-        Assert.Equal(0, svc.ConsecutivePollFailures);
         Assert.False(svc.IsCircuitBroken);
         Assert.True(callCount >= 2, $"Expected at least 2 poll attempts, got {callCount}");
 
@@ -1252,7 +1246,6 @@ public class PipelineLoopServiceTests : IAsyncDisposable
             await Task.Delay(50);
 
         Assert.True(svc.IsLoopActive);
-        Assert.Equal(0, svc.ConsecutivePollFailures);
         Assert.Null(svc.LastPollError);
         Assert.False(svc.IsCircuitBroken);
 

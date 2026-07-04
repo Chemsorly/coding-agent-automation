@@ -65,9 +65,6 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     /// <summary>Number of agent:next issues remaining in the current queue snapshot.</summary>
     public int QueueCount { get; private set; }
 
-    /// <summary>Number of consecutive poll failures since last successful poll.</summary>
-    public int ConsecutivePollFailures { get; private set; }
-
     /// <summary>Whether the circuit breaker has tripped due to consecutive poll failures.</summary>
     public bool IsCircuitBroken { get; private set; }
 
@@ -145,7 +142,6 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
         lock (_lock)
         {
             if (!IsCircuitBroken) return;
-            ConsecutivePollFailures = 0;
             IsCircuitBroken = false;
             LastPollError = null;
             StatusMessage = "🔄 Loop resumed, polling at normal interval.";
@@ -202,7 +198,6 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             ProcessedCount = 0;
             FailedCount = 0;
             QueueCount = 0;
-            ConsecutivePollFailures = 0;
             IsCircuitBroken = false;
             LastPollError = null;
             CurrentIssueIdentifier = null;
@@ -256,7 +251,6 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             CurrentIssueIdentifier = null;
             CurrentCycleTemplateIndex = 0;
             CurrentCycleTemplateCount = 0;
-            ConsecutivePollFailures = 0;
             IsCircuitBroken = false;
             LastPollError = null;
             StatusMessage = "";
