@@ -67,12 +67,21 @@ public static class ServiceCollectionExtensions
 
     /// <summary>
     /// Registers WebUI-specific pipeline services: orchestration, loop service, lifecycle, and history.
+    /// In DB mode, skips the in-memory history service registration (PostgresPipelineRunHistoryService
+    /// is registered by AddWorkDistribution instead).
     /// </summary>
-    public static IServiceCollection AddPipelineCoreServices(this IServiceCollection services)
+    public static IServiceCollection AddPipelineCoreServices(this IServiceCollection services, bool isDatabaseMode = false)
     {
         services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
-        services.AddSingleton<IPipelineRunHistoryService>(sp => new PipelineRunHistoryService(Log.Logger));
 
+        if (!isDatabaseMode)
+        {
+            services.AddSingleton<IPipelineRunHistoryService>(sp => new PipelineRunHistoryService(Log.Logger));
+        }
+
+        // TODO: In DB mode (isDatabaseMode: true), IPipelineRunHistoryService is not registered here —
+        // it depends on AddWorkDistribution being called separately. If AddWorkDistribution is ever
+        // removed or conditionalized, this GetRequiredService call will fail at runtime.
         services.AddSingleton(sp => new PipelineRunLifecycleService(
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
