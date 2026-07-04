@@ -625,8 +625,7 @@ public sealed partial class PipelineLoopService
         var activeDecompositionCount = _orchestration.GetAllActiveRuns()
             .Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
 
-        // Three-way turn tracking: 0 = issues, 1 = PRs, 2 = decomposition
-        int currentTurn = 0;
+        var currentTurn = DispatchTurn.Issues;
 
         while (remaining > 0)
         {
@@ -644,12 +643,12 @@ public sealed partial class PipelineLoopService
 
             // Determine which queue to dispatch from this iteration.
             // If the current turn's queue is empty, try the next non-empty queue.
-            int startTurn = currentTurn;
+            var startTurn = currentTurn;
             bool foundTurn = false;
             for (int attempt = 0; attempt < 3; attempt++)
             {
-                int tryTurn = (startTurn + attempt) % 3;
-                if ((tryTurn == 0 && hasIssues) || (tryTurn == 1 && hasPrs) || (tryTurn == 2 && hasDecomp))
+                var tryTurn = (DispatchTurn)(((int)startTurn + attempt) % 3);
+                if ((tryTurn == DispatchTurn.Issues && hasIssues) || (tryTurn == DispatchTurn.PullRequests && hasPrs) || (tryTurn == DispatchTurn.Decomposition && hasDecomp))
                 {
                     currentTurn = tryTurn;
                     foundTurn = true;
@@ -659,7 +658,7 @@ public sealed partial class PipelineLoopService
             if (!foundTurn) break; // All queues exhausted
 
             // ── Issue dispatch (one per template per pass) ──
-            if (currentTurn == 0 && hasIssues)
+            if (currentTurn == DispatchTurn.Issues && hasIssues)
             {
                 var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
                 {
@@ -752,7 +751,7 @@ public sealed partial class PipelineLoopService
             if (_stopRequested || ct.IsCancellationRequested || remaining <= 0) break;
 
             // ── PR review dispatch (one per template per pass) ──
-            if (currentTurn == 1 && hasPrs)
+            if (currentTurn == DispatchTurn.PullRequests && hasPrs)
             {
                 var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
                 {
@@ -835,7 +834,7 @@ public sealed partial class PipelineLoopService
             if (_stopRequested || ct.IsCancellationRequested || remaining <= 0) break;
 
             // ── Decomposition dispatch (one per template per pass) ──
-            if (currentTurn == 2 && hasDecomp)
+            if (currentTurn == DispatchTurn.Decomposition && hasDecomp)
             {
                 var (progress, count) = await DispatchRoundAsync(pollableTemplates, async (template, stopToken) =>
                 {
@@ -915,7 +914,7 @@ public sealed partial class PipelineLoopService
             // ── Project-level decomposition dispatch ──
             // Dispatch epics from project-level EpicIssueProviderId after template-level decomposition.
             // These use the first decomposition-enabled template in the project (SelectDecompositionTemplate).
-            if (currentTurn == 2 && !decompMadeProgress && projectLevelDecompositionQueues.Count > 0
+            if (currentTurn == DispatchTurn.Decomposition && !decompMadeProgress && projectLevelDecompositionQueues.Count > 0
                 && activeDecompositionCount < config.MaxConcurrentDecompositions)
             {
                 foreach (var kvp in projectLevelDecompositionQueues.ToList())
@@ -1004,7 +1003,7 @@ public sealed partial class PipelineLoopService
             if (!issueMadeProgress && !prMadeProgress && !decompMadeProgress) break;
 
             // Advance to next turn for fair alternation
-            currentTurn = (currentTurn + 1) % 3;
+            currentTurn = NextTurn(currentTurn);
         }
 
         // Emit skipped_max_runs for items remaining in queues after budget exhaustion
@@ -1037,6 +1036,17 @@ public sealed partial class PipelineLoopService
         prQueues[templateId] = new List<PullRequestSummary>();
         decompositionQueues[templateId] = new List<(IssueSummary, PipelineRunType)>();
     }
+
+    /// <summary>
+    /// Represents which queue type the round-robin dispatcher should process next.
+    /// </summary>
+    private enum DispatchTurn { Issues = 0, PullRequests = 1, Decomposition = 2 }
+
+    /// <summary>
+    /// Advances to the next turn in the three-way round-robin cycle.
+    /// </summary>
+    private static DispatchTurn NextTurn(DispatchTurn turn) =>
+        (DispatchTurn)(((int)turn + 1) % 3);
 
     /// <summary>
     /// Result of a single-template dispatch attempt within <see cref="DispatchRoundAsync"/>.
