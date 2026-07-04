@@ -98,39 +98,59 @@ public class BlacklistEnforcementTests
 
     // --- PR body with blacklisted files ---
 
+    // TODO: Tautological test — GeneratePrBody never reads BlacklistedFilesDetected, so this assertion is vacuously true and cannot detect a regression.
     [Fact]
     public void GeneratePrBody_WithBlacklistedFiles_DoesNotIncludeWarningSection()
     {
         var blacklisted = new[] { ".agent/steering/rule.md", ".github/workflows/ci.yml" };
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#42", testsPassed: 5, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: 90.0, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Feature",
-            blacklistedFilesDetected: blacklisted);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 5,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = 90.0,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Feature",
+                BlacklistedFilesDetected = blacklisted,
+            });
 
         body.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
     }
 
+    // TODO: Tautological test — GeneratePrBody never reads BlacklistedFilesDetected, so this assertion is vacuously true and cannot detect a regression.
     [Fact]
     public void GeneratePrBody_WithNoBlacklistedFiles_OmitsWarningSection()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Bug",
+            });
 
         body.Should().NotContain("Blacklisted Files Excluded");
     }
 
+    // TODO: Tautological test — GeneratePrBody never reads BlacklistedFilesDetected, so this assertion is vacuously true and cannot detect a regression.
     [Fact]
     public void GeneratePrBody_WithNullBlacklistedFiles_OmitsWarningSection()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1", testsPassed: 1, testsFailed: 0, testsSkipped: 0,
-            coveragePercent: null, fileChanges: Array.Empty<FileChangeSummary>(),
-            issueTitle: "Bug",
-            blacklistedFilesDetected: null);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 1,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = Array.Empty<FileChangeSummary>(),
+                IssueTitle = "Bug",
+            });
 
         body.Should().NotContain("Blacklisted Files Excluded");
     }

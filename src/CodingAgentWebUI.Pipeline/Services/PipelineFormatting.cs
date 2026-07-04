@@ -56,25 +56,11 @@ public static partial class PipelineFormatting
     /// <summary>
     /// Generates a PR body with all required sections including file changes and issue context.
     /// </summary>
-    public static string GeneratePrBody(
-        string issueReference,
-        int testsPassed,
-        int testsFailed,
-        int testsSkipped,
-        double? coveragePercent,
-        IReadOnlyList<FileChangeSummary> fileChanges,
-        string issueTitle,
-        bool isDraft = false,
-        IReadOnlyList<IssueComment>? comments = null,
-        IReadOnlyList<string>? blacklistedFilesDetected = null,
-        string? modelName = null,
-        CodeReviewSummary? codeReviewSummary = null,
-        string? closeReference = null,
-        AcceptanceCriteriaReport? complianceReport = null)
+    public static string GeneratePrBody(PrBodyParameters parameters)
     {
         var sb = new StringBuilder();
 
-        if (isDraft)
+        if (parameters.IsDraft)
         {
             sb.AppendLine("⚠️ **This is a draft PR — implementation is incomplete.**");
             sb.AppendLine();
@@ -82,23 +68,23 @@ public static partial class PipelineFormatting
 
         // Issue context — link to the issue instead of duplicating its body
         sb.AppendLine("## Issue Context");
-        sb.AppendLine($"**{issueTitle}** ({issueReference})");
+        sb.AppendLine($"**{parameters.IssueTitle}** ({parameters.IssueReference})");
         sb.AppendLine();
 
         // Input comments
-        AppendInputComments(sb, comments);
+        AppendInputComments(sb, parameters.Comments);
 
         // Files changed
         sb.AppendLine("## Files Changed");
-        if (fileChanges.Count > 0)
+        if (parameters.FileChanges.Count > 0)
         {
             sb.AppendLine("| Status | File |");
             sb.AppendLine("|--------|------|");
             const int maxFiles = 50;
-            foreach (var fc in fileChanges.Take(maxFiles))
+            foreach (var fc in parameters.FileChanges.Take(maxFiles))
                 sb.AppendLine($"| {fc.Status} | `{fc.Path}` |");
-            if (fileChanges.Count > maxFiles)
-                sb.AppendLine($"| | *(and {fileChanges.Count - maxFiles} more)* |");
+            if (parameters.FileChanges.Count > maxFiles)
+                sb.AppendLine($"| | *(and {parameters.FileChanges.Count - maxFiles} more)* |");
         }
         else
         {
@@ -108,30 +94,30 @@ public static partial class PipelineFormatting
 
         // Test results
         sb.AppendLine("## Test Results");
-        sb.AppendLine($"- Passed: {testsPassed}");
-        sb.AppendLine($"- Failed: {testsFailed}");
-        sb.AppendLine($"- Skipped: {testsSkipped}");
+        sb.AppendLine($"- Passed: {parameters.TestsPassed}");
+        sb.AppendLine($"- Failed: {parameters.TestsFailed}");
+        sb.AppendLine($"- Skipped: {parameters.TestsSkipped}");
         sb.AppendLine();
 
         sb.AppendLine("## Coverage");
-        sb.AppendLine(coveragePercent.HasValue
-            ? $"{coveragePercent.Value.ToString("F1", CultureInfo.InvariantCulture)}%"
+        sb.AppendLine(parameters.CoveragePercent.HasValue
+            ? $"{parameters.CoveragePercent.Value.ToString("F1", CultureInfo.InvariantCulture)}%"
             : "Not available");
         sb.AppendLine();
 
-        if (closeReference is not null)
+        if (parameters.CloseReference is not null)
         {
             sb.AppendLine("## Issue Reference");
-            sb.AppendLine(closeReference);
+            sb.AppendLine(parameters.CloseReference);
             sb.AppendLine();
         }
 
-        AppendCodeReviewSection(sb, codeReviewSummary);
-        AppendComplianceSection(sb, complianceReport);
+        AppendCodeReviewSection(sb, parameters.CodeReviewSummary);
+        AppendComplianceSection(sb, parameters.ComplianceReport);
 
         sb.AppendLine("---");
-        if (!string.IsNullOrEmpty(modelName))
-            sb.AppendLine($"*Model: {modelName} · {PipelineConstants.AutomatedCommitSuffix}*");
+        if (!string.IsNullOrEmpty(parameters.ModelName))
+            sb.AppendLine($"*Model: {parameters.ModelName} · {PipelineConstants.AutomatedCommitSuffix}*");
         else
             sb.AppendLine($"*{PipelineConstants.AutomatedCommitSuffix}*");
 

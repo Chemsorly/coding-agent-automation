@@ -23,6 +23,84 @@ public sealed class PullRequestFinalizationService
     }
 
     /// <summary>
+    /// Runs the full PR creation and post-PR finalization flow: transition → create PR → post-PR sequence → set final state.
+    /// Encapsulates the complete lifecycle from "ready to create PR" through to "run completed/failed".
+    /// Sets CompletedAt, CurrentStep, FinalLabel, and (on failure) FailureReason on the run.
+    /// </summary>
+    // TODO: Validate non-nullable parameters (run, report, prOrchestrator, repoProvider, agentProvider, config, feedbackService, emitOutputLine, transitionCallback) with ArgumentNullException.ThrowIfNull for fail-fast behavior on public API surface.
+    public async Task RunFullPrCreationAsync(
+        PipelineRun run,
+        QualityGateReport report,
+        bool isDraft,
+        PullRequestOrchestrator prOrchestrator,
+        IRepositoryProvider repoProvider,
+        IAgentProvider agentProvider,
+        IRepositoryProvider? brainProvider,
+        IBrainSyncService? brainSync,
+        PipelineConfiguration config,
+        IssueDetail? issue,
+        IReadOnlyList<IssueComment>? issueComments,
+        FeedbackService feedbackService,
+        IPipelineRunHistoryService? historyService,
+        Action<string> emitOutputLine,
+        Func<PipelineStep, Task> transitionCallback,
+        CancellationToken ct)
+    {
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag("pipeline.issue", run.IssueIdentifier);
+        activity?.SetTag("pipeline.pr.is_draft", isDraft);
+        PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
+
+        try
+        {
+            // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
+            // during its cleanup phase, so we skip that transition here to avoid duplicates.
+
+            await transitionCallback(PipelineStep.CreatingPullRequest);
+
+            if (run.LinkedPullRequest is not null)
+            {
+                run.PullRequestUrl = run.LinkedPullRequest.Url;
+                run.PullRequestNumber = run.LinkedPullRequest.Number.ToString();
+            }
+
+            var prUrl = await prOrchestrator.CreatePullRequestAsync(
+                run, report, isDraft, repoProvider, issue, issueComments, config, ct,
+                emitOutputLine, isRework: run.LinkedPullRequest is not null);
+
+            if (prUrl is null)
+            {
+                run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
+                run.MarkCompleted();
+                run.CurrentStep = PipelineStep.Failed;
+                return;
+            }
+
+            var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
+            if (isDraft)
+            {
+                run.FailureReason = "Quality gates failed after max retries; draft PR created.";
+            }
+            // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
+
+            await RunPostPrSequenceAsync(
+                run, isDraft, agentProvider, repoProvider, config,
+                brainSync, brainProvider, feedbackService, historyService,
+                emitOutputLine, transitionCallback, ct);
+
+            run.MarkCompleted();
+            run.CurrentStep = finalStep;
+            run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Runs the full post-PR finalization sequence: PR description → reflection → brain sync → feedback.
     /// Conditionally skips steps based on isDraft, brain provider availability, and config.
     /// Does not set CompletedAt or CurrentStep — those remain the caller's responsibility.

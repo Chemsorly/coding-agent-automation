@@ -77,14 +77,23 @@ public class PullRequestOrchestrator
 
         var codeReviewSummary = BuildCodeReviewSummary(run);
 
-        var prBody = PipelineFormatting.GeneratePrBody(
-            effectiveIssueRef, testsPassed, testsFailed, testsSkipped,
-            coverage, fileChanges, issueTitle, isDraft, issueComments,
-            run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
-            run.ModelName,
-            codeReviewSummary,
-            closeRef,
-            run.AcceptanceCriteriaReport);
+        var prBody = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+        {
+            IssueReference = effectiveIssueRef,
+            TestsPassed = testsPassed,
+            TestsFailed = testsFailed,
+            TestsSkipped = testsSkipped,
+            CoveragePercent = coverage,
+            FileChanges = fileChanges,
+            IssueTitle = issueTitle,
+            IsDraft = isDraft,
+            Comments = issueComments,
+            BlacklistedFilesDetected = run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
+            ModelName = run.ModelName,
+            CodeReviewSummary = codeReviewSummary,
+            CloseReference = closeRef,
+            ComplianceReport = run.AcceptanceCriteriaReport,
+        });
 
         run.PullRequestBody = prBody;
 
@@ -329,14 +338,23 @@ public class PullRequestOrchestrator
 
         var codeReviewSummary = BuildCodeReviewSummary(run);
 
-        var prBody = PipelineFormatting.GeneratePrBody(
-            effectiveIssueRef, testsPassed, testsFailed, testsSkipped,
-            coverage, fileChanges, issueTitle, isDraft, issueComments,
-            run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
-            run.ModelName,
-            codeReviewSummary,
-            closeRef,
-            run.AcceptanceCriteriaReport);
+        var prBody = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+        {
+            IssueReference = effectiveIssueRef,
+            TestsPassed = testsPassed,
+            TestsFailed = testsFailed,
+            TestsSkipped = testsSkipped,
+            CoveragePercent = coverage,
+            FileChanges = fileChanges,
+            IssueTitle = issueTitle,
+            IsDraft = isDraft,
+            Comments = issueComments,
+            BlacklistedFilesDetected = run.BlacklistedFilesDetected.Count > 0 ? run.BlacklistedFilesDetected : null,
+            ModelName = run.ModelName,
+            CodeReviewSummary = codeReviewSummary,
+            CloseReference = closeRef,
+            ComplianceReport = run.AcceptanceCriteriaReport,
+        });
 
         run.PullRequestBody = prBody;
 

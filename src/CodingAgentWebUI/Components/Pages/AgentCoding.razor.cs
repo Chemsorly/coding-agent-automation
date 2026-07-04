@@ -23,7 +23,6 @@ public partial class AgentCoding : IDisposable
     [Inject] private OrchestratorRunService RunService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
     [Inject] private JobDispatcherService Dispatcher { get; set; } = default!;
-    [Inject] private IWorkDistributor WorkDistributor { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
     [Inject] private IJSRuntime JS { get; set; } = default!;
     [CascadingParameter] private MainLayout? Layout { get; set; }
@@ -54,20 +53,19 @@ public partial class AgentCoding : IDisposable
 
     // Manual Dispatch UI State
     private string _manualDispatchTemplateId = "";
-    private bool _drawerOpen;
-    private PipelineJobTemplate? _drawerTemplate;
-    private bool _drawerDispatching;
-    private HashSet<(string IssueIdentifier, string IssueProviderConfigId)> _activeIssues = new();
+    private bool _drawerOpen => PageService.IsIssueDrawerOpen;
+    private PipelineJobTemplate? _drawerTemplate => PageService.IssueDrawerTemplate;
+    private bool _drawerDispatching => PageService.IssueDrawerDispatching;
 
     // PR Drawer UI State
-    private bool _prDrawerOpen;
-    private PipelineJobTemplate? _prDrawerTemplate;
-    private bool _prDrawerDispatching;
+    private bool _prDrawerOpen => PageService.IsPrDrawerOpen;
+    private PipelineJobTemplate? _prDrawerTemplate => PageService.PrDrawerTemplate;
+    private bool _prDrawerDispatching => PageService.PrDrawerDispatching;
 
     // Epic Drawer UI State
-    private bool _epicDrawerOpen;
-    private PipelineJobTemplate? _epicDrawerTemplate;
-    private bool _epicDrawerDispatching;
+    private bool _epicDrawerOpen => PageService.IsEpicDrawerOpen;
+    private PipelineJobTemplate? _epicDrawerTemplate => PageService.EpicDrawerTemplate;
+    private bool _epicDrawerDispatching => PageService.EpicDrawerDispatching;
 
     // ── Delegate properties for .razor template binding ──
 
@@ -121,9 +119,8 @@ public partial class AgentCoding : IDisposable
     // TODO: InvokeAsync(StateHasChanged) is fire-and-forget here; exceptions (e.g. ObjectDisposedException) are silently lost.
     private void HandleGlobalEscape()
     {
-        if (_drawerOpen) { CloseDrawer(); InvokeAsync(StateHasChanged); }
-        else if (_prDrawerOpen) { ClosePrDrawer(); InvokeAsync(StateHasChanged); }
-        else if (_epicDrawerOpen) { CloseEpicDrawer(); InvokeAsync(StateHasChanged); }
+        PageService.CloseActiveDrawer();
+        InvokeAsync(StateHasChanged);
     }
 
     // ── Template Table Callbacks ──
@@ -274,77 +271,37 @@ public partial class AgentCoding : IDisposable
 
     // ── Drawer Mutual Exclusion ──
 
-    private void HideOtherDrawers(string keepOpen)
-    {
-        if (keepOpen != "issue") _drawerOpen = false;
-        if (keepOpen != "pr") _prDrawerOpen = false;
-        if (keepOpen != "epic") _epicDrawerOpen = false;
-    }
+    private string ActiveDrawerTab => PageService.ActiveDrawerTab;
 
-    private string ActiveDrawerTab => _drawerOpen ? "issue" : _prDrawerOpen ? "pr" : _epicDrawerOpen ? "epic" : "";
-
-    // TODO: ActiveDrawerTemplate uses a fixed fallback chain that doesn't reflect the currently active drawer.
-    // If templates ever differ per drawer type, this may return a stale template. Consider keying off ActiveDrawerTab instead.
-    private PipelineJobTemplate? ActiveDrawerTemplate =>
-        _drawerTemplate ?? _prDrawerTemplate ?? _epicDrawerTemplate;
+    private PipelineJobTemplate? ActiveDrawerTemplate => PageService.ActiveDrawerTemplate;
 
     private async Task SwitchToIssueDrawer()
     {
-        HideOtherDrawers("issue");
-        if (_drawerTemplate != null && PageService.DrawerIssues.Count > 0)
-        {
-            _drawerOpen = true;
-        }
-        else
-        {
-            await OpenDrawer();
-        }
+        var error = await PageService.SwitchToIssueDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+        if (error != null) _errorMessage = error;
     }
 
     private async Task SwitchToPrDrawer()
     {
-        HideOtherDrawers("pr");
-        if (_prDrawerTemplate != null && PageService.PrDrawerPrs.Count > 0)
-        {
-            _prDrawerOpen = true;
-        }
-        else
-        {
-            await OpenPrDrawer();
-        }
+        var error = await PageService.SwitchToPrDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+        if (error != null) _errorMessage = error;
     }
 
     private async Task SwitchToEpicDrawer()
     {
-        HideOtherDrawers("epic");
-        if (_epicDrawerTemplate != null && PageService.EpicDrawerIssues.Count > 0)
-        {
-            _epicDrawerOpen = true;
-        }
-        else
-        {
-            await OpenEpicDrawer();
-        }
+        var error = await PageService.SwitchToEpicDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
+        if (error != null) _errorMessage = error;
     }
 
     // ── Issue Drawer ──
 
     private async Task OpenDrawer()
     {
-        var template = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
-        if (template == null) return;
-        HideOtherDrawers("issue");
-        _drawerTemplate = template; _drawerOpen = true;
-        await RefreshActiveIssuesAsync();
-        StateHasChanged(); // flush loading spinner before async fetches
-        var labelsTask = PageService.LoadDrawerLabelsAsync(template);
-        var error = await PageService.LoadDrawerIssuesAsync(template, 1);
-        await labelsTask; // ensure labels are loaded before render
+        var error = await PageService.OpenIssueDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
         if (error != null) _errorMessage = error;
-        else _ = CheckDrawerDependenciesInBackground(template);
     }
 
-    private void CloseDrawer() { _drawerOpen = false; _drawerTemplate = null; PageService.ClearDrawerIssues(); }
+    private void CloseDrawer() => PageService.CloseIssueDrawer();
 
     private async Task DrawerPrevPage()
     {
@@ -384,50 +341,39 @@ public partial class AgentCoding : IDisposable
         else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
     }
 
-    // TODO: Add CancellationTokenSource cancelled on drawer close/page change to prevent stale writes and ObjectDisposedException.
-    // TODO: Wrap body in try/catch — InvokeAsync can throw ObjectDisposedException if component is disposed during background work.
+    // TODO: This does not pass a CancellationToken to CheckDrawerDependenciesAsync — calls from pagination/label
+    // filter will not be cancelled on drawer close, defeating the purpose of the CTS managed in the service.
     private async Task CheckDrawerDependenciesInBackground(PipelineJobTemplate template)
     {
         await PageService.CheckDrawerDependenciesAsync(template, () => InvokeAsync(StateHasChanged));
         await InvokeAsync(StateHasChanged);
     }
 
+    // TODO: Dispatching spinner regression — StateHasChanged() is called before the service sets IssueDrawerDispatching = true,
+    // so the user never sees the disabled/spinner state during dispatch. Need to either set the flag before calling
+    // the service method, or call StateHasChanged after the service sets the flag.
     private async Task DispatchFromDrawer(IssueSummary issue)
     {
-        if (_drawerTemplate == null) return;
-        _drawerDispatching = true; StateHasChanged();
+        StateHasChanged();
         try
         {
-            var (success, error, successMessage) = await PageService.DispatchIssueAsync(issue, _drawerTemplate);
-            if (success) { _successMessage = successMessage; CloseDrawer(); _ = ClearSuccessAfterDelay(); }
+            var (success, error, successMessage) = await PageService.DispatchFromIssueDrawerAsync(issue);
+            if (success) { _successMessage = successMessage; _ = ClearSuccessAfterDelay(); }
             else _errorMessage = error;
         }
         catch (Exception ex) { _errorMessage = $"Dispatch failed: {ex.Message}"; }
-        finally { _drawerDispatching = false; }
     }
 
     // ── PR Drawer ──
 
     private async Task OpenPrDrawer()
     {
-        if (string.IsNullOrEmpty(_manualDispatchTemplateId)) return;
-        _prDrawerTemplate = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
-        if (_prDrawerTemplate == null) return;
-        HideOtherDrawers("pr");
-        _prDrawerOpen = true;
-        await RefreshActiveIssuesAsync();
-        StateHasChanged(); // flush loading spinner before async fetches
-        var labelsTask = PageService.LoadPrDrawerLabelsAsync(_prDrawerTemplate);
-        var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, 1);
-        await labelsTask;
+        var error = await PageService.OpenPrDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
         if (error != null) _errorMessage = error;
     }
 
-    // TODO: ClosePrDrawer does not null _prDrawerTemplate unlike CloseDrawer and CloseEpicDrawer.
-    // This asymmetry means ActiveDrawerTemplate may return stale PR template after close.
-    private void ClosePrDrawer() { _prDrawerOpen = false; PageService.ClearPrDrawerLabelFilter(); }
+    private void ClosePrDrawer() => PageService.ClosePrDrawer();
 
-    // TODO: Behavioral change — original PrDrawerNextPage always incremented page unconditionally; now guarded by null check on template.
     private async Task PrDrawerNextPage()
     {
         if (_prDrawerTemplate != null)
@@ -437,7 +383,6 @@ public partial class AgentCoding : IDisposable
         }
     }
 
-    // TODO: Behavioral change — original PrDrawerPrevPage reloaded current page even on page 1; now a no-op on page 1.
     private async Task PrDrawerPrevPage()
     {
         if (_prDrawerPage > 1 && _prDrawerTemplate != null)
@@ -463,38 +408,30 @@ public partial class AgentCoding : IDisposable
         if (error != null) _errorMessage = error;
     }
 
+    // TODO: Dispatching spinner regression — StateHasChanged() is called before the service sets PrDrawerDispatching = true,
+    // so the user never sees the disabled/spinner state during dispatch. Same issue as DispatchFromDrawer.
     private async Task DispatchPrReviewFromDrawer(PullRequestSummary pr)
     {
-        if (_prDrawerTemplate == null) return;
-        _prDrawerDispatching = true; StateHasChanged();
+        StateHasChanged();
         try
         {
-            var (success, error, successMessage) = await PageService.DispatchPrReviewAsync(pr, _prDrawerTemplate);
+            var (success, error, successMessage) = await PageService.DispatchFromPrDrawerAsync(pr);
             if (success) { _successMessage = successMessage; _ = ClearSuccessAfterDelay(); }
             else _errorMessage = error;
         }
         catch (Exception ex) { _errorMessage = $"Failed to dispatch PR review: {ex.Message}"; }
-        finally { _prDrawerDispatching = false; StateHasChanged(); }
+        finally { StateHasChanged(); }
     }
 
     // ── Epic Drawer ──
 
     private async Task OpenEpicDrawer()
     {
-        if (string.IsNullOrEmpty(_manualDispatchTemplateId)) return;
-        _epicDrawerTemplate = _templates.FirstOrDefault(t => t.Id == _manualDispatchTemplateId);
-        if (_epicDrawerTemplate == null) return;
-        HideOtherDrawers("epic");
-        _epicDrawerOpen = true;
-        await RefreshActiveIssuesAsync();
-        StateHasChanged(); // flush loading spinner before async fetches
-        var labelsTask = PageService.LoadEpicDrawerLabelsAsync(_epicDrawerTemplate);
-        var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, 1);
-        await labelsTask;
+        var error = await PageService.OpenEpicDrawerAsync(_manualDispatchTemplateId, () => InvokeAsync(StateHasChanged));
         if (error != null) _errorMessage = error;
     }
 
-    private void CloseEpicDrawer() { _epicDrawerOpen = false; _epicDrawerTemplate = null; PageService.ClearEpicDrawerIssues(); }
+    private void CloseEpicDrawer() => PageService.CloseEpicDrawer();
 
     private async Task EpicDrawerNextPage()
     {
@@ -530,18 +467,18 @@ public partial class AgentCoding : IDisposable
         if (error != null) _errorMessage = error;
     }
 
+    // TODO: Dispatching spinner regression — StateHasChanged() is called before the service sets EpicDrawerDispatching = true,
+    // so the user never sees the disabled/spinner state during dispatch. Same issue as DispatchFromDrawer.
     private async Task DispatchDecompositionFromDrawer(IssueSummary issue)
     {
-        if (_epicDrawerTemplate == null) return;
-        _epicDrawerDispatching = true; StateHasChanged();
+        StateHasChanged();
         try
         {
-            var (success, error, successMessage) = await PageService.DispatchDecompositionAsync(issue, _epicDrawerTemplate);
-            if (success) { _successMessage = successMessage; CloseEpicDrawer(); _ = ClearSuccessAfterDelay(); }
+            var (success, error, successMessage) = await PageService.DispatchFromEpicDrawerAsync(issue);
+            if (success) { _successMessage = successMessage; _ = ClearSuccessAfterDelay(); }
             else _errorMessage = error;
         }
         catch (Exception ex) { _errorMessage = $"Dispatch failed: {ex.Message}"; }
-        finally { _epicDrawerDispatching = false; }
     }
 
     // ── Helpers ──
@@ -549,20 +486,11 @@ public partial class AgentCoding : IDisposable
     private PipelineProject? GetParentProject(string templateId) => PageService.GetParentProject(templateId);
 
     /// <summary>
-    /// Refreshes the cached set of active issue identifiers from <see cref="IWorkDistributor"/>.
-    /// Called when drawers are opened to provide synchronous IsBeingProcessed checks.
-    /// </summary>
-    private async Task RefreshActiveIssuesAsync()
-    {
-        _activeIssues = await WorkDistributor.GetActiveIssueIdentifiersAsync(CancellationToken.None);
-    }
-
-    /// <summary>
     /// Synchronous check against the preloaded active issues set.
     /// Used by drawer component <c>IsBeingProcessed</c> parameter (Func&lt;string, bool&gt;).
     /// </summary>
     private bool IsIssueActive(string issueIdentifier, string issueProviderConfigId)
-        => _activeIssues.Contains((issueIdentifier, issueProviderConfigId));
+        => PageService.IsIssueActive(issueIdentifier, issueProviderConfigId);
 
     private async Task ClearRecentlyToggledAfterDelay(string templateId)
     {

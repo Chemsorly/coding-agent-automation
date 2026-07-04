@@ -264,9 +264,6 @@ public sealed class LocalPipelineExecutor
         // Wrap EmitOutputLine so ALL output is masked once secrets are populated.
         // context.InjectedSecrets is null until RunEnvironmentSetupStep populates it,
         // so output before that step passes through unmasked (no secrets exist yet).
-        // TODO: EmitOutputLineInternalAsync is not serialized via signalrLock. If output lines and
-        // step transitions share the same SignalR connection, interleaving could affect perceived
-        // ordering at the orchestrator.
         void EmitOutputLine(string line)
         {
             var masked = MaskSecretsInOutput(line, context);
@@ -667,60 +664,15 @@ public sealed class LocalPipelineExecutor
         PipelineRun run, QualityGateReport report, bool isDraft,
         PullRequestCreationContext context, CancellationToken ct)
     {
-        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest");
-        activity?.SetTag("pipeline.run_id", run.RunId);
-        activity?.SetTag("pipeline.issue", run.IssueIdentifier);
-        activity?.SetTag("pipeline.pr.is_draft", isDraft);
-        PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
-
-        try
-        {
-            // NOTE: QualityGateExecutor already transitions to PreparingForPullRequest
-            // during its cleanup phase, so we skip that transition here to avoid duplicates.
-
-            await ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, PipelineStep.CreatingPullRequest, ct);
-
-            if (run.LinkedPullRequest is not null)
-            {
-                run.PullRequestUrl = run.LinkedPullRequest.Url;
-                run.PullRequestNumber = run.LinkedPullRequest.Number.ToString();
-            }
-
-            var prUrl = await context.PrOrchestrator.CreatePullRequestAsync(
-                run, report, isDraft, context.RepoProvider, context.Job.IssueDetail, context.Job.IssueComments, context.Config, ct,
-                context.EmitOutputLine, isRework: run.LinkedPullRequest is not null);
-
-            if (prUrl is null)
-            {
-                run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
-                run.MarkCompleted();
-                run.CurrentStep = PipelineStep.Failed;
-                return;
-            }
-
-            var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
-            if (isDraft)
-            {
-                run.FailureReason = "Quality gates failed after max retries; draft PR created.";
-            }
-            // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
-
-            await _finalization.RunPostPrSequenceAsync(
-                run, isDraft, context.AgentProvider, context.RepoProvider, context.Config,
-                context.BrainSync, context.BrainProvider, _feedbackService, _historyService,
-                context.EmitOutputLine,
-                step => ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, step, ct),
-                ct);
-
-            run.MarkCompleted();
-            run.CurrentStep = finalStep;
-            run.FinalLabel = isDraft ? AgentLabels.Error : AgentLabels.Done;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            throw;
-        }
+        await _finalization.RunFullPrCreationAsync(
+            run, report, isDraft,
+            context.PrOrchestrator, context.RepoProvider, context.AgentProvider,
+            context.BrainProvider, context.BrainSync, context.Config,
+            context.Job.IssueDetail, context.Job.IssueComments,
+            _feedbackService, _historyService,
+            context.EmitOutputLine,
+            step => ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, step, ct),
+            ct);
     }
 
     /// <summary>

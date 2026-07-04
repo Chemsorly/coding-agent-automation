@@ -600,7 +600,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task SweepAsync_BusyAgent_DefaultLastStepChangeAt_SkipsProgressCheck()
+    public async Task SweepAsync_BusyAgent_DefaultLastStepChangeAt_FallsBackToStartedAt_WithinTimeout()
     {
         _mockConfigStore
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -610,7 +610,77 @@ public class HeartbeatMonitorServiceTests : IDisposable
         entry.ActiveJobId = "job-1";
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
 
-        // LastStepChangeAt = default (pre-existing run without the new field)
+        // LastStepChangeAt = default but StartedAtOffset is recent (within timeout)
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Legacy",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAtOffset = DateTimeOffset.UtcNow.AddSeconds(-30) // Within 1min timeout
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Should NOT be timed out — StartedAtOffset fallback is within timeout
+        _registry.GetByAgentId("agent-1")!.Status.Should().Be(AgentStatus.Busy);
+        _runService.GetRun("job-1").Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_DefaultLastStepChangeAt_FallsBackToStartedAt_ExceedsTimeout()
+    {
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentBusyProgressTimeout = TimeSpan.FromMinutes(1) });
+
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        // LastStepChangeAt = default and StartedAtOffset exceeds timeout
+        var run = new PipelineRun
+        {
+            RunId = "job-1",
+            IssueIdentifier = "org/repo#1",
+            IssueTitle = "Legacy",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-2) // Well past 1min timeout
+        };
+        _runService.AddRun(run);
+
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Should be timed out — StartedAtOffset fallback exceeds timeout
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Idle);
+        agent.ActiveJobId.Should().BeNull();
+
+        // Run should be removed from active runs
+        _runService.GetRun("job-1").Should().BeNull();
+
+        // History should have been called with progress timeout failure reason
+        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+            r.RunId == "job-1" &&
+            r.FailureReason!.Contains("progress timeout") &&
+            r.CurrentStep == PipelineStep.Failed)), Times.Once);
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_BothTimestampsDefault_SkipsProgressCheck()
+    {
+        _mockConfigStore
+            .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentBusyProgressTimeout = TimeSpan.FromMinutes(1) });
+
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-1";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        // Both LastStepChangeAt and StartedAtOffset are default (truly broken data)
         var run = new PipelineRun
         {
             RunId = "job-1",
@@ -623,7 +693,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
 
         await _monitor.SweepAsync(CancellationToken.None);
 
-        // Should NOT be timed out — default value guard protects legacy runs
+        // Should NOT be timed out — both timestamps are default, skip with warning
         _registry.GetByAgentId("agent-1")!.Status.Should().Be(AgentStatus.Busy);
         _runService.GetRun("job-1").Should().NotBeNull();
     }

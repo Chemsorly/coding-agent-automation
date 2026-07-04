@@ -28,6 +28,12 @@ public class PullRequestFinalizationServiceTests
         StartedAt = DateTime.UtcNow.AddMinutes(-5)
     };
 
+    private static QualityGateReport CreateReport() => new()
+    {
+        Compilation = new GateResult { GateName = "Compilation", Passed = true, Details = "OK" },
+        Tests = new GateResult { GateName = "Tests", Passed = true, Details = "OK" }
+    };
+
     // ── RunReflectionAsync ──
 
     [Fact]
@@ -257,5 +263,213 @@ public class PullRequestFinalizationServiceTests
         transitions.Should().ContainInOrder(PipelineStep.GeneratingPrDescription);
         transitions.Should().NotContain(PipelineStep.ReflectingOnRun);
         brainSync.Verify(b => b.SyncPostRunAsync(It.IsAny<PipelineRun>(), It.IsAny<IRepositoryProvider>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>(), It.IsAny<int>()), Times.Never);
+    }
+
+    // ── RunFullPrCreationAsync ──
+
+    [Fact]
+    public async Task RunFullPrCreationAsync_HappyPath_CreatesPrAndSetsCompletedState()
+    {
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        var report = CreateReport();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var agentProvider = new Mock<IAgentProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var historyService = new Mock<IPipelineRunHistoryService>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+        var transitions = new List<PipelineStep>();
+
+        // Setup PullRequestOrchestrator to succeed
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<FileChangeSummary>());
+        repoProvider.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/pull/99");
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #1");
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+        historyService.Setup(h => h.GetRunHistory()).Returns([]);
+
+        var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
+
+        await _sut.RunFullPrCreationAsync(
+            run, report, isDraft: false, prOrchestrator, repoProvider.Object, agentProvider.Object,
+            null, null, config, null, null, feedbackService, historyService.Object,
+            _ => { }, step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.CompletedAtOffset.Should().NotBeNull();
+        run.FinalLabel.Should().Be(AgentLabels.Done);
+        run.FailureReason.Should().BeNull();
+        transitions.Should().Contain(PipelineStep.CreatingPullRequest);
+    }
+
+    [Fact]
+    public async Task RunFullPrCreationAsync_NoChanges_SetsFailedState()
+    {
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        var report = CreateReport();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var config = new PipelineConfiguration();
+        var transitions = new List<PipelineStep>();
+
+        // Setup PullRequestOrchestrator to return null (no commits ahead)
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #1");
+
+        var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
+
+        await _sut.RunFullPrCreationAsync(
+            run, report, isDraft: false, prOrchestrator, repoProvider.Object, Mock.Of<IAgentProvider>(),
+            null, null, config, null, null, new FeedbackService(_logger.Object), null,
+            _ => { }, step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Be("Agent did not produce any changes. No commits ahead of base branch.");
+        run.CompletedAtOffset.Should().NotBeNull();
+        run.FinalLabel.Should().BeNull();
+        transitions.Should().Contain(PipelineStep.CreatingPullRequest);
+    }
+
+    [Fact]
+    public async Task RunFullPrCreationAsync_DraftPr_SetsFailedStateWithDraftMessage()
+    {
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        var report = CreateReport();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var agentProvider = new Mock<IAgentProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+        // Setup PullRequestOrchestrator to succeed
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<FileChangeSummary>());
+        repoProvider.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("https://github.com/org/repo/pull/99");
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #1");
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+
+        var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
+
+        await _sut.RunFullPrCreationAsync(
+            run, report, isDraft: true, prOrchestrator, repoProvider.Object, agentProvider.Object,
+            null, null, config, null, null, feedbackService, null,
+            _ => { }, step => Task.CompletedTask, CancellationToken.None);
+
+        run.CurrentStep.Should().Be(PipelineStep.Failed);
+        run.FailureReason.Should().Be("Quality gates failed after max retries; draft PR created.");
+        run.FinalLabel.Should().Be(AgentLabels.Error);
+        run.CompletedAtOffset.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task RunFullPrCreationAsync_LinkedPr_SetsUrlAndNumberBeforeCallingOrchestrator()
+    {
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        run.LinkedPullRequest = new LinkedPullRequest
+        {
+            Url = "https://github.com/org/repo/pull/41",
+            Number = 41,
+            BranchName = "agent/issue-41",
+            IsDraft = false
+        };
+        var report = CreateReport();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var agentProvider = new Mock<IAgentProvider>();
+        var feedbackService = new FeedbackService(_logger.Object);
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+
+        // Setup PullRequestOrchestrator to succeed (rework path — updates existing PR)
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<FileChangeSummary>());
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #1");
+
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
+
+        var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
+
+        await _sut.RunFullPrCreationAsync(
+            run, report, isDraft: false, prOrchestrator, repoProvider.Object, agentProvider.Object,
+            null, null, config, null, null, feedbackService, null,
+            _ => { }, step => Task.CompletedTask, CancellationToken.None);
+
+        run.PullRequestUrl.Should().Be("https://github.com/org/repo/pull/41");
+        run.PullRequestNumber.Should().Be("41");
+        run.CurrentStep.Should().Be(PipelineStep.Completed);
+        run.FinalLabel.Should().Be(AgentLabels.Done);
+    }
+
+    // TODO: This test only asserts exception propagation but does not verify that activity?.SetStatus(ActivityStatusCode.Error, ...) is called. Consider using a custom ActivityListener to assert telemetry decoration.
+    [Fact]
+    public async Task RunFullPrCreationAsync_ExceptionPropagates_WithTelemetryDecoration()
+    {
+        var run = CreateRun();
+        run.BranchName = "agent/test-1";
+        var report = CreateReport();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var config = new PipelineConfiguration();
+
+        // Setup PullRequestOrchestrator to throw (push fails)
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+            .ReturnsAsync(Array.Empty<string>());
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("permission denied"));
+        repoProvider.Setup(r => r.BaseBranch).Returns("main");
+        repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #1");
+
+        var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
+
+        var act = () => _sut.RunFullPrCreationAsync(
+            run, report, isDraft: false, prOrchestrator, repoProvider.Object, Mock.Of<IAgentProvider>(),
+            null, null, config, null, null, new FeedbackService(_logger.Object), null,
+            _ => { }, step => Task.CompletedTask, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("permission denied");
     }
 }

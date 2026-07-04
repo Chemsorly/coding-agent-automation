@@ -20,9 +20,17 @@ public class PipelineFormattingComplianceTests
             Summary = "1 of 3 criteria addressed."
         };
 
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, 95.0, [], "Test Issue",
-            complianceReport: report);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = 95.0,
+                FileChanges = [],
+                IssueTitle = "Test Issue",
+                ComplianceReport = report,
+            });
 
         body.Should().Contain("## Acceptance Criteria Compliance");
         body.Should().Contain("| ✅ | REST endpoint works | Implemented in Controller.cs |");
@@ -34,9 +42,16 @@ public class PipelineFormattingComplianceTests
     [Fact]
     public void GeneratePrBody_NullReport_NoComplianceSection()
     {
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, 95.0, [], "Test Issue",
-            complianceReport: null);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = 95.0,
+                FileChanges = [],
+                IssueTitle = "Test Issue",
+            });
 
         body.Should().NotContain("Acceptance Criteria Compliance");
     }
@@ -50,9 +65,17 @@ public class PipelineFormattingComplianceTests
             Summary = "No acceptance criteria found."
         };
 
-        var body = PipelineFormatting.GeneratePrBody(
-            "#42", 10, 0, 0, 95.0, [], "Test Issue",
-            complianceReport: report);
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = 95.0,
+                FileChanges = [],
+                IssueTitle = "Test Issue",
+                ComplianceReport = report,
+            });
 
         body.Should().NotContain("Acceptance Criteria Compliance");
     }

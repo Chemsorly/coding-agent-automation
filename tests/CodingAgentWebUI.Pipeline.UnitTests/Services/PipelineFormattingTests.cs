@@ -201,15 +201,17 @@ public class PipelineFormattingTests
     [Fact]
     public void GeneratePrBody_MinimalInput_ContainsRequiredSections()
     {
-        var result = PipelineFormatting.GeneratePrBody(
-            issueReference: "#42",
-            testsPassed: 10,
-            testsFailed: 0,
-            testsSkipped: 2,
-            coveragePercent: 85.5,
-            fileChanges: [],
-            issueTitle: "Add feature X",
-            closeReference: "Closes #42");
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#42",
+                TestsPassed = 10,
+                TestsFailed = 0,
+                TestsSkipped = 2,
+                CoveragePercent = 85.5,
+                FileChanges = [],
+                IssueTitle = "Add feature X",
+                CloseReference = "Closes #42",
+            });
 
         result.Should().Contain("## Issue Context");
         result.Should().Contain("**Add feature X** (#42)");
@@ -233,14 +235,16 @@ public class PipelineFormattingTests
             new("Modified", "src/Existing.cs", LinesAdded: 10, LinesDeleted: 3)
         };
 
-        var result = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1",
-            testsPassed: 5,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: null,
-            fileChanges: files,
-            issueTitle: "Test");
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 5,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = files,
+                IssueTitle = "Test",
+            });
 
         result.Should().Contain("| Status | File |");
         result.Should().Contain("| Added | `src/NewFile.cs` |");
@@ -254,14 +258,16 @@ public class PipelineFormattingTests
             .Select(i => new FileChangeSummary("Modified", $"src/File{i}.cs"))
             .ToList();
 
-        var result = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1",
-            testsPassed: 0,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: null,
-            fileChanges: files,
-            issueTitle: "Many files");
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 0,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = files,
+                IssueTitle = "Many files",
+            });
 
         result.Should().Contain("*(and 10 more)*");
     }
@@ -269,14 +275,16 @@ public class PipelineFormattingTests
     [Fact]
     public void GeneratePrBody_NullCoverage_ShowsNotAvailable()
     {
-        var result = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1",
-            testsPassed: 0,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: null,
-            fileChanges: [],
-            issueTitle: "Test");
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 0,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = [],
+                IssueTitle = "Test",
+            });
 
         result.Should().Contain("Not available");
     }
@@ -284,15 +292,17 @@ public class PipelineFormattingTests
     [Fact]
     public void GeneratePrBody_IsDraft_ShowsDraftWarning()
     {
-        var result = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1",
-            testsPassed: 0,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: null,
-            fileChanges: [],
-            issueTitle: "Draft PR",
-            isDraft: true);
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 0,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = [],
+                IssueTitle = "Draft PR",
+                IsDraft = true,
+            });
 
         result.Should().Contain("⚠️ **This is a draft PR — implementation is incomplete.**");
     }
@@ -300,15 +310,17 @@ public class PipelineFormattingTests
     [Fact]
     public void GeneratePrBody_WithModelName_IncludesModelInFooter()
     {
-        var result = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1",
-            testsPassed: 0,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: null,
-            fileChanges: [],
-            issueTitle: "Test",
-            modelName: "claude-sonnet-4-20250514");
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 0,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = [],
+                IssueTitle = "Test",
+                ModelName = "claude-sonnet-4-20250514",
+            });
 
         result.Should().Contain("*Model: claude-sonnet-4-20250514 · Automated implementation via pipeline*");
     }
@@ -316,32 +328,37 @@ public class PipelineFormattingTests
     [Fact]
     public void GeneratePrBody_WithoutModelName_ShowsGenericFooter()
     {
-        var result = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1",
-            testsPassed: 0,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: null,
-            fileChanges: [],
-            issueTitle: "Test");
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 0,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = [],
+                IssueTitle = "Test",
+            });
 
         result.Should().Contain("*Automated implementation via pipeline*");
     }
 
+    // TODO: Tautological test — GeneratePrBody never reads BlacklistedFilesDetected, so this assertion is vacuously true and cannot detect a regression.
     [Fact]
     public void GeneratePrBody_WithBlacklistedFiles_DoesNotShowWarningSection()
     {
         var blacklisted = new List<string> { ".github/workflows/ci.yml", "package-lock.json" };
 
-        var result = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1",
-            testsPassed: 0,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: null,
-            fileChanges: [],
-            issueTitle: "Test",
-            blacklistedFilesDetected: blacklisted);
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 0,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = [],
+                IssueTitle = "Test",
+                BlacklistedFilesDetected = blacklisted,
+            });
 
         result.Should().NotContain("## ⚠️ Blacklisted Files Excluded");
     }
@@ -356,15 +373,17 @@ public class PipelineFormattingTests
             SuggestionCount: 3,
             AgentFindings: [new AgentFindings("security-agent", "Found SQL injection risk")]);
 
-        var result = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1",
-            testsPassed: 0,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: null,
-            fileChanges: [],
-            issueTitle: "Test",
-            codeReviewSummary: review);
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 0,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = [],
+                IssueTitle = "Test",
+                CodeReviewSummary = review,
+            });
 
         result.Should().Contain("## AI Code Review Findings");
         result.Should().Contain("security-agent, style-agent");
@@ -384,15 +403,17 @@ public class PipelineFormattingTests
             SuggestionCount: 0,
             AgentFindings: []);
 
-        var result = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1",
-            testsPassed: 0,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: null,
-            fileChanges: [],
-            issueTitle: "Test",
-            codeReviewSummary: review);
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 0,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = [],
+                IssueTitle = "Test",
+                CodeReviewSummary = review,
+            });
 
         result.Should().Contain("Code review: no findings");
     }
@@ -411,15 +432,17 @@ public class PipelineFormattingTests
             }
         };
 
-        var result = PipelineFormatting.GeneratePrBody(
-            issueReference: "#1",
-            testsPassed: 0,
-            testsFailed: 0,
-            testsSkipped: 0,
-            coveragePercent: null,
-            fileChanges: [],
-            issueTitle: "Test",
-            comments: comments);
+        var result = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = "#1",
+                TestsPassed = 0,
+                TestsFailed = 0,
+                TestsSkipped = 0,
+                CoveragePercent = null,
+                FileChanges = [],
+                IssueTitle = "Test",
+                Comments = comments,
+            });
 
         result.Should().Contain("## Input Comments");
         result.Should().Contain("@reviewer");

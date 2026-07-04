@@ -109,15 +109,17 @@ public class GitHubRepositoryProviderPropertyTests
             new("Modified", "src/Other.cs")
         };
 
-        var body = PipelineFormatting.GeneratePrBody(
-            issueRef,
-            passed.Get,
-            failed.Get,
-            skipped.Get,
-            coveragePercent: 85.5,
-            fileChanges: fileChanges,
-            issueTitle: title.Get,
-            closeReference: $"Closes {issueRef}");
+        var body = PipelineFormatting.GeneratePrBody(new PrBodyParameters
+            {
+                IssueReference = issueRef,
+                TestsPassed = passed.Get,
+                TestsFailed = failed.Get,
+                TestsSkipped = skipped.Get,
+                CoveragePercent = 85.5,
+                FileChanges = fileChanges,
+                IssueTitle = title.Get,
+                CloseReference = $"Closes {issueRef}",
+            });
 
         body.Should().Contain("## Issue Context");
         body.Should().Contain(title.Get);

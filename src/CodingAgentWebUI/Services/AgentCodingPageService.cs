@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Services;
 /// and retains only UI state (visibility, timers, JS interop, StateHasChanged).
 /// Registered as Scoped because it holds per-page mutable state.
 /// </summary>
-public class AgentCodingPageService
+public class AgentCodingPageService : IDisposable
 {
     private readonly IPipelineLoopService _loopService;
     private readonly IWorkDistributor _workDistributor;
@@ -80,6 +80,31 @@ public class AgentCodingPageService
     public bool EpicDrawerLoading { get; private set; }
     public List<string> EpicDrawerLabels { get; private set; } = new();
     public List<string> EpicDrawerSelectedLabels { get; private set; } = new();
+
+    // Drawer lifecycle state
+    public bool IsIssueDrawerOpen { get; private set; }
+    public bool IsPrDrawerOpen { get; private set; }
+    public bool IsEpicDrawerOpen { get; private set; }
+    public PipelineJobTemplate? IssueDrawerTemplate { get; private set; }
+    public PipelineJobTemplate? PrDrawerTemplate { get; private set; }
+    public PipelineJobTemplate? EpicDrawerTemplate { get; private set; }
+    // TODO: These setters should be `private set` for encapsulation consistency — they are only mutated internally.
+    public bool IssueDrawerDispatching { get; set; }
+    public bool PrDrawerDispatching { get; set; }
+    public bool EpicDrawerDispatching { get; set; }
+    public HashSet<(string IssueIdentifier, string IssueProviderConfigId)> ActiveIssues { get; private set; } = new();
+
+    public string ActiveDrawerTab => IsIssueDrawerOpen ? "issue" : IsPrDrawerOpen ? "pr" : IsEpicDrawerOpen ? "epic" : "";
+
+    public PipelineJobTemplate? ActiveDrawerTemplate => ActiveDrawerTab switch
+    {
+        "issue" => IssueDrawerTemplate,
+        "pr" => PrDrawerTemplate,
+        "epic" => EpicDrawerTemplate,
+        _ => null
+    };
+
+    private CancellationTokenSource? _drawerCts;
 
     // ── Initialization ──
 
@@ -291,8 +316,7 @@ public class AgentCodingPageService
     /// Checks dependency readiness for all current drawer issues asynchronously.
     /// Results are stored in <see cref="DrawerReadiness"/> and the caller is notified via onProgress.
     /// </summary>
-    // TODO: Accept a CancellationToken and cancel on drawer close/page navigation to prevent concurrent mutations on DrawerReadiness from overlapping invocations.
-    public async Task CheckDrawerDependenciesAsync(PipelineJobTemplate template, Action? onProgress = null)
+    public async Task CheckDrawerDependenciesAsync(PipelineJobTemplate template, Action? onProgress = null, CancellationToken cancellationToken = default)
     {
         var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
         if (providerConfig == null) return;
@@ -305,15 +329,16 @@ public class AgentCodingPageService
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
             foreach (var issue in issues)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var result = await _dependencyChecker.CheckAsync(
-                    issue.Identifier, issue.Description, provider, stateCache, CancellationToken.None);
+                    issue.Identifier, issue.Description, provider, stateCache, cancellationToken);
                 DrawerReadiness[issue.Identifier] = result;
                 onProgress?.Invoke();
             }
         }
+        catch (OperationCanceledException) { throw; }
         catch
         {
-            // TODO: Log the exception at Warning level for diagnosability; re-throw OperationCanceledException when cancellation support is added.
             // Best-effort: partial results are still useful
         }
     }
@@ -583,6 +608,203 @@ public class AgentCodingPageService
         return (false, "Could not dispatch — epic is already being processed or queued, or no agents are available.", null);
     }
 
+    // ── Drawer Orchestration ──
+
+    /// <summary>Refreshes the cached set of active issue identifiers from <see cref="IWorkDistributor"/>.</summary>
+    public async Task RefreshActiveIssuesAsync()
+    {
+        ActiveIssues = await _workDistributor.GetActiveIssueIdentifiersAsync(CancellationToken.None);
+    }
+
+    /// <summary>Synchronous check against the preloaded active issues set.</summary>
+    public bool IsIssueActive(string issueIdentifier, string issueProviderConfigId)
+        => ActiveIssues.Contains((issueIdentifier, issueProviderConfigId));
+
+    private void HideOtherDrawers(string keepOpen)
+    {
+        if (keepOpen != "issue") IsIssueDrawerOpen = false;
+        if (keepOpen != "pr") IsPrDrawerOpen = false;
+        if (keepOpen != "epic") IsEpicDrawerOpen = false;
+    }
+
+    /// <summary>Closes whichever drawer is currently open.</summary>
+    public void CloseActiveDrawer()
+    {
+        if (IsIssueDrawerOpen) CloseIssueDrawer();
+        else if (IsPrDrawerOpen) ClosePrDrawer();
+        else if (IsEpicDrawerOpen) CloseEpicDrawer();
+    }
+
+    // ── Issue Drawer Orchestration ──
+
+    public async Task<string?> OpenIssueDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    {
+        var template = Templates.FirstOrDefault(t => t.Id == templateId);
+        if (template == null) return null;
+        HideOtherDrawers("issue");
+        IssueDrawerTemplate = template;
+        IsIssueDrawerOpen = true;
+        CancelAndResetCts();
+        await RefreshActiveIssuesAsync();
+        if (notifyStateChanged != null) await notifyStateChanged();
+        var labelsTask = LoadDrawerLabelsAsync(template);
+        var error = await LoadDrawerIssuesAsync(template, 1);
+        await labelsTask;
+        if (error != null) return error;
+        _ = CheckDrawerDependenciesInBackgroundAsync(template);
+        return null;
+    }
+
+    public void CloseIssueDrawer()
+    {
+        IsIssueDrawerOpen = false;
+        IssueDrawerTemplate = null;
+        CancelCts();
+        ClearDrawerIssues();
+    }
+
+    public async Task<string?> SwitchToIssueDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    {
+        HideOtherDrawers("issue");
+        if (IssueDrawerTemplate != null && DrawerIssues.Count > 0)
+        {
+            IsIssueDrawerOpen = true;
+            return null;
+        }
+        return await OpenIssueDrawerAsync(templateId, notifyStateChanged);
+    }
+
+    // TODO: Returning (false, null, null) when template is null causes the component to silently clear _errorMessage.
+    // The old code returned early without modifying error state. Consider returning early or returning an error message.
+    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(IssueSummary issue)
+    {
+        if (IssueDrawerTemplate == null) return (false, null, null);
+        IssueDrawerDispatching = true;
+        try
+        {
+            var (success, error, successMessage) = await DispatchIssueAsync(issue, IssueDrawerTemplate);
+            if (success) CloseIssueDrawer();
+            return (success, error, successMessage);
+        }
+        finally { IssueDrawerDispatching = false; }
+    }
+
+    // ── PR Drawer Orchestration ──
+
+    public async Task<string?> OpenPrDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    {
+        if (string.IsNullOrEmpty(templateId)) return null;
+        var template = Templates.FirstOrDefault(t => t.Id == templateId);
+        if (template == null) return null;
+        HideOtherDrawers("pr");
+        PrDrawerTemplate = template;
+        IsPrDrawerOpen = true;
+        CancelAndResetCts();
+        await RefreshActiveIssuesAsync();
+        if (notifyStateChanged != null) await notifyStateChanged();
+        var labelsTask = LoadPrDrawerLabelsAsync(template);
+        var error = await LoadPrDrawerPageAsync(template, 1);
+        await labelsTask;
+        return error;
+    }
+
+    public void ClosePrDrawer()
+    {
+        IsPrDrawerOpen = false;
+        PrDrawerTemplate = null;
+        CancelCts();
+        ClearPrDrawerLabelFilter();
+    }
+
+    public async Task<string?> SwitchToPrDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    {
+        HideOtherDrawers("pr");
+        if (PrDrawerTemplate != null && PrDrawerPrs.Count > 0)
+        {
+            IsPrDrawerOpen = true;
+            return null;
+        }
+        return await OpenPrDrawerAsync(templateId, notifyStateChanged);
+    }
+
+    // TODO: Same (false, null, null) issue as DispatchFromIssueDrawerAsync — silently clears component error state.
+    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(PullRequestSummary pr)
+    {
+        if (PrDrawerTemplate == null) return (false, null, null);
+        PrDrawerDispatching = true;
+        try
+        {
+            var (success, error, successMessage) = await DispatchPrReviewAsync(pr, PrDrawerTemplate);
+            // PR drawer intentionally stays open on success for multi-dispatch
+            return (success, error, successMessage);
+        }
+        finally { PrDrawerDispatching = false; }
+    }
+
+    // ── Epic Drawer Orchestration ──
+
+    public async Task<string?> OpenEpicDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    {
+        if (string.IsNullOrEmpty(templateId)) return null;
+        var template = Templates.FirstOrDefault(t => t.Id == templateId);
+        if (template == null) return null;
+        HideOtherDrawers("epic");
+        EpicDrawerTemplate = template;
+        IsEpicDrawerOpen = true;
+        CancelAndResetCts();
+        await RefreshActiveIssuesAsync();
+        if (notifyStateChanged != null) await notifyStateChanged();
+        var labelsTask = LoadEpicDrawerLabelsAsync(template);
+        var error = await LoadEpicDrawerIssuesAsync(template, 1);
+        await labelsTask;
+        return error;
+    }
+
+    public void CloseEpicDrawer()
+    {
+        IsEpicDrawerOpen = false;
+        EpicDrawerTemplate = null;
+        CancelCts();
+        ClearEpicDrawerIssues();
+    }
+
+    public async Task<string?> SwitchToEpicDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    {
+        HideOtherDrawers("epic");
+        if (EpicDrawerTemplate != null && EpicDrawerIssues.Count > 0)
+        {
+            IsEpicDrawerOpen = true;
+            return null;
+        }
+        return await OpenEpicDrawerAsync(templateId, notifyStateChanged);
+    }
+
+    // TODO: Same (false, null, null) issue as DispatchFromIssueDrawerAsync — silently clears component error state.
+    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(IssueSummary issue)
+    {
+        if (EpicDrawerTemplate == null) return (false, null, null);
+        EpicDrawerDispatching = true;
+        try
+        {
+            var (success, error, successMessage) = await DispatchDecompositionAsync(issue, EpicDrawerTemplate);
+            if (success) CloseEpicDrawer();
+            return (success, error, successMessage);
+        }
+        finally { EpicDrawerDispatching = false; }
+    }
+
+    // ── Dependency Check (with CTS) ──
+
+    private async Task CheckDrawerDependenciesInBackgroundAsync(PipelineJobTemplate template)
+    {
+        var cts = _drawerCts;
+        try
+        {
+            await CheckDrawerDependenciesAsync(template, null, cts?.Token ?? CancellationToken.None);
+        }
+        catch (OperationCanceledException) { /* expected on drawer close */ }
+    }
+
     // ── Helpers ──
 
     /// <summary>
@@ -595,4 +817,25 @@ public class AgentCodingPageService
 
     public PipelineProject? GetParentProject(string templateId) =>
         Projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
+
+    private void CancelAndResetCts()
+    {
+        _drawerCts?.Cancel();
+        _drawerCts?.Dispose();
+        _drawerCts = new CancellationTokenSource();
+    }
+
+    private void CancelCts()
+    {
+        _drawerCts?.Cancel();
+        _drawerCts?.Dispose();
+        _drawerCts = null;
+    }
+
+    public void Dispose()
+    {
+        _drawerCts?.Cancel();
+        _drawerCts?.Dispose();
+        _drawerCts = null;
+    }
 }
