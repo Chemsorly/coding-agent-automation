@@ -399,4 +399,74 @@ public sealed class ButtonStateTests : E2ETestBase, IClassFixture<E2EFixture>
             }");
         Assert.False(hasDisabled, "Disabled template should NOT appear in the Manual Dispatch dropdown");
     }
+
+    [Fact]
+    public async Task BrowseIssues_ShowsTooltipWhenDisabled()
+    {
+        // Arrange: seed a template so the dropdown has options
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        // Act: navigate without selecting a template
+        var codingPage = new AgentCodingPage(Page, BaseUrl);
+        await codingPage.NavigateAsync();
+
+        // Assert: Browse Issues button has a title attribute with tooltip text
+        var btn = Page.Locator("[data-testid='browse-issues-btn']");
+        var title = await btn.GetAttributeAsync("title");
+        Assert.NotNull(title);
+        Assert.Contains("Select a pipeline template", title);
+
+        // Assert: Browse Epics button also has tooltip
+        var epicsBtn = Page.Locator("[data-testid='browse-epics-btn']");
+        var epicsTitle = await epicsBtn.GetAttributeAsync("title");
+        Assert.NotNull(epicsTitle);
+        Assert.Contains("Select a pipeline template", epicsTitle);
+
+        // Assert: Browse PRs button also has tooltip
+        var prsBtn = Page.Locator("[data-testid='browse-prs-btn']");
+        var prsTitle = await prsBtn.GetAttributeAsync("title");
+        Assert.NotNull(prsTitle);
+        Assert.Contains("Select a pipeline template", prsTitle);
+    }
+
+    [Fact]
+    public async Task BrowseIssues_TooltipDisappearsWhenEnabled()
+    {
+        // Arrange: seed a template
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-1",
+            Name = "Test Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "1",
+            Title = "Test issue",
+            Description = "Test",
+            Labels = new[] { "enhancement" }
+        });
+
+        // Act: navigate and select template
+        var codingPage = new AgentCodingPage(Page, BaseUrl);
+        await codingPage.NavigateAsync();
+        await codingPage.SelectTemplateAsync("Test Template");
+
+        // Assert: Browse Issues button should NOT have a title attribute when enabled
+        // TODO: Also verify Browse Epics and Browse PRs buttons lose their tooltips when enabled,
+        // matching the symmetry of the disabled-state test that checks all three buttons.
+        var btn = Page.Locator("[data-testid='browse-issues-btn']");
+        var title = await btn.GetAttributeAsync("title");
+        Assert.Null(title);
+    }
 }

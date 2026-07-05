@@ -465,6 +465,60 @@ public class AgentCodingPageComponentTests : BunitContext
             timeout: TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public void AgentCoding_WhenBrowseIssuesDisabled_ShowsTooltip()
+    {
+        var component = Render<AgentCoding>();
+
+        var browseBtn = component.Find("[data-testid='browse-issues-btn']");
+        Assert.True(browseBtn.HasAttribute("disabled"));
+        Assert.True(browseBtn.HasAttribute("title"));
+        Assert.Contains("Select a pipeline template to browse issues", browseBtn.GetAttribute("title"));
+    }
+
+    [Fact]
+    public void AgentCoding_WhenBrowseEpicsDisabled_ShowsTooltip()
+    {
+        var component = Render<AgentCoding>();
+
+        var browseBtn = component.Find("[data-testid='browse-epics-btn']");
+        Assert.True(browseBtn.HasAttribute("disabled"));
+        Assert.True(browseBtn.HasAttribute("title"));
+        Assert.Contains("Select a pipeline template to browse epics", browseBtn.GetAttribute("title"));
+    }
+
+    [Fact]
+    public void AgentCoding_WhenBrowsePrsDisabled_ShowsTooltip()
+    {
+        var component = Render<AgentCoding>();
+
+        var browseBtn = component.Find("[data-testid='browse-prs-btn']");
+        Assert.True(browseBtn.HasAttribute("disabled"));
+        Assert.True(browseBtn.HasAttribute("title"));
+        Assert.Contains("Select a pipeline template to browse pull requests", browseBtn.GetAttribute("title"));
+    }
+
+    [Fact]
+    public async Task AgentCoding_WhenTemplateSelected_BrowseButtonsHaveNoTooltip()
+    {
+        var component = Render<AgentCoding>();
+
+        // Select a template in the manual dispatch dropdown
+        var selects = component.FindAll("select");
+        var dispatchSelect = selects.Last();
+        await component.InvokeAsync(() => dispatchSelect.Change("t-1"));
+
+        // All browse buttons should have no title when enabled
+        var browseIssuesBtn = component.Find("[data-testid='browse-issues-btn']");
+        Assert.False(browseIssuesBtn.HasAttribute("title"));
+
+        var browseEpicsBtn = component.Find("[data-testid='browse-epics-btn']");
+        Assert.False(browseEpicsBtn.HasAttribute("title"));
+
+        var browsePrsBtn = component.Find("[data-testid='browse-prs-btn']");
+        Assert.False(browsePrsBtn.HasAttribute("title"));
+    }
+
     private void SetActiveRun(PipelineRun run)
     {
         // ActiveRun delegates to lifecycle service — set via lifecycle's public setter
