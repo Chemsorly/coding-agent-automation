@@ -63,6 +63,22 @@
             </div>
         }
     }
+    @if (DatabaseStatus is not null || RedisStatus is not null)
+    {
+        <div class="run-stats-divider" style="margin: 0 6px;"></div>
+        @if (DatabaseStatus is not null)
+        {
+            <span class="infra-health-item" title="@DbTooltip">
+                <span class="infra-health-dot @DbDotClass"></span> DB
+            </span>
+        }
+        @if (RedisStatus is not null)
+        {
+            <span class="infra-health-item" title="@RedisTooltip">
+                <span class="infra-health-dot @RedisDotClass"></span> Redis
+            </span>
+        }
+    }
 </div>
 
 @code {
@@ -70,6 +86,8 @@
     [Parameter] public IReadOnlyList<AgentEntry> Agents { get; set; } = [];
     [Parameter] public int QueueLength { get; set; }
     [Parameter] public bool ShowAgentStats { get; set; }
+    [Parameter] public bool? DatabaseStatus { get; set; }
+    [Parameter] public bool? RedisStatus { get; set; }
 
     private int ConnectedCount => Agents.Count(a => a.Status != AgentStatus.Disconnected);
     private int BusyCount => Agents.Count(a => a.Status == AgentStatus.Busy);
@@ -96,4 +114,9 @@
             return avg < 60 ? $"{avg:F0}m" : $"{avg / 60:F1}h";
         }
     }
+
+    private string DbDotClass => DatabaseStatus == true ? "dot-healthy" : "dot-unhealthy";
+    private string DbTooltip => DatabaseStatus == true ? "Database: Connected" : "Database: Disconnected";
+    private string RedisDotClass => RedisStatus == true ? "dot-healthy" : "dot-unhealthy";
+    private string RedisTooltip => RedisStatus == true ? "Redis: Connected" : "Redis: Disconnected";
 }
