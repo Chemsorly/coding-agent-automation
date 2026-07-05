@@ -10,9 +10,11 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
+using Microsoft.Extensions.Http.Resilience;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Polly;
 using Serilog;
 using Serilog.Enrichers.Span;
 
@@ -186,7 +188,15 @@ try
             client.BaseAddress = new Uri(orchestratorUrl.TrimEnd('/'));
             client.DefaultRequestHeaders.Authorization =
                 new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", agentApiKey);
-            client.Timeout = TimeSpan.FromSeconds(90); // Per-request timeout (retries handle longer waits)
+            // DO NOT set client.Timeout — resilience handler manages timeouts
+        })
+        .AddStandardResilienceHandler(options =>
+        {
+            options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(90);
+            options.Retry.MaxRetryAttempts = 5;
+            options.Retry.BackoffType = DelayBackoffType.Exponential;
+            options.Retry.UseJitter = true;
+            options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
         });
 
         builder.Services.AddSingleton(sp => new WorkItemAgentService(

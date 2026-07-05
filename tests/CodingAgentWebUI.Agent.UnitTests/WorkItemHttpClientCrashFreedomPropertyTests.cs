@@ -1,4 +1,5 @@
 using System.Net;
+using AwesomeAssertions;
 using FsCheck;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Pipeline;
@@ -11,6 +12,11 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// Verifies that no combination of HTTP status codes causes an unhandled exception.
 /// The client should only throw well-defined domain exceptions or OperationCanceledException.
 /// </summary>
+/// <remarks>
+/// After the resilience migration, the client no longer retries internally.
+/// All transient failures either throw domain exceptions (wrapping handler exhaustion)
+/// or return immediately for non-retryable status codes.
+/// </remarks>
 public class WorkItemHttpClientCrashFreedomPropertyTests
 {
     private static readonly HttpStatusCode[] AllStatusCodes = Enum.GetValues<HttpStatusCode>();
@@ -20,7 +26,7 @@ public class WorkItemHttpClientCrashFreedomPropertyTests
     /// For any single-response status code, the method either:
     /// - Returns a value (null or JobAssignmentMessage)
     /// - Throws WorkItemFetchException (expected domain error)
-    /// - Throws OperationCanceledException (cancellation during retry delay)
+    /// - Throws OperationCanceledException (cancellation)
     /// It must NEVER throw NullReferenceException, InvalidCastException, or other unhandled types.
     /// </summary>
     [Property(MaxTest = 50)]
@@ -33,13 +39,10 @@ public class WorkItemHttpClientCrashFreedomPropertyTests
         var logger = new Mock<Serilog.ILogger>();
         var client = new WorkItemHttpClient(httpClient, logger.Object);
 
-        // Use a short cancellation to avoid waiting for retry delays on 5xx
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-
         Exception? caught = null;
         try
         {
-            client.GetAssignmentAsync("test-wi", cts.Token).GetAwaiter().GetResult();
+            client.GetAssignmentAsync("test-wi", CancellationToken.None).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -67,8 +70,8 @@ public class WorkItemHttpClientCrashFreedomPropertyTests
     /// Property P2: PostStatusAsync never throws unexpected exceptions regardless of HTTP status code.
     /// For any single-response status code, the method either:
     /// - Returns bool (true/false)
-    /// - Throws WorkItemStatusPostException (retries exhausted)
-    /// - Throws OperationCanceledException (cancellation during retry delay)
+    /// - Throws WorkItemStatusPostException (domain error for 5xx after exhaustion)
+    /// - Throws OperationCanceledException (cancellation)
     /// </summary>
     [Property(MaxTest = 50)]
     public void PostStatus_AnyStatusCode_NeverThrowsUnexpectedException(int statusCodeSeed)
@@ -80,12 +83,11 @@ public class WorkItemHttpClientCrashFreedomPropertyTests
         var client = new WorkItemHttpClient(httpClient, logger.Object);
 
         var update = new WorkItemStatusUpdate { Status = "Running" };
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
 
         Exception? caught = null;
         try
         {
-            client.PostStatusAsync("test-wi", update, cts.Token).GetAwaiter().GetResult();
+            client.PostStatusAsync("test-wi", update, CancellationToken.None).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -109,8 +111,7 @@ public class WorkItemHttpClientCrashFreedomPropertyTests
 
     /// <summary>
     /// Property P3: GetAssignmentAsync handles network failures gracefully.
-    /// No matter what exception the HTTP layer throws, the client either retries and eventually
-    /// throws a domain exception or OperationCanceledException.
+    /// When the HTTP layer throws, the client wraps in WorkItemFetchException.
     /// </summary>
     [Property(MaxTest = 20)]
     public void GetAssignment_NetworkFailure_NeverThrowsUnexpectedException(int exceptionTypeSeed)
@@ -127,12 +128,10 @@ public class WorkItemHttpClientCrashFreedomPropertyTests
         var logger = new Mock<Serilog.ILogger>();
         var client = new WorkItemHttpClient(httpClient, logger.Object);
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-
         Exception? caught = null;
         try
         {
-            client.GetAssignmentAsync("test-wi", cts.Token).GetAwaiter().GetResult();
+            client.GetAssignmentAsync("test-wi", CancellationToken.None).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -140,18 +139,17 @@ public class WorkItemHttpClientCrashFreedomPropertyTests
         }
 
         // Must throw something (network always fails) — but only expected types
-        if (caught is not null)
-        {
-            var isExpected = caught is WorkItemFetchException
-                || caught is OperationCanceledException
-                || caught is TaskCanceledException;
+        caught.Should().NotBeNull("network failure should always throw");
 
-            if (!isExpected)
-            {
-                throw new Exception(
-                    $"Unexpected exception for network failure ({exception.GetType().Name}): {caught.GetType().Name}: {caught.Message}",
-                    caught);
-            }
+        var isExpected = caught is WorkItemFetchException
+            || caught is OperationCanceledException
+            || caught is TaskCanceledException;
+
+        if (!isExpected)
+        {
+            throw new Exception(
+                $"Unexpected exception for network failure ({exception.GetType().Name}): {caught!.GetType().Name}: {caught.Message}",
+                caught);
         }
     }
 

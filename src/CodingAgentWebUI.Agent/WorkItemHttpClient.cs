@@ -11,8 +11,10 @@ namespace CodingAgentWebUI.Agent;
 /// Used in K8s mode to fetch assignments and report status transitions.
 /// </summary>
 /// <remarks>
-/// <para><b>GET /api/work-items/{id}/assignment</b> — 6 retries, exponential backoff 2s→64s (~126s window).</para>
-/// <para><b>POST /api/work-items/{id}/status</b> — 3 retries, exponential backoff 5s, 10s, 20s.</para>
+/// <para>Resilience (retries, circuit breaker, timeouts) is handled by the
+/// <c>AddStandardResilienceHandler()</c> configured at the DI registration level.</para>
+/// <para><b>GET /api/work-items/{id}/assignment</b> — single call; transient failures retried by handler.</para>
+/// <para><b>POST /api/work-items/{id}/status</b> — single call; transient failures retried by handler.</para>
 /// </remarks>
 public sealed class WorkItemHttpClient
 {
@@ -32,147 +34,106 @@ public sealed class WorkItemHttpClient
 
     /// <summary>
     /// Fetches the work item assignment from the orchestrator.
-    /// Retries up to 6 times with exponential backoff (2s→64s, ~126s total window)
-    /// to accommodate orchestrator rolling updates.
+    /// Transient failures (5xx, network errors) are retried transparently by the resilience handler.
     /// </summary>
     /// <returns>
     /// The deserialized <see cref="JobAssignmentMessage"/>, or null if the work item
     /// is in a terminal status (410 Gone).
     /// </returns>
-    /// <exception cref="WorkItemFetchException">Thrown when all retries are exhausted or a non-retryable error occurs.</exception>
+    /// <exception cref="WorkItemFetchException">Thrown when a non-retryable error occurs or all retries are exhausted.</exception>
     public async Task<JobAssignmentMessage?> GetAssignmentAsync(string workItemId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(workItemId);
 
-        var retryDelays = new[] { 2, 4, 8, 16, 32, 64 }; // seconds
-
-        for (var attempt = 0; attempt <= retryDelays.Length; attempt++)
+        HttpResponseMessage response;
+        try
         {
-            try
-            {
-                using var response = await _httpClient.GetAsync($"/api/work-items/{workItemId}/assignment", ct);
-
-                switch (response.StatusCode)
-                {
-                    case HttpStatusCode.OK:
-                        // Server returns WorkItemAssignmentDto which has identical JSON property names to JobAssignmentMessage.
-                        // System.Text.Json matches on property names, ignoring MessagePack [Key] attributes.
-                        var message = await response.Content.ReadFromJsonAsync<JobAssignmentMessage>(JsonOptions, ct);
-                        return message ?? throw new WorkItemFetchException("Response deserialized to null");
-
-                    case HttpStatusCode.Gone:
-                        // Work item already in terminal status — agent should exit 0
-                        _logger.Information("Work item {WorkItemId} is in terminal status (410 Gone), exiting gracefully", workItemId);
-                        return null;
-
-                    case HttpStatusCode.NotFound:
-                        throw new WorkItemFetchException($"Work item {workItemId} not found (404)");
-
-                    default:
-                        if ((int)response.StatusCode >= 500)
-                        {
-                            _logger.Warning("GET assignment returned {StatusCode} on attempt {Attempt}, will retry",
-                                (int)response.StatusCode, attempt + 1);
-                            break;
-                        }
-                        throw new WorkItemFetchException(
-                            $"Unexpected status {(int)response.StatusCode} from GET /api/work-items/{workItemId}/assignment");
-                }
-            }
-            catch (HttpRequestException ex) when (attempt < retryDelays.Length)
-            {
-                _logger.Warning(ex, "GET assignment network error on attempt {Attempt}, will retry", attempt + 1);
-            }
-            catch (TaskCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (TaskCanceledException ex) when (attempt < retryDelays.Length)
-            {
-                _logger.Warning(ex, "GET assignment timeout on attempt {Attempt}, will retry", attempt + 1);
-            }
-
-            if (attempt < retryDelays.Length)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(retryDelays[attempt]), ct);
-            }
+            response = await _httpClient.GetAsync($"/api/work-items/{workItemId}/assignment", ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Resilience handler exhausted retries (TimeoutRejectedException, HttpRequestException, etc.)
+            throw new WorkItemFetchException(
+                $"All retries exhausted for GET /api/work-items/{workItemId}/assignment: {ex.Message}", ex);
         }
 
-        throw new WorkItemFetchException(
-            $"All {retryDelays.Length + 1} attempts to GET /api/work-items/{workItemId}/assignment failed");
+        using (response)
+        {
+            switch (response.StatusCode)
+            {
+                case HttpStatusCode.OK:
+                    var message = await response.Content.ReadFromJsonAsync<JobAssignmentMessage>(JsonOptions, ct);
+                    return message ?? throw new WorkItemFetchException("Response deserialized to null");
+
+                case HttpStatusCode.Gone:
+                    _logger.Information("Work item {WorkItemId} is in terminal status (410 Gone), exiting gracefully", workItemId);
+                    return null;
+
+                case HttpStatusCode.NotFound:
+                    throw new WorkItemFetchException($"Work item {workItemId} not found (404)");
+
+                default:
+                    // TODO: Add explicit >= 500 check with "retries exhausted" message for consistency with PostStatusAsync
+                    throw new WorkItemFetchException(
+                        $"Unexpected status {(int)response.StatusCode} from GET /api/work-items/{workItemId}/assignment");
+            }
+        }
     }
 
     /// <summary>
     /// Posts a status transition to the orchestrator.
-    /// Retries up to 3 times with exponential backoff (5s, 10s, 20s).
+    /// Transient failures (5xx, network errors) are retried transparently by the resilience handler.
     /// </summary>
     /// <returns>True if the transition was accepted (200); false if rejected (400) or not found (404).</returns>
-    /// <exception cref="WorkItemStatusPostException">Thrown when all retries are exhausted for a terminal status POST.</exception>
+    /// <exception cref="WorkItemStatusPostException">Thrown when all retries are exhausted.</exception>
     public async Task<bool> PostStatusAsync(string workItemId, WorkItemStatusUpdate update, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(workItemId);
         ArgumentNullException.ThrowIfNull(update);
 
-        var retryDelays = new[] { 5, 10, 20 }; // seconds
-
-        for (var attempt = 0; attempt <= retryDelays.Length; attempt++)
+        HttpResponseMessage response;
+        try
         {
-            try
-            {
-                using var response = await _httpClient.PostAsJsonAsync(
-                    $"/api/work-items/{workItemId}/status", update, JsonOptions, ct);
-
-                switch (response.StatusCode)
-                {
-                    case HttpStatusCode.OK:
-                        _logger.Information("Posted status {Status} for work item {WorkItemId}",
-                            update.Status, workItemId);
-                        return true;
-
-                    case HttpStatusCode.BadRequest:
-                        _logger.Warning("Status transition to {Status} rejected (400) for work item {WorkItemId}",
-                            update.Status, workItemId);
-                        return false;
-
-                    case HttpStatusCode.NotFound:
-                        _logger.Warning("Work item {WorkItemId} not found (404) for status POST", workItemId);
-                        return false;
-
-                    default:
-                        if ((int)response.StatusCode >= 500)
-                        {
-                            _logger.Warning("POST status returned {StatusCode} on attempt {Attempt}, will retry",
-                                (int)response.StatusCode, attempt + 1);
-                            break;
-                        }
-                        _logger.Error("Unexpected status {StatusCode} from POST /api/work-items/{WorkItemId}/status",
-                            (int)response.StatusCode, workItemId);
-                        return false;
-                }
-            }
-            catch (HttpRequestException ex) when (attempt < retryDelays.Length)
-            {
-                _logger.Warning(ex, "POST status network error on attempt {Attempt}, will retry", attempt + 1);
-            }
-            catch (TaskCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (TaskCanceledException ex) when (attempt < retryDelays.Length)
-            {
-                _logger.Warning(ex, "POST status timeout on attempt {Attempt}, will retry", attempt + 1);
-            }
-
-            if (attempt < retryDelays.Length)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(retryDelays[attempt]), ct);
-            }
+            response = await _httpClient.PostAsJsonAsync(
+                $"/api/work-items/{workItemId}/status", update, JsonOptions, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Resilience handler exhausted retries (TimeoutRejectedException, HttpRequestException, etc.)
+            throw new WorkItemStatusPostException(
+                $"All retries exhausted for POST status={update.Status} for work item {workItemId}: {ex.Message}", ex);
         }
 
-        // All retries exhausted
-        var errorMsg = $"All {retryDelays.Length + 1} attempts to POST status={update.Status} for work item {workItemId} failed";
-        _logger.Error(errorMsg);
-        throw new WorkItemStatusPostException(errorMsg);
+        using (response)
+        {
+            switch (response.StatusCode)
+            {
+                case HttpStatusCode.OK:
+                    _logger.Information("Posted status {Status} for work item {WorkItemId}",
+                        update.Status, workItemId);
+                    return true;
+
+                case HttpStatusCode.BadRequest:
+                    _logger.Warning("Status transition to {Status} rejected (400) for work item {WorkItemId}",
+                        update.Status, workItemId);
+                    return false;
+
+                case HttpStatusCode.NotFound:
+                    _logger.Warning("Work item {WorkItemId} not found (404) for status POST", workItemId);
+                    return false;
+
+                default:
+                    if ((int)response.StatusCode >= 500)
+                    {
+                        // 5xx leaked through after resilience handler exhaustion
+                        throw new WorkItemStatusPostException(
+                            $"Server error {(int)response.StatusCode} from POST status={update.Status} for work item {workItemId} (retries exhausted)");
+                    }
+                    _logger.Error("Unexpected status {StatusCode} from POST /api/work-items/{WorkItemId}/status",
+                        (int)response.StatusCode, workItemId);
+                    return false;
+            }
+        }
     }
 }
 

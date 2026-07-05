@@ -13,6 +13,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging;
 using Serilog;
 
@@ -193,7 +194,8 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<Pipeline.Interfaces.IJobDeduplicationGuard>(sp =>
             sp.GetRequiredService<JobDispatcherService>());
 
-        services.AddHttpClient("TokenVending");
+        services.AddHttpClient("TokenVending")
+            .AddStandardResilienceHandler();
         services.AddSingleton<ITokenVendingService>(sp => new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
 
         services.AddSingleton(sp => new OrchestratorRunService(
