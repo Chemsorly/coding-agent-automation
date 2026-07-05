@@ -29,9 +29,6 @@ public interface IPipelineLoopService
     /// <summary>Number of agent:next issues remaining in the current queue snapshot.</summary>
     int QueueCount { get; }
 
-    /// <summary>Number of consecutive poll failures since last successful poll.</summary>
-    int ConsecutivePollFailures { get; }
-
     /// <summary>Whether the circuit breaker has tripped due to consecutive poll failures.</summary>
     bool IsCircuitBroken { get; }
 

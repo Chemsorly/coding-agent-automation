@@ -577,7 +577,6 @@ public sealed partial class PipelineLoopService
         lock (_lock)
         {
             if (!IsCircuitBroken) return true; // ResumeLoop() already handled reset
-            ConsecutivePollFailures = 0;
             IsCircuitBroken = false;
             LastPollError = null;
             StatusMessage = "🔄 Circuit breaker auto-resumed, retrying poll.";
