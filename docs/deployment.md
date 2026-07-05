@@ -199,17 +199,12 @@ The chart deploys:
 | `workDistribution.reconciliation.intervalSeconds` | Seconds between reconciliation cycles in Kubernetes mode (default: `30`) |
 | `workDistribution.reconciliation.timeoutEnforcementEnabled` | Whether to enforce agent timeouts via reconciliation (default: `true`) |
 | `workDistribution.reconciliation.staleRetentionDays` | Days to retain stale work items before cleanup (default: `7`) |
-| `workDistribution.imageMapping` | Map of sorted agent labels → container image for K8s Job dispatch |
-| `workDistribution.jobResources` | Resource requests/limits for spawned agent Jobs |
-| `workDistribution.maxConcurrentPods` | Max concurrent pods per agent selector group |
-| `workDistribution.scheduling.priorityClassName` | PriorityClass for spawned agent Job pods |
-| `workDistribution.scheduling.nodeSelector` | Node selector for spawned agent Job pods |
-| `workDistribution.scheduling.tolerations` | Tolerations for spawned agent Job pods |
-| `workDistribution.scheduling.topologySpreadConstraints` | Topology spread constraints for spawned agent Job pods |
 | `credentialPools.kiro` | List of PVC names for kiro agent credential data (DispatchService claims one per Job) |
 | `signalr.redis.enabled` | Enable Redis backplane for multi-replica orchestrator SignalR (default: `false`) |
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
 | `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
+
+In Kubernetes mode, Job pod specs (image, resources, nodeSelector, tolerations, initContainers, podSecurityContext, maxConcurrent) are configured per-agent in the `agents[]` list and rendered into a ConfigMap consumed by `DispatchService`.
 
 ### Scaling Agents
 
