@@ -1221,7 +1221,7 @@ public sealed partial class PipelineLoopService
             maxPages, ct);
 
         // FIFO: oldest first
-        result.Sort((a, b) => (a.CreatedAt ?? DateTime.MaxValue).CompareTo(b.CreatedAt ?? DateTime.MaxValue));
+        result.SortByCreatedAtFifo();
         return result;
     }
 
@@ -1244,7 +1244,7 @@ public sealed partial class PipelineLoopService
             pr.Labels.Contains(AgentLabels.Cancelled));
 
         // FIFO: oldest first, PRs without CreatedAt go last
-        result.Sort((a, b) => (a.CreatedAt ?? DateTime.MaxValue).CompareTo(b.CreatedAt ?? DateTime.MaxValue));
+        result.SortByCreatedAtFifo();
         return result;
     }
 
@@ -1283,7 +1283,7 @@ public sealed partial class PipelineLoopService
         }
 
         // FIFO: oldest first
-        result.Sort((a, b) => (a.CreatedAt ?? DateTime.MaxValue).CompareTo(b.CreatedAt ?? DateTime.MaxValue));
+        result.SortByCreatedAtFifo();
         return result;
     }
 
