@@ -56,6 +56,23 @@ public sealed class SmokeTests : E2ETestBase, IClassFixture<E2EFixture>
         Assert.Contains("Agent", heading);
     }
 
+    [Theory]
+    [InlineData("/agent-coding", "Agent Coding - Coding Agent")]
+    [InlineData("/agent-monitoring", "Agent Monitoring - Coding Agent")]
+    [InlineData("/agent-chat", "Agent Chat - Coding Agent")]
+    [InlineData("/consolidation", "Consolidation - Coding Agent")]
+    [InlineData("/settings", "Settings - Coding Agent")]
+    [InlineData("/about", "About - Coding Agent")]
+    // TODO: Add [InlineData("/agent-refinement", "Agent Refinement - Coding Agent")] — missing test coverage for the agent-refinement page title
+    public async Task Page_Has_Correct_BrowserTitle(string path, string expectedTitle)
+    {
+        await Page.GotoAsync($"{BaseUrl}{path}");
+        await Page.WaitForSelectorAsync("h1", new() { Timeout = 10_000 });
+
+        var title = await Page.TitleAsync();
+        Assert.Equal(expectedTitle, title);
+    }
+
     [Fact]
     public async Task Blazor_Circuit_Connects()
     {
