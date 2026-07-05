@@ -1743,7 +1743,7 @@ public class LocalPipelineExecutorTests : IDisposable
     [Fact]
     public void PullRequestCreationContext_CanBeConstructed()
     {
-        var context = new LocalPipelineExecutor.PullRequestCreationContext
+        var context = new PullRequestCreationContext
         {
             RepoProvider = Mock.Of<IRepositoryProvider>(),
             AgentProvider = Mock.Of<IAgentProvider>(),
