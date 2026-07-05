@@ -277,7 +277,7 @@ public sealed class DispatchService : BackgroundService
             {
                 Log.Error("DispatchService: no template or image mapping for selector '{Selector}', failing WorkItem {WorkItemId}",
                     item.AgentSelector, item.Id);
-                await FailWorkItem(item.Id, $"No template or image mapping for selector: {item.AgentSelector}", ct);
+                await FailWorkItem(item.Id, $"No image mapping for selector: {item.AgentSelector}", ct);
                 return;
             }
         }
