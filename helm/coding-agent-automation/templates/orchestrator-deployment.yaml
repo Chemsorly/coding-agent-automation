@@ -135,6 +135,12 @@ spec:
               readOnly: true
               {{- end }}
             {{- end }}
+            {{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
+            - name: job-templates
+              mountPath: /app/config/job-templates.yaml
+              subPath: job-templates.yaml
+              readOnly: true
+            {{- end }}
       volumes:
         {{- if ne .Values.orchestrator.persistence.mountMode "disabled" }}
         - name: pipeline-config
@@ -152,4 +158,9 @@ spec:
           emptyDir:
             sizeLimit: 1Gi
           {{- end }}
+        {{- end }}
+        {{- if and .Values.database.enabled (eq .Values.workDistribution.mode "Kubernetes") }}
+        - name: job-templates
+          configMap:
+            name: {{ include "coding-agent-automation.fullname" . }}-job-templates
         {{- end }}

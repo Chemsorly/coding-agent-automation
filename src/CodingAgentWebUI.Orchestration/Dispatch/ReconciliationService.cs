@@ -335,6 +335,14 @@ public sealed class ReconciliationService : BackgroundService
                 }, ct);
 
             LogTerminalTransition(workItemId, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
+
+            // Delete the failed Job immediately to release PVC faster (don't wait for TTL controller).
+            // Without this, the PVC stays claimed for up to TtlSecondsAfterFinished (default 3600s).
+            var jobName = job.Metadata?.Name;
+            if (!string.IsNullOrEmpty(jobName))
+            {
+                await TryDeleteJobAsync(jobName, ct);
+            }
         }
         // For "Complete" — agent should have already POSTed terminal status.
         // If not, the poll loop will catch it as orphan/timeout.
@@ -586,12 +594,15 @@ public sealed class ReconciliationService : BackgroundService
 
     /// <summary>
     /// During poll: verify claimed PVCs by checking if their Jobs still exist.
+    /// Also handles the crash-recovery case: Pending items with ClaimedPvcName but no K8s Job
+    /// (crash between DB write and Job creation leaves stale claims).
     /// </summary>
     private async Task ReconcilePvcsFromPollAsync(CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-        var claimedItems = await db.WorkItems
+        // Case 1: Terminal items with claimed PVCs whose Jobs no longer exist
+        var terminalClaimedItems = await db.WorkItems
             .Where(w => w.ClaimedPvcName != null && w.K8sJobName != null &&
                         (w.Status == WorkItemStatus.Succeeded ||
                          w.Status == WorkItemStatus.Failed ||
@@ -599,12 +610,21 @@ public sealed class ReconciliationService : BackgroundService
             .Select(w => new { w.Id, w.K8sJobName })
             .ToListAsync(ct);
 
-        if (claimedItems.Count == 0) return;
+        // Case 2: Pending items with stale PVC claims (crash between DB write and Job creation)
+        var pendingWithStaleClaims = await db.WorkItems
+            .Where(w => w.ClaimedPvcName != null &&
+                        w.Status == WorkItemStatus.Pending &&
+                        w.K8sJobName != null)
+            .Select(w => new { w.Id, w.K8sJobName })
+            .ToListAsync(ct);
+
+        var allItemsToCheck = terminalClaimedItems.Concat(pendingWithStaleClaims).ToList();
+        if (allItemsToCheck.Count == 0) return;
 
         var existingJobs = await GetExistingJobNamesAsync(ct);
         if (existingJobs is null) return;
 
-        foreach (var item in claimedItems)
+        foreach (var item in allItemsToCheck)
         {
             if (ct.IsCancellationRequested) break;
 

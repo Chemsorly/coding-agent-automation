@@ -85,9 +85,7 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
             "WorkItem {WorkItemId} created (Pending) for issue {IssueIdentifier} — awaiting DispatchService",
             workItemId, request.IssueIdentifier);
 
-        // TODO(#997): K8s mode needs label swap to agent:in-progress when pod agent picks up the job.
-        // Currently, the label remains agent:next until the pipeline completes. The proper fix is to
-        // swap labels in DispatchService when transitioning WorkItems from Pending → Dispatched.
+        // Label swap to agent:in-progress is handled by DispatchService when transitioning Pending → Dispatched.
         return new DistributionResult(true, workItemId.ToString(), null, Queued: true);
     }
 

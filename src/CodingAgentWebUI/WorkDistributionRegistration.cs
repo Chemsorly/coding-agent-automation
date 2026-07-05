@@ -242,7 +242,8 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<LeaderElectionService>(),
             sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<IConfiguration>()));
+            sp.GetRequiredService<IConfiguration>(),
+            sp.GetService<ILabelSwapper>()));
         services.AddHostedService(sp => new ReconciliationService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<LeaderElectionService>(),

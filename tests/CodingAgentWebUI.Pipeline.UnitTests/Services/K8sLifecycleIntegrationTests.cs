@@ -17,6 +17,7 @@ using Microsoft.Extensions.Options;
 using Moq;
 using System.Net;
 using System.Reflection;
+using System.Text.Json;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
@@ -213,13 +214,16 @@ public class K8sLifecycleIntegrationTests : IDisposable
     // ── Group 2: Dispatch Edge Cases ────────────────────────────────────
 
     [Fact]
-    public async Task K8s_Dispatch_NoImageMapping_WorkItemFailedImmediately()
+    public async Task K8s_Dispatch_NoTemplateMatch_WorkItemFailedImmediately()
     {
-        // Arrange: WorkItem with labels that have no image mapping
+        // Arrange: WorkItem with labels that have no template match
         var workItemId = Guid.NewGuid();
         await InsertWorkItem(workItemId, "owner/repo#4", "unmapped-agent", WorkItemStatus.Pending);
 
-        var service = CreateDispatchService(imageMapping: new Dictionary<string, string>());
+        var service = CreateDispatchService(imageMapping: new Dictionary<string, string>
+        {
+            ["dotnet,kiro"] = "ghcr.io/agent:latest"
+        });
 
         // Act
         await InvokePollAndDispatch(service);
@@ -228,7 +232,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
         await using var db = await _dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
-        item.ErrorMessage.Should().Contain("No image mapping");
+        item.ErrorMessage.Should().Contain("No job template");
         item.FailureReason.Should().Be(FailureReason.InfrastructureFailure);
     }
 
@@ -385,11 +389,25 @@ public class K8sLifecycleIntegrationTests : IDisposable
         for (var i = 0; i < pvcCount; i++)
             configData[$"WorkDistribution:CredentialPools:Kiro:{i}"] = $"pvc-test-{i + 1}";
 
-        foreach (var (selector, image) in imageMapping)
-            configData[$"WorkDistribution:ImageMapping:{selector}"] = image;
-
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
-        return new DispatchService(_dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config);
+
+        // Build JobTemplateProvider from imageMapping dictionary
+        var templateProvider = BuildTemplateProvider(imageMapping);
+
+        return new DispatchService(_dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider);
+    }
+
+    private static JobTemplateProvider BuildTemplateProvider(Dictionary<string, string> imageMapping)
+    {
+        var templates = imageMapping.Select(kv => new JobTemplate
+        {
+            Labels = kv.Key,
+            Image = kv.Value,
+            ProviderType = kv.Key.Contains("kiro") ? "kiro" : "opencode"
+        }).ToList();
+
+        var json = System.Text.Json.JsonSerializer.Serialize(templates);
+        return JobTemplateProvider.LoadFromJson(json);
     }
 
     private ReconciliationService CreateReconciliationService(bool withLabelSwapper = false)

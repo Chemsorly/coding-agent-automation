@@ -133,7 +133,7 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
         // Generate a random key
         var randomBytes = RandomNumberGenerator.GetBytes(32);
         var generatedKey = Convert.ToBase64String(randomBytes);
-        logger.Warning("AGENT_API_KEY not set — generated random key: {ApiKeyPrefix}... (set AGENT_API_KEY env var for production)", generatedKey[..8]);
+        logger.Warning("AGENT_API_KEY not set — generated random key (length={KeyLength}). Set AGENT_API_KEY env var for production use", generatedKey.Length);
         return generatedKey;
     }
 }

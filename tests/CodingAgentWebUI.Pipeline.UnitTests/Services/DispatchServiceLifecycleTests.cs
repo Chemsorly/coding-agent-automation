@@ -16,6 +16,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using System.Net;
+using System.Text.Json;
 using Xunit;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
@@ -89,19 +90,22 @@ public class DispatchServiceLifecycleTests : IDisposable
     // ── Error Handling ──────────────────────────────────────────────────
 
     [Fact]
-    public async Task PollAndDispatch_NoImageMapping_FailsWorkItem()
+    public async Task PollAndDispatch_NoTemplateMatch_FailsWorkItem()
     {
         var workItemId = Guid.NewGuid();
         await InsertWorkItem(workItemId, "owner/repo#2", "unknown-label", WorkItemStatus.Pending);
 
-        var service = CreateService(imageMapping: new Dictionary<string, string>());
+        var service = CreateService(imageMapping: new Dictionary<string, string>
+        {
+            ["dotnet,kiro"] = "ghcr.io/agent:latest"
+        });
 
         await InvokePollAndDispatch(service);
 
         await using var db = await _dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
-        item.ErrorMessage.Should().Contain("No image mapping");
+        item.ErrorMessage.Should().Contain("No job template");
     }
 
     [Fact]
@@ -221,32 +225,7 @@ public class DispatchServiceLifecycleTests : IDisposable
         _mockKubeClient.Verify(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── Image Resolution ────────────────────────────────────────────────
-
-    [Fact]
-    public void ResolveImage_NormalizesSelector_BeforeLookup()
-    {
-        var service = CreateService(imageMapping: new Dictionary<string, string>
-        {
-            ["dotnet,kiro"] = "ghcr.io/agent:latest"
-        });
-
-        service.ResolveImage("kiro,dotnet").Should().Be("ghcr.io/agent:latest");
-        service.ResolveImage("dotnet,kiro").Should().Be("ghcr.io/agent:latest");
-    }
-
-    [Fact]
-    public void ResolveImage_NoMatch_ReturnsNull()
-    {
-        var service = CreateService(imageMapping: new Dictionary<string, string>
-        {
-            ["dotnet,kiro"] = "ghcr.io/agent:latest"
-        });
-
-        service.ResolveImage("unknown").Should().BeNull();
-    }
-
-    // ── Leadership Loss Cancellation ────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────────
 
     [Fact]
     public async Task ExecuteAsync_LeadershipLost_ExitsWithinOneSecond()
@@ -351,6 +330,11 @@ public class DispatchServiceLifecycleTests : IDisposable
         Dictionary<string, int>? maxConcurrentPods = null,
         LeaderElectionService? leaderElection = null)
     {
+        imageMapping ??= new Dictionary<string, string>
+        {
+            ["dotnet,kiro"] = "ghcr.io/agent:latest"
+        };
+
         var configData = new Dictionary<string, string?>
         {
             ["WorkDistribution:Dispatch:PollIntervalSeconds"] = "10",
@@ -362,16 +346,33 @@ public class DispatchServiceLifecycleTests : IDisposable
             ["WorkDistribution:CredentialPools:Kiro:1"] = "pvc-test-2"
         };
 
-        if (imageMapping is not null)
-            foreach (var (selector, image) in imageMapping)
-                configData[$"WorkDistribution:ImageMapping:{selector}"] = image;
-
-        if (maxConcurrentPods is not null)
-            foreach (var (selector, max) in maxConcurrentPods)
-                configData[$"WorkDistribution:Dispatch:MaxConcurrentPods:{selector}"] = max.ToString();
-
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
-        return new DispatchService(_dbFactory, leaderElection ?? _leaderElection, _mockKubeClient.Object, _transitionService, config);
+
+        // Build JobTemplateProvider from imageMapping + maxConcurrentPods
+        var templateProvider = BuildTemplateProvider(imageMapping, maxConcurrentPods);
+
+        return new DispatchService(_dbFactory, leaderElection ?? _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider);
+    }
+
+    private static JobTemplateProvider BuildTemplateProvider(
+        Dictionary<string, string> imageMapping,
+        Dictionary<string, int>? maxConcurrentPods = null)
+    {
+        // Normalize maxConcurrentPods keys so they match regardless of input order
+        var normalizedMaxConcurrent = maxConcurrentPods?.ToDictionary(
+            kv => JobTemplateProvider.NormalizeLabels(kv.Key), kv => kv.Value);
+
+        var templates = imageMapping.Select(kv => new JobTemplate
+        {
+            Labels = kv.Key,
+            Image = kv.Value,
+            ProviderType = kv.Key.Contains("kiro") ? "kiro" : "opencode",
+            MaxConcurrent = normalizedMaxConcurrent?.GetValueOrDefault(
+                JobTemplateProvider.NormalizeLabels(kv.Key), 0) ?? 0
+        }).ToList();
+
+        var json = System.Text.Json.JsonSerializer.Serialize(templates);
+        return JobTemplateProvider.LoadFromJson(json);
     }
 
     private async Task InvokePollAndDispatch(DispatchService service)

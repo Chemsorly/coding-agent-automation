@@ -17,4 +17,14 @@ data:
   WorkDistribution__Dispatch__RateLimitPerSecond: {{ .Values.workDistribution.dispatch.rateLimitPerSecond | quote }}
   WorkDistribution__Reconciliation__IntervalSeconds: {{ .Values.workDistribution.reconciliation.intervalSeconds | quote }}
   WorkDistribution__Reconciliation__StaleRetentionDays: {{ .Values.workDistribution.reconciliation.staleRetentionDays | quote }}
+  {{- if eq .Values.workDistribution.mode "Kubernetes" }}
+  WorkDistribution__OrchestratorUrl: "http://{{ include "coding-agent-automation.fullname" . }}-orchestrator.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.orchestrator.service.port }}"
+  WorkDistribution__AgentApiKeySecretName: {{ include "coding-agent-automation.secretName" . | quote }}
+  WorkDistribution__AgentServiceAccountName: "{{ include "coding-agent-automation.fullname" . }}-agent"
+  WorkDistribution__Namespace: {{ .Release.Namespace | quote }}
+  WorkDistribution__OpencodeConfigSecretName: {{ include "coding-agent-automation.secretName" . | quote }}
+  {{- range $i, $pvc := (.Values.credentialPools).kiro | default list }}
+  WorkDistribution__CredentialPools__Kiro__{{ $i }}: {{ $pvc | quote }}
+  {{- end }}
+  {{- end }}
   {{- end }}

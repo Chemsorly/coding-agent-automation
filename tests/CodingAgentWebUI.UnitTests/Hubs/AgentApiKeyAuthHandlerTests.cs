@@ -130,7 +130,7 @@ public class AgentApiKeyAuthHandlerTests
     }
 
     [Fact]
-    public void ResolveApiKey_GeneratedKey_LogsTruncatedPrefix()
+    public void ResolveApiKey_GeneratedKey_LogsKeyLength()
     {
         var originalKey = Environment.GetEnvironmentVariable("AGENT_API_KEY");
         try
@@ -140,8 +140,8 @@ public class AgentApiKeyAuthHandlerTests
             AgentApiKeyAuthHandler.ResolveApiKey(_mockLogger.Object);
 
             _mockLogger.Verify(l => l.Warning(
-                It.Is<string>(msg => msg.Contains("{ApiKeyPrefix}") && msg.Contains("set AGENT_API_KEY env var for production")),
-                It.Is<string>(prefix => prefix.Length == 8)));
+                It.Is<string>(msg => msg.Contains("{KeyLength}") && msg.Contains("Set AGENT_API_KEY env var for production")),
+                It.Is<int>(length => length > 0)));
         }
         finally
         {

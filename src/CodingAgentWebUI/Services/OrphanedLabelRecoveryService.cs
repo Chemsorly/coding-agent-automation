@@ -51,24 +51,35 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
             _logger.Information("Orphaned label recovery: waiting {GracePeriod} for agents to reconnect", GracePeriod);
             await Task.Delay(GracePeriod, stoppingToken);
 
-            // First sweep immediately after grace period
-            // TODO: Wrap this call and the config load below in a try-catch for non-cancellation exceptions.
-            // If either throws (e.g., transient DB error), the exception escapes to the outer catch which only
-            // handles OperationCanceledException, causing the BackgroundService to stop permanently without
-            // establishing the periodic timer. Should degrade gracefully and still enter the periodic loop.
-            await RecoverOrphanedLabelsAsync(stoppingToken);
-
-            // Load config for interval
-            // TODO: Consider reloading config on each tick so runtime changes to OrphanedLabelSweepIntervalMinutes
-            // take effect without a pod restart. Currently the interval is fixed for the lifetime of the service.
-            var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
-            var intervalMinutes = Math.Max(config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
-            if (intervalMinutes != config.OrphanedLabelSweepIntervalMinutes)
+            // First sweep immediately after grace period — wrapped in try-catch so transient
+            // failures (DB timeout, provider unavailable) don't kill the service permanently.
+            try
             {
-                _logger.Warning("OrphanedLabelSweepIntervalMinutes ({Configured}) is below minimum, clamping to {Min} min",
-                    config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
+                await RecoverOrphanedLabelsAsync(stoppingToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Orphaned label recovery: initial sweep failed — will continue to periodic loop");
             }
 
+            // Load config for interval — also wrapped so a transient config load failure
+            // falls back to the default interval rather than killing the service.
+            int intervalMinutes;
+            try
+            {
+                var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
+                intervalMinutes = Math.Max(config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
+                if (intervalMinutes != config.OrphanedLabelSweepIntervalMinutes)
+                {
+                    _logger.Warning("OrphanedLabelSweepIntervalMinutes ({Configured}) is below minimum, clamping to {Min} min",
+                        config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
+                }
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.Warning(ex, "Orphaned label recovery: failed to load config — using default interval");
+                intervalMinutes = 30; // DefaultOrphanedLabelSweepIntervalMinutes
+            }
             _logger.Information("Orphaned label recovery: sweep interval set to {Interval} min", intervalMinutes);
 
             using var timer = new PeriodicTimer(TimeSpan.FromMinutes(intervalMinutes));
