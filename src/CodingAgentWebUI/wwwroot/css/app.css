@@ -344,7 +344,6 @@ select option { background: var(--surface); color: var(--text); }
 .run-stats-divider { width: 1px; height: 28px; background: var(--border); }
 
 /* Infrastructure Health Indicators */
-.infra-health-bar { display: flex; align-items: center; gap: 14px; padding: 6px 16px; margin-bottom: 12px; }
 .infra-health-item { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-muted); cursor: default; }
 .infra-health-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
 .infra-health-dot.dot-healthy { background: var(--success); box-shadow: 0 0 4px var(--success); }

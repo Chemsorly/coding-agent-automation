@@ -44,9 +44,7 @@
         </span>
     </header>
 
-    <RunHistoryStats Runs="_runHistory" Agents="Registry.GetAllAgents()" QueueLength="_queuedJobs.Count" ShowAgentStats="true" />
-
-    <InfrastructureHealth DatabaseStatus="_dbStatus" RedisStatus="_redisStatus" />
+    <RunHistoryStats Runs="_runHistory" Agents="Registry.GetAllAgents()" QueueLength="_queuedJobs.Count" ShowAgentStats="true" DatabaseStatus="_dbStatus" RedisStatus="_redisStatus" />
 
     <!-- Active Runs -->
     <section class="settings-section" style="margin: 16px 20px;">
