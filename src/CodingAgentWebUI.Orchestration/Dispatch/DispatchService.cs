@@ -19,8 +19,8 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// K8s mode only: polls WorkItems WHERE Status=Pending ORDER BY CreatedAt ASC,
-/// resolves container image from AgentSelector, creates K8s Jobs, updates to Dispatched.
-/// Runs under leader election (same Lease as PipelineLoopService).
+/// resolves container image via JobTemplateProvider, creates K8s Jobs via JobSpecBuilder,
+/// updates to Dispatched. Runs under leader election (same Lease as PipelineLoopService).
 /// Rate-limited: default 10 Jobs/s. Skips items whose selector group is at concurrency limit.
 /// </summary>
 public sealed class DispatchService : BackgroundService
@@ -35,7 +35,7 @@ public sealed class DispatchService : BackgroundService
     private readonly IKubernetesJobClient _kubeClient;
     private readonly WorkItemTransitionService _transitionService;
     private readonly DispatchServiceOptions _options;
-    private readonly JobTemplateProvider? _templateProvider;
+    private readonly JobTemplateProvider _templateProvider;
     private readonly ILabelSwapper? _labelSwapper;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
@@ -54,7 +54,6 @@ public sealed class DispatchService : BackgroundService
         _labelSwapper = labelSwapper;
         _options = new DispatchServiceOptions();
         configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
-        configuration.GetSection("WorkDistribution:ImageMapping").Bind(_options.ImageMapping);
 
         var pvcList = configuration.GetSection("WorkDistribution:CredentialPools:Kiro").Get<List<string>>();
         if (pvcList is not null)
@@ -68,25 +67,62 @@ public sealed class DispatchService : BackgroundService
             ?? "default";
         _options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
 
-        // Load job templates from ConfigMap-mounted file (optional — falls back to ImageMapping if absent)
+        // Load job templates from ConfigMap-mounted file (required for K8s mode)
         var templatesPath = configuration.GetValue<string>("WorkDistribution:JobTemplatesPath") ?? DefaultJobTemplatesPath;
-        // Also check legacy .json path for backward compatibility
+        // Also check .json path for format flexibility
         if (!File.Exists(templatesPath) && templatesPath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
         {
             var jsonFallback = Path.ChangeExtension(templatesPath, ".json");
             if (File.Exists(jsonFallback))
                 templatesPath = jsonFallback;
         }
-        if (File.Exists(templatesPath))
+        _templateProvider = JobTemplateProvider.LoadFromFile(templatesPath);
+        Log.Information("DispatchService: loaded {Count} job template(s) from {Path}",
+            _templateProvider.GetAllTemplates().Count, templatesPath);
+
+        _rateLimiter = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
         {
-            _templateProvider = JobTemplateProvider.LoadFromFile(templatesPath);
-            Log.Information("DispatchService: loaded {Count} job template(s) from {Path}",
-                _templateProvider.GetAllTemplates().Count, templatesPath);
-        }
-        else
-        {
-            Log.Debug("DispatchService: no job templates file at {Path}, using legacy ImageMapping", templatesPath);
-        }
+            TokenLimit = _options.RateLimitPerSecond,
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0,
+            ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+            TokensPerPeriod = _options.RateLimitPerSecond,
+            AutoReplenishment = true
+        });
+    }
+
+    /// <summary>
+    /// Constructor overload accepting a pre-built JobTemplateProvider (for testing).
+    /// </summary>
+    internal DispatchService(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        LeaderElectionService leaderElection,
+        IKubernetesJobClient kubeClient,
+        WorkItemTransitionService transitionService,
+        IConfiguration configuration,
+        JobTemplateProvider templateProvider,
+        ILabelSwapper? labelSwapper = null)
+    {
+        _dbFactory = dbFactory;
+        _leaderElection = leaderElection;
+        _kubeClient = kubeClient;
+        _transitionService = transitionService;
+        _labelSwapper = labelSwapper;
+        _templateProvider = templateProvider;
+        _options = new DispatchServiceOptions();
+        configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
+
+        var pvcList = configuration.GetSection("WorkDistribution:CredentialPools:Kiro").Get<List<string>>();
+        if (pvcList is not null)
+            _options.KiroPvcPool = pvcList;
+
+        _options.OrchestratorUrl = configuration.GetValue<string>("WorkDistribution:OrchestratorUrl") ?? "";
+        _options.AgentApiKeySecretName = configuration.GetValue<string>("WorkDistribution:AgentApiKeySecretName") ?? "";
+        _options.AgentServiceAccountName = configuration.GetValue<string>("WorkDistribution:AgentServiceAccountName") ?? "";
+        _options.Namespace = configuration.GetValue<string>("WorkDistribution:Namespace")
+            ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
+            ?? "default";
+        _options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
 
         _rateLimiter = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
         {
@@ -116,10 +152,6 @@ public sealed class DispatchService : BackgroundService
             Log.Information("DispatchService: leader acquired, entering poll loop");
 
             // Create linked token: cancels on EITHER host stop OR leadership loss
-            // TODO: Race condition — between IsLeader returning true and reading LeaderToken,
-            // leadership could be lost causing the linked CTS to start cancelled. Functionally safe
-            // (re-enters wait loop) but could cause tight spin on rapid leadership toggling.
-            // Consider adding a short delay or ct.IsCancellationRequested check before the inner loop.
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(
                 stoppingToken, _leaderElection.LeaderToken);
             var ct = linked.Token;
@@ -224,9 +256,8 @@ public sealed class DispatchService : BackgroundService
                 break;
             }
 
-            // Check concurrency limit for selector group (template-based or legacy config)
-            var maxConcurrent = _templateProvider?.GetMaxConcurrent(item.AgentSelector)
-                ?? (_options.MaxConcurrentPods.TryGetValue(item.AgentSelector, out var legacyMax) ? legacyMax : 0);
+            // Check concurrency limit from template
+            var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
             if (maxConcurrent > 0)
             {
                 var current = concurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0);
@@ -238,8 +269,15 @@ public sealed class DispatchService : BackgroundService
                 }
             }
 
-            // Determine if this is a kiro agent (needs PVC) or opencode agent (bypasses PVC)
-            var isKiroAgent = IsKiroAgent(item.AgentSelector);
+            // Resolve template — fail immediately if no match (before PVC gating)
+            var template = _templateProvider.Resolve(item.AgentSelector);
+            if (template is null)
+            {
+                await FailWorkItem(item.Id, $"No job template for selector: {item.AgentSelector}", ct);
+                continue;
+            }
+
+            var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
 
             if (isKiroAgent && availablePvcs.Count == 0)
             {
@@ -248,7 +286,7 @@ public sealed class DispatchService : BackgroundService
                 continue;
             }
 
-            await DispatchSingleItemAsync(db, item, isKiroAgent, availablePvcs, concurrencyBySelector, ct);
+            await DispatchSingleItemAsync(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, ct);
         }
 
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
@@ -257,31 +295,12 @@ public sealed class DispatchService : BackgroundService
     private async Task DispatchSingleItemAsync(
         PipelineDbContext db,
         PendingWorkItemProjection item,
+        JobTemplate template,
         bool isKiroAgent,
         List<string> availablePvcs,
         Dictionary<string, int> concurrencyBySelector,
         CancellationToken ct)
     {
-        // Resolve template or image
-        var template = _templateProvider?.Resolve(item.AgentSelector);
-        string? image;
-        if (template is not null)
-        {
-            image = template.Image;
-        }
-        else
-        {
-            // Legacy fallback: resolve from ImageMapping
-            image = ResolveImage(item.AgentSelector);
-            if (image is null)
-            {
-                Log.Error("DispatchService: no template or image mapping for selector '{Selector}', failing WorkItem {WorkItemId}",
-                    item.AgentSelector, item.Id);
-                await FailWorkItem(item.Id, $"No image mapping for selector: {item.AgentSelector}", ct);
-                return;
-            }
-        }
-
         // Generate deterministic job name
         var jobName = GenerateJobName(item.Id);
 
@@ -324,34 +343,24 @@ public sealed class DispatchService : BackgroundService
             projectSecrets = await LoadProjectSecretsAsync(db, item.ProjectId, ct);
         }
 
-        // Create K8s Job
+        // Create K8s Job via JobSpecBuilder
         try
         {
-            V1Job job;
-            if (template is not null)
+            var buildCtx = new JobSpecBuilder.BuildContext
             {
-                // Template-based: use JobSpecBuilder for full pod spec from template
-                var buildCtx = new JobSpecBuilder.BuildContext
-                {
-                    WorkItemId = item.Id,
-                    AgentSelector = item.AgentSelector,
-                    TimeoutSeconds = item.TimeoutSeconds,
-                    JobName = jobName,
-                    ClaimedPvc = claimedPvc,
-                    OrchestratorUrl = _options.OrchestratorUrl,
-                    AgentApiKeySecretName = _options.AgentApiKeySecretName,
-                    AgentServiceAccountName = _options.AgentServiceAccountName,
-                    Namespace = _options.Namespace,
-                    OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
-                    ProjectSecrets = projectSecrets
-                };
-                job = JobSpecBuilder.Build(template, buildCtx);
-            }
-            else
-            {
-                // Legacy fallback: use inline BuildJobSpec
-                job = BuildJobSpec(item, jobName, image!, claimedPvc, projectSecrets);
-            }
+                WorkItemId = item.Id,
+                AgentSelector = item.AgentSelector,
+                TimeoutSeconds = item.TimeoutSeconds,
+                JobName = jobName,
+                ClaimedPvc = claimedPvc,
+                OrchestratorUrl = _options.OrchestratorUrl,
+                AgentApiKeySecretName = _options.AgentApiKeySecretName,
+                AgentServiceAccountName = _options.AgentServiceAccountName,
+                Namespace = _options.Namespace,
+                OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
+                ProjectSecrets = projectSecrets
+            };
+            var job = JobSpecBuilder.Build(template, buildCtx);
             await _kubeClient.CreateJobAsync(job, _options.Namespace, ct);
         }
         catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
@@ -446,178 +455,6 @@ public sealed class DispatchService : BackgroundService
             Log.Warning("DispatchService: concurrency conflict updating WorkItem {WorkItemId} to Dispatched", item.Id);
             // Job exists in K8s — ReconciliationService will reconcile
         }
-    }
-
-    private V1Job BuildJobSpec(
-        PendingWorkItemProjection item,
-        string jobName,
-        string image,
-        string? claimedPvc,
-        Dictionary<string, string>? projectSecrets)
-    {
-        var isKiroAgent = IsKiroAgent(item.AgentSelector);
-        var isOpencodeAgent = IsOpencodeAgent(item.AgentSelector);
-
-        var envVars = new List<V1EnvVar>
-        {
-            new() { Name = "ORCHESTRATOR_URL", Value = _options.OrchestratorUrl },
-            new() { Name = "AGENT_API_KEY_FILE", Value = "/var/run/secrets/agent-api-key/agent-api-key" }
-        };
-
-        // Propagate OTel env vars from orchestrator's own environment
-        var otelEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
-        if (!string.IsNullOrEmpty(otelEndpoint))
-            envVars.Add(new V1EnvVar { Name = "OTEL_EXPORTER_OTLP_ENDPOINT", Value = otelEndpoint });
-
-        var otelHeaders = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS");
-        if (!string.IsNullOrEmpty(otelHeaders))
-            envVars.Add(new V1EnvVar { Name = "OTEL_EXPORTER_OTLP_HEADERS", Value = otelHeaders });
-
-        var volumeMounts = new List<V1VolumeMount>
-        {
-            new()
-            {
-                Name = "agent-api-key",
-                MountPath = "/var/run/secrets/agent-api-key",
-                ReadOnlyProperty = true
-            }
-        };
-
-        var volumes = new List<V1Volume>
-        {
-            new()
-            {
-                Name = "agent-api-key",
-                Secret = new V1SecretVolumeSource
-                {
-                    SecretName = _options.AgentApiKeySecretName,
-                    Items = [new V1KeyToPath { Key = "agent-api-key", Path = "agent-api-key" }]
-                }
-            }
-        };
-
-        // PVC mount for kiro agents
-        if (isKiroAgent && claimedPvc is not null)
-        {
-            volumeMounts.Add(new V1VolumeMount
-            {
-                Name = "kiro-cli-data",
-                MountPath = "/home/ubuntu/.local/share/kiro-cli"
-            });
-            volumes.Add(new V1Volume
-            {
-                Name = "kiro-cli-data",
-                PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource
-                {
-                    ClaimName = claimedPvc
-                }
-            });
-        }
-
-        // Opencode config secret mount
-        if (isOpencodeAgent && !string.IsNullOrEmpty(_options.OpencodeConfigSecretName))
-        {
-            volumeMounts.Add(new V1VolumeMount
-            {
-                Name = "opencode-config",
-                MountPath = "/home/ubuntu/.config/opencode",
-                ReadOnlyProperty = true
-            });
-            volumes.Add(new V1Volume
-            {
-                Name = "opencode-config",
-                Secret = new V1SecretVolumeSource
-                {
-                    SecretName = _options.OpencodeConfigSecretName
-                }
-            });
-        }
-
-        // Per-job project-secrets volume (optional)
-        if (projectSecrets is not null && projectSecrets.Count > 0)
-        {
-            var secretName = $"caa-secrets-{item.Id.ToString("N")[..8]}";
-            volumeMounts.Add(new V1VolumeMount
-            {
-                Name = "project-secrets",
-                MountPath = "/var/run/secrets/project-secrets",
-                ReadOnlyProperty = true
-            });
-            volumes.Add(new V1Volume
-            {
-                Name = "project-secrets",
-                Secret = new V1SecretVolumeSource
-                {
-                    SecretName = secretName,
-                    Optional = true
-                }
-            });
-        }
-
-        var container = new V1Container
-        {
-            Name = "agent",
-            Image = image,
-            Args = [$"--work-item-id={item.Id}"],
-            Env = envVars,
-            VolumeMounts = volumeMounts,
-            SecurityContext = new V1SecurityContext
-            {
-                Capabilities = new V1Capabilities { Drop = ["ALL"] }
-            }
-        };
-
-        // Apply resource requests/limits from config
-        if (_options.JobResources is not null)
-        {
-            container.Resources = new V1ResourceRequirements
-            {
-                Requests = _options.JobResources.Requests?
-                    .ToDictionary(kv => kv.Key, kv => new ResourceQuantity(kv.Value)),
-                Limits = _options.JobResources.Limits?
-                    .ToDictionary(kv => kv.Key, kv => new ResourceQuantity(kv.Value))
-            };
-        }
-
-        return new V1Job
-        {
-            Metadata = new V1ObjectMeta
-            {
-                Name = jobName,
-                NamespaceProperty = _options.Namespace,
-                Labels = new Dictionary<string, string>
-                {
-                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
-                    ["app.kubernetes.io/component"] = "agent-job",
-                    ["caa/work-item-id"] = item.Id.ToString(),
-                    ["caa/agent-selector"] = item.AgentSelector
-                }
-            },
-            Spec = new V1JobSpec
-            {
-                Parallelism = 1,
-                Completions = 1,
-                BackoffLimit = 2,
-                ActiveDeadlineSeconds = item.TimeoutSeconds + 60,
-                TtlSecondsAfterFinished = 3600,
-                Template = new V1PodTemplateSpec
-                {
-                    Spec = new V1PodSpec
-                    {
-                        ServiceAccountName = _options.AgentServiceAccountName,
-                        RestartPolicy = "Never",
-                        TerminationGracePeriodSeconds = 30,
-                        SecurityContext = new V1PodSecurityContext
-                        {
-                            RunAsNonRoot = true,
-                            SeccompProfile = new V1SeccompProfile { Type = "RuntimeDefault" }
-                        },
-                        Containers = [container],
-                        Volumes = volumes
-                    }
-                }
-            }
-        };
     }
 
     private async Task CreateJobSecretAsync(
@@ -717,45 +554,11 @@ public sealed class DispatchService : BackgroundService
         => $"caa-{workItemId.ToString("N")[..8]}";
 
     /// <summary>
-    /// Resolves container image from AgentSelector using configured image mapping.
-    /// AgentSelector is already sorted comma-joined labels.
-    /// </summary>
-    internal string? ResolveImage(string agentSelector)
-    {
-        if (_options.ImageMapping.TryGetValue(agentSelector, out var image))
-            return image;
-
-        // Try normalizing: sort and re-join (in case input wasn't pre-sorted)
-        var normalized = NormalizeSelector(agentSelector);
-        if (normalized != agentSelector && _options.ImageMapping.TryGetValue(normalized, out image))
-            return image;
-
-        return null;
-    }
-
-    /// <summary>
     /// Normalizes agent selector by sorting labels and joining with comma.
+    /// Delegates to <see cref="JobTemplateProvider.NormalizeLabels"/>.
     /// </summary>
     internal static string NormalizeSelector(string agentSelector)
-    {
-        var labels = agentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        Array.Sort(labels, StringComparer.Ordinal);
-        return string.Join(",", labels);
-    }
-
-    /// <summary>
-    /// Determines if the selector indicates a kiro agent (needs PVC pool).
-    /// </summary>
-    internal static bool IsKiroAgent(string agentSelector)
-        => agentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Any(l => string.Equals(l, "kiro", StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>
-    /// Determines if the selector indicates an opencode agent (needs config secret mount).
-    /// </summary>
-    internal static bool IsOpencodeAgent(string agentSelector)
-        => agentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Any(l => string.Equals(l, "opencode", StringComparison.OrdinalIgnoreCase));
+        => JobTemplateProvider.NormalizeLabels(agentSelector);
 
     /// <summary>
     /// Calculates available PVCs from the configured pool minus currently claimed.

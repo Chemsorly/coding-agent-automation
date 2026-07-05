@@ -216,25 +216,6 @@ workDistribution:
     intervalSeconds: 30
     timeoutEnforcementEnabled: true
     staleRetentionDays: 7
-  # Image mapping: sorted comma-joined agent labels → container image.
-  # Example: "kiro,dotnet,dotnet10": "chemsorly/coding-agent:coding-agent-kiro-dotnet10"
-  imageMapping: {}
-  # Resource requests/limits for spawned agent Jobs
-  jobResources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      cpu: "4"
-      memory: 8Gi
-  # Max concurrent pods per agent selector group (no limit if not specified)
-  maxConcurrentPods: {}
-  # Pod scheduling fields injected into spawned Job pod templates
-  scheduling:
-    priorityClassName: ""
-    nodeSelector: {}
-    tolerations: []
-    topologySpreadConstraints: []
 
 # ── Credential Pools ─────────────────────────────────────────────────────────
 

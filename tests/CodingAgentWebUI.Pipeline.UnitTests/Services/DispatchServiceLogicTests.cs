@@ -74,31 +74,6 @@ public class DispatchServiceLogicTests
         DispatchService.NormalizeSelector(input).Should().Be(expected);
     }
 
-    // ── Agent Type Detection ────────────────────────────────────────────
-
-    [Theory]
-    [InlineData("kiro,dotnet,dotnet10", true)]
-    [InlineData("kiro", true)]
-    [InlineData("dotnet,kiro,linux", true)]
-    [InlineData("opencode,dotnet,dotnet10", false)]
-    [InlineData("opencode", false)]
-    [InlineData("", false)]
-    public void IsKiroAgent_DetectsKiroLabel(string selector, bool expected)
-    {
-        DispatchService.IsKiroAgent(selector).Should().Be(expected);
-    }
-
-    [Theory]
-    [InlineData("opencode,dotnet,dotnet10", true)]
-    [InlineData("opencode", true)]
-    [InlineData("kiro,dotnet,dotnet10", false)]
-    [InlineData("kiro", false)]
-    [InlineData("", false)]
-    public void IsOpencodeAgent_DetectsOpencodeLabel(string selector, bool expected)
-    {
-        DispatchService.IsOpencodeAgent(selector).Should().Be(expected);
-    }
-
     // ── PVC Pool Availability ───────────────────────────────────────────
 
     [Fact]
