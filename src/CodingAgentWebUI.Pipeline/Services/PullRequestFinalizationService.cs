@@ -275,23 +275,7 @@ public sealed class PullRequestFinalizationService
         try
         {
             var elapsed = DateTimeOffset.UtcNow - run.StartedAtOffset;
-            var recentSummaries = (historyService?.GetRunHistory() ?? [])
-                // TODO: Add fallback for legacy summaries where StartedAtOffset == default (consistent with PipelineRunHistoryService)
-                .OrderByDescending(s => s.StartedAtOffset)
-                .Take(FeedbackConstraints.MaxRecentRunsForCategories)
-                .ToList();
-
-            var harnessCategories = recentSummaries
-                .Where(s => s.Feedback?.Harness.Category is not null)
-                .Select(s => s.Feedback!.Harness.Category!)
-                .Distinct()
-                .ToList();
-
-            var issueCategories = recentSummaries
-                .Where(s => s.Feedback?.Issue?.Category is not null)
-                .Select(s => s.Feedback!.Issue!.Category!)
-                .Distinct()
-                .ToList();
+            var (harnessCategories, issueCategories) = feedbackService.LoadPreviousCategories(historyService);
 
             var feedbackPrompt = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
                 run, elapsed, harnessCategories, issueCategories);
