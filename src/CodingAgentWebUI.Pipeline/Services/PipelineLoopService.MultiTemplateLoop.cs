@@ -811,8 +811,13 @@ public sealed partial class PipelineLoopService
                                 BrainProviderId = template.BrainProviderId,
                                 InitiatedBy = "loop"
                             };
+                            // TODO: Add a test where templateProjectLookup is missing an entry for a pollable template
+                            // to guard against regression (KeyNotFoundException) and validate the fallback behavior.
                             return await _dispatchOrchestration!.PrepareReviewDistributionRequestAsync(
-                                reviewDispatchReq, templateProjectLookup[template.Id], ct);
+                                reviewDispatchReq,
+                                templateProjectLookup.GetValueOrDefault(template.Id)
+                                    ?? new PipelineProject { Id = "", Name = "Unknown" },
+                                ct);
                         },
                         () => JobDistributionRequest.FromTemplate(
                             template, pr, initiatedBy: "loop", useFullPrMetadata: false),
@@ -889,7 +894,10 @@ public sealed partial class PipelineLoopService
                             template.RepoProviderId,
                             template.BrainProviderId,
                             "loop",
-                            templateProjectLookup[template.Id],
+                            // TODO: Add a test where templateProjectLookup is missing an entry for a pollable template
+                            // to guard against regression and validate fallback PipelineProject behavior downstream.
+                            templateProjectLookup.GetValueOrDefault(template.Id)
+                                ?? new PipelineProject { Id = "", Name = "Unknown" },
                             ct: ct),
                         () => JobDistributionRequest.FromTemplate(
                             template, epicItem.Issue, epicItem.Phase, initiatedBy: "loop"),
