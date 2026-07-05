@@ -8,8 +8,9 @@ using Moq;
 namespace CodingAgentWebUI.Agent.UnitTests;
 
 /// <summary>
-/// Tests for <see cref="WorkItemHttpClient"/> retry logic, error classification,
-/// and status code handling for both GET assignment and POST status endpoints.
+/// Tests for <see cref="WorkItemHttpClient"/> response classification and exception wrapping.
+/// Resilience (retries, circuit breaker) is handled by the DI-configured handler — these tests
+/// verify the client's response parsing and domain exception contracts.
 /// </summary>
 public class WorkItemHttpClientTests
 {
@@ -91,64 +92,53 @@ public class WorkItemHttpClientTests
             .WithMessage("*Unexpected status 403*");
     }
 
-    // ── GetAssignmentAsync — Retry Behavior ──────────────────────────────
-
     [Fact]
-    public async Task GetAssignment_5xx_RetriesAtLeastOnce_ThenCancelled()
+    public async Task GetAssignment_5xx_ThrowsWorkItemFetchException()
     {
-        // Verifies retry loop starts on 5xx. Uses cancellation to avoid waiting full backoff.
+        // After resilience handler exhaustion, a 5xx may leak through to the client
         var handler = new FakeHandler(HttpStatusCode.InternalServerError);
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
         var client = CreateClient(handler);
 
-        var act = () => client.GetAssignmentAsync("wi-retry", cts.Token);
+        var act = () => client.GetAssignmentAsync("wi-5xx", CancellationToken.None);
 
-        // Should be cancelled during a retry delay, proving retry was attempted
-        await act.Should().ThrowAsync<OperationCanceledException>();
-        handler.CallCount.Should().BeGreaterThanOrEqualTo(1);
+        await act.Should().ThrowAsync<WorkItemFetchException>()
+            .WithMessage("*Unexpected status 500*");
+    }
+
+    // ── GetAssignmentAsync — Exception Wrapping ──────────────────────────
+
+    [Fact]
+    public async Task GetAssignment_HttpRequestException_WrapsInWorkItemFetchException()
+    {
+        // Simulates resilience handler exhaustion throwing HttpRequestException
+        var handler = new ThrowingHandler(new HttpRequestException("Connection refused"));
+        var client = CreateClient(handler);
+
+        var act = () => client.GetAssignmentAsync("wi-net", CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<WorkItemFetchException>();
+        ex.WithMessage("*All retries exhausted*");
+        ex.WithInnerException<HttpRequestException>();
     }
 
     [Fact]
-    public async Task GetAssignment_5xxThenSuccess_RetriesAndReturns()
+    public async Task GetAssignment_TimeoutException_WrapsInWorkItemFetchException()
     {
-        var expected = CreateMinimalAssignment("job-retry", "owner/repo#99");
-        var json = JsonSerializer.Serialize(expected, PipelineJsonOptions.Default);
-        var handler = new SequenceHandler(
-            (HttpStatusCode.InternalServerError, ""),
-            (HttpStatusCode.OK, json));
-
+        // Simulates resilience handler timeout (e.g., Polly.Timeout.TimeoutRejectedException)
+        var handler = new ThrowingHandler(new TimeoutException("Request timed out"));
         var client = CreateClient(handler);
-        // First attempt: 500 → waits 2s → second attempt: 200 OK
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var result = await client.GetAssignmentAsync("wi-retry", cts.Token);
 
-        result.Should().NotBeNull();
-        result!.JobId.Should().Be("job-retry");
-        handler.CallCount.Should().Be(2);
-    }
+        var act = () => client.GetAssignmentAsync("wi-timeout", CancellationToken.None);
 
-    [Fact]
-    public async Task GetAssignment_NetworkErrorThenSuccess_Retries()
-    {
-        var expected = CreateMinimalAssignment("job-net", "owner/repo#7");
-        var json = JsonSerializer.Serialize(expected, PipelineJsonOptions.Default);
-        var handler = new ExceptionThenSuccessHandler(
-            new HttpRequestException("connection refused"),
-            HttpStatusCode.OK, json);
-
-        var client = CreateClient(handler);
-        // Note: first attempt fails (network error), then 2s delay, then second attempt succeeds
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var result = await client.GetAssignmentAsync("wi-net", cts.Token);
-
-        result.Should().NotBeNull();
-        result!.JobId.Should().Be("job-net");
+        var ex = await act.Should().ThrowAsync<WorkItemFetchException>();
+        ex.WithMessage("*All retries exhausted*");
+        ex.WithInnerException<TimeoutException>();
     }
 
     [Fact]
     public async Task GetAssignment_CancellationRequested_ThrowsOperationCanceled()
     {
-        var handler = new FakeHandler(HttpStatusCode.InternalServerError);
+        var handler = new FakeHandler(HttpStatusCode.OK);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
         var client = CreateClient(handler);
@@ -222,21 +212,48 @@ public class WorkItemHttpClientTests
         result.Should().BeFalse();
     }
 
-    // ── PostStatusAsync — Retry Behavior ─────────────────────────────────
-
     [Fact]
-    public async Task PostStatus_5xx_RetriesAtLeastOnce_ThenCancelled()
+    public async Task PostStatus_5xx_ThrowsWorkItemStatusPostException()
     {
-        // Verifies retry loop starts on 5xx. Uses cancellation to avoid waiting full backoff.
+        // After resilience handler exhaustion, a 5xx may leak through
         var handler = new FakeHandler(HttpStatusCode.InternalServerError);
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
         var client = CreateClient(handler);
         var update = new WorkItemStatusUpdate { Status = "Failed" };
 
-        var act = () => client.PostStatusAsync("wi-retry", update, cts.Token);
+        var act = () => client.PostStatusAsync("wi-5xx", update, CancellationToken.None);
 
-        await act.Should().ThrowAsync<OperationCanceledException>();
-        handler.CallCount.Should().BeGreaterThanOrEqualTo(1);
+        await act.Should().ThrowAsync<WorkItemStatusPostException>()
+            .WithMessage("*Server error 500*retries exhausted*");
+    }
+
+    // ── PostStatusAsync — Exception Wrapping ─────────────────────────────
+
+    [Fact]
+    public async Task PostStatus_HttpRequestException_WrapsInWorkItemStatusPostException()
+    {
+        var handler = new ThrowingHandler(new HttpRequestException("Connection reset"));
+        var client = CreateClient(handler);
+        var update = new WorkItemStatusUpdate { Status = "Completed" };
+
+        var act = () => client.PostStatusAsync("wi-net", update, CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<WorkItemStatusPostException>();
+        ex.WithMessage("*All retries exhausted*");
+        ex.WithInnerException<HttpRequestException>();
+    }
+
+    [Fact]
+    public async Task PostStatus_TimeoutException_WrapsInWorkItemStatusPostException()
+    {
+        var handler = new ThrowingHandler(new TimeoutException("Timed out"));
+        var client = CreateClient(handler);
+        var update = new WorkItemStatusUpdate { Status = "Completed" };
+
+        var act = () => client.PostStatusAsync("wi-timeout", update, CancellationToken.None);
+
+        var ex = await act.Should().ThrowAsync<WorkItemStatusPostException>();
+        ex.WithMessage("*All retries exhausted*");
+        ex.WithInnerException<TimeoutException>();
     }
 
     // ── Guard Clause Tests ───────────────────────────────────────────────
@@ -321,62 +338,18 @@ public class WorkItemHttpClientTests
     }
 
     /// <summary>
-    /// Returns responses from a sequence, repeating the last one if exhausted.
+    /// Always throws the specified exception. Simulates resilience handler exhaustion.
     /// </summary>
-    private sealed class SequenceHandler : HttpMessageHandler
-    {
-        private readonly List<(HttpStatusCode Status, string Content)> _responses;
-        private int _index;
-        public int CallCount { get; private set; }
-
-        public SequenceHandler(params (HttpStatusCode, string)[] responses)
-        {
-            _responses = responses.ToList();
-        }
-
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
-        {
-            ct.ThrowIfCancellationRequested();
-            CallCount++;
-            var (status, content) = _index < _responses.Count ? _responses[_index++] : _responses[^1];
-            var response = new HttpResponseMessage(status)
-            {
-                Content = new StringContent(content, System.Text.Encoding.UTF8, "application/json")
-            };
-            return Task.FromResult(response);
-        }
-    }
-
-    /// <summary>
-    /// Throws an exception on first call, then returns success.
-    /// </summary>
-    private sealed class ExceptionThenSuccessHandler : HttpMessageHandler
+    private sealed class ThrowingHandler : HttpMessageHandler
     {
         private readonly Exception _exception;
-        private readonly HttpStatusCode _successStatus;
-        private readonly string _successContent;
-        private bool _threw;
 
-        public ExceptionThenSuccessHandler(Exception exception, HttpStatusCode successStatus, string successContent)
-        {
-            _exception = exception;
-            _successStatus = successStatus;
-            _successContent = successContent;
-        }
+        public ThrowingHandler(Exception exception) => _exception = exception;
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             ct.ThrowIfCancellationRequested();
-            if (!_threw)
-            {
-                _threw = true;
-                throw _exception;
-            }
-            var response = new HttpResponseMessage(_successStatus)
-            {
-                Content = new StringContent(_successContent, System.Text.Encoding.UTF8, "application/json")
-            };
-            return Task.FromResult(response);
+            throw _exception;
         }
     }
 }
