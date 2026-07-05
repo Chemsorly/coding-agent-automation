@@ -47,14 +47,14 @@ services:
 
   orchestrator:
     environment:
-      - Database__Host=postgres
-      - Database__Port=5432
-      - Database__Name=coding_agent_automation
-      - Database__Username=caa
-      - Database__Password=caa_dev_password
-      - Database__SslMode=Disable
-      - Database__MigrateOnStartup=true
-      - SignalR__Redis__ConnectionString=redis:6379
+      Database__Host: postgres
+      Database__Port: "5432"
+      Database__Name: coding_agent_automation
+      Database__Username: caa
+      Database__Password: caa_dev_password
+      Database__SslMode: Disable
+      Database__MigrateOnStartup: "true"
+      SignalR__Redis__ConnectionString: redis:6379
     depends_on:
       postgres:
         condition: service_healthy

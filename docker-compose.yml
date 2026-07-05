@@ -10,6 +10,32 @@
 # corruption from concurrent access. Dynamic scaling requires Kubernetes.
 # =============================================================================
 
+# ── Shared fragments ──────────────────────────────────────────────────────────
+
+x-agent-common: &agent-common
+  stop_grace_period: 10s
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 30s
+  depends_on:
+    orchestrator:
+      condition: service_healthy
+  networks:
+    - coding-agent-net
+
+x-agent-env: &agent-env
+  ORCHESTRATOR_URL: http://orchestrator:8080
+  AGENT_API_KEY: ${AGENT_API_KEY}
+  LOG_LEVEL: ${LOG_LEVEL:-Information}
+  OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+  OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+  OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+
+# ── Services ──────────────────────────────────────────────────────────────────
+
 services:
   orchestrator:
     build:
@@ -21,16 +47,16 @@ services:
     volumes:
       - ./config/pipeline:/app/config/pipeline
     environment:
-      - AGENT_API_KEY=${AGENT_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-Information}
-      - DB_LOG_LEVEL=${DB_LOG_LEVEL:-Warning}
-      - PIPELINE_LOOP_STARTUP_DELAY_SECONDS=${PIPELINE_LOOP_STARTUP_DELAY_SECONDS:-90}
-      - READINESS_DRAIN_DELAY_SECONDS=${READINESS_DRAIN_DELAY_SECONDS:-15}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
-      - OTEL_SERVICE_NAME=coding-agent-orchestrator
-      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation
+      AGENT_API_KEY: ${AGENT_API_KEY}
+      LOG_LEVEL: ${LOG_LEVEL:-Information}
+      DB_LOG_LEVEL: ${DB_LOG_LEVEL:-Warning}
+      PIPELINE_LOOP_STARTUP_DELAY_SECONDS: ${PIPELINE_LOOP_STARTUP_DELAY_SECONDS:-90}
+      READINESS_DRAIN_DELAY_SECONDS: ${READINESS_DRAIN_DELAY_SECONDS:-15}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_SERVICE_NAME: coding-agent-orchestrator
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
       interval: 10s
@@ -41,214 +67,102 @@ services:
       - coding-agent-net
 
   agent-dotnet-1:
+    <<: *agent-common
     build:
       context: .
       dockerfile: dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile
-    stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-1:/home/ubuntu/.local/share/kiro-cli
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-      - AGENT_ID=agent-1
-      - AGENT_LABELS=kiro,dotnet,dotnet10
-      - AGENT_API_KEY=${AGENT_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-Information}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
-      - OTEL_SERVICE_NAME=coding-agent-worker-dotnet-1
-      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-1
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    networks:
-      - coding-agent-net
+      <<: *agent-env
+      AGENT_ID: agent-1
+      AGENT_LABELS: kiro,dotnet,dotnet10
+      OTEL_SERVICE_NAME: coding-agent-worker-dotnet-1
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-1
 
   agent-dotnet-2:
+    <<: *agent-common
     build:
       context: .
       dockerfile: dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile
-    stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-2:/home/ubuntu/.local/share/kiro-cli
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-      - AGENT_ID=agent-2
-      - AGENT_LABELS=kiro,dotnet,dotnet10
-      - AGENT_API_KEY=${AGENT_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-Information}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
-      - OTEL_SERVICE_NAME=coding-agent-worker-dotnet-2
-      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-2
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    networks:
-      - coding-agent-net
+      <<: *agent-env
+      AGENT_ID: agent-2
+      AGENT_LABELS: kiro,dotnet,dotnet10
+      OTEL_SERVICE_NAME: coding-agent-worker-dotnet-2
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-2
 
   agent-python:
+    <<: *agent-common
     build:
       context: .
       dockerfile: dockerfiles/kiro/agent-kiro-python312.Dockerfile
-    stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-3:/home/ubuntu/.local/share/kiro-cli
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-      - AGENT_ID=agent-python
-      - AGENT_LABELS=kiro,python,python312
-      - AGENT_API_KEY=${AGENT_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-Information}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
-      - OTEL_SERVICE_NAME=coding-agent-worker-python
-      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-python
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    networks:
-      - coding-agent-net
+      <<: *agent-env
+      AGENT_ID: agent-python
+      AGENT_LABELS: kiro,python,python312
+      OTEL_SERVICE_NAME: coding-agent-worker-python
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-python
 
   agent-java:
+    <<: *agent-common
     build:
       context: .
       dockerfile: dockerfiles/kiro/agent-kiro-java21.Dockerfile
-    stop_grace_period: 10s
     volumes:
       - ./config/kiro-cli-data-4:/home/ubuntu/.local/share/kiro-cli
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-      - AGENT_ID=agent-java
-      - AGENT_LABELS=kiro,java,java21
-      - AGENT_API_KEY=${AGENT_API_KEY}
-      - LOG_LEVEL=${LOG_LEVEL:-Information}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
-      - OTEL_SERVICE_NAME=coding-agent-worker-java
-      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-java
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    networks:
-      - coding-agent-net
+      <<: *agent-env
+      AGENT_ID: agent-java
+      AGENT_LABELS: kiro,java,java21
+      OTEL_SERVICE_NAME: coding-agent-worker-java
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-java
 
   agent-opencode-dotnet:
+    <<: *agent-common
     build:
       context: .
       dockerfile: dockerfiles/opencode/agent-opencode-dotnet10.Dockerfile
-    stop_grace_period: 10s
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-      - AGENT_ID=agent-opencode-dotnet
-      - AGENT_PROVIDER_TYPE=OpenCode
-      - AGENT_LABELS=opencode,dotnet,dotnet10
-      - AGENT_API_KEY=${AGENT_API_KEY}
-      - OPENCODE_CONFIG_CONTENT=${OPENCODE_CONFIG_CONTENT}
-      - LOG_LEVEL=${LOG_LEVEL:-Information}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
-      - OTEL_SERVICE_NAME=coding-agent-worker-opencode-dotnet
-      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-opencode-dotnet
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    networks:
-      - coding-agent-net
+      <<: *agent-env
+      AGENT_ID: agent-opencode-dotnet
+      AGENT_PROVIDER_TYPE: OpenCode
+      AGENT_LABELS: opencode,dotnet,dotnet10
+      OPENCODE_CONFIG_CONTENT: ${OPENCODE_CONFIG_CONTENT}
+      OTEL_SERVICE_NAME: coding-agent-worker-opencode-dotnet
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-opencode-dotnet
 
   agent-opencode-python:
+    <<: *agent-common
     build:
       context: .
       dockerfile: dockerfiles/opencode/agent-opencode-python312.Dockerfile
-    stop_grace_period: 10s
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-      - AGENT_ID=agent-opencode-python
-      - AGENT_PROVIDER_TYPE=OpenCode
-      - AGENT_LABELS=opencode,python,python312
-      - AGENT_API_KEY=${AGENT_API_KEY}
-      - OPENCODE_CONFIG_CONTENT=${OPENCODE_CONFIG_CONTENT}
-      - LOG_LEVEL=${LOG_LEVEL:-Information}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
-      - OTEL_SERVICE_NAME=coding-agent-worker-opencode-python
-      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-opencode-python
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    networks:
-      - coding-agent-net
+      <<: *agent-env
+      AGENT_ID: agent-opencode-python
+      AGENT_PROVIDER_TYPE: OpenCode
+      AGENT_LABELS: opencode,python,python312
+      OPENCODE_CONFIG_CONTENT: ${OPENCODE_CONFIG_CONTENT}
+      OTEL_SERVICE_NAME: coding-agent-worker-opencode-python
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-opencode-python
 
   agent-opencode-java:
+    <<: *agent-common
     build:
       context: .
       dockerfile: dockerfiles/opencode/agent-opencode-java21.Dockerfile
-    stop_grace_period: 10s
     environment:
-      - ORCHESTRATOR_URL=http://orchestrator:8080
-      - AGENT_ID=agent-opencode-java
-      - AGENT_PROVIDER_TYPE=OpenCode
-      - AGENT_LABELS=opencode,java,java21
-      - AGENT_API_KEY=${AGENT_API_KEY}
-      - OPENCODE_CONFIG_CONTENT=${OPENCODE_CONFIG_CONTENT}
-      - LOG_LEVEL=${LOG_LEVEL:-Information}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-}
-      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
-      - OTEL_EXPORTER_OTLP_HEADERS=${OTEL_EXPORTER_OTLP_HEADERS:-}
-      - OTEL_SERVICE_NAME=coding-agent-worker-opencode-java
-      - OTEL_RESOURCE_ATTRIBUTES=deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-opencode-java
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    depends_on:
-      orchestrator:
-        condition: service_healthy
-    networks:
-      - coding-agent-net
+      <<: *agent-env
+      AGENT_ID: agent-opencode-java
+      AGENT_PROVIDER_TYPE: OpenCode
+      AGENT_LABELS: opencode,java,java21
+      OPENCODE_CONFIG_CONTENT: ${OPENCODE_CONFIG_CONTENT}
+      OTEL_SERVICE_NAME: coding-agent-worker-opencode-java
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-opencode-java
 
 networks:
   coding-agent-net:
