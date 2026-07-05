@@ -13,31 +13,31 @@
     {
         <div class="sidebar-overlay-backdrop" @onclick="CloseOverlay"></div>
     }
-    <button class="hamburger-toggle" @onclick="ToggleOverlay" aria-label="Toggle navigation">☰</button>
+    <button class="hamburger-toggle" @onclick="ToggleOverlay" aria-label="Toggle navigation"><Icon Name="menu" Size="20" /></button>
     <nav class="sidebar @SidebarCssClass" role="navigation" aria-label="Main navigation">
         <div class="sidebar-brand">
-            <span class="sidebar-icon">🤖</span>
+            <span class="sidebar-icon" aria-hidden="true"><Icon Name="bot" Size="20" /></span>
             <span class="sidebar-label">Coding Agent</span>
         </div>
 
         <NavLink href="agent-chat" class="sidebar-link">
-            <span class="sidebar-icon">💬</span>
+            <span class="sidebar-icon" aria-hidden="true"><Icon Name="message-circle" Size="20" /></span>
             <span class="sidebar-label">Agent Chat</span>
         </NavLink>
         <NavLink href="agent-coding" class="sidebar-link">
-            <span class="sidebar-icon">🤖</span>
+            <span class="sidebar-icon" aria-hidden="true"><Icon Name="bot" Size="20" /></span>
             <span class="sidebar-label">Agent Coding</span>
             @if (LoopService.IsLoopActive)
             {
-                <span class="sidebar-loop-indicator" title="Pipeline loop is active">🔄</span>
+                <span class="sidebar-loop-indicator" title="Pipeline loop is active"><Icon Name="refresh-cw" Size="14" /></span>
             }
         </NavLink>
         <NavLink href="agent-monitoring" class="sidebar-link">
-            <span class="sidebar-icon">📊</span>
+            <span class="sidebar-icon" aria-hidden="true"><Icon Name="bar-chart-2" Size="20" /></span>
             <span class="sidebar-label">Agent Monitoring</span>
         </NavLink>
         <NavLink href="consolidation" class="sidebar-link">
-            <span class="sidebar-icon">🔄</span>
+            <span class="sidebar-icon" aria-hidden="true"><Icon Name="refresh-cw" Size="20" /></span>
             <span class="sidebar-label">Consolidation</span>
             @if (BadgeService.BadgeCount > 0)
             {
@@ -45,11 +45,11 @@
             }
         </NavLink>
         <NavLink href="settings" class="sidebar-link">
-            <span class="sidebar-icon">⚙️</span>
+            <span class="sidebar-icon" aria-hidden="true"><Icon Name="settings" Size="20" /></span>
             <span class="sidebar-label">Settings</span>
         </NavLink>
         <NavLink href="about" class="sidebar-link">
-            <span class="sidebar-icon">ℹ️</span>
+            <span class="sidebar-icon" aria-hidden="true"><Icon Name="info" Size="20" /></span>
             <span class="sidebar-label">About</span>
         </NavLink>
         <SidebarHealthIndicators />
@@ -57,11 +57,11 @@
             <button class="sidebar-toggle sidebar-theme-toggle" @onclick="ToggleTheme"
                     aria-label="@(_theme == "dark" ? "Switch to light theme" : "Switch to dark theme")"
                     title="@(_theme == "dark" ? "Light mode" : "Dark mode")">
-                @(_theme == "dark" ? "☀️" : "🌙")
+                <Icon Name="@(_theme == "dark" ? "sun" : "moon")" Size="18" />
             </button>
             <button class="sidebar-toggle sidebar-collapse-toggle" @onclick="ToggleCollapse"
                     aria-expanded="@(_collapsed ? "false" : "true")" aria-label="@(_collapsed ? "Expand sidebar" : "Collapse sidebar")">
-                @(_collapsed ? "»" : "«")
+                <Icon Name="@(_collapsed ? "chevrons-right" : "chevrons-left")" Size="16" />
             </button>
         </div>
     </nav>

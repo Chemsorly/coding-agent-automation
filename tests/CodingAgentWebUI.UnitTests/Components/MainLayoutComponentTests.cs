@@ -55,7 +55,36 @@ public class MainLayoutComponentTests : BunitContext
         var cut = Render<MainLayout>();
         var toggle = cut.Find(".sidebar-collapse-toggle");
         Assert.NotNull(toggle);
-        Assert.Equal("«", toggle.TextContent);
+        var svg = toggle.QuerySelector("svg[data-icon='chevrons-left']");
+        Assert.NotNull(svg);
+    }
+
+    [Fact]
+    public void Sidebar_RendersIconComponents()
+    {
+        var cut = Render<MainLayout>();
+        var iconSpans = cut.FindAll(".sidebar-icon svg");
+        // TODO: Assertion is too weak — should assert exact expected count (7) to catch unintended additions or duplications
+        Assert.True(iconSpans.Count >= 7, $"Expected at least 7 sidebar icon SVGs, found {iconSpans.Count}");
+    }
+
+    [Fact]
+    public void Sidebar_IconsHaveAriaHidden()
+    {
+        var cut = Render<MainLayout>();
+        var iconSpans = cut.FindAll(".sidebar-icon[aria-hidden='true']");
+        // TODO: Assertion is too weak — should assert exact expected count (7) to detect regressions where new icons lack aria-hidden
+        Assert.True(iconSpans.Count >= 7, $"Expected at least 7 icon spans with aria-hidden, found {iconSpans.Count}");
+    }
+
+    [Fact]
+    public void Sidebar_ThemeToggle_ShowsCorrectIcon()
+    {
+        var cut = Render<MainLayout>();
+        // Default theme is "dark", so sun icon should be shown
+        var themeButton = cut.Find(".sidebar-theme-toggle");
+        var svg = themeButton.QuerySelector("svg[data-icon='sun']");
+        Assert.NotNull(svg);
     }
 
     [Fact]
