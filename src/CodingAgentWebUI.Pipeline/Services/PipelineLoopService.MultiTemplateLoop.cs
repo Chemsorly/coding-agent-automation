@@ -547,19 +547,26 @@ public sealed partial class PipelineLoopService
         TimeSpan cooldown,
         CancellationToken ct)
     {
-        var allFailing = enabledTemplates.Count > 0 && enabledTemplates.All(t =>
+        // Build failure counts from _templateStatuses for the circuit breaker to evaluate.
+        // Note: This allocates a dictionary per poll cycle, but given poll intervals are typically
+        // seconds (default 30s), the allocation cost is negligible vs. the I/O in each cycle.
+        var failureCounts = new Dictionary<string, int>(enabledTemplates.Count);
+        foreach (var t in enabledTemplates)
         {
-            if (_templateStatuses.TryGetValue(t.Id, out var s))
-                return s.ConsecutiveFailures >= maxConsecutiveFailures;
+            var failures = _templateStatuses.TryGetValue(t.Id, out var s) ? s.ConsecutiveFailures : 0;
+            failureCounts[t.Id] = failures;
+        }
+
+        // Delegate decision to circuit breaker (pure query — no state mutation)
+        if (!_circuitBreaker.Evaluate(failureCounts, maxConsecutiveFailures))
             return false;
-        });
 
-        if (!allFailing) return false;
-
+        // TRIP — execution logic stays in PipelineLoopService
         Task resumeTask;
         lock (_lock)
         {
-            IsCircuitBroken = true;
+            // TODO: Pass a descriptive error message to Trip() so that LastPollError surfaces useful info to the UI
+            _circuitBreaker.Trip();
             StatusMessage = $"⚠️ Loop paused — all {enabledTemplates.Count} templates failing. Auto-resume in {cooldown.TotalMinutes:0.#} min.";
             _resumeSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             resumeTask = _resumeSignal.Task;
@@ -569,16 +576,17 @@ public sealed partial class PipelineLoopService
         _logger.Warning("Circuit breaker tripped: all {Count} enabled templates have {Threshold}+ consecutive failures. Auto-resume in {Cooldown}",
             enabledTemplates.Count, maxConsecutiveFailures, cooldown);
 
+        // WAIT for manual resume or cooldown
         try { await Task.WhenAny(resumeTask, Task.Delay(cooldown, ct)); }
         catch (OperationCanceledException) { return true; }
 
         if (_stopRequested) return true;
 
+        // AUTO-RESUME (if ResumeLoop() hasn't already reset it)
         lock (_lock)
         {
-            if (!IsCircuitBroken) return true; // ResumeLoop() already handled reset
-            IsCircuitBroken = false;
-            LastPollError = null;
+            if (!_circuitBreaker.IsTripped) return true; // ResumeLoop() already handled
+            _circuitBreaker.Reset();
             StatusMessage = "🔄 Circuit breaker auto-resumed, retrying poll.";
         }
 
