@@ -25,6 +25,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
 
     private TaskCompletionSource _activationSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Lock _lock = new();
+    private readonly TemplateCircuitBreaker _circuitBreaker = new();
 
     private volatile bool _stopRequested;
     private CancellationTokenSource? _loopCts;
@@ -66,10 +67,10 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     public int QueueCount { get; private set; }
 
     /// <summary>Whether the circuit breaker has tripped due to consecutive poll failures.</summary>
-    public bool IsCircuitBroken { get; private set; }
+    public bool IsCircuitBroken => _circuitBreaker.IsTripped;
 
     /// <summary>Last poll error message, or null if last poll succeeded.</summary>
-    public string? LastPollError { get; private set; }
+    public string? LastPollError => _circuitBreaker.LastError;
 
     // ── Multi-template public API ───────────────────────────────────────
 
@@ -141,9 +142,8 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     {
         lock (_lock)
         {
-            if (!IsCircuitBroken) return;
-            IsCircuitBroken = false;
-            LastPollError = null;
+            if (!_circuitBreaker.IsTripped) return;
+            _circuitBreaker.Reset();
             StatusMessage = "🔄 Loop resumed, polling at normal interval.";
             _resumeSignal?.TrySetResult();
             NotifyChange();
@@ -198,8 +198,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             ProcessedCount = 0;
             FailedCount = 0;
             QueueCount = 0;
-            IsCircuitBroken = false;
-            LastPollError = null;
+            _circuitBreaker.Reset();
             CurrentIssueIdentifier = null;
             CurrentCycleTemplateIndex = 0;
             CurrentCycleTemplateCount = enabledTemplates.Count;
@@ -251,8 +250,7 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             CurrentIssueIdentifier = null;
             CurrentCycleTemplateIndex = 0;
             CurrentCycleTemplateCount = 0;
-            IsCircuitBroken = false;
-            LastPollError = null;
+            _circuitBreaker.Reset();
             StatusMessage = "";
             // Reset activation signal under lock to prevent race with StartLoop (review finding #1)
             _activationSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
