@@ -257,25 +257,20 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
     /// <summary>
     /// Builds the ordered list of pipeline steps. Step ordering is explicit and configurable.
+    /// Orchestrator prefix (FetchIssue → Clone → RunEnvironmentSetup → SyncBrainPreRun) followed
+    /// by the shared core implementation steps from <see cref="Steps.PipelineStepFactory"/>.
     /// </summary>
     private IReadOnlyList<Steps.IPipelineStep> BuildStepPipeline()
     {
-        return new Steps.IPipelineStep[]
+        var steps = new List<Steps.IPipelineStep>
         {
             new Steps.FetchIssueStep(_issueParser),
             new Steps.CloneRepositoryStep(),
             new Steps.RunEnvironmentSetupStep(),
             new Steps.SyncBrainPreRunStep(),
-            new Steps.DetectReworkStep(),
-            new Steps.WritePrConversationContextStep(),
-            new Steps.CreateBranchStep(),
-            new Steps.VerifyBaselineStep(),
-            new Steps.AnalyzeCodeStep(),
-            new Steps.GenerateCodeStep(),
-            new Steps.BrainPullBeforeWriteStep(),
-            new Steps.ReviewCodeStep(),
-            new Steps.RunQualityGatesStep()
         };
+        steps.AddRange(Steps.PipelineStepFactory.CreateCoreImplementationSteps());
+        return steps;
     }
 
     /// <summary>Cancels the active pipeline run. Delegates state transitions to lifecycle service.</summary>

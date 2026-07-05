@@ -250,22 +250,15 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
 
     private IReadOnlyList<IPipelineStep> BuildStepPipeline()
     {
-        return new IPipelineStep[]
+        var steps = new List<IPipelineStep>
         {
             new FetchIssueStep(_issueParser),
             new CloneRepositoryStep(),
             new RunEnvironmentSetupStep(),
             new SyncBrainPreRunStep(),
-            new DetectReworkStep(),
-            new WritePrConversationContextStep(),
-            new CreateBranchStep(),
-            new VerifyBaselineStep(),
-            new AnalyzeCodeStep(),
-            new GenerateCodeStep(),
-            new BrainPullBeforeWriteStep(),
-            new ReviewCodeStep(),
-            new RunQualityGatesStep()
         };
+        steps.AddRange(PipelineStepFactory.CreateCoreImplementationSteps());
+        return steps;
     }
 
     public void Dispose()
