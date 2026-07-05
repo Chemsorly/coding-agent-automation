@@ -302,3 +302,66 @@ When `IKubernetes` client is not available (local dev, Docker Compose):
 - `LeaderToken` starts cancelled
 - Leader-dependent services (DispatchService, ReconciliationService) never enter their work loops
 - This is correct for non-K8s environments where `PipelineLoopService` handles dispatch via the legacy or DB+SignalR path instead
+
+### Credential Pool Initialization (Kubernetes Mode)
+
+Kiro agents require CLI authentication tokens stored on persistent volumes. In Kubernetes mode, the `DispatchService` claims a PVC from the credential pool for each spawned Job pod, mounting it at `/home/ubuntu/.local/share/kiro-cli`. Before the first dispatch, each PVC must contain valid tokens.
+
+#### One-Time Setup Per PVC
+
+Each PVC in `credentialPools.kiro` must be authenticated once. Since agent Jobs are ephemeral (terminate on completion or failure), use a temporary long-running pod for the interactive login flow:
+
+**1. Create a temporary auth pod mounting the target PVC:**
+
+```bash
+kubectl run kiro-auth-1 -n coding-agent \
+  --image=chemsorly/coding-agent:coding-agent-kiro-dotnet10-latest \
+  --restart=Never \
+  --overrides='{
+    "spec": {
+      "nodeSelector": {"kubernetes.io/hostname": "YOUR-NODE"},
+      "securityContext": {"runAsUser": 1000, "fsGroup": 1000},
+      "containers": [{
+        "name": "kiro-auth-1",
+        "image": "chemsorly/coding-agent:coding-agent-kiro-dotnet10-latest",
+        "command": ["sleep", "3600"],
+        "volumeMounts": [{"name": "creds", "mountPath": "/home/ubuntu/.local/share/kiro-cli"}]
+      }],
+      "volumes": [{"name": "creds", "persistentVolumeClaim": {"claimName": "kiro-creds-pvc-1"}}]
+    }
+  }'
+```
+
+Replace `YOUR-NODE` with the node hosting the PVC's underlying storage (required for hostPath-backed PVs with node affinity).
+
+**2. Exec into the pod and authenticate:**
+
+```bash
+kubectl exec -it kiro-auth-1 -n coding-agent -- kiro-cli login
+```
+
+Follow the device code URL printed to the terminal — open it in a browser and complete the OAuth flow.
+
+**3. Delete the auth pod:**
+
+```bash
+kubectl delete pod kiro-auth-1 -n coding-agent
+```
+
+**4. Repeat for each PVC** in the pool (`kiro-creds-pvc-2`, `kiro-creds-pvc-3`, etc.).
+
+#### Token Lifecycle
+
+- Tokens include a refresh token with long expiry (weeks to months depending on the identity provider)
+- Regular pipeline runs keep the refresh token active automatically — each Job mounts the PVC and the CLI refreshes the token as needed
+- If a PVC's token expires (e.g., the pool was not used for an extended period), re-run the auth pod workflow for that PVC
+- Token validity can be verified without running a full pipeline: `kubectl exec ... -- kiro-cli auth status`
+
+#### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| Job pod fails immediately with auth error | PVC has no tokens or tokens expired | Re-run auth pod workflow |
+| Job pod hangs during CLI startup | Token refresh failing (network/IdP issue) | Check pod logs, verify IdP connectivity |
+| DispatchService logs "no PVC available" | All PVCs claimed by running Jobs | Wait for Jobs to complete, or add more PVCs to the pool |
+| Auth pod can't mount PVC | PVC bound to a different node | Ensure nodeSelector matches the PV's node affinity |

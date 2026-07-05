@@ -5,6 +5,7 @@ using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Orchestration.Telemetry;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s;
 using k8s.Autorest;
@@ -26,11 +27,16 @@ public sealed class DispatchService : BackgroundService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<DispatchService>();
 
+    /// <summary>Default path for job templates ConfigMap mount.</summary>
+    internal const string DefaultJobTemplatesPath = "/app/config/job-templates.yaml";
+
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly LeaderElectionService _leaderElection;
     private readonly IKubernetesJobClient _kubeClient;
     private readonly WorkItemTransitionService _transitionService;
     private readonly DispatchServiceOptions _options;
+    private readonly JobTemplateProvider? _templateProvider;
+    private readonly ILabelSwapper? _labelSwapper;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
     public DispatchService(
@@ -38,12 +44,14 @@ public sealed class DispatchService : BackgroundService
         LeaderElectionService leaderElection,
         IKubernetesJobClient kubeClient,
         WorkItemTransitionService transitionService,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        ILabelSwapper? labelSwapper = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
         _kubeClient = kubeClient;
         _transitionService = transitionService;
+        _labelSwapper = labelSwapper;
         _options = new DispatchServiceOptions();
         configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
         configuration.GetSection("WorkDistribution:ImageMapping").Bind(_options.ImageMapping);
@@ -59,6 +67,26 @@ public sealed class DispatchService : BackgroundService
             ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
             ?? "default";
         _options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
+
+        // Load job templates from ConfigMap-mounted file (optional — falls back to ImageMapping if absent)
+        var templatesPath = configuration.GetValue<string>("WorkDistribution:JobTemplatesPath") ?? DefaultJobTemplatesPath;
+        // Also check legacy .json path for backward compatibility
+        if (!File.Exists(templatesPath) && templatesPath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
+        {
+            var jsonFallback = Path.ChangeExtension(templatesPath, ".json");
+            if (File.Exists(jsonFallback))
+                templatesPath = jsonFallback;
+        }
+        if (File.Exists(templatesPath))
+        {
+            _templateProvider = JobTemplateProvider.LoadFromFile(templatesPath);
+            Log.Information("DispatchService: loaded {Count} job template(s) from {Path}",
+                _templateProvider.GetAllTemplates().Count, templatesPath);
+        }
+        else
+        {
+            Log.Debug("DispatchService: no job templates file at {Path}, using legacy ImageMapping", templatesPath);
+        }
 
         _rateLimiter = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
         {
@@ -144,7 +172,9 @@ public sealed class DispatchService : BackgroundService
                 AgentSelector = w.AgentSelector,
                 CreatedAt = w.CreatedAt,
                 TimeoutSeconds = w.TimeoutSeconds,
-                ProjectId = w.ProjectId
+                ProjectId = w.ProjectId,
+                IssueIdentifier = w.IssueIdentifier,
+                IssueProviderConfigId = w.IssueProviderConfigId
             })
             .ToListAsync(ct);
 
@@ -194,8 +224,10 @@ public sealed class DispatchService : BackgroundService
                 break;
             }
 
-            // Check concurrency limit for selector group
-            if (_options.MaxConcurrentPods.TryGetValue(item.AgentSelector, out var maxConcurrent) && maxConcurrent > 0)
+            // Check concurrency limit for selector group (template-based or legacy config)
+            var maxConcurrent = _templateProvider?.GetMaxConcurrent(item.AgentSelector)
+                ?? (_options.MaxConcurrentPods.TryGetValue(item.AgentSelector, out var legacyMax) ? legacyMax : 0);
+            if (maxConcurrent > 0)
             {
                 var current = concurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0);
                 if (current >= maxConcurrent)
@@ -230,14 +262,24 @@ public sealed class DispatchService : BackgroundService
         Dictionary<string, int> concurrencyBySelector,
         CancellationToken ct)
     {
-        // Resolve container image
-        var image = ResolveImage(item.AgentSelector);
-        if (image is null)
+        // Resolve template or image
+        var template = _templateProvider?.Resolve(item.AgentSelector);
+        string? image;
+        if (template is not null)
         {
-            Log.Error("DispatchService: no image mapping for selector '{Selector}', failing WorkItem {WorkItemId}",
-                item.AgentSelector, item.Id);
-            await FailWorkItem(item.Id, $"No image mapping for selector: {item.AgentSelector}", ct);
-            return;
+            image = template.Image;
+        }
+        else
+        {
+            // Legacy fallback: resolve from ImageMapping
+            image = ResolveImage(item.AgentSelector);
+            if (image is null)
+            {
+                Log.Error("DispatchService: no template or image mapping for selector '{Selector}', failing WorkItem {WorkItemId}",
+                    item.AgentSelector, item.Id);
+                await FailWorkItem(item.Id, $"No template or image mapping for selector: {item.AgentSelector}", ct);
+                return;
+            }
         }
 
         // Generate deterministic job name
@@ -285,7 +327,31 @@ public sealed class DispatchService : BackgroundService
         // Create K8s Job
         try
         {
-            var job = BuildJobSpec(item, jobName, image, claimedPvc, projectSecrets);
+            V1Job job;
+            if (template is not null)
+            {
+                // Template-based: use JobSpecBuilder for full pod spec from template
+                var buildCtx = new JobSpecBuilder.BuildContext
+                {
+                    WorkItemId = item.Id,
+                    AgentSelector = item.AgentSelector,
+                    TimeoutSeconds = item.TimeoutSeconds,
+                    JobName = jobName,
+                    ClaimedPvc = claimedPvc,
+                    OrchestratorUrl = _options.OrchestratorUrl,
+                    AgentApiKeySecretName = _options.AgentApiKeySecretName,
+                    AgentServiceAccountName = _options.AgentServiceAccountName,
+                    Namespace = _options.Namespace,
+                    OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
+                    ProjectSecrets = projectSecrets
+                };
+                job = JobSpecBuilder.Build(template, buildCtx);
+            }
+            else
+            {
+                // Legacy fallback: use inline BuildJobSpec
+                job = BuildJobSpec(item, jobName, image!, claimedPvc, projectSecrets);
+            }
             await _kubeClient.CreateJobAsync(job, _options.Namespace, ct);
         }
         catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
@@ -356,6 +422,24 @@ public sealed class DispatchService : BackgroundService
             Log.Information(
                 "DispatchService: WorkItem {WorkItemId} dispatched as Job {JobName} (selector={Selector}, pvc={Pvc})",
                 item.Id, jobName, item.AgentSelector, claimedPvc ?? "none");
+
+            // Swap issue label to agent:in-progress (non-fatal — best effort)
+            if (_labelSwapper is not null &&
+                !string.IsNullOrEmpty(item.IssueIdentifier) &&
+                !string.IsNullOrEmpty(item.IssueProviderConfigId))
+            {
+                try
+                {
+                    await _labelSwapper.SwapLabelAsync(
+                        item.IssueProviderConfigId, item.IssueIdentifier, "agent:in-progress", ct);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex,
+                        "DispatchService: failed to swap label to agent:in-progress for {IssueIdentifier}",
+                        item.IssueIdentifier);
+                }
+            }
         }
         catch (DbUpdateConcurrencyException)
         {
@@ -696,5 +780,7 @@ public sealed class DispatchService : BackgroundService
         public required DateTimeOffset CreatedAt { get; init; }
         public required int TimeoutSeconds { get; init; }
         public string? ProjectId { get; init; }
+        public string? IssueIdentifier { get; init; }
+        public string? IssueProviderConfigId { get; init; }
     }
 }

@@ -180,6 +180,16 @@ public sealed partial class AgentHub
                 // Without this, the issue becomes permanently blocked from re-dispatch.
                 _facade.RemoveRun(jobId);
                 _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+                // Attempt to transition WorkItem to terminal state so it doesn't stay stuck in Running.
+                try
+                {
+                    await _facade.TransitionWorkItemAsync(jobId, workItemStatus, CancellationToken.None);
+                }
+                catch (Exception innerEx)
+                {
+                    _logger.Warning(innerEx, "Failed to transition WorkItem {JobId} to {Status} during defensive cleanup", jobId, workItemStatus);
+                }
             }
 
             _logger.Information(

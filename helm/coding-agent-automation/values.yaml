@@ -109,6 +109,8 @@ agents:
     #   opencode → mounts opencode config file from Secret
     providerType: kiro
     labels: "kiro,dotnet,dotnet10"
+    # Max concurrent Jobs for this label set in K8s mode. 0 = no limit.
+    maxConcurrent: 0
     # Additional annotations on the Deployment metadata
     annotations: {}
     # Pod-level securityContext
