@@ -343,7 +343,8 @@ public sealed class AgentWorkerService : BackgroundService
                 {
                     FinalStep = PipelineStep.Cancelled,
                     CompletedAt = DateTimeOffset.UtcNow,
-                    IsRework = message.LinkedPullRequest is not null
+                    IsRework = message.LinkedPullRequest is not null,
+                    FinalLabel = AgentLabels.Cancelled
                 };
             }
             catch (Exception ex)
