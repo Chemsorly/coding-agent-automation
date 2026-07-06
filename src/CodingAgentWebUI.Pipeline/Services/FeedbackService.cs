@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Parsers;
 using Serilog;
@@ -17,6 +18,45 @@ public sealed class FeedbackService
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
+    }
+
+    /// <summary>
+    /// Loads distinct harness and issue category labels from the most recent run summaries.
+    /// Returns empty lists if the history service is not available or an error occurs.
+    /// </summary>
+    public (IReadOnlyList<string> HarnessCategories, IReadOnlyList<string> IssueCategories) LoadPreviousCategories(
+        IPipelineRunHistoryService? historyService)
+    {
+        if (historyService is null)
+            return ([], []);
+
+        try
+        {
+            var recentSummaries = historyService.GetRunHistory()
+                // TODO: Add fallback for legacy summaries where StartedAtOffset == default (consistent with PipelineRunHistoryService)
+                .OrderByDescending(s => s.StartedAtOffset)
+                .Take(FeedbackConstraints.MaxRecentRunsForCategories)
+                .ToList();
+
+            var harnessCategories = recentSummaries
+                .Where(s => s.Feedback?.Harness.Category is not null)
+                .Select(s => s.Feedback!.Harness.Category!)
+                .Distinct()
+                .ToList();
+
+            var issueCategories = recentSummaries
+                .Where(s => s.Feedback?.Issue?.Category is not null)
+                .Select(s => s.Feedback!.Issue!.Category!)
+                .Distinct()
+                .ToList();
+
+            return (harnessCategories, issueCategories);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to load previous feedback categories, using empty lists");
+            return ([], []);
+        }
     }
 
     /// <summary>

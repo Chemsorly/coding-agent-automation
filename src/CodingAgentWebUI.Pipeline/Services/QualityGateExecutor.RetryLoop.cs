@@ -177,7 +177,7 @@ public partial class QualityGateExecutor
             context.Callbacks.EmitOutputLine("📋 Collecting failure feedback...");
 
             // Load distinct categories from recent run summaries
-            var (harnessCategories, issueCategories) = LoadPreviousCategories();
+            var (harnessCategories, issueCategories) = _feedbackService.LoadPreviousCategories(_historyService);
 
             // Build the issue detail for the prompt (use context issue or create a minimal one from run data)
             var issue = context.Issue ?? new IssueDetail
@@ -233,44 +233,6 @@ public partial class QualityGateExecutor
             _logger.Warning(ex, "Pipeline {RunId} failure feedback collection failed", run.RunId);
             run.Feedback = _feedbackService.CreateFallbackFeedback(
                 FeedbackOutcome.Failure, $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
-        }
-    }
-
-    /// <summary>
-    /// Loads distinct harness and issue category labels from the most recent run summaries.
-    /// Returns empty lists if the history service is not available.
-    /// </summary>
-    private (IReadOnlyList<string> HarnessCategories, IReadOnlyList<string> IssueCategories) LoadPreviousCategories()
-    {
-        if (_historyService is null)
-            return ([], []);
-
-        try
-        {
-            var recentSummaries = _historyService.GetRunHistory()
-                // TODO: Add fallback for legacy summaries where StartedAtOffset == default (consistent with PipelineRunHistoryService)
-                .OrderByDescending(s => s.StartedAtOffset)
-                .Take(FeedbackConstraints.MaxRecentRunsForCategories)
-                .ToList();
-
-            var harnessCategories = recentSummaries
-                .Where(s => s.Feedback?.Harness.Category is not null)
-                .Select(s => s.Feedback!.Harness.Category!)
-                .Distinct()
-                .ToList();
-
-            var issueCategories = recentSummaries
-                .Where(s => s.Feedback?.Issue?.Category is not null)
-                .Select(s => s.Feedback!.Issue!.Category!)
-                .Distinct()
-                .ToList();
-
-            return (harnessCategories, issueCategories);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to load previous feedback categories, using empty lists");
-            return ([], []);
         }
     }
 

@@ -1,6 +1,8 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using Moq;
 using Serilog;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
@@ -213,6 +215,112 @@ public class FeedbackServiceTests
         result.Harness.PromptIssues.Should().BeEquivalentTo(["Timeout too short"]);
         result.Harness.Suggestions.Should().BeEquivalentTo(["Increase MCP timeout to 30s"]);
     }
+
+    #endregion
+
+    #region LoadPreviousCategories
+
+    // TODO: Add test for exception-handling path — mock GetRunHistory() to throw and assert empty lists are returned (covers the catch block's graceful degradation).
+
+    [Fact]
+    public void LoadPreviousCategories_NullHistoryService_ReturnsEmptyLists()
+    {
+        var (harness, issue) = _sut.LoadPreviousCategories(null);
+
+        harness.Should().BeEmpty();
+        issue.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void LoadPreviousCategories_EmptyHistory_ReturnsEmptyLists()
+    {
+        var mockHistory = new Mock<IPipelineRunHistoryService>();
+        mockHistory.Setup(h => h.GetRunHistory()).Returns([]);
+
+        var (harness, issue) = _sut.LoadPreviousCategories(mockHistory.Object);
+
+        harness.Should().BeEmpty();
+        issue.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void LoadPreviousCategories_ExtractsDistinctCategories()
+    {
+        var summaries = new[]
+        {
+            CreateSummaryWithCategories(DateTimeOffset.UtcNow, "build-failure", "feature"),
+            CreateSummaryWithCategories(DateTimeOffset.UtcNow.AddMinutes(-1), "build-failure", "bug"),
+            CreateSummaryWithCategories(DateTimeOffset.UtcNow.AddMinutes(-2), "test-failure", "feature"),
+        };
+        var mockHistory = new Mock<IPipelineRunHistoryService>();
+        mockHistory.Setup(h => h.GetRunHistory()).Returns(summaries);
+
+        var (harness, issue) = _sut.LoadPreviousCategories(mockHistory.Object);
+
+        harness.Should().BeEquivalentTo(["build-failure", "test-failure"]);
+        issue.Should().BeEquivalentTo(["feature", "bug"]);
+    }
+
+    [Fact]
+    public void LoadPreviousCategories_SkipsNullFeedbackEntries()
+    {
+        var summaries = new[]
+        {
+            CreateSummaryWithCategories(DateTimeOffset.UtcNow, "build-failure", "feature"),
+            new PipelineRunSummary
+            {
+                RunId = "run-2", IssueIdentifier = "org/repo#1", IssueTitle = "Test",
+                FinalStep = PipelineStep.Completed, StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-1),
+                Feedback = null
+            },
+        };
+        var mockHistory = new Mock<IPipelineRunHistoryService>();
+        mockHistory.Setup(h => h.GetRunHistory()).Returns(summaries);
+
+        var (harness, issue) = _sut.LoadPreviousCategories(mockHistory.Object);
+
+        harness.Should().BeEquivalentTo(["build-failure"]);
+        issue.Should().BeEquivalentTo(["feature"]);
+    }
+
+    [Fact]
+    public void LoadPreviousCategories_OrdersByStartedAtOffsetDescending_TakesNewest()
+    {
+        // Create more than MaxRecentRunsForCategories summaries
+        var summaries = Enumerable.Range(0, FeedbackConstraints.MaxRecentRunsForCategories + 10)
+            .Select(i => CreateSummaryWithCategories(
+                DateTimeOffset.UtcNow.AddMinutes(-i), $"cat-{i}", $"issue-{i}"))
+            .ToList();
+
+        // Shuffle to ensure ordering is applied by the method, not pre-sorted input
+        var shuffled = summaries.OrderBy(_ => Guid.NewGuid()).ToArray();
+
+        var mockHistory = new Mock<IPipelineRunHistoryService>();
+        mockHistory.Setup(h => h.GetRunHistory()).Returns(shuffled);
+
+        var (harness, issue) = _sut.LoadPreviousCategories(mockHistory.Object);
+
+        // Should only have categories from the top MaxRecentRunsForCategories entries (by StartedAtOffset desc)
+        harness.Should().HaveCount(FeedbackConstraints.MaxRecentRunsForCategories);
+        harness.Should().NotContain($"cat-{FeedbackConstraints.MaxRecentRunsForCategories + 5}");
+    }
+
+    private static PipelineRunSummary CreateSummaryWithCategories(
+        DateTimeOffset startedAt, string harnessCategory, string issueCategory) => new()
+    {
+        RunId = $"run-{Guid.NewGuid():N}",
+        IssueIdentifier = "org/repo#1",
+        IssueTitle = "Test Issue",
+        FinalStep = PipelineStep.Completed,
+        StartedAtOffset = startedAt,
+        Feedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Success,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback { Category = harnessCategory },
+            Issue = new IssueFeedback { Category = issueCategory }
+        }
+    };
 
     #endregion
 }
