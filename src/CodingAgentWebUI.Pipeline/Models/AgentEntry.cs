@@ -20,7 +20,7 @@ public enum AgentStatus
 /// </summary>
 public sealed record AgentEntry
 {
-    /// <summary>Per-entry lock object for thread-safe mutation of mutable properties.</summary>
+    /// <summary>Per-entry lock object for thread-safe mutation of mutable properties. See docs/architecture/concurrency-model.md</summary>
     [JsonIgnore]
     [IgnoreMember]
     private readonly object _syncRoot = new();
