@@ -173,7 +173,14 @@ public class SettingsResolutionDeterminismPropertyTests
         if (project.AnalysisRefinementPrompt is not null)
             result.AnalysisRefinementPrompt.Should().Be(project.AnalysisRefinementPrompt);
         if (project.CodeReview is not null)
-            result.CodeReview.Should().Be(project.CodeReview);
+        {
+            if (project.CodeReview.MaxIterations.HasValue)
+                result.CodeReview.MaxIterations.Should().Be(project.CodeReview.MaxIterations.Value);
+            if (project.CodeReview.FixPrompt is not null)
+                result.CodeReview.FixPrompt.Should().Be(project.CodeReview.FixPrompt);
+            if (project.CodeReview.ReviewIsolation.HasValue)
+                result.CodeReview.ReviewIsolation.Should().Be(project.CodeReview.ReviewIsolation.Value);
+        }
         if (project.BaselineHealthCheckEnabled.HasValue)
             result.BaselineHealthCheckEnabled.Should().Be(project.BaselineHealthCheckEnabled.Value);
         if (project.ExternalCiTimeout.HasValue)
@@ -248,6 +255,17 @@ public class SettingsResolutionArbitraries
 
     private static Gen<TimeSpan> GenTimeSpan() =>
         Gen.Choose(1, 120).Select(minutes => TimeSpan.FromMinutes(minutes));
+
+    private static Gen<CodeReviewOverrides> GenCodeReviewOverrides() =>
+        from maxIterations in Gen.Elements<int?>(null, 1, 2, 3, 5)
+        from fixPrompt in Gen.Elements<string?>(null, "Fix the issues", "Apply corrections")
+        from isolation in Gen.Elements<ReviewIsolation?>(null, ReviewIsolation.Shared, ReviewIsolation.Isolated)
+        select new CodeReviewOverrides
+        {
+            MaxIterations = maxIterations,
+            FixPrompt = fixPrompt,
+            ReviewIsolation = isolation
+        };
 
     private static Gen<CodeReviewConfiguration> GenCodeReview() =>
         from maxIterations in Gen.Choose(1, 5)
@@ -331,8 +349,8 @@ public class SettingsResolutionArbitraries
         from analysisReviewPrompt in Gen.Elements<string?>(null, "Custom review")
         from analysisRefinementPrompt in Gen.Elements<string?>(null, "Custom refinement")
         from codeReview in Gen.Frequency(
-            (2, Gen.Constant<CodeReviewConfiguration?>(null)),
-            (1, GenCodeReview().Select<CodeReviewConfiguration, CodeReviewConfiguration?>(cr => cr)))
+            (2, Gen.Constant<CodeReviewOverrides?>(null)),
+            (1, GenCodeReviewOverrides().Select<CodeReviewOverrides, CodeReviewOverrides?>(cr => cr)))
         from baselineHealthCheckEnabled in Gen.Elements<bool?>(null, true, false)
         from externalCiTimeout in Gen.Elements<TimeSpan?>(null, TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(30))
         from externalCiPollInterval in Gen.Elements<TimeSpan?>(null, TimeSpan.FromSeconds(30), TimeSpan.FromMinutes(1))
