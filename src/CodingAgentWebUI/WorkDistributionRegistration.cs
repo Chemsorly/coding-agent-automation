@@ -178,6 +178,9 @@ public static class WorkDistributionRegistration
         // ── Polly resilience pipelines ──────────────────────────────────────
         RegisterResiliencePipelines(services);
 
+        // ── WorkItem metrics background service (DB-mode only) ──────────────
+        services.AddHostedService<WorkItemMetricsBackgroundService>();
+
         // ── Mode-specific registrations ─────────────────────────────────────
         if (isKubernetesMode)
         {
