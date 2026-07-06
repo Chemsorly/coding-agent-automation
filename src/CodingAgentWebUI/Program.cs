@@ -83,6 +83,13 @@ if (args.Length >= 1 && args[0] == "export-config")
     return;
 }
 
+// Bootstrap logger: captures log output during service registration (before UseSerilog takes over at Build())
+// TODO: Add integration test verifying ResolveApiKey log messages appear in output (review-findings #953)
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+    .CreateBootstrapLogger();
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Register services
