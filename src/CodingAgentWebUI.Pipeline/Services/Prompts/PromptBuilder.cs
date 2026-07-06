@@ -160,7 +160,7 @@ public static class PromptBuilder
     /// details (title, description, requirements, acceptance criteria, and comments).
     /// </summary>
     public static string BuildReviewPrompt(string reviewInstructions, IssueDetail issue,
-        ParsedIssue parsed, string findingsFilePath, bool isolated = false, bool inlineCommentsEnabled = false, bool hasLinkedPr = false)
+        ParsedIssue parsed, string findingsFilePath, bool inlineCommentsEnabled = false, bool hasLinkedPr = false)
     {
         ArgumentNullException.ThrowIfNull(reviewInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -169,21 +169,18 @@ public static class PromptBuilder
 
         var sb = new StringBuilder();
 
-        if (isolated)
-        {
-            sb.AppendLine("You are reviewing code changes made by another agent. You have no prior context about how or why these changes were made — judge purely on correctness, security, and adherence to requirements.");
-            sb.AppendLine();
-            sb.AppendLine("The diff has been pre-computed for you. Read these files to understand the changes:");
-            sb.AppendLine($"- `{AgentWorkspacePaths.DiffStatFilePath}` — summary of changed files with line counts (read this FIRST to triage)");
-            sb.AppendLine($"- `{AgentWorkspacePaths.FullDiffFilePath}` — full diff between origin/main and the working tree");
-            sb.AppendLine();
-            sb.AppendLine("IMPORTANT: Do NOT run `git diff` yourself — the diff is already captured in the files above. Read the diff-stat first to identify which files are relevant to your review focus, then selectively read sections of the full diff for those files. You do NOT need to read the entire full-diff file.");
-            sb.AppendLine();
-            sb.AppendLine("You may also run read-only git commands for additional context:");
-            sb.AppendLine("- `git log origin/main..HEAD --oneline` — shows commits on the branch");
-            sb.AppendLine("- `git status` — shows working tree state (NOTE: untracked files are expected — the pipeline automatically stages and commits ALL new/modified files before creating the PR)");
-            sb.AppendLine();
-        }
+        sb.AppendLine("You are reviewing code changes made by another agent. You have no prior context about how or why these changes were made — judge purely on correctness, security, and adherence to requirements.");
+        sb.AppendLine();
+        sb.AppendLine("The diff has been pre-computed for you. Read these files to understand the changes:");
+        sb.AppendLine($"- `{AgentWorkspacePaths.DiffStatFilePath}` — summary of changed files with line counts (read this FIRST to triage)");
+        sb.AppendLine($"- `{AgentWorkspacePaths.FullDiffFilePath}` — full diff between origin/main and the working tree");
+        sb.AppendLine();
+        sb.AppendLine("IMPORTANT: Do NOT run `git diff` yourself — the diff is already captured in the files above. Read the diff-stat first to identify which files are relevant to your review focus, then selectively read sections of the full diff for those files. You do NOT need to read the entire full-diff file.");
+        sb.AppendLine();
+        sb.AppendLine("You may also run read-only git commands for additional context:");
+        sb.AppendLine("- `git log origin/main..HEAD --oneline` — shows commits on the branch");
+        sb.AppendLine("- `git status` — shows working tree state (NOTE: untracked files are expected — the pipeline automatically stages and commits ALL new/modified files before creating the PR)");
+        sb.AppendLine();
 
         sb.AppendLine(reviewInstructions);
         sb.AppendLine();

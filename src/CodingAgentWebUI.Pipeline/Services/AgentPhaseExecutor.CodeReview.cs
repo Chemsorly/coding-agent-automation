@@ -132,12 +132,9 @@ public partial class AgentPhaseExecutor
         }
 
         // Determine if parallel execution is possible:
-        // - Isolated mode (no session sharing)
         // - Multiple agents (no point parallelizing 1 agent)
         // - Provider supports concurrent execution (SupportsParallelExecution)
-        var isolated = config.CodeReview.ReviewIsolation == ReviewIsolation.Isolated;
-        var useParallel = isolated
-                          && agents.Count > 1
+        var useParallel = agents.Count > 1
                           && context.AgentProvider.SupportsParallelExecution;
 
         // Launch acceptance criteria compliance check in parallel with code reviewers.
@@ -194,13 +191,13 @@ public partial class AgentPhaseExecutor
                     if (useParallel)
                     {
                         iterationCriticalCount = await ExecuteReviewAgentsParallelAsync(
-                            context, agents, i, isolated,
+                            context, agents, i,
                             iterationFindings, agentsRun, ct);
                     }
                     else
                     {
                         iterationCriticalCount = await ExecuteReviewAgentsSequentialAsync(
-                            context, agents, i, isolated,
+                            context, agents, i,
                             iterationFindings, agentsRun, ct);
                     }
 
@@ -375,7 +372,6 @@ public partial class AgentPhaseExecutor
         AgentPhaseContext context,
         IReadOnlyList<ReviewAgentConfig> agents,
         int iterationIndex,
-        bool isolated,
         System.Text.StringBuilder iterationFindings,
         List<string> agentsRun,
         CancellationToken ct)
@@ -397,7 +393,7 @@ public partial class AgentPhaseExecutor
             });
             context.Callbacks.NotifyChange();
 
-            var result = await ExecuteSingleReviewAgentAsync(context, agent, iterationIndex, isolated, ct);
+            var result = await ExecuteSingleReviewAgentAsync(context, agent, iterationIndex, ct);
             agentsRun.Add(agent.Name);
 
             run.AccumulateTokenUsage(result.AgentResult, phase: $"review_{agent.Name}");
@@ -442,7 +438,6 @@ public partial class AgentPhaseExecutor
         AgentPhaseContext context,
         IReadOnlyList<ReviewAgentConfig> agents,
         int iterationIndex,
-        bool isolated,
         System.Text.StringBuilder iterationFindings,
         List<string> agentsRun,
         CancellationToken ct)
@@ -458,7 +453,7 @@ public partial class AgentPhaseExecutor
         var sw = Stopwatch.StartNew();
 
         // Launch all agents concurrently
-        var tasks = agents.Select(agent => ExecuteSingleReviewAgentSafeAsync(context, agent, iterationIndex, isolated, ct)).ToList();
+        var tasks = agents.Select(agent => ExecuteSingleReviewAgentSafeAsync(context, agent, iterationIndex, ct)).ToList();
         var results = await Task.WhenAll(tasks);
 
         sw.Stop();
@@ -575,11 +570,11 @@ public partial class AgentPhaseExecutor
     /// Returns a failed result instead of throwing, so one agent failure doesn't cancel others.
     /// </summary>
     private async Task<ReviewAgentResult> ExecuteSingleReviewAgentSafeAsync(
-        AgentPhaseContext context, ReviewAgentConfig agent, int iterationIndex, bool isolated, CancellationToken ct)
+        AgentPhaseContext context, ReviewAgentConfig agent, int iterationIndex, CancellationToken ct)
     {
         try
         {
-            return await ExecuteSingleReviewAgentAsync(context, agent, iterationIndex, isolated, ct);
+            return await ExecuteSingleReviewAgentAsync(context, agent, iterationIndex, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -598,14 +593,13 @@ public partial class AgentPhaseExecutor
     /// Shared by both sequential and parallel paths.
     /// </summary>
     private async Task<ReviewAgentResult> ExecuteSingleReviewAgentAsync(
-        AgentPhaseContext context, ReviewAgentConfig agent, int iterationIndex, bool isolated, CancellationToken ct)
+        AgentPhaseContext context, ReviewAgentConfig agent, int iterationIndex, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("CodeReview.Agent");
         activity?.SetTag("pipeline.run_id", context.Run.RunId);
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
         activity?.SetTag("code_review.agent_name", agent.Name);
         activity?.SetTag("code_review.iteration", iterationIndex + 1);
-        activity?.SetTag("code_review.isolated", isolated);
 
         using var _logCtxAgent = LogContext.PushProperty("ReviewAgentName", agent.Name);
         using var _logCtxIter = LogContext.PushProperty("ReviewIteration", iterationIndex + 1);
@@ -613,15 +607,15 @@ public partial class AgentPhaseExecutor
         var run = context.Run;
         var config = context.Config;
 
-        _logger.Information("Pipeline {RunId} iteration {Iteration}: starting review agent '{AgentName}' (isolated={Isolated})",
-            run.RunId, iterationIndex + 1, agent.Name, isolated);
+        _logger.Information("Pipeline {RunId} iteration {Iteration}: starting review agent '{AgentName}'",
+            run.RunId, iterationIndex + 1, agent.Name);
 
         var agentFindingsRelativePath = AgentWorkspacePaths.GetReviewFindingsFilePath(agent.Name);
         var findingsFilePath = Path.Combine(run.WorkspacePath!, agentFindingsRelativePath);
         if (File.Exists(findingsFilePath))
             File.Delete(findingsFilePath);
 
-        var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, isolated: isolated, inlineCommentsEnabled: config.CodeReview.InlineComments.Enabled, hasLinkedPr: run.LinkedPullRequest is not null);
+        var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, inlineCommentsEnabled: config.CodeReview.InlineComments.Enabled, hasLinkedPr: run.LinkedPullRequest is not null);
         _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, iterationIndex + 1, agent.Name, reviewPrompt);
         activity?.SetTag("pipeline.prompt_length_chars", reviewPrompt.Length);
 
@@ -632,7 +626,7 @@ public partial class AgentPhaseExecutor
                 Prompt = reviewPrompt,
                 WorkspacePath = run.WorkspacePath!,
                 Timeout = config.AgentTimeout,
-                UseResume = !isolated
+                UseResume = false
             },
             run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
             line => context.Callbacks.EmitOutputLine($"[{agent.Name}] {line}"));

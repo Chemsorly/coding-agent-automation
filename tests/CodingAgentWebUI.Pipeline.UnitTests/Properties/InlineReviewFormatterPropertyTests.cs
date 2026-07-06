@@ -195,18 +195,16 @@ public class InlineReviewFormatterPropertyTests
         var gen =
             from maxIterations in Gen.Choose(1, 10)
             from fixPrompt in Gen.Elements<string?>(null, "Fix the issues", "Please resolve critical findings")
-            from isolation in Gen.Elements(ReviewIsolation.Shared, ReviewIsolation.Isolated)
-            select (maxIterations, fixPrompt, isolation);
+            select (maxIterations, fixPrompt);
 
         return Prop.ForAll(gen.ToArbitrary(), tuple =>
         {
-            var (maxIterations, fixPrompt, isolation) = tuple;
+            var (maxIterations, fixPrompt) = tuple;
 
             // Build a JSON object WITHOUT the InlineComments key
             var jsonObj = new Dictionary<string, object?>
             {
-                ["MaxIterations"] = maxIterations,
-                ["ReviewIsolation"] = isolation.ToString()
+                ["MaxIterations"] = maxIterations
             };
 
             if (fixPrompt is not null)
@@ -238,7 +236,6 @@ public class InlineReviewFormatterPropertyTests
             // Also verify the other fields were deserialized correctly
             config.MaxIterations.Should().Be(maxIterations);
             config.FixPrompt.Should().Be(fixPrompt);
-            config.ReviewIsolation.Should().Be(isolation);
         });
     }
 }
