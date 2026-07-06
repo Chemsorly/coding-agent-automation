@@ -11,6 +11,16 @@ namespace CodingAgentWebUI.Pipeline.Services.Prompts;
 public static class PromptBuilder
 {
     /// <summary>
+    /// Standardized thoroughness instruction appended to all review and analysis prompts.
+    /// Injected at the builder level so it applies to both default and custom/externalized prompts.
+    /// </summary>
+    internal const string ThoroughnessFooter =
+        "\n## Thoroughness\n\n" +
+        "Be exhaustive within your domain. Don't stop at the first finding — scan the entire scope systematically. " +
+        "Consider what's MISSING (untested paths, unhandled errors, missing validation) as much as what's wrong. " +
+        "Check interactions between changed components — a change in one area may break assumptions in another.";
+
+    /// <summary>
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
     /// issue and writes its recommendation to .agent/analysis.md without making any other changes.
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
@@ -26,6 +36,8 @@ public static class PromptBuilder
 
         // Configurable instructions
         sb.AppendLine(analysisInstructions);
+        sb.AppendLine();
+        sb.AppendLine(ThoroughnessFooter);
         sb.AppendLine();
 
         // Pipeline mechanics (non-configurable)
@@ -82,6 +94,8 @@ public static class PromptBuilder
         var sb = new StringBuilder();
 
         sb.AppendLine(reviewInstructions);
+        sb.AppendLine();
+        sb.AppendLine(ThoroughnessFooter);
         sb.AppendLine();
         sb.AppendLine($"Write your findings to `{AgentWorkspacePaths.AnalysisReviewFilePath}`. Do NOT print findings to stdout — only write them to that file.");
         sb.AppendLine();
@@ -186,6 +200,8 @@ public static class PromptBuilder
         }
 
         sb.AppendLine(reviewInstructions);
+        sb.AppendLine();
+        sb.AppendLine(ThoroughnessFooter);
         sb.AppendLine();
 
         // PR conversation context reference

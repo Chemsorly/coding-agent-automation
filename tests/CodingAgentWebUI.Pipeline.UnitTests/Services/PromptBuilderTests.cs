@@ -767,6 +767,52 @@ public class PromptBuilderTests
 
     #endregion
 
+    #region ThoroughnessFooter
+
+    [Fact]
+    public void BuildReviewPrompt_ContainsThoroughnessInstruction()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain("## Thoroughness");
+        result.Should().Contain("Be exhaustive within your domain");
+        result.Should().Contain("scan the entire scope systematically");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsThoroughnessInstruction()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Analyze carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("## Thoroughness");
+        result.Should().Contain("Be exhaustive within your domain");
+        result.Should().Contain("scan the entire scope systematically");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_ContainsThoroughnessInstruction()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain("## Thoroughness");
+        result.Should().Contain("Be exhaustive within your domain");
+        result.Should().Contain("scan the entire scope systematically");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_ThoroughnessAppliesToCustomPrompt()
+    {
+        var customPrompt = "Only check for SQL injection vulnerabilities.";
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("CustomAgent");
+        var result = PromptBuilder.BuildReviewPrompt(customPrompt, CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain(customPrompt);
+        result.Should().Contain("## Thoroughness");
+        result.Should().Contain("Be exhaustive within your domain");
+        // TODO: Add positional assertion to verify custom prompt appears before "## Thoroughness"
+        // e.g. result.IndexOf(customPrompt).Should().BeLessThan(result.IndexOf("## Thoroughness"))
+        // to guard against accidental reordering in future refactors.
+    }
+
+    #endregion
+
     private static PipelineRun CreatePipelineRun(string runId = "test-run", string issueId = "42") => new()
     {
         RunId = runId,
