@@ -23,8 +23,10 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
 
     private readonly ILogger _logger;
 
+    /// <summary>Guards compound queue operations (scan-and-re-enqueue). See docs/architecture/concurrency-model.md</summary>
     private readonly object _queueLock = new();
 
+    /// <summary>Serializes agent selection to prevent double-booking. See docs/architecture/concurrency-model.md</summary>
     private readonly object _selectionLock = new();
 
     public JobDispatcherService(IAgentRegistryService registry, ILogger logger)
