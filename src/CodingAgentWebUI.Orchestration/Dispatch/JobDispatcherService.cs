@@ -217,6 +217,16 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
     }
 
     /// <summary>
+    /// Removes a queued job by its RunId (IssueIdentifier for consolidation jobs).
+    /// Used when a consolidation run is cancelled while queued.
+    /// </summary>
+    public bool RemoveJob(string runId)
+    {
+        ArgumentNullException.ThrowIfNull(runId);
+        return RemoveFromQueue(runId, "consolidation");
+    }
+
+    /// <summary>
     /// Marks an issue as no longer being processed (call after job completion or failure).
     /// </summary>
     public void MarkIssueComplete(string issueIdentifier, string issueProviderConfigId)

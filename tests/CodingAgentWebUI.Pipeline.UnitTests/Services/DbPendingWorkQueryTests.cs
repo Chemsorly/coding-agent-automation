@@ -150,7 +150,7 @@ public sealed class DbPendingWorkQueryTests : IDisposable
         };
 
         var json = JsonSerializer.Serialize(payload, PipelineJsonOptions.Default);
-        var (title, repoId) = DbPendingWorkQuery.ExtractFromPayload(json);
+        var (title, repoId, _) = DbPendingWorkQuery.ExtractFromPayload(json);
 
         title.Should().Be("My Title");
         repoId.Should().Be("rp-abc");
@@ -159,17 +159,19 @@ public sealed class DbPendingWorkQueryTests : IDisposable
     [Fact]
     public void ExtractFromPayload_NullPayload_ReturnsEmptyStrings()
     {
-        var (title, repoId) = DbPendingWorkQuery.ExtractFromPayload(null);
+        var (title, repoId, consolidationType) = DbPendingWorkQuery.ExtractFromPayload(null);
         title.Should().BeEmpty();
         repoId.Should().BeEmpty();
+        consolidationType.Should().BeNull();
     }
 
     [Fact]
     public void ExtractFromPayload_InvalidJson_ReturnsEmptyStrings()
     {
-        var (title, repoId) = DbPendingWorkQuery.ExtractFromPayload("not valid json{{{");
+        var (title, repoId, consolidationType) = DbPendingWorkQuery.ExtractFromPayload("not valid json{{{");
         title.Should().BeEmpty();
         repoId.Should().BeEmpty();
+        consolidationType.Should().BeNull();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

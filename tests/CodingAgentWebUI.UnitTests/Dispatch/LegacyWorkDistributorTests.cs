@@ -233,6 +233,78 @@ public class LegacyWorkDistributorTests
         result.Should().Contain(("same-issue", "ip-1"));
     }
 
+    // ── Consolidation ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DistributeAsync_Consolidation_EnqueuesIntoJobDispatcherService()
+    {
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "crun-123",
+            IssueProviderConfigId = "consolidation",
+            RepoProviderConfigId = "",
+            InitiatedBy = "consolidation",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "dotnet,kiro",
+            TimeoutSeconds = 0,
+            ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
+            ConsolidationTemplateId = "template-1",
+            ConsolidationWorkspacePath = "/tmp/ws"
+        };
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.Queued.Should().BeTrue();
+        result.ErrorMessage.Should().Be("Queued — no idle agent");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_Consolidation_DedupRejectsDuplicate()
+    {
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "crun-dedup",
+            IssueProviderConfigId = "consolidation",
+            RepoProviderConfigId = "",
+            InitiatedBy = "consolidation",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "",
+            TimeoutSeconds = 0,
+            ConsolidationRunType = ConsolidationRunType.RefactoringDetection,
+            ConsolidationWorkspacePath = "/tmp/ws"
+        };
+
+        var result1 = await _sut.DistributeAsync(request, CancellationToken.None);
+        var result2 = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result1.Success.Should().BeTrue();
+        result2.Success.Should().BeFalse("duplicate should be rejected by dedup");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_Consolidation_SetsRequiredLabelsFromAgentSelector()
+    {
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "crun-labels",
+            IssueProviderConfigId = "consolidation",
+            RepoProviderConfigId = "",
+            InitiatedBy = "consolidation",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "dotnet, kiro",
+            TimeoutSeconds = 0,
+            ConsolidationRunType = ConsolidationRunType.HarnessSuggestions,
+            ConsolidationWorkspacePath = "/tmp/ws"
+        };
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        // Verify the job was enqueued (queue length > 0)
+        _dispatcherService.QueueLength.Should().Be(1);
+    }
+
     // ── Null argument validation ────────────────────────────────────────
 
     [Fact]

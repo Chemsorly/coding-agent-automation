@@ -233,11 +233,10 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IJobDispatcher>(),
             sp.GetRequiredService<IConfigurationStore>(),
-            sp.GetRequiredService<ConsolidationQueueService>(),
-            sp.GetRequiredService<IConsolidationService>(),
             sp.GetRequiredService<IConsolidationDispatcher>(),
             sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetService<IConsolidationRunStore>()));
         var hasDatabase = !string.IsNullOrEmpty(workDistributionMode);
         if (!hasDatabase)
         {
@@ -309,8 +308,6 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         PipelineConfiguration pipelineConfig)
     {
-        services.AddSingleton<ConsolidationQueueService>(sp => new ConsolidationQueueService(Log.Logger));
-
         services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatcher(
             sp.GetRequiredService<AgentRegistryService>(),
             sp.GetRequiredService<JobDispatcherService>(),
@@ -319,7 +316,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ITokenVendingService>(),
             pipelineConfig,
-            sp.GetRequiredService<ConsolidationQueueService>(),
+            sp.GetRequiredService<IWorkDistributor>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             Log.Logger,
             sp.GetRequiredService<IConsolidationRunStore>()));
