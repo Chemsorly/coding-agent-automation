@@ -2,38 +2,47 @@
 
 @if (_initialized && !_dismissed && !AllComplete)
 {
+    var completedCount = new[] { HasIssueProvider, HasRepoProvider, HasProject, HasTemplate, HasAgent, IsLoopActive }.Count(x => x);
+    var foundCurrent = false;
+
     <section class="onboarding-checklist">
         <div class="onboarding-header">
             <h2>🚀 Getting Started</h2>
             <button class="onboarding-dismiss" @onclick="Dismiss" title="Dismiss checklist">✕</button>
         </div>
         <p class="onboarding-description">Complete these steps to run your first pipeline:</p>
+        <div class="onboarding-progress">
+            <div class="progress-bar" role="progressbar" aria-valuenow="@completedCount" aria-valuemin="0" aria-valuemax="6">
+                <div class="progress-fill" style="width: @((int)Math.Round(completedCount * 100.0 / 6))%"></div>
+            </div>
+            <span class="progress-text">@completedCount of 6 steps complete</span>
+        </div>
         <ol class="onboarding-steps">
-            <li class="@(HasIssueProvider ? "step-complete" : "")">
-                @if (HasIssueProvider) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }
+            <li class="@StepClass(HasIssueProvider, ref foundCurrent)">
+                @if (HasIssueProvider) { <Icon Name="check-circle" Size="16" Class="step-check-done" /> } else { <Icon Name="circle" Size="16" Class="step-check-pending" /> }
                 <a href="settings?section=providers-issue">Create an Issue Provider</a>
             </li>
-            <li class="@(HasRepoProvider ? "step-complete" : "")">
-                @if (HasRepoProvider) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }
+            <li class="@StepClass(HasRepoProvider, ref foundCurrent)">
+                @if (HasRepoProvider) { <Icon Name="check-circle" Size="16" Class="step-check-done" /> } else { <Icon Name="circle" Size="16" Class="step-check-pending" /> }
                 <a href="settings?section=providers-repository">Create a Repository Provider</a>
             </li>
-            <li class="@(HasProject ? "step-complete" : "")">
-                @if (HasProject) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }
+            <li class="@StepClass(HasProject, ref foundCurrent)">
+                @if (HasProject) { <Icon Name="check-circle" Size="16" Class="step-check-done" /> } else { <Icon Name="circle" Size="16" Class="step-check-pending" /> }
                 <a href="settings?section=projects">Create a Project</a>
             </li>
             @* TODO: This link uses @onclick:preventDefault so the href is never followed on click — navigation depends
                entirely on the OnAddTemplate EventCallback. If rendered outside the agent-coding page or if OnAddTemplate
                is not wired, the link will do nothing. Consider aligning with peer links that use direct href navigation. *@
-            <li class="@(HasTemplate ? "step-complete" : "")">
-                @if (HasTemplate) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }
+            <li class="@StepClass(HasTemplate, ref foundCurrent)">
+                @if (HasTemplate) { <Icon Name="check-circle" Size="16" Class="step-check-done" /> } else { <Icon Name="circle" Size="16" Class="step-check-pending" /> }
                 <a href="agent-coding" @onclick="OnAddTemplate" @onclick:preventDefault>Create a Pipeline Template</a>
             </li>
-            <li class="@(HasAgent ? "step-complete" : "")">
-                @if (HasAgent) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }
+            <li class="@StepClass(HasAgent, ref foundCurrent)">
+                @if (HasAgent) { <Icon Name="check-circle" Size="16" Class="step-check-done" /> } else { <Icon Name="circle" Size="16" Class="step-check-pending" /> }
                 <a href="agent-monitoring">Register an Agent</a>
             </li>
-            <li class="@(IsLoopActive ? "step-complete" : "")">
-                @if (IsLoopActive) { <span class="step-icon">✅</span> } else { <span class="step-icon">☐</span> }
+            <li class="@StepClass(IsLoopActive, ref foundCurrent)">
+                @if (IsLoopActive) { <Icon Name="check-circle" Size="16" Class="step-check-done" /> } else { <Icon Name="circle" Size="16" Class="step-check-pending" /> }
                 <span class="step-text">Start the pipeline loop</span>
             </li>
         </ol>
@@ -53,6 +62,20 @@
     [Parameter] public EventCallback OnAddTemplate { get; set; }
 
     private bool AllComplete => HasIssueProvider && HasRepoProvider && HasProject && HasTemplate && HasAgent && IsLoopActive;
+
+    private static string StepClass(bool isComplete, ref bool foundCurrent)
+    {
+        if (isComplete)
+            return "step-complete";
+
+        if (!foundCurrent)
+        {
+            foundCurrent = true;
+            return "step-current";
+        }
+
+        return "";
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
