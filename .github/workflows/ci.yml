@@ -148,7 +148,7 @@ jobs:
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_RUN_ID=${{ github.run_id }}"
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_RUN_NUMBER=${{ github.run_number }}"
-          BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_IMAGE_TAG=chemsorly/dev:${{ matrix.tag }}"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_IMAGE_TAG=chemsorly/coding-agent:${{ matrix.tag }}-latest"
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}"
 
           # Build multi-arch image (SDK runs natively on ARM via $BUILDPLATFORM, cross-compiles via $TARGETARCH)
@@ -165,22 +165,6 @@ jobs:
           # Push manifests only on main branch or tag pushes
           if [ "${{ github.ref }}" = "refs/heads/main" ] || echo "${{ github.ref }}" | grep -q "^refs/tags/v"; then
             SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-
-            # Push to chemsorly/dev (backward compatibility — existing tag)
-            buildah manifest push \
-              --storage-driver vfs \
-              --authfile /run/containers/0/auth.json \
-              --all \
-              docker.io/chemsorly/dev:${{ matrix.tag }} \
-              docker://docker.io/chemsorly/dev:${{ matrix.tag }}
-
-            # Push to chemsorly/coding-agent (public registry — unversioned rolling tag)
-            buildah manifest push \
-              --storage-driver vfs \
-              --authfile /run/containers/0/auth.json \
-              --all \
-              docker.io/chemsorly/dev:${{ matrix.tag }} \
-              docker://docker.io/chemsorly/coding-agent:${{ matrix.tag }}
 
             # Push SHA-tagged image (pinnable version)
             buildah manifest push \
