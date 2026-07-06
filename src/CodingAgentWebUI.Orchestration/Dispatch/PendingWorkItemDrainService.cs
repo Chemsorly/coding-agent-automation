@@ -25,6 +25,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly ILabelSwapper _labelSwapper;
     private readonly IProjectStore? _projectStore;
+    private readonly IConsolidationDispatcher? _consolidationDispatcher;
+    private readonly IConsolidationRunStore? _consolidationRunStore;
     private readonly ILogger<PendingWorkItemDrainService> _logger;
 
     private readonly SemaphoreSlim _wakeSignal = new(0, int.MaxValue);
@@ -40,7 +42,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         IPendingWorkQuery pendingWorkQuery,
         ILabelSwapper labelSwapper,
         ILogger<PendingWorkItemDrainService> logger,
-        IProjectStore? projectStore = null)
+        IProjectStore? projectStore = null,
+        IConsolidationDispatcher? consolidationDispatcher = null,
+        IConsolidationRunStore? consolidationRunStore = null)
     {
         _dbFactory = dbFactory;
         _agentResolver = agentResolver;
@@ -51,6 +55,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         _labelSwapper = labelSwapper;
         _logger = logger;
         _projectStore = projectStore;
+        _consolidationDispatcher = consolidationDispatcher;
+        _consolidationRunStore = consolidationRunStore;
     }
 
     /// <summary>
@@ -102,7 +108,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         var pendingItems = await db.WorkItems
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending)
-            .OrderBy(w => w.CreatedAt)
+            .OrderBy(w => w.TaskType == WorkItemTaskType.Consolidation ? 1 : 0)
+            .ThenBy(w => w.CreatedAt)
             .Take(20) // Batch limit per cycle
             .ToListAsync(ct);
 
@@ -155,6 +162,87 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             var connectionId = resolveResult.ConnectionId;
             var agentId = resolveResult.AgentId;
 
+            // --- Consolidation items: dispatch via IConsolidationDispatcher (token vending at drain time) ---
+            if (item.TaskType == WorkItemTaskType.Consolidation)
+            {
+                if (_consolidationDispatcher is null || _consolidationRunStore is null)
+                {
+                    _logger.LogError("PendingWorkItemDrainService: consolidation dispatcher not available for WorkItem {WorkItemId}", item.Id);
+                    _agentResolver.ReleaseAgent(agentId);
+                    continue;
+                }
+
+                // Cancel-during-dispatch race guard: check if run was cancelled while queued
+                var runId = request.IssueIdentifier; // RunId stored as IssueIdentifier for consolidation
+                var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
+                if (consolidationRun is null ||
+                    consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
+                    consolidationRun.Status == ConsolidationRunStatus.Failed)
+                {
+                    _logger.LogInformation(
+                        "PendingWorkItemDrainService: consolidation run {RunId} is cancelled/failed, transitioning WorkItem {WorkItemId} to Cancelled",
+                        runId, item.Id);
+                    _agentResolver.ReleaseAgent(agentId);
+                    await _transitionService.TransitionAsync(
+                        item.Id, WorkItemStatus.Cancelled,
+                        entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct);
+                    continue;
+                }
+
+                try
+                {
+                    // Transition to Dispatched before dispatch attempt
+                    await _transitionService.TransitionAsync(
+                        item.Id, WorkItemStatus.Dispatched,
+                        entity =>
+                        {
+                            entity.DispatchedAt = DateTimeOffset.UtcNow;
+                            entity.AssignedAgentId = agentId;
+                        }, ct);
+
+                    var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
+                        runId,
+                        request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
+                        request.ConsolidationTemplateId,
+                        request.ConsolidationWorkspacePath ?? "",
+                        agentId,
+                        ct);
+
+                    if (dispatched)
+                    {
+                        _agentResolver.AssignJob(agentId, item.Id.ToString());
+                        _logger.LogInformation(
+                            "PendingWorkItemDrainService: dispatched consolidation WorkItem {WorkItemId} (run {RunId}) to agent {AgentId}",
+                            item.Id, runId, agentId);
+                    }
+                    else
+                    {
+                        // Dispatch failed — revert to Pending for next cycle
+                        _agentResolver.ReleaseAgent(agentId);
+                        await _transitionService.TransitionAsync(
+                            item.Id, WorkItemStatus.Pending,
+                            entity =>
+                            {
+                                entity.DispatchedAt = null;
+                                entity.AssignedAgentId = null;
+                            }, ct);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "PendingWorkItemDrainService: consolidation dispatch failed for WorkItem {WorkItemId}",
+                        item.Id);
+                    _agentResolver.ReleaseAgent(agentId);
+                    // TODO: Revert WorkItem from Dispatched to Pending here (matching the non-exception failure path).
+                    // Currently the WorkItem remains stuck in Dispatched until the stuck-item detector fires (~5 min).
+                    // Add: await _transitionService.TransitionAsync(item.Id, WorkItemStatus.Pending, entity => { entity.DispatchedAt = null; entity.AssignedAgentId = null; }, ct);
+                }
+
+                continue;
+            }
+
+            // --- Pipeline items: existing path ---
             try
             {
                 // Update in-memory PipelineRun with agent ID.

@@ -44,6 +44,14 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        // Consolidation requires persistent SignalR connections (AssignConsolidationJobAsync).
+        // Kubernetes mode spawns ephemeral pods without SignalR — consolidation is not supported.
+        if (request.TaskType == WorkItemTaskType.Consolidation)
+        {
+            _logger.LogWarning("Consolidation dispatch not supported in Kubernetes mode");
+            return new DistributionResult(false, null, "Consolidation not supported in Kubernetes mode");
+        }
+
         var workItemId = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
 

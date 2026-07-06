@@ -39,7 +39,7 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
 
         var result = items.Select(w =>
         {
-            var (issueTitle, repoProviderId) = ExtractFromPayload(w.Payload);
+            var (issueTitle, repoProviderId, consolidationRunType) = ExtractFromPayload(w.Payload);
             return new PendingJob
             {
                 IssueIdentifier = w.IssueIdentifier,
@@ -53,7 +53,8 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
                     : w.AgentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                 RunType = w.TaskType == WorkItemTaskType.Review ? PipelineRunType.Review
                     : w.TaskType == WorkItemTaskType.Decomposition ? PipelineRunType.DecompositionAnalysis
-                    : PipelineRunType.Implementation
+                    : PipelineRunType.Implementation,
+                ConsolidationRunType = w.TaskType == WorkItemTaskType.Consolidation ? consolidationRunType : null
             };
         }).ToList();
 
@@ -62,27 +63,27 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
     }
 
     /// <summary>
-    /// Extracts IssueTitle and RepoProviderConfigId from the serialized payload JSONB.
-    /// Falls back to empty strings if payload is null or deserialization fails.
+    /// Extracts IssueTitle, RepoProviderConfigId, and ConsolidationRunType from the serialized payload JSONB.
+    /// Falls back to empty strings/null if payload is null or deserialization fails.
     /// </summary>
-    internal static (string IssueTitle, string RepoProviderId) ExtractFromPayload(string? payload)
+    internal static (string IssueTitle, string RepoProviderId, ConsolidationRunType? ConsolidationRunType) ExtractFromPayload(string? payload)
     {
         if (string.IsNullOrEmpty(payload))
-            return ("", "");
+            return ("", "", null);
 
         try
         {
             var request = JsonSerializer.Deserialize<JobDistributionRequest>(payload, PipelineJsonOptions.Default);
             if (request is null)
-                return ("", "");
+                return ("", "", null);
 
             var title = request.IssueDetail?.Title ?? "";
             var repoId = request.RepoProviderConfigId ?? "";
-            return (title, repoId);
+            return (title, repoId, request.ConsolidationRunType);
         }
         catch (JsonException)
         {
-            return ("", "");
+            return ("", "", null);
         }
     }
 }

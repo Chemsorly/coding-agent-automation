@@ -52,7 +52,8 @@ public static class WorkDistributionRegistration
                 sp.GetRequiredService<IJobDispatcher>(),
                 sp.GetRequiredService<JobDispatcherService>(),
                 sp.GetRequiredService<IOrchestratorRunService>(),
-                Log.Logger));
+                Log.Logger,
+                new Lazy<IConsolidationDispatcher>(() => sp.GetRequiredService<IConsolidationDispatcher>())));
             services.AddSingleton<IActiveRunQueryService>(sp => new InMemoryActiveRunQueryService(
                 sp.GetRequiredService<IOrchestratorRunService>()));
             services.AddSingleton<IConsolidationRunStore>(sp =>
@@ -299,7 +300,10 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IPendingWorkQuery>(),
             sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>()));
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>(),
+            sp.GetService<IProjectStore>(),
+            sp.GetRequiredService<IConsolidationDispatcher>(),
+            sp.GetRequiredService<IConsolidationRunStore>()));
         services.AddHostedService(sp => sp.GetRequiredService<PendingWorkItemDrainService>());
 
         Log.Information("WorkDistribution: SignalR mode — SignalRWorkDistributor + PendingWorkItemDrainService registered");

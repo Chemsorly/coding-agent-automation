@@ -32,8 +32,7 @@ public class AgentHubFacadeConcurrencyTests
         var dispatcher = new JobDispatcherService(_registry, mockLogger.Object);
         var drainService = new JobQueueDrainService(
             dispatcher, _registry, Mock.Of<IJobDispatcher>(),
-            Mock.Of<IConfigurationStore>(), new ConsolidationQueueService(mockLogger.Object),
-            Mock.Of<IConsolidationService>(), Mock.Of<IConsolidationDispatcher>(),
+            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatcher>(),
             new ShutdownSignal(), mockLogger.Object);
 
         _facade = new AgentHubFacade(

@@ -15,6 +15,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
     private readonly IJobDispatcher _jobDispatcher;
     private readonly JobDispatcherService _dispatcherService;
     private readonly IOrchestratorRunService _runService;
+    private readonly Lazy<IConsolidationDispatcher>? _consolidationDispatcher;
     private readonly ILogger _logger;
 
     /// <summary>
@@ -27,7 +28,8 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
         IJobDispatcher jobDispatcher,
         JobDispatcherService dispatcherService,
         IOrchestratorRunService runService,
-        ILogger logger)
+        ILogger logger,
+        Lazy<IConsolidationDispatcher>? consolidationDispatcher = null)
     {
         ArgumentNullException.ThrowIfNull(jobDispatcher);
         ArgumentNullException.ThrowIfNull(dispatcherService);
@@ -38,6 +40,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
         _dispatcherService = dispatcherService;
         _runService = runService;
         _logger = logger;
+        _consolidationDispatcher = consolidationDispatcher;
     }
 
     /// <inheritdoc />
@@ -87,7 +90,33 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
                     request.DecompositionSource);
                 break;
 
-            default: // Implementation, Consolidation
+            case WorkItemTaskType.Consolidation:
+                // Enqueue directly into the in-memory queue for drain by JobQueueDrainService.
+                // Do NOT call ConsolidationDispatcher.TryDispatchAsync here — that would recurse
+                // back to IWorkDistributor.DistributeAsync (this method) causing a StackOverflow.
+                var requiredLabels = string.IsNullOrEmpty(request.AgentSelector)
+                    ? Array.Empty<string>()
+                    : request.AgentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+                var consolidationPendingJob = new PendingJob
+                {
+                    IssueIdentifier = request.IssueIdentifier,
+                    IssueProviderId = request.IssueProviderConfigId,
+                    RepoProviderId = request.RepoProviderConfigId,
+                    InitiatedBy = request.InitiatedBy,
+                    EnqueuedAt = DateTimeOffset.UtcNow,
+                    RequiredLabels = requiredLabels,
+                    ConsolidationRunType = request.ConsolidationRunType,
+                    ConsolidationTemplateId = request.ConsolidationTemplateId,
+                    ConsolidationWorkspacePath = request.ConsolidationWorkspacePath
+                };
+
+                var enqueued = _dispatcherService.EnqueueJob(consolidationPendingJob);
+                return enqueued
+                    ? new DistributionResult(true, null, "Queued — no idle agent", Queued: true)
+                    : new DistributionResult(false, null, "Consolidation job already queued (dedup)");
+
+            default: // Implementation
                 success = await _jobDispatcher.TryDispatchAsync(
                     request.IssueIdentifier,
                     request.IssueProviderConfigId,

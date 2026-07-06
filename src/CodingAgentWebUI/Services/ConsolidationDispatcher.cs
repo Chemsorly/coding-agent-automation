@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Services;
 /// Implements <see cref="IConsolidationDispatcher"/> by selecting an idle agent from the
 /// <see cref="AgentRegistryService"/>, building a <see cref="ConsolidationJobMessage"/>,
 /// and dispatching it via <see cref="IAgentCommunication"/>.
-/// When no idle agent is available, enqueues the job in <see cref="ConsolidationQueueService"/>.
+/// When no idle agent is available, enqueues via <see cref="IWorkDistributor"/>.
 /// </summary>
 public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 {
@@ -24,7 +24,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly IProjectStore _projectStore;
     private readonly ITokenVendingService _tokenVending;
     private readonly PipelineConfiguration _config;
-    private readonly ConsolidationQueueService _queueService;
+    private readonly IWorkDistributor _workDistributor;
     private readonly IPipelineRunHistoryService _runHistoryService;
     private readonly ILogger _logger;
     private readonly IConsolidationRunStore _runStore;
@@ -37,7 +37,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         IProjectStore projectStore,
         ITokenVendingService tokenVending,
         PipelineConfiguration config,
-        ConsolidationQueueService queueService,
+        IWorkDistributor workDistributor,
         IPipelineRunHistoryService runHistoryService,
         ILogger logger,
         IConsolidationRunStore runStore)
@@ -49,7 +49,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(config);
-        ArgumentNullException.ThrowIfNull(queueService);
+        ArgumentNullException.ThrowIfNull(workDistributor);
         ArgumentNullException.ThrowIfNull(runHistoryService);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(runStore);
@@ -61,7 +61,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         _projectStore = projectStore;
         _tokenVending = tokenVending;
         _config = config;
-        _queueService = queueService;
+        _workDistributor = workDistributor;
         _runHistoryService = runHistoryService;
         _logger = logger;
         _runStore = runStore;
@@ -86,24 +86,36 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         var agent = _jobDispatcher.SelectAgent(requiredLabels);
         if (agent is null)
         {
-            // No idle agent — enqueue for later dispatch
-            var pendingJob = new PendingConsolidationJob
-            {
-                RunId = run.RunId,
-                Type = type,
-                TemplateId = templateId,
-                WorkspacePath = workspacePath,
-                RequiredLabels = requiredLabels,
-                EnqueuedAt = DateTimeOffset.UtcNow
-            };
-
+            // No idle agent — enqueue via IWorkDistributor for unified drain
             // Store required labels on the run for restart rehydration
             run.QueuedRequiredLabels = requiredLabels.ToList();
 
-            _queueService.EnqueueJob(pendingJob);
+            var distributionRequest = new JobDistributionRequest
+            {
+                IssueIdentifier = run.RunId,
+                IssueProviderConfigId = "consolidation",
+                RepoProviderConfigId = "",
+                InitiatedBy = "consolidation",
+                TaskType = WorkItemTaskType.Consolidation,
+                AgentSelector = string.Join(",", requiredLabels),
+                TimeoutSeconds = 0,
+                ConsolidationRunType = type,
+                ConsolidationTemplateId = templateId,
+                ConsolidationWorkspacePath = workspacePath,
+                RunId = run.RunId
+            };
+
+            var result = await _workDistributor.DistributeAsync(distributionRequest, ct);
+            if (!result.Success)
+            {
+                _logger.Error(
+                    "Failed to enqueue consolidation run {RunId} via IWorkDistributor: {Error}",
+                    run.RunId, result.ErrorMessage);
+                return ConsolidationDispatchResult.Failed;
+            }
 
             _logger.Information(
-                "No idle agent for consolidation run {RunId} (type={Type}), enqueued for later dispatch",
+                "No idle agent for consolidation run {RunId} (type={Type}), enqueued via IWorkDistributor",
                 run.RunId, type);
             return ConsolidationDispatchResult.Queued;
         }
@@ -143,15 +155,24 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         ArgumentNullException.ThrowIfNull(workspacePath);
         ArgumentNullException.ThrowIfNull(agentId);
 
-        // Cancel-during-dispatch race check
-        if (_queueService.IsRunCancelled(runId))
+        // Cancel-during-dispatch race check via run store
+        var existingRun = await _runStore.GetByIdAsync(runId, ct);
+        if (existingRun is null ||
+            existingRun.Status == ConsolidationRunStatus.Cancelled ||
+            existingRun.Status == ConsolidationRunStatus.Failed)
         {
-            _logger.Information("Consolidation job {RunId} was cancelled, skipping dispatch", runId);
+            _logger.Information("Consolidation job {RunId} was cancelled/failed, skipping dispatch", runId);
             return false;
         }
 
         var agent = _registry.GetByAgentId(agentId);
-        if (agent is null || agent.Status != AgentStatus.Idle)
+        if (agent is null)
+            return false;
+
+        // Accept Idle (Legacy drain — agent not yet reserved) or Busy with no active job
+        // (DB drain — agent pre-reserved by PendingWorkItemDrainService via ResolveAgent).
+        if (agent.Status != AgentStatus.Idle &&
+            !(agent.Status == AgentStatus.Busy && agent.ActiveJobId is null))
             return false;
 
         // Load the run from disk to get template name
@@ -169,6 +190,11 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
             }
 
             await DispatchToAgentAsync(run, type, templateId, feedbackDataJson, workspacePath, agent, ct);
+
+            // Transition run from Queued → Running after successful dispatch
+            // (previously done in the deleted DrainConsolidationJobsAsync)
+            await TransitionRunToRunningAsync(runId, ct);
+
             return true;
         }
         catch (Exception ex)
@@ -184,10 +210,19 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     }
 
     /// <inheritdoc />
-    public void NotifyRunCancelled(string runId)
+    public async Task NotifyRunCancelledAsync(string runId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(runId);
-        _queueService.CancelRun(runId);
+
+        // DB mode: transition WorkItem to Cancelled
+        // TODO: CancelJobAsync uses Guid.TryParse(runId) as WorkItem.Id. This works because
+        // InsertConsolidationAsPendingAsync sets WorkItem.Id = RunId (when parseable as GUID).
+        // If the coupling breaks (e.g., RunId not parseable), cancellation silently fails.
+        // Consider querying by IssueIdentifier instead of relying on ID equality. (#1084 follow-up)
+        await _workDistributor.CancelJobAsync(runId, ct);
+
+        // Legacy mode: remove from in-memory queue
+        _jobDispatcher.RemoveJob(runId);
     }
 
     private async Task DispatchToAgentAsync(
@@ -239,6 +274,31 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private async Task<ConsolidationRun?> LoadRunAsync(string runId, CancellationToken ct)
     {
         return await _runStore.GetByIdAsync(runId, ct);
+    }
+
+    /// <summary>
+    /// Transitions a queued consolidation run to Running status after successful dispatch.
+    /// This mirrors what the deleted DrainConsolidationJobsAsync did via IConsolidationService.TransitionToRunningAsync.
+    /// We call the run store directly to avoid a circular dependency (ConsolidationService → IConsolidationDispatcher → IConsolidationService).
+    /// </summary>
+    private async Task TransitionRunToRunningAsync(string runId, CancellationToken ct)
+    {
+        try
+        {
+            var run = await _runStore.GetByIdAsync(runId, ct);
+            if (run is null || run.Status != ConsolidationRunStatus.Queued)
+                return;
+
+            run.Status = ConsolidationRunStatus.Running;
+            await _runStore.SaveRunAsync(run, ct);
+
+            _logger.Information("Consolidation run {RunId} transitioned from Queued to Running", runId);
+        }
+        catch (Exception ex)
+        {
+            // Non-fatal: the run will still execute, just shows wrong status in the UI until completion
+            _logger.Error(ex, "Failed to transition consolidation run {RunId} to Running", runId);
+        }
     }
 
     /// <summary>

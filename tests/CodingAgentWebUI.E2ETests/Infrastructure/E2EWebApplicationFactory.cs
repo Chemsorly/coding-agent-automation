@@ -151,9 +151,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
         if (consolidationService is ConsolidationService cs)
             cs.Reset();
 
-        // Reset consolidation queue (prevents queued jobs from prior tests dispatching to new agents)
-        var queueService = Services.GetRequiredService<ConsolidationQueueService>();
-        queueService.Reset();
+
     }
 
     private static void ReplaceService<T>(IServiceCollection services, T implementation) where T : class
