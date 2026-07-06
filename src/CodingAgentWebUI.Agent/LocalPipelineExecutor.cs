@@ -540,17 +540,7 @@ public sealed class LocalPipelineExecutor
         JobAssignmentMessage job, HubConnection connection)
     {
         var steps = BuildFullPrefix(job);
-        steps.AddRange([
-            new DetectReworkStep(),
-            new WritePrConversationContextStep(),
-            new CreateBranchStep(),
-            new VerifyBaselineStep(),
-            new AnalyzeCodeStep(),
-            new GenerateCodeStep(),
-            new BrainPullBeforeWriteStep(),
-            new ReviewCodeStep(),
-            new RunQualityGatesStep()
-        ]);
+        steps.AddRange(PipelineStepFactory.CreateCoreImplementationSteps());
         return steps;
     }
 
