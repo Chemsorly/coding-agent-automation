@@ -281,8 +281,7 @@ public sealed record PipelineConfiguration
     /// Applies non-null project overrides to a PipelineConfiguration instance.
     /// Called BEFORE ApplyTemplateOverrides in the dispatch pipeline.
     /// Each non-null property on the project replaces the corresponding global value.
-    /// // TODO: Update this doc comment — nested objects (e.g., CodeReview) now use deep-merge semantics via ApplyOverrides, not REPLACE.
-    /// Nested objects (e.g., CodeReview) use REPLACE semantics — no deep merge.
+    /// Nested objects (e.g., CodeReview) use deep-merge semantics via ApplyOverrides.
     /// </summary>
     public static PipelineConfiguration ApplyProjectOverrides(
         PipelineConfiguration config, PipelineProject? project)
