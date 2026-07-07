@@ -307,7 +307,7 @@ public class AgentMonitoringComponentTests : BunitContext
         var indicator = header.QuerySelector(".freshness-indicator");
         Assert.NotNull(indicator);
         Assert.Contains("Last updated:", indicator.TextContent);
-        Assert.Contains("Refreshing every 2s", indicator.TextContent);
+        Assert.Contains("Refreshing every 5s", indicator.TextContent);
     }
 
     [Fact]

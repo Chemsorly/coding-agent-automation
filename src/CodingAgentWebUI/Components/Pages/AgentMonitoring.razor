@@ -40,7 +40,7 @@
             }
             else
             {
-                <text>Last updated: @FormatTimeAgo(_lastSuccessfulRefresh) · Refreshing every 2s</text>
+                <text>Last updated: @FormatTimeAgo(_lastSuccessfulRefresh) · Refreshing every 5s</text>
             }
         </span>
     </header>
@@ -780,8 +780,8 @@
         PipelineService.OnChange += HandleStateChanged;
         ConsolidationService.OnChange += HandleStateChanged;
 
-        // Refresh every 2 seconds for heartbeat/elapsed updates
-        _refreshTimer = new Timer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
+        // Refresh every 5 seconds for heartbeat/elapsed updates
+        _refreshTimer = new Timer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
 
         try
         {
