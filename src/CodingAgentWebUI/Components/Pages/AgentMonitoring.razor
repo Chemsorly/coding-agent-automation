@@ -23,6 +23,7 @@
 @inject IPipelineRunHistoryService HistoryService
 @inject InfrastructureHealthService InfraHealth
 @inject IJSRuntime JS
+@inject TimeProvider Clock
 @using Microsoft.AspNetCore.SignalR
 
 <PageTitle>Agent Monitoring - Coding Agent</PageTitle>
@@ -31,7 +32,7 @@
     <header class="agent-header">
         <h1>Agent Monitoring</h1>
         @{
-            var isStale = _lastRefreshFailed || (DateTimeOffset.UtcNow - _lastSuccessfulRefresh).TotalSeconds > 30;
+            var isStale = _lastRefreshFailed || (Clock.GetUtcNow() - _lastSuccessfulRefresh).TotalSeconds > 30;
         }
         <span class="freshness-indicator @(isStale ? "freshness-warning" : "")">
             @if (isStale)
@@ -770,13 +771,14 @@
     private Timer? _refreshTimer;
     private int _maxRetries = 3;
     private bool _showDisconnectConfirm;
-    private DateTimeOffset _lastSuccessfulRefresh = DateTimeOffset.UtcNow;
+    private DateTimeOffset _lastSuccessfulRefresh;
     private bool _lastRefreshFailed;
     private bool? _dbStatus;
     private bool? _redisStatus;
 
     protected override async Task OnInitializedAsync()
     {
+        _lastSuccessfulRefresh = Clock.GetUtcNow();
         PipelineService.OnChange += HandleStateChanged;
         ConsolidationService.OnChange += HandleStateChanged;
 
@@ -895,7 +897,7 @@
             {
                 if (_disposed) return;
                 await RefreshDataAsync();
-                _lastSuccessfulRefresh = DateTimeOffset.UtcNow;
+                _lastSuccessfulRefresh = Clock.GetUtcNow();
                 _lastRefreshFailed = false;
                 StateHasChanged();
             });
@@ -918,7 +920,7 @@
             {
                 if (_disposed) return;
                 await RefreshDataAsync(includeConsolidation: true);
-                _lastSuccessfulRefresh = DateTimeOffset.UtcNow;
+                _lastSuccessfulRefresh = Clock.GetUtcNow();
                 _lastRefreshFailed = false;
                 StateHasChanged();
             });

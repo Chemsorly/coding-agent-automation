@@ -94,6 +94,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Register services
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(BuildInfo.Load());
 
 // Host shutdown timeout: drain delay (15s) + ShutdownService timeout (15s) + buffer (10s) = 40s
