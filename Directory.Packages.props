@@ -4,6 +4,15 @@
     <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
+  <!-- Suppress NuGet audit warnings for transitive vulnerabilities we cannot control.
+       Scriban.Signed 7.2.0 is pulled in by WireMock.Net 2.11.0 (latest available);
+       no patched Scriban version exists yet. These are moderate-severity template injection
+       advisories that don't apply to our test-only usage of WireMock. -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-6q7j-xr26-3h2c" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-q6rr-fm2g-g5x8" />
+  </ItemGroup>
+
   <!-- Source packages -->
   <ItemGroup>
     <PackageVersion Include="LibGit2Sharp" Version="0.31.0" />
