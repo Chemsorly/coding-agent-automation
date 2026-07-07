@@ -511,6 +511,8 @@ public partial class AgentCoding : IDisposable
 
     private void DismissAgentSummary() => _showAgentSummary = false;
 
+    private void DismissError() => _errorMessage = null;
+
     private async Task AutoDismissAgentSummary()
     {
         await Task.Delay(8000);

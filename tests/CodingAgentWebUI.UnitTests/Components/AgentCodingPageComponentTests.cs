@@ -542,4 +542,43 @@ public class AgentCodingPageComponentTests : BunitContext
         var del = field?.GetValue(lifecycle) as Delegate;
         del?.DynamicInvoke(args.Length > 0 ? args : []);
     }
+
+    // TODO: Add a negative test verifying that error messages do NOT auto-dismiss after a timeout
+    //       (acceptance criteria: "Error messages do NOT auto-dismiss"). Use a fake timer or Task.Delay
+    //       simulation to confirm the error remains displayed after 3+ seconds.
+
+    [Fact]
+    public void AgentCoding_ErrorMessage_HasDismissButton()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection failed"));
+
+        var component = Render<AgentCoding>();
+
+        var errorDiv = component.Find(".settings-status.status-error");
+        var dismissBtn = errorDiv.QuerySelector("button.agent-summary-dismiss");
+        Assert.NotNull(dismissBtn);
+        Assert.Equal("Dismiss", dismissBtn!.GetAttribute("title"));
+        Assert.Contains("✕", dismissBtn.TextContent);
+    }
+
+    [Fact]
+    public void AgentCoding_DismissError_ClearsErrorMessage()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection failed"));
+
+        var component = Render<AgentCoding>();
+
+        // Verify error is displayed
+        Assert.Contains("Connection failed", component.Markup);
+
+        // Click dismiss button
+        var dismissBtn = component.Find(".settings-status.status-error button.agent-summary-dismiss");
+        dismissBtn.Click();
+
+        // Error message should be gone
+        Assert.Empty(component.FindAll(".settings-status.status-error"));
+        Assert.DoesNotContain("Connection failed", component.Markup);
+    }
 }
