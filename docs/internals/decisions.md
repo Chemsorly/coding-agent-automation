@@ -240,6 +240,21 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 ---
 
+### Helm values: `agents` and `jobTemplates` are separate concerns
+
+**Date:** 2026-07-07
+**Category:** architecture
+
+**Decision:** The Helm `values.yaml` separates `agents[]` (SignalR mode Deployments) from `jobTemplates[]` (Kubernetes mode Job pod specs). These serve fundamentally different purposes: `agents` creates persistent Deployments with PVCs, health probes, and rolling update strategies; `jobTemplates` defines ephemeral Job pod specs (image, resources, securityContext, initContainers) rendered into a ConfigMap consumed by `DispatchService`. The ConfigMap template falls back to `agents[]` when `jobTemplates` is empty for backward compatibility.
+
+**Context:** Originally a single `agents[]` field served both modes. In SignalR mode it creates Deployments; in K8s mode it only produced a ConfigMap (no Deployments). The dual-purpose design caused confusion: K8s-only fields (maxConcurrent, initContainers for permission fixers) mixed with Deployment-only fields (persistence, strategy, affinity). The split clarifies: `agents` for what runs persistently, `jobTemplates` for what ephemeral Job pods look like.
+
+**Alternatives considered:** Keep unified `agents[]` with mode-conditional rendering (confusing for users — fields that do nothing in one mode), rename `agents` to `jobTemplates` globally (breaks existing SignalR deployments).
+
+**Reassess when:** If docker-compose/SignalR mode is deprecated entirely (per "Agent lifetime" decision above), `agents[]` becomes dead config and can be removed — only `jobTemplates[]` would remain.
+
+---
+
 ### Cleanup step before PR is intentional quality polish
 
 **Date:** 2026-07-04

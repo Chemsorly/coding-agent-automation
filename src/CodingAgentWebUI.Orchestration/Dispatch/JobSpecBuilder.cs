@@ -199,7 +199,7 @@ public static class JobSpecBuilder
                     ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
                     ["app.kubernetes.io/component"] = "agent-job",
                     ["caa/work-item-id"] = ctx.WorkItemId.ToString(),
-                    ["caa/agent-selector"] = ctx.AgentSelector
+                    ["caa/agent-selector"] = ctx.AgentSelector.Replace(',', '.')
                 }
             },
             Spec = new V1JobSpec

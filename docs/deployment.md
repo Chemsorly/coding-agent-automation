@@ -178,9 +178,10 @@ The chart deploys:
 | `orchestrator.image.repository/tag` | Orchestrator container image |
 | `orchestrator.persistence.type` | Storage backend: `pvc` (default), `hostPath`, or `emptyDir` |
 | `orchestrator.persistence.mountMode` | Config volume mount mode: `readWrite` (default), `readOnly` (migration source when database enabled), `disabled` (after migration complete) |
-| `agents[]` | List of agent definitions (name, image, labels, providerType) |
+| `agents[]` | List of agent definitions for SignalR mode (name, image, labels, providerType). Creates Deployments. |
 | `agents[].providerType` | `kiro` or `opencode` — determines volume mount profile |
 | `agents[].labels` | Comma-separated routing labels (e.g., `kiro,dotnet,dotnet10`) |
+| `jobTemplates[]` | List of K8s Job templates for Kubernetes mode. Defines pod spec per label set. Falls back to `agents[]` if empty. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
 | `secrets.otelHeaders` | OTLP auth headers |
 | `secrets.opencodeConfigContent` | OpenCode config JSON (mounted as file for opencode agents) |
@@ -204,11 +205,11 @@ The chart deploys:
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
 | `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
 
-In Kubernetes mode, Job pod specs (image, resources, nodeSelector, tolerations, initContainers, podSecurityContext, maxConcurrent) are configured per-agent in the `agents[]` list and rendered into a ConfigMap consumed by `DispatchService`.
+In Kubernetes mode, Job pod specs (image, resources, nodeSelector, tolerations, initContainers, podSecurityContext, maxConcurrent) are configured in the `jobTemplates[]` list and rendered into a ConfigMap consumed by `DispatchService`. If `jobTemplates` is empty, the chart falls back to deriving templates from the `agents[]` list for backward compatibility.
 
 ### Scaling Agents
 
-Add entries to the `agents[]` list. Each entry produces a separate Deployment with dedicated storage:
+**SignalR mode** — add entries to `agents[]`. Each entry produces a separate Deployment with dedicated storage:
 
 ```yaml
 agents:
@@ -226,6 +227,37 @@ agents:
       tag: coding-agent-kiro-dotnet10
     providerType: kiro
     labels: "kiro,dotnet,dotnet10"
+```
+
+**Kubernetes mode** — define `jobTemplates[]` with K8s Job-specific pod spec. `maxConcurrent` controls parallelism per label set:
+
+```yaml
+jobTemplates:
+  - labels: "kiro,dotnet,dotnet10"
+    image: "chemsorly/coding-agent:kiro-dotnet10"
+    providerType: kiro
+    maxConcurrent: 3
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+    podSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+    nodeSelector:
+      kubernetes.io/hostname: k8s-worker-1
+    initContainers:
+      - name: fix-perms
+        image: busybox:latest
+        command: ["sh", "-c", "chown -R 1000:1000 /home/ubuntu/.local/share/kiro-cli"]
+    tolerations:
+      - key: agents
+        operator: Exists
+        effect: NoSchedule
 ```
 
 ### Graceful Shutdown

@@ -254,7 +254,7 @@ public class JobSpecBuilderTests
         job.Metadata.Name.Should().Be("caa-12345678");
         job.Metadata.NamespaceProperty.Should().Be("coding-agent");
         job.Metadata.Labels["caa/work-item-id"].Should().Be(id.ToString());
-        job.Metadata.Labels["caa/agent-selector"].Should().Be("dotnet,dotnet10,kiro");
+        job.Metadata.Labels["caa/agent-selector"].Should().Be("dotnet.dotnet10.kiro");
     }
 
     [Fact]
@@ -329,6 +329,58 @@ public class JobSpecBuilderTests
         podSec.FsGroup.Should().Be(1000);
     }
 
+    [Fact]
+    public void Build_FullYamlTemplate_AllPassThroughFieldsDeserializeViaKubernetesJson()
+    {
+        // Guard against YAML→JSON type mismatches for ALL pass-through fields.
+        // Uses the real k8s client serializer (KubernetesJson) to validate that
+        // the JsonElements produced by JobTemplateProvider are compatible with
+        // the k8s model types. If a numeric field arrives as a JSON string,
+        // KubernetesJson.Deserialize will throw — catching the bug at test time.
+        const string yaml = """
+        - labels: "kiro,dotnet,dotnet10"
+          image: "chemsorly/coding-agent:kiro-dotnet10"
+          providerType: kiro
+          podSecurityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            runAsNonRoot: true
+          initContainers:
+            - name: fix-perms
+              image: busybox:latest
+              command: ["sh", "-c", "chown -R 1000:1000 /data"]
+          tolerations:
+            - key: agents
+              operator: Exists
+              effect: NoSchedule
+              tolerationSeconds: 300
+        """;
+
+        var provider = JobTemplateProvider.LoadFromYaml(yaml);
+        var template = provider.Resolve("dotnet,dotnet10,kiro")!;
+
+        // Validate podSecurityContext via k8s client deserializer
+        var pscJson = template.PodSecurityContext!.Value.GetRawText();
+        var psc = k8s.KubernetesJson.Deserialize<V1PodSecurityContext>(pscJson);
+        psc.RunAsUser.Should().Be(1000);
+        psc.FsGroup.Should().Be(1000);
+        psc.RunAsNonRoot.Should().BeTrue();
+
+        // Validate initContainers via k8s client deserializer
+        var icJson = template.InitContainers!.Value.GetRawText();
+        var containers = k8s.KubernetesJson.Deserialize<List<V1Container>>(icJson);
+        containers.Should().HaveCount(1);
+        containers![0].Name.Should().Be("fix-perms");
+
+        // Validate tolerations via k8s client deserializer
+        var tolJson = template.Tolerations!.Value.GetRawText();
+        var tolerations = k8s.KubernetesJson.Deserialize<List<V1Toleration>>(tolJson);
+        tolerations.Should().HaveCount(1);
+        tolerations![0].TolerationSeconds.Should().Be(300);
+        tolerations[0].Key.Should().Be("agents");
+    }
+
     #endregion
 
     #region InitContainers VolumeMounts Injection
@@ -352,6 +404,142 @@ public class JobSpecBuilderTests
         // The initContainer should have its volumeMount preserved
         var initContainer = job.Spec.Template.Spec.InitContainers[0];
         initContainer.VolumeMounts.Should().Contain(vm => vm.Name == "kiro-cli-data");
+    }
+
+    #endregion
+
+    #region Full Job Spec Validation (K8s API compliance)
+
+    /// <summary>
+    /// K8s label value regex: alphanumeric, '-', '_', '.', max 63 chars,
+    /// must start and end with alphanumeric (or be empty).
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex K8sLabelValueRegex = new(
+        @"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// K8s label key regex (without prefix): alphanumeric, '-', '_', '.', max 63 chars.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex K8sLabelKeyRegex = new(
+        @"^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    [Fact]
+    public void Build_FullSpec_ProducesValidK8sJob()
+    {
+        // Comprehensive validation: build a Job with ALL features enabled,
+        // then validate it would be accepted by the K8s API — labels, serialization, structure.
+        const string yaml = """
+        - labels: "kiro,dotnet,dotnet10"
+          image: "chemsorly/coding-agent:kiro-dotnet10"
+          providerType: kiro
+          maxConcurrent: 2
+          podSecurityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+            runAsNonRoot: true
+          initContainers:
+            - name: fix-perms
+              image: busybox:latest
+              command: ["sh", "-c", "chown -R 1000:1000 /home/ubuntu/.local/share/kiro-cli"]
+              volumeMounts:
+                - name: kiro-cli-data
+                  mountPath: /home/ubuntu/.local/share/kiro-cli
+          nodeSelector:
+            kubernetes.io/hostname: k8s-worker-1
+          tolerations:
+            - key: agents
+              operator: Exists
+              effect: NoSchedule
+              tolerationSeconds: 300
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+        """;
+
+        var provider = JobTemplateProvider.LoadFromYaml(yaml);
+        var template = provider.Resolve("dotnet,dotnet10,kiro")!;
+        var ctx = CreateContext(claimedPvc: "caa-kiro-cli-data-0");
+
+        // Build the full Job (with project secrets to exercise that volume path)
+        var ctxWithSecrets = new JobSpecBuilder.BuildContext
+        {
+            WorkItemId = ctx.WorkItemId,
+            AgentSelector = ctx.AgentSelector,
+            TimeoutSeconds = ctx.TimeoutSeconds,
+            JobName = ctx.JobName,
+            ClaimedPvc = ctx.ClaimedPvc,
+            OrchestratorUrl = ctx.OrchestratorUrl,
+            AgentApiKeySecretName = ctx.AgentApiKeySecretName,
+            AgentServiceAccountName = ctx.AgentServiceAccountName,
+            Namespace = ctx.Namespace,
+            OpencodeConfigSecretName = null,
+            ProjectSecrets = new Dictionary<string, string> { ["GH_TOKEN"] = "secret" }
+        };
+
+        // Build the full Job
+        var job = JobSpecBuilder.Build(template, ctxWithSecrets);
+
+        // ── 1. All label values must be valid K8s labels ──────────────────────
+        foreach (var (key, value) in job.Metadata.Labels)
+        {
+            var keyName = key.Contains('/') ? key.Split('/')[1] : key;
+            K8sLabelKeyRegex.IsMatch(keyName).Should().BeTrue(
+                $"label key '{key}' has invalid name part '{keyName}'");
+            value.Length.Should().BeLessThanOrEqualTo(63,
+                $"label value '{value}' for key '{key}' exceeds 63 chars");
+            K8sLabelValueRegex.IsMatch(value).Should().BeTrue(
+                $"label value '{value}' for key '{key}' is not a valid K8s label value");
+        }
+
+        // ── 2. Full Job serializes via KubernetesJson without error ───────────
+        var json = k8s.KubernetesJson.Serialize(job);
+        json.Should().NotBeNullOrEmpty();
+
+        // ── 3. Round-trip: serialize → deserialize produces equivalent Job ────
+        var roundTripped = k8s.KubernetesJson.Deserialize<V1Job>(json);
+        roundTripped.Should().NotBeNull();
+        roundTripped!.Metadata.Name.Should().Be(job.Metadata.Name);
+        roundTripped.Spec.Template.Spec.Containers.Should().HaveCount(1);
+        roundTripped.Spec.Template.Spec.Containers[0].Image.Should().Be("chemsorly/coding-agent:kiro-dotnet10");
+
+        // ── 4. Structural invariants ──────────────────────────────────────────
+        job.Metadata.Name.Should().NotBeNullOrEmpty("Job must have a name");
+        job.Metadata.NamespaceProperty.Should().NotBeNullOrEmpty("Job must have a namespace");
+        job.Spec.Template.Spec.RestartPolicy.Should().Be("Never", "Agent Jobs must not restart");
+        job.Spec.Template.Spec.ServiceAccountName.Should().NotBeNullOrEmpty("Job must use a ServiceAccount");
+        job.Spec.BackoffLimit.Should().BeGreaterThan(0, "Must allow at least one retry");
+        job.Spec.TtlSecondsAfterFinished.Should().BeGreaterThan(0, "Jobs must auto-cleanup");
+
+        // ── 5. Security: container drops ALL capabilities ─────────────────────
+        var mainContainer = job.Spec.Template.Spec.Containers[0];
+        mainContainer.SecurityContext.Capabilities.Drop.Should().Contain("ALL");
+
+        // ── 6. Volumes: all volumeMounts have corresponding volumes ───────────
+        var volumeNames = job.Spec.Template.Spec.Volumes.Select(v => v.Name).ToHashSet();
+        foreach (var mount in mainContainer.VolumeMounts)
+        {
+            volumeNames.Should().Contain(mount.Name,
+                $"container volumeMount '{mount.Name}' has no corresponding volume");
+        }
+        if (job.Spec.Template.Spec.InitContainers is not null)
+        {
+            foreach (var ic in job.Spec.Template.Spec.InitContainers)
+            {
+                if (ic.VolumeMounts is null) continue;
+                foreach (var mount in ic.VolumeMounts)
+                {
+                    volumeNames.Should().Contain(mount.Name,
+                        $"initContainer '{ic.Name}' volumeMount '{mount.Name}' has no corresponding volume");
+                }
+            }
+        }
     }
 
     #endregion

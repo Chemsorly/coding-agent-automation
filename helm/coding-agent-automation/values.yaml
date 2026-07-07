@@ -94,10 +94,13 @@ orchestrator:
     # Log level for the orchestrator application
     logLevel: Information
 
-# ── Agents ───────────────────────────────────────────────────────────────────
+# ── Agents (SignalR mode) ─────────────────────────────────────────────────────
 
-# Agents are defined as a list. Each entry produces its own Deployment + optional PVC.
-# This allows multiple instances of the same type with different names and dedicated storage.
+# Agent Deployments for SignalR work distribution mode (workDistribution.mode: SignalR).
+# Each entry produces its own Deployment + optional PVC — persistent containers that
+# connect via SignalR and receive jobs from the orchestrator.
+# In Kubernetes mode, these Deployments are NOT created. Use 'jobTemplates' instead
+# to define the K8s Job pod spec for ephemeral agent pods.
 agents:
   - name: agent-kiro-dotnet-1
     enabled: true
@@ -228,6 +231,46 @@ credentialPools:
   #   - caa-kiro-cli-data-0
   #   - caa-kiro-cli-data-1
   #   - caa-kiro-cli-data-2
+
+# ── Job Templates (Kubernetes mode) ─────────────────────────────────────────
+
+# Job templates define the K8s Job pod spec for each agent label set.
+# Used ONLY in Kubernetes work distribution mode (workDistribution.mode: Kubernetes).
+# Each entry becomes a template in the job-templates ConfigMap that DispatchService
+# uses to create K8s Job pods per WorkItem.
+#
+# If empty, falls back to the 'agents' list for backward compatibility.
+# When both 'jobTemplates' and 'agents' are populated, jobTemplates takes
+# priority — agents[] is only used as fallback when jobTemplates is empty.
+# When migrating from a unified 'agents' config to split mode, populate this
+# section with your K8s Job-specific settings and keep 'agents' for SignalR Deployments.
+jobTemplates: []
+  # Example:
+  # - labels: "kiro,dotnet,dotnet10"
+  #   image: "chemsorly/coding-agent:kiro-dotnet10"
+  #   providerType: kiro
+  #   maxConcurrent: 2
+  #   resources:
+  #     requests:
+  #       cpu: "100m"
+  #       memory: "256Mi"
+  #     limits:
+  #       cpu: "4"
+  #       memory: "8Gi"
+  #   podSecurityContext:
+  #     runAsUser: 1000
+  #     runAsGroup: 1000
+  #     fsGroup: 1000
+  #   nodeSelector:
+  #     kubernetes.io/hostname: k8s-worker-1
+  #   initContainers:
+  #     - name: fix-perms
+  #       image: busybox:latest
+  #       command: ["sh", "-c", "chown -R 1000:1000 /home/ubuntu/.local/share/kiro-cli"]
+  #   tolerations:
+  #     - key: agents
+  #       operator: Exists
+  #       effect: NoSchedule
 
 # ── SignalR Backplane (Redis) ────────────────────────────────────────────────
 
