@@ -363,7 +363,7 @@
             Repo = p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, ""),
             BaseBranch = p.Settings.GetValueOrDefault(ProviderSettingKeys.BaseBranch, ProviderSettingKeys.DefaultBaseBranch),
             RepositoryRole = p.RepositoryRole.ToString(),
-            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : p.Settings.GetValueOrDefault(ProviderSettingKeys.RequiredAgentLabels, ""),
+            RequiredLabels = p.RequiredLabels != null ? string.Join(", ", p.RequiredLabels) : "",
             BlacklistedPaths = p.BlacklistedPaths != null ? string.Join(", ", p.BlacklistedPaths) : "",
             GitLabApiUrl = p.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, ProviderSettingKeys.DefaultGitLabApiUrl),
             GitLabAccessToken = p.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken, ""),

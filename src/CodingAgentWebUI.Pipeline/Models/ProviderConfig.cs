@@ -40,8 +40,8 @@ public sealed class ProviderConfig
 
     /// <summary>
     /// Explicit required agent labels for this provider config. When set, takes precedence
-    /// over the <c>requiredAgentLabels</c> entry in the <see cref="Settings"/> dictionary.
-    /// Null means fall back to Settings dictionary lookup.
+    /// in label resolution. Null or empty means fall back to
+    /// <see cref="Models.PipelineConfiguration.DefaultRequiredAgentLabels"/>, then empty (any agent).
     /// </summary>
     [Key(6)]
     public IReadOnlyList<string>? RequiredLabels { get; init; }

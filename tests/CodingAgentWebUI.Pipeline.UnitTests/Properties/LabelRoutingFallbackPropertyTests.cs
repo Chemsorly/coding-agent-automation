@@ -17,7 +17,7 @@ public class LabelRoutingFallbackPropertyTests
 {
     /// <summary>
     /// Property 23: Label Routing Fallback
-    /// When repo config has requiredAgentLabels, those are used.
+    /// When repo config has RequiredLabels, those are used.
     /// **Validates: Requirements 19.3**
     /// </summary>
     [Property(MaxTest = 20)]
@@ -32,10 +32,7 @@ public class LabelRoutingFallbackPropertyTests
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             DisplayName = "Test",
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.RequiredAgentLabels] = $"{l1},{l2}"
-            }
+            RequiredLabels = new List<string> { l1, l2 }
         };
 
         var pipelineConfig = new PipelineConfiguration
@@ -51,7 +48,7 @@ public class LabelRoutingFallbackPropertyTests
     }
 
     /// <summary>
-    /// Property 23 (continued): When repo config has no requiredAgentLabels,
+    /// Property 23 (continued): When repo config has no RequiredLabels,
     /// falls back to DefaultRequiredAgentLabels.
     /// **Validates: Requirements 19.3**
     /// </summary>

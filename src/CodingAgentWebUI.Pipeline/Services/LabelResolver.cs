@@ -12,7 +12,6 @@ public static class LabelResolver
     /// <summary>
     /// Resolves the required agent labels for a repository provider config.
     /// Resolution order: <see cref="ProviderConfig.RequiredLabels"/> property →
-    /// repo <c>requiredAgentLabels</c> setting →
     /// <see cref="PipelineConfiguration.DefaultRequiredAgentLabels"/> → empty (any agent).
     /// </summary>
     public static IReadOnlyList<string> ResolveRequiredLabels(
@@ -25,16 +24,7 @@ public static class LabelResolver
             return explicitLabels;
         }
 
-        // 1. Check repo-level setting (legacy dictionary approach)
-        if (repoConfig?.Settings.TryGetValue(ProviderSettingKeys.RequiredAgentLabels, out var repoLabels) == true
-            && !string.IsNullOrWhiteSpace(repoLabels))
-        {
-            return repoLabels.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList()
-                .AsReadOnly();
-        }
-
-        // 2. Fall back to pipeline-level default
+        // 1. Fall back to pipeline-level default
         if (!string.IsNullOrWhiteSpace(pipelineConfig?.DefaultRequiredAgentLabels))
         {
             return pipelineConfig.DefaultRequiredAgentLabels
@@ -43,7 +33,7 @@ public static class LabelResolver
                 .AsReadOnly();
         }
 
-        // 3. No labels required — any agent matches
+        // 2. No labels required — any agent matches
         return [];
     }
 }

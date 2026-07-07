@@ -496,7 +496,7 @@ public sealed record PipelineConfiguration
 
     /// <summary>
     /// Global fallback for agent label routing when a repository's ProviderConfig
-    /// does not specify <c>requiredAgentLabels</c>. Comma-separated string (e.g., "kiro,dotnet").
+    /// does not specify <see cref="ProviderConfig.RequiredLabels"/>. Comma-separated string (e.g., "kiro,dotnet").
     /// Null means any idle agent can be selected.
     /// </summary>
     [Key(24)]
