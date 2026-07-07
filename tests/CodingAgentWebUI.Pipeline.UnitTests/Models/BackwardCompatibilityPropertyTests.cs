@@ -52,7 +52,6 @@ public class BackwardCompatibilityPropertyTests
         Assert.Equal(originalConfig.AnalysisRefinementPrompt, result.AnalysisRefinementPrompt);
         Assert.Equal(originalConfig.CodeReview.MaxIterations, result.CodeReview.MaxIterations);
         Assert.Equal(originalConfig.CodeReview.FixPrompt, result.CodeReview.FixPrompt);
-        Assert.Equal(originalConfig.CodeReview.ReviewIsolation, result.CodeReview.ReviewIsolation);
         Assert.Equal(originalConfig.BaselineHealthCheckEnabled, result.BaselineHealthCheckEnabled);
         Assert.Equal(originalConfig.ExternalCiTimeout, result.ExternalCiTimeout);
         Assert.Equal(originalConfig.ExternalCiPollInterval, result.ExternalCiPollInterval);
@@ -128,7 +127,6 @@ public class PipelineConfigArbitraries
             from analysisReviewPrompt in Gen.Elements(PromptPool)
             from analysisRefinementPrompt in Gen.Elements(PromptPool)
             from codeReviewMaxIter in Gen.Choose(1, 5)
-            from codeReviewIsolation in Gen.Elements(ReviewIsolation.Shared, ReviewIsolation.Isolated)
             from baselineHealthCheck in Gen.Elements(true, false)
             from externalCiTimeoutMin in Gen.Choose(5, 60)
             from externalCiPollSec in Gen.Choose(10, 120)
@@ -159,8 +157,7 @@ public class PipelineConfigArbitraries
                 CodeReview = new CodeReviewConfiguration
                 {
                     MaxIterations = codeReviewMaxIter,
-                    FixPrompt = null,
-                    ReviewIsolation = codeReviewIsolation
+                    FixPrompt = null
                 },
                 BaselineHealthCheckEnabled = baselineHealthCheck,
                 ExternalCiTimeout = TimeSpan.FromMinutes(externalCiTimeoutMin),

@@ -93,7 +93,6 @@ Code review behavior is configured via the `codeReview` sub-object on the pipeli
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `codeReview.maxIterations` | 2 | Max review → fix cycles |
-| `codeReview.reviewIsolation` | `Isolated` | Controls whether review agents share the codegen session (`Shared`) or run in fresh isolated sessions (`Isolated`). Isolated mode eliminates self-attribution bias |
 | `codeReview.fixPrompt` | *(null)* | When set, review splits into find-then-fix: review agents report findings with severity markers, then this fix prompt runs only if `[CRITICAL]` findings exist. When null, falls back to single-pass behavior |
 
 ### Inline Comments

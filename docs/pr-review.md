@@ -31,7 +31,6 @@ Inline comments are enabled by default. Configure via the web UI under Settings 
 {
   "CodeReview": {
     "MaxIterations": 2,
-    "ReviewIsolation": "Isolated",
     "InlineComments": {
       "Enabled": true,
       "SeverityThreshold": "Warning",
@@ -128,19 +127,15 @@ Review agents execute in parallel when conditions are met, reducing review laten
 
 ### Conditions for Parallel Execution
 
-All three must be true:
-1. `ReviewIsolation` is `Isolated` (default)
-2. More than 1 review agent is configured
-3. The agent provider supports parallel execution (`SupportsParallelExecution = true`)
+Both must be true:
+1. More than 1 review agent is configured
+2. The agent provider supports parallel execution (`SupportsParallelExecution = true`)
 
 Both Kiro CLI and OpenCode providers support parallel execution. When conditions aren't met, agents run sequentially.
 
 ### Isolation Model
 
-| Mode | Behavior | Use Case |
-|------|----------|----------|
-| `Isolated` (default) | Each review agent runs in a fresh session with no shared context (`UseResume = false`) | Prevents self-attribution bias |
-| `Shared` | Review agents share the code generation session (`UseResume = true`) | Legacy behavior |
+All review agents unconditionally run in isolated sessions (`UseResume = false`) with no shared context from the code generation phase. This prevents self-attribution bias — a phenomenon where models evaluate their own output as more correct.
 
 ### Output Isolation
 

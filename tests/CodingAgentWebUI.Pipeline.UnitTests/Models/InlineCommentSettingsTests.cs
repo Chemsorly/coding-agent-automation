@@ -83,8 +83,7 @@ public class InlineCommentSettingsTests
     {
         var json = """
         {
-            "MaxIterations": 5,
-            "ReviewIsolation": "Shared"
+            "MaxIterations": 5
         }
         """;
 
@@ -92,13 +91,31 @@ public class InlineCommentSettingsTests
 
         config.Should().NotBeNull();
         config!.MaxIterations.Should().Be(5);
-        config.ReviewIsolation.Should().Be(ReviewIsolation.Shared);
         config.InlineComments.Should().NotBeNull();
         config.InlineComments.Enabled.Should().BeTrue();
         config.InlineComments.SeverityThreshold.Should().Be(FindingSeverity.Warning);
         config.InlineComments.MaxInlineComments.Should().Be(15);
         config.InlineComments.OrderBySeverity.Should().BeTrue();
         config.InlineComments.MaxRetries.Should().Be(1);
+    }
+
+    [Fact]
+    public void CodeReviewConfiguration_WithLegacyReviewIsolation_IgnoresFieldGracefully()
+    {
+        // Backward compatibility: old JSON configs may still contain ReviewIsolation.
+        // System.Text.Json silently ignores unknown properties.
+        var json = """
+        {
+            "MaxIterations": 3,
+            "ReviewIsolation": "Shared"
+        }
+        """;
+
+        var config = JsonSerializer.Deserialize<CodeReviewConfiguration>(json);
+
+        config.Should().NotBeNull();
+        config!.MaxIterations.Should().Be(3);
+        config.InlineComments.Should().NotBeNull();
     }
 
     [Fact]

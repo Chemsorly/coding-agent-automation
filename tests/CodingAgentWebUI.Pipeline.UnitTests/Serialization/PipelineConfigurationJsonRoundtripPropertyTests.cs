@@ -140,8 +140,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
             CodeReview = new CodeReviewConfiguration
             {
                 MaxIterations = 5,
-                FixPrompt = "Custom fix prompt for testing",
-                ReviewIsolation = ReviewIsolation.Shared
+                FixPrompt = "Custom fix prompt for testing"
             }
         };
 
@@ -152,7 +151,6 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
         deserialized!.CodeReview.Should().NotBeNull();
         deserialized.CodeReview.MaxIterations.Should().Be(config.CodeReview.MaxIterations);
         deserialized.CodeReview.FixPrompt.Should().Be(config.CodeReview.FixPrompt);
-        deserialized.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Shared);
     }
 
     /// <summary>

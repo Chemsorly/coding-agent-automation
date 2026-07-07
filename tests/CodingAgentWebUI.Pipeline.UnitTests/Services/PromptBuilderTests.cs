@@ -194,7 +194,7 @@ public class PromptBuilderTests
     {
         var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
         var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
-        result.Should().StartWith("Review this code");
+        result.Should().Contain("Review this code");
     }
 
     [Fact]
@@ -239,27 +239,19 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void BuildReviewPrompt_Isolated_ContainsIndependentReviewerFraming()
+    public void BuildReviewPrompt_ContainsIndependentReviewerFraming()
     {
         var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
-        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath, isolated: true);
+        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath);
         result.Should().Contain("reviewing code changes made by another agent");
     }
 
     [Fact]
-    public void BuildReviewPrompt_Isolated_ContainsGitDiffInstruction()
+    public void BuildReviewPrompt_ContainsGitDiffInstruction()
     {
         var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
-        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath, isolated: true);
+        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath);
         result.Should().Contain("git diff");
-    }
-
-    [Fact]
-    public void BuildReviewPrompt_NotIsolated_NoIsolationFraming()
-    {
-        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
-        var result = PromptBuilder.BuildReviewPrompt("Review", CreateIssue(), CreateParsedIssue(), findingsPath, isolated: false);
-        result.Should().NotContain("reviewing code changes made by another agent");
     }
 
     #endregion
