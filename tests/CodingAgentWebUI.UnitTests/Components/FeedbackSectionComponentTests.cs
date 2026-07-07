@@ -73,6 +73,7 @@ public class FeedbackSectionComponentTests : BunitContext
         var emptyConfig = new ConfigurationBuilder().Build();
         var emptyServiceProvider = new ServiceCollection().BuildServiceProvider();
         Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig));
+        Services.AddSingleton(TimeProvider.System);
     }
 
     private static PipelineRunSummary CreateSummaryWithFeedback(RunFeedback? feedback)

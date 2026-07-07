@@ -72,6 +72,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
         var emptyConfig = new ConfigurationBuilder().Build();
         Services.AddSingleton(new InfrastructureHealthService(
             new ServiceCollection().BuildServiceProvider(), emptyConfig));
+        Services.AddSingleton(TimeProvider.System);
     }
 
     [Fact]
