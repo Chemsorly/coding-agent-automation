@@ -130,8 +130,8 @@ public sealed class WorkItemAgentService : BackgroundService
         var accepted = await _workItemClient.PostStatusAsync(_workItemId, runningUpdate, ct);
         if (!accepted)
         {
-            _logger.Warning("Status transition to Running was rejected for work item {WorkItemId}", _workItemId);
-            // Already transitioned (idempotent) or invalid state — proceed anyway
+            _logger.Warning("Status transition to Running was rejected for work item {WorkItemId} — aborting (work item already terminal or invalid state)", _workItemId);
+            return 1;
         }
 
         // Step 3: Connect SignalR for logs/tokens

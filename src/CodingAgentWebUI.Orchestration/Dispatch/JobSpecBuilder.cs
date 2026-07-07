@@ -41,7 +41,15 @@ public static class JobSpecBuilder
         var envVars = new List<V1EnvVar>
         {
             new() { Name = "ORCHESTRATOR_URL", Value = ctx.OrchestratorUrl },
-            new() { Name = "AGENT_API_KEY_FILE", Value = "/var/run/secrets/agent-api-key/agent-api-key" }
+            new() { Name = "AGENT_API_KEY_FILE", Value = "/var/run/secrets/agent-api-key/agent-api-key" },
+            new()
+            {
+                Name = "AGENT_ID",
+                ValueFrom = new V1EnvVarSource
+                {
+                    FieldRef = new V1ObjectFieldSelector { FieldPath = "metadata.name" }
+                }
+            }
         };
 
         var otelEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");

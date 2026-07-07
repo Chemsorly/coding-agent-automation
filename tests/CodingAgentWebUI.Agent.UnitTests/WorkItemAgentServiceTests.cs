@@ -1,4 +1,6 @@
+using System.Text.Json;
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -92,6 +94,39 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         act.Should().NotThrow();
     }
 
+    // ── ExecuteAsync — Running Rejected (400) ───────────────────────────
+
+    [Fact]
+    public async Task ExecuteAsync_RunningStatusRejected_AbortsWithoutConnectingSignalR()
+    {
+        // Arrange: GET assignment → 200 OK with valid JSON, POST Running → 400 Bad Request
+        var assignmentJson = JsonSerializer.Serialize(CreateMinimalAssignment("job-1", "owner/repo#42"), PipelineJsonOptions.Default);
+
+        var handler = new FakeSequentialHandler([
+            (System.Net.HttpStatusCode.OK, assignmentJson),          // GET /api/work-items/{id}/assignment
+            (System.Net.HttpStatusCode.BadRequest, "{}")             // POST /api/work-items/{id}/status (Running)
+        ]);
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
+
+        var service = new WorkItemAgentService(
+            "wi-rejected", client, _hubManager, _hubFactory,
+            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
+            new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
+
+        // Act
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await service.StartAsync(cts.Token);
+        await Task.Delay(500);
+        await service.StopAsync(CancellationToken.None);
+
+        // Assert
+        handler.CallCount.Should().Be(2, "GET assignment + POST Running, then abort — no further calls");
+        _hubManager.IsConnected.Should().BeFalse(
+            "Agent must NOT connect SignalR when Running status is rejected");
+        _mockLifetime.Verify(l => l.StopApplication(), Times.AtLeastOnce);
+    }
+
     // ── ExecuteAsync — Terminal Assignment (410 Gone) ─────────────────────
 
     [Fact]
@@ -144,6 +179,22 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         return new LocalConsolidationExecutor(mockOrchestrator.Object, mockHttpFactory.Object, _mockLogger.Object);
     }
 
+    private static JobAssignmentMessage CreateMinimalAssignment(string jobId, string issueId) => new()
+    {
+        JobId = jobId,
+        IssueIdentifier = issueId,
+        IssueDetail = new IssueDetail { Identifier = issueId, Title = "Test", Description = "", Labels = [] },
+        ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+        RepoProviderConfigId = "repo-1",
+        AgentProviderConfigId = "agent-1",
+        PipelineConfiguration = new PipelineConfiguration(),
+        ProviderConfigs = [],
+        ReviewerConfigs = [],
+        QualityGateConfigs = [],
+        IssueComments = [],
+        InitiatedBy = "test"
+    };
+
     private sealed class FakeOkHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -166,6 +217,29 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             return Task.FromResult(new HttpResponseMessage(_statusCode)
             {
                 Content = new StringContent("{}", System.Text.Encoding.UTF8, "application/json")
+            });
+        }
+    }
+
+    private sealed class FakeSequentialHandler : HttpMessageHandler
+    {
+        private readonly (System.Net.HttpStatusCode Code, string Body)[] _responses;
+        private int _callIndex;
+
+        public int CallCount => _callIndex;
+
+        public FakeSequentialHandler((System.Net.HttpStatusCode, string)[] responses) => _responses = responses;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            ct.ThrowIfCancellationRequested();
+            var index = Interlocked.Increment(ref _callIndex) - 1;
+            var (code, body) = index < _responses.Length
+                ? _responses[index]
+                : (System.Net.HttpStatusCode.InternalServerError, "{}");
+            return Task.FromResult(new HttpResponseMessage(code)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
             });
         }
     }

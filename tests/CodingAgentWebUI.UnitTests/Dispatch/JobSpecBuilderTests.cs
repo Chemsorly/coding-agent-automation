@@ -408,6 +408,27 @@ public class JobSpecBuilderTests
 
     #endregion
 
+    #region AGENT_ID Env Var (Downward API)
+
+    [Fact]
+    public void Build_SetsAgentIdFromDownwardApi_PodName()
+    {
+        var template = CreateTemplate();
+        var ctx = CreateContext();
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        var agentIdEnv = container.Env.FirstOrDefault(e => e.Name == "AGENT_ID");
+        agentIdEnv.Should().NotBeNull("AGENT_ID must be set for SignalR hub authentication");
+        agentIdEnv!.ValueFrom.Should().NotBeNull("AGENT_ID should use valueFrom (Downward API)");
+        agentIdEnv.ValueFrom.FieldRef.Should().NotBeNull();
+        agentIdEnv.ValueFrom.FieldRef.FieldPath.Should().Be("metadata.name",
+            "AGENT_ID must reference pod name via Downward API");
+    }
+
+    #endregion
+
     #region Full Job Spec Validation (K8s API compliance)
 
     /// <summary>

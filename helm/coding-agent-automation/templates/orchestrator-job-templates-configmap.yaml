@@ -54,6 +54,7 @@ data:
     {{- if .enabled }}
     - labels: {{ .labels | quote }}
       image: "{{ .image.repository }}:{{ .image.tag }}"
+      imagePullPolicy: {{ .imagePullPolicy | default "Always" | quote }}
       providerType: {{ .providerType | quote }}
       maxConcurrent: {{ .maxConcurrent | default 0 }}
       {{- if .resources }}
