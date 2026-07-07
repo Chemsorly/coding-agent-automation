@@ -1,5 +1,0 @@
-{
-  "mcp.loadedBefore": true,
-  "mcp.initTimeout": 30,
-  "chat.defaultModel": "claude-opus-4.6"
-}

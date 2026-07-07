@@ -13,6 +13,7 @@ data:
     {{- range .Values.jobTemplates }}
     - labels: {{ .labels | quote }}
       image: {{ .image | quote }}
+      imagePullPolicy: {{ .imagePullPolicy | default "Always" | quote }}
       providerType: {{ .providerType | quote }}
       maxConcurrent: {{ .maxConcurrent | default 0 }}
       {{- if .resources }}

@@ -248,6 +248,7 @@ jobTemplates: []
   # Example:
   # - labels: "kiro,dotnet,dotnet10"
   #   image: "chemsorly/coding-agent:kiro-dotnet10"
+  #   imagePullPolicy: Always  # Always (default), IfNotPresent, or Never
   #   providerType: kiro
   #   maxConcurrent: 2
   #   resources:

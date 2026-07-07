@@ -136,6 +136,7 @@ public static class JobSpecBuilder
         {
             Name = "agent",
             Image = template.Image,
+            ImagePullPolicy = template.ImagePullPolicy,
             Args = [$"--work-item-id={ctx.WorkItemId}"],
             Env = envVars,
             VolumeMounts = volumeMounts,

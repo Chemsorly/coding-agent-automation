@@ -147,6 +147,7 @@ internal sealed class JobTemplateYamlDto
 {
     public string Labels { get; set; } = "";
     public string Image { get; set; } = "";
+    public string ImagePullPolicy { get; set; } = "Always";
     public string ProviderType { get; set; } = "";
     public int MaxConcurrent { get; set; }
     public JobTemplateResourcesYamlDto? Resources { get; set; }
@@ -161,6 +162,7 @@ internal sealed class JobTemplateYamlDto
         {
             Labels = Labels,
             Image = Image,
+            ImagePullPolicy = ImagePullPolicy,
             ProviderType = ProviderType,
             MaxConcurrent = MaxConcurrent,
             Resources = Resources?.ToResources(),
