@@ -270,7 +270,6 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
     /// Resolves the required agent labels for a repository provider config.
     /// Delegates to <see cref="Pipeline.Services.LabelResolver.ResolveRequiredLabels"/> for the actual logic.
     /// Resolution order: <see cref="ProviderConfig.RequiredLabels"/> property →
-    /// repo <c>requiredAgentLabels</c> setting →
     /// <see cref="PipelineConfiguration.DefaultRequiredAgentLabels"/> → empty (any agent).
     /// </summary>
     public static IReadOnlyList<string> ResolveRequiredLabels(

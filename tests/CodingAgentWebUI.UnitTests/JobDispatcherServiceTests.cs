@@ -423,10 +423,7 @@ public class JobDispatcherServiceTests
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             DisplayName = "Test Repo",
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.RequiredAgentLabels] = "dotnet, linux"
-            }
+            RequiredLabels = new List<string> { "dotnet", "linux" }
         };
         var pipelineConfig = new PipelineConfiguration();
 

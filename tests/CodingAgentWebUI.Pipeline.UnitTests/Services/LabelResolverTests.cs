@@ -14,11 +14,7 @@ public class LabelResolverTests
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             DisplayName = "Test Repo",
-            RequiredLabels = new List<string> { "kiro", "dotnet", "dotnet10" },
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.RequiredAgentLabels] = "python,java"
-            }
+            RequiredLabels = new List<string> { "kiro", "dotnet", "dotnet10" }
         };
         var pipelineConfig = new PipelineConfiguration
         {
@@ -28,29 +24,6 @@ public class LabelResolverTests
         var result = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         result.Should().BeEquivalentTo(new[] { "kiro", "dotnet", "dotnet10" });
-    }
-
-    [Fact]
-    public void ResolveRequiredLabels_SettingsDictionary_UsedWhenNoExplicitLabels()
-    {
-        var repoConfig = new ProviderConfig
-        {
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test Repo",
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.RequiredAgentLabels] = "kiro, dotnet"
-            }
-        };
-        var pipelineConfig = new PipelineConfiguration
-        {
-            DefaultRequiredAgentLabels = "fallback"
-        };
-
-        var result = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
-
-        result.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
     }
 
     [Fact]
@@ -112,66 +85,22 @@ public class LabelResolverTests
     }
 
     [Fact]
-    public void ResolveRequiredLabels_SettingsWithWhitespace_TrimsEntries()
+    public void ResolveRequiredLabels_EmptyExplicitLabels_FallsToPipelineDefault()
     {
         var repoConfig = new ProviderConfig
         {
             Kind = ProviderKind.Repository,
             ProviderType = "GitHub",
             DisplayName = "Test Repo",
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.RequiredAgentLabels] = "  kiro  ,  dotnet  ,  linux  "
-            }
+            RequiredLabels = new List<string>() // Empty list, not null
         };
-        var pipelineConfig = new PipelineConfiguration();
-
-        var result = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
-
-        result.Should().BeEquivalentTo(new[] { "kiro", "dotnet", "linux" });
-    }
-
-    [Fact]
-    public void ResolveRequiredLabels_EmptyExplicitLabels_FallsToSettings()
-    {
-        var repoConfig = new ProviderConfig
+        var pipelineConfig = new PipelineConfiguration
         {
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test Repo",
-            RequiredLabels = new List<string>(), // Empty list, not null
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.RequiredAgentLabels] = "kiro,dotnet"
-            }
+            DefaultRequiredAgentLabels = "kiro,dotnet"
         };
-        var pipelineConfig = new PipelineConfiguration();
 
         var result = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         result.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
-    }
-
-    [Fact]
-    public void ResolveRequiredLabels_WhitespaceSettingsValue_FallsToPipelineDefault()
-    {
-        var repoConfig = new ProviderConfig
-        {
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test Repo",
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.RequiredAgentLabels] = "   "
-            }
-        };
-        var pipelineConfig = new PipelineConfiguration
-        {
-            DefaultRequiredAgentLabels = "fallback"
-        };
-
-        var result = LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
-
-        result.Should().BeEquivalentTo(new[] { "fallback" });
     }
 }
