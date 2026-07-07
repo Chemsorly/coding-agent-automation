@@ -298,6 +298,39 @@ public class JobSpecBuilderTests
 
     #endregion
 
+    #region PodSecurityContext — YAML round-trip
+
+    [Fact]
+    public void Build_WithPodSecurityContextFromYaml_NumericFieldsDeserializeCorrectly()
+    {
+        // Reproduces production bug: YAML integers in podSecurityContext get serialized
+        // as JSON strings through the YamlDotNet -> Dictionary<string, object> -> JsonElement path,
+        // causing "Cannot get the value of a token type 'String' as a number" at runtime.
+        const string yaml = """
+        - labels: "kiro,dotnet,dotnet10"
+          image: "chemsorly/coding-agent:kiro-dotnet10"
+          providerType: kiro
+          podSecurityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+        """;
+
+        var provider = JobTemplateProvider.LoadFromYaml(yaml);
+        var template = provider.Resolve("dotnet,dotnet10,kiro")!;
+        var ctx = CreateContext();
+
+        // This call throws if fsGroup is a JSON string instead of number
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var podSec = job.Spec.Template.Spec.SecurityContext;
+        podSec.RunAsUser.Should().Be(1000);
+        podSec.RunAsGroup.Should().Be(1000);
+        podSec.FsGroup.Should().Be(1000);
+    }
+
+    #endregion
+
     #region InitContainers VolumeMounts Injection
 
     [Fact]

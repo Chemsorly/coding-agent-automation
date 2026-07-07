@@ -350,5 +350,37 @@ public class JobTemplateProviderTests
         }
     }
 
+    [Fact]
+    public void LoadFromYaml_PodSecurityContext_NumericFieldsDeserializeAsNumbers()
+    {
+        // Reproduces production bug: YAML integers in podSecurityContext get serialized
+        // as JSON strings by YamlDotNet's Dictionary<string, object> deserialization,
+        // causing V1PodSecurityContext deserialization to fail with:
+        // "The JSON value could not be converted to System.Nullable`1[System.Int64]. Path: $.fsGroup"
+        const string yaml = """
+        - labels: "kiro,dotnet,dotnet10"
+          image: "chemsorly/coding-agent:kiro-dotnet10"
+          providerType: kiro
+          podSecurityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            fsGroup: 1000
+        """;
+
+        var provider = JobTemplateProvider.LoadFromYaml(yaml);
+        var template = provider.Resolve("dotnet,dotnet10,kiro");
+
+        template.Should().NotBeNull();
+        template!.PodSecurityContext.Should().NotBeNull();
+
+        // This is the critical assertion: the JsonElement must contain numbers, not strings.
+        // If fsGroup is serialized as "1000" (string) instead of 1000 (number),
+        // DeserializeK8s<V1PodSecurityContext> will throw.
+        var psc = template.PodSecurityContext!.Value;
+        psc.GetProperty("fsGroup").ValueKind.Should().Be(JsonValueKind.Number);
+        psc.GetProperty("runAsUser").ValueKind.Should().Be(JsonValueKind.Number);
+        psc.GetProperty("runAsGroup").ValueKind.Should().Be(JsonValueKind.Number);
+    }
+
     #endregion
 }

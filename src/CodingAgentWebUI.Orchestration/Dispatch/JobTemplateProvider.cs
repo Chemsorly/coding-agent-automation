@@ -174,11 +174,53 @@ internal sealed class JobTemplateYamlDto
     private static JsonElement? ToJsonElement(object? value)
     {
         if (value is null) return null;
-        // Round-trip through JSON serialization to produce a JsonElement
-        var json = JsonSerializer.Serialize(value);
-        using var doc = JsonDocument.Parse(json);
+        // YamlDotNet deserializes untyped mappings into Dictionary<object, object> with
+        // values as boxed primitives (int, bool, string). System.Text.Json won't
+        // recursively inspect runtime types of object-typed dictionary values, so we
+        // convert the object graph to a JsonNode tree which preserves types correctly.
+        var node = ToJsonNode(value);
+        using var doc = JsonDocument.Parse(node!.ToJsonString());
         return doc.RootElement.Clone();
     }
+
+    /// <summary>
+    /// Converts a YamlDotNet-deserialized object graph to a <see cref="System.Text.Json.Nodes.JsonNode"/>
+    /// that preserves numeric/boolean types from boxed primitives.
+    /// YamlDotNet's ScalarNodeDeserializer defaults all scalars to strings when the target type
+    /// is <c>object</c> (even with WithAttemptingUnquotedStringTypeDeserialization in nested contexts).
+    /// We detect numeric/boolean strings and emit proper JSON types so downstream k8s model
+    /// deserialization (V1PodSecurityContext, V1Container, etc.) succeeds on Int32/Int64/bool fields.
+    /// This is safe because k8s API string-typed fields (toleration.value, container.name)
+    /// never contain bare integers — they always include non-digit characters.
+    /// </summary>
+    private static System.Text.Json.Nodes.JsonNode? ToJsonNode(object? value) => value switch
+    {
+        null => null,
+        int i => System.Text.Json.Nodes.JsonValue.Create(i),
+        long l => System.Text.Json.Nodes.JsonValue.Create(l),
+        double d => System.Text.Json.Nodes.JsonValue.Create(d),
+        bool b => System.Text.Json.Nodes.JsonValue.Create(b),
+        string s when long.TryParse(s, System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out var lv) =>
+            System.Text.Json.Nodes.JsonValue.Create(lv),
+        string s when double.TryParse(s, System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var dv) =>
+            System.Text.Json.Nodes.JsonValue.Create(dv),
+        string s when s.Equals("true", StringComparison.OrdinalIgnoreCase) =>
+            System.Text.Json.Nodes.JsonValue.Create(true),
+        string s when s.Equals("false", StringComparison.OrdinalIgnoreCase) =>
+            System.Text.Json.Nodes.JsonValue.Create(false),
+        string s => System.Text.Json.Nodes.JsonValue.Create(s),
+        IDictionary<object, object> dict => new System.Text.Json.Nodes.JsonObject(
+            dict.Select(kvp => new KeyValuePair<string, System.Text.Json.Nodes.JsonNode?>(
+                kvp.Key.ToString()!, ToJsonNode(kvp.Value)))),
+        IDictionary<string, object> dict => new System.Text.Json.Nodes.JsonObject(
+            dict.Select(kvp => new KeyValuePair<string, System.Text.Json.Nodes.JsonNode?>(
+                kvp.Key, ToJsonNode(kvp.Value)))),
+        IList<object> list => new System.Text.Json.Nodes.JsonArray(
+            list.Select(ToJsonNode).ToArray()),
+        _ => System.Text.Json.Nodes.JsonValue.Create(value.ToString()!)
+    };
 }
 
 internal sealed class JobTemplateResourcesYamlDto
