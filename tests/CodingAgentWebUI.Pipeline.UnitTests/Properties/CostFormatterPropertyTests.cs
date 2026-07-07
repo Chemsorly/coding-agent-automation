@@ -1,3 +1,4 @@
+using System.Globalization;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Services;
 using FsCheck;
@@ -67,19 +68,13 @@ public class CostFormatterPropertyTests
     [Fact]
     public void FormatCost_SmallPositive_FormatsCorrectly()
     {
-        var result = CostFormatter.FormatCost(0.03m);
-        result.Should().StartWith("$");
-        result.Should().Contain("0");
-        result.Should().Contain("03");
+        CostFormatter.FormatCost(0.03m).Should().Be("$0.03");
     }
 
     [Fact]
     public void FormatCost_LargeValue_FormatsCorrectly()
     {
-        var result = CostFormatter.FormatCost(123.45m);
-        result.Should().StartWith("$");
-        result.Should().Contain("123");
-        result.Should().Contain("45");
+        CostFormatter.FormatCost(123.45m).Should().Be("$123.45");
     }
 
     // ── FormatTokens crash-freedom ───────────────────────────────────────
@@ -130,17 +125,13 @@ public class CostFormatterPropertyTests
     [Fact]
     public void FormatTokens_Exactly1000_FormatsAsK()
     {
-        var result = CostFormatter.FormatTokens(1000);
-        result.Should().EndWith("K");
-        result.Should().Contain("1");
+        CostFormatter.FormatTokens(1000).Should().Be("1.0K");
     }
 
     [Fact]
     public void FormatTokens_Millions_FormatsAsM()
     {
-        var result = CostFormatter.FormatTokens(2_500_000);
-        result.Should().EndWith("M");
-        result.Should().Contain("2");
+        CostFormatter.FormatTokens(2_500_000).Should().Be("2.5M");
     }
 
     [Property(MaxTest = 50)]
@@ -182,14 +173,51 @@ public class CostFormatterPropertyTests
     [Fact]
     public void FormatBadge_CostPreferred_WhenBothPositive()
     {
-        var result = CostFormatter.FormatBadge(5000, 1.23m);
-        result.Should().StartWith("$");
+        CostFormatter.FormatBadge(5000, 1.23m).Should().Be("$1.23");
     }
 
     [Fact]
     public void FormatBadge_TokensFallback_WhenCostNull()
     {
-        var result = CostFormatter.FormatBadge(5000, null);
-        result.Should().Contain("tok");
+        CostFormatter.FormatBadge(5000, null).Should().Be("5.0K tok");
+    }
+
+    // ── Culture invariance ───────────────────────────────────────────────
+
+    // TODO: Add a FormatBadge culture-invariance test under non-US culture (e.g., de-DE)
+    //       to directly validate that FormatBadge delegates correctly (acceptance criteria).
+    //       Example: FormatBadge(2_500_000, null).Should().Be("2.5M tok") under German culture.
+
+    [Fact]
+    public void FormatTokens_GermanCulture_StillUsesDot()
+    {
+        var prev = Thread.CurrentThread.CurrentCulture;
+        try
+        {
+            Thread.CurrentThread.CurrentCulture = new CultureInfo("de-DE");
+            CostFormatter.FormatTokens(2_500_000).Should().Be("2.5M");
+            CostFormatter.FormatTokens(12_400).Should().Be("12.4K");
+            CostFormatter.FormatTokens(999).Should().Be("999");
+        }
+        finally
+        {
+            Thread.CurrentThread.CurrentCulture = prev;
+        }
+    }
+
+    [Fact]
+    public void FormatCost_GermanCulture_StillUsesDot()
+    {
+        var prev = Thread.CurrentThread.CurrentCulture;
+        try
+        {
+            Thread.CurrentThread.CurrentCulture = new CultureInfo("de-DE");
+            CostFormatter.FormatCost(1.23m).Should().Be("$1.23");
+            CostFormatter.FormatCost(0.03m).Should().Be("$0.03");
+        }
+        finally
+        {
+            Thread.CurrentThread.CurrentCulture = prev;
+        }
     }
 }
