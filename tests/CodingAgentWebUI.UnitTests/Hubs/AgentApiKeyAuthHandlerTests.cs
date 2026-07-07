@@ -370,6 +370,55 @@ public class AgentApiKeyAuthHandlerTests
         key1.Should().NotBe(key2);
     }
 
+    // ── SHA-256 normalization (handler-level) ───────────────────────────
+
+    [Fact]
+    public async Task HandleAuthenticate_TokenShorterThanExpected_RejectsWithoutException()
+    {
+        // A token shorter than the expected key exercises the SHA-256 normalization path.
+        // Without SHA-256 pre-hashing, FixedTimeEquals would early-return on length mismatch
+        // (leaking length info via timing). This test verifies the handler handles
+        // different-length tokens gracefully through the SHA-256 normalization.
+        var masterKey = "a]long-master-key-that-is-definitely-longer-than-short";
+        var handler = await CreateHandlerAsync(masterKey, queryToken: "short", authHeader: null);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeFalse();
+        result.Failure!.Message.Should().Contain("Invalid API key");
+    }
+
+    [Fact]
+    public async Task HandleAuthenticate_TokenLongerThanExpected_RejectsWithoutException()
+    {
+        // A token longer than the expected key exercises the SHA-256 normalization path.
+        var masterKey = "short-key";
+        var longToken = "this-is-a-very-long-token-that-exceeds-the-expected-key-length-significantly";
+        var handler = await CreateHandlerAsync(masterKey, queryToken: longToken, authHeader: null);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeFalse();
+        result.Failure!.Message.Should().Contain("Invalid API key");
+    }
+
+    [Fact]
+    public async Task HandleAuthenticate_HmacPath_TokenDifferentLengthFromExpected_RejectsWithoutException()
+    {
+        // HMAC-derived expected keys are 64 hex chars. A short token exercises
+        // the SHA-256 normalization on the HMAC path specifically.
+        var masterKey = "my-master-key";
+        var agentId = "agent-1";
+        var shortToken = "abc"; // Much shorter than 64-char hex HMAC output
+
+        var handler = await CreateHandlerAsync(masterKey, queryToken: shortToken, authHeader: null, agentId: agentId);
+
+        var result = await handler.AuthenticateAsync();
+
+        result.Succeeded.Should().BeFalse();
+        result.Failure!.Message.Should().Contain("Invalid API key");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private Task<AgentApiKeyAuthHandler> CreateHandlerAsync(

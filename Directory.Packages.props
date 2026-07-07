@@ -43,6 +43,15 @@
     <PackageVersion Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
+  <!-- Suppress known moderate-severity advisories in Scriban.Signed 7.2.0 (transitive via WireMock.Net).
+       These are sandbox-escape / template-injection issues in Scriban's scripting engine.
+       WireMock.Net uses Scriban only for response templating in test stubs — no user-controlled
+       input reaches it in our test suite. Suppress until WireMock.Net ships with a patched Scriban. -->
+  <ItemGroup>
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-6q7j-xr26-3h2c" />
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-q6rr-fm2g-g5x8" />
+  </ItemGroup>
+
   <!-- Test packages -->
   <ItemGroup>
     <PackageVersion Include="AwesomeAssertions" Version="9.4.0" />
