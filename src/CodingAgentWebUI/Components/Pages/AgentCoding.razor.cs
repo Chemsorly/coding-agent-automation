@@ -116,11 +116,12 @@ public partial class AgentCoding : IDisposable
         _ = AutoDismissAgentSummary();
     }
 
-    // TODO: InvokeAsync(StateHasChanged) is fire-and-forget here; exceptions (e.g. ObjectDisposedException) are silently lost.
-    private void HandleGlobalEscape()
+    private async void HandleGlobalEscape()
     {
+        if (_disposed) return;
         PageService.CloseActiveDrawer();
-        InvokeAsync(StateHasChanged);
+        try { await InvokeAsync(StateHasChanged); }
+        catch (ObjectDisposedException) { }
     }
 
     // ── Template Table Callbacks ──
@@ -142,14 +143,16 @@ public partial class AgentCoding : IDisposable
     {
         var (success, error) = await PageService.ToggleTemplateEnabledAsync(args.template, args.enabled);
         if (!success) { _errorMessage = error; return; }
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
         if (LoopService.IsLoopActive)
         {
-            _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
             var prev = !args.enabled;
-            // TODO: Undo lambda captures args.template by reference — if template is deleted before Undo is clicked, callback operates on stale object.
+            var templateId = args.template.Id;
             await _undoSnackbar.Show($"Template {(args.enabled ? "enabled" : "disabled")}.", async () =>
             {
-                await PageService.ToggleTemplateEnabledAsync(args.template, prev);
+                var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+                if (current is null) return;
+                await PageService.ToggleTemplateEnabledAsync(current, prev);
                 await InvokeAsync(StateHasChanged);
             });
         }
@@ -159,14 +162,16 @@ public partial class AgentCoding : IDisposable
     {
         var (success, error) = await PageService.ToggleImplementationEnabledAsync(args.template, args.enabled);
         if (!success) { _errorMessage = error; return; }
-        // TODO: _recentlyToggled is added unconditionally here but conditionally in ToggleTemplateEnabled — inconsistent behavior when loop is inactive.
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
         if (LoopService.IsLoopActive)
         {
             var prev = !args.enabled;
+            var templateId = args.template.Id;
             await _undoSnackbar.Show($"Implementation {(args.enabled ? "enabled" : "disabled")}.", async () =>
             {
-                await PageService.ToggleImplementationEnabledAsync(args.template, prev);
+                var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+                if (current is null) return;
+                await PageService.ToggleImplementationEnabledAsync(current, prev);
                 await InvokeAsync(StateHasChanged);
             });
         }
@@ -180,9 +185,12 @@ public partial class AgentCoding : IDisposable
         if (LoopService.IsLoopActive)
         {
             var prev = !args.enabled;
+            var templateId = args.template.Id;
             await _undoSnackbar.Show($"Review {(args.enabled ? "enabled" : "disabled")}.", async () =>
             {
-                await PageService.ToggleReviewEnabledAsync(args.template, prev);
+                var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+                if (current is null) return;
+                await PageService.ToggleReviewEnabledAsync(current, prev);
                 await InvokeAsync(StateHasChanged);
             });
         }
@@ -196,9 +204,12 @@ public partial class AgentCoding : IDisposable
         if (LoopService.IsLoopActive)
         {
             var prev = !args.enabled;
+            var templateId = args.template.Id;
             await _undoSnackbar.Show($"Decomposition {(args.enabled ? "enabled" : "disabled")}.", async () =>
             {
-                await PageService.ToggleDecompositionEnabledAsync(args.template, prev);
+                var current = PageService.Templates.FirstOrDefault(t => t.Id == templateId);
+                if (current is null) return;
+                await PageService.ToggleDecompositionEnabledAsync(current, prev);
                 await InvokeAsync(StateHasChanged);
             });
         }
@@ -341,12 +352,15 @@ public partial class AgentCoding : IDisposable
         else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
     }
 
-    // TODO: This does not pass a CancellationToken to CheckDrawerDependenciesAsync — calls from pagination/label
-    // filter will not be cancelled on drawer close, defeating the purpose of the CTS managed in the service.
     private async Task CheckDrawerDependenciesInBackground(PipelineJobTemplate template)
     {
-        await PageService.CheckDrawerDependenciesAsync(template, () => InvokeAsync(StateHasChanged));
-        await InvokeAsync(StateHasChanged);
+        try
+        {
+            await PageService.CheckDrawerDependenciesAsync(
+                template, () => InvokeAsync(StateHasChanged), PageService.DrawerCancellationToken);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException) { /* expected on drawer close */ }
     }
 
     // NOTE: Setting the dispatching flag before calling the service ensures StateHasChanged
