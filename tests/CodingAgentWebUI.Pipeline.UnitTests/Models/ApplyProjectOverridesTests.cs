@@ -329,7 +329,6 @@ public class ApplyProjectOverridesTests
         {
             MaxIterations = 5,
             FixPrompt = "Custom fix prompt",
-            ReviewIsolation = ReviewIsolation.Isolated,
         };
         var project = TestPipelineConfig.WithProject() with { CodeReview = projectCodeReview };
 
@@ -339,7 +338,6 @@ public class ApplyProjectOverridesTests
         result.CodeReview.Should().BeSameAs(projectCodeReview);
         result.CodeReview.MaxIterations.Should().Be(5);
         result.CodeReview.FixPrompt.Should().Be("Custom fix prompt");
-        result.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
     }
 
     [Fact]

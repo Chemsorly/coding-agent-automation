@@ -114,7 +114,6 @@
                     {
                         MaxIterations = _codeReviewEnabled ? Math.Max(1, _codeReviewMaxIterations) : 0,
                         FixPrompt = _codeReviewFixPrompt,
-                        ReviewIsolation = current.CodeReview.ReviewIsolation,
                         InlineComments = current.CodeReview.InlineComments,
                     },
                     ExternalCiTimeout = TimeSpan.FromMinutes(_externalCiTimeoutMinutes),

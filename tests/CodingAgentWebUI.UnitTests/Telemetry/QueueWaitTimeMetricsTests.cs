@@ -55,11 +55,9 @@ public class QueueWaitTimeMetricsTests : IDisposable
             .Setup(c => c.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
 
-        var consolidationQueue = new ConsolidationQueueService(logger);
         _drainService = new JobQueueDrainService(
             _dispatcher, _registry, _mockJobDispatcher.Object,
-            mockConfigStore.Object, consolidationQueue, new Mock<IConsolidationService>().Object,
-            new Mock<IConsolidationDispatcher>().Object, new ShutdownSignal(), logger);
+            mockConfigStore.Object, new Mock<IConsolidationDispatcher>().Object, new ShutdownSignal(), logger);
     }
 
     public void Dispose() => _listener.Dispose();

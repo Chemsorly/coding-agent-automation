@@ -558,7 +558,6 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var config = new PipelineConfiguration();
         config.CodeReview.MaxIterations.Should().Be(2);
         config.CodeReview.FixPrompt.Should().BeNull();
-        config.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
         PipelineConfiguration.DefaultReviewAgents.Should().NotBeNull();
         PipelineConfiguration.DefaultReviewAgents.Count.Should().Be(4);
         PipelineConfiguration.DefaultReviewAgents[0].Name.Should().Be("Correctness");

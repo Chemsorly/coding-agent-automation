@@ -252,12 +252,10 @@ public class SettingsResolutionArbitraries
     private static Gen<CodeReviewConfiguration> GenCodeReview() =>
         from maxIterations in Gen.Choose(1, 5)
         from fixPrompt in Gen.Elements<string?>(null, "Fix the issues", "Apply corrections")
-        from isolation in Gen.Elements(ReviewIsolation.Shared, ReviewIsolation.Isolated)
         select new CodeReviewConfiguration
         {
             MaxIterations = maxIterations,
-            FixPrompt = fixPrompt,
-            ReviewIsolation = isolation
+            FixPrompt = fixPrompt
         };
 
     private static Gen<IReadOnlyList<string>> GenBlacklistedPaths() =>

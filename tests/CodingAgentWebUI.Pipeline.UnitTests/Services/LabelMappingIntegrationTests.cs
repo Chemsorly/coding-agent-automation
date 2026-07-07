@@ -330,30 +330,6 @@ public class LabelMappingIntegrationTests
     #region Scenario 7: RequiredLabels from ProviderConfig.RequiredLabels field
 
     [Fact]
-    public void RequiredLabels_ExplicitField_TakesPrecedenceOverSettings()
-    {
-        // Arrange: ProviderConfig with explicit RequiredLabels AND Settings dictionary entry
-        var repoConfig = new ProviderConfig
-        {
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test Repo",
-            RequiredLabels = new List<string> { "kiro", "dotnet", "dotnet10" },
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.RequiredAgentLabels] = "kiro,python"
-            }
-        };
-        var pipelineConfig = new PipelineConfiguration();
-
-        // Act
-        var resolved = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
-
-        // Assert: Explicit RequiredLabels wins over Settings dictionary
-        resolved.Should().BeEquivalentTo(new[] { "kiro", "dotnet", "dotnet10" });
-    }
-
-    [Fact]
     public void RequiredLabels_ExplicitField_UsedForResolution()
     {
         // Arrange
@@ -378,36 +354,12 @@ public class LabelMappingIntegrationTests
 
     #endregion
 
-    #region Scenario 8: RequiredLabels fallback to Settings dictionary
-
-    [Fact]
-    public void RequiredLabels_FallsBackToSettingsDictionary_WhenExplicitFieldNull()
-    {
-        // Arrange: RequiredLabels is null, Settings has requiredAgentLabels
-        var repoConfig = new ProviderConfig
-        {
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Test Repo",
-            RequiredLabels = null,
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.RequiredAgentLabels] = "kiro,dotnet"
-            }
-        };
-        var pipelineConfig = new PipelineConfiguration();
-
-        // Act
-        var resolved = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
-
-        // Assert: Falls back to Settings dictionary parsing
-        resolved.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
-    }
+    #region Scenario 8: RequiredLabels fallback to pipeline default
 
     [Fact]
     public void RequiredLabels_FallsBackToPipelineDefault_WhenBothNull()
     {
-        // Arrange: No RequiredLabels, no Settings entry, but pipeline has default
+        // Arrange: No RequiredLabels, but pipeline has default
         var repoConfig = new ProviderConfig
         {
             Kind = ProviderKind.Repository,

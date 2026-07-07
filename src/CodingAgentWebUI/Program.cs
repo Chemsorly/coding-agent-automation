@@ -83,6 +83,13 @@ if (args.Length >= 1 && args[0] == "export-config")
     return;
 }
 
+// Bootstrap logger: captures log output during service registration (before UseSerilog takes over at Build())
+// TODO: Add integration test verifying ResolveApiKey log messages appear in output (review-findings #953)
+Log.Logger = new LoggerConfiguration()
+    .MinimumLevel.Information()
+    .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
+    .CreateBootstrapLogger();
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Register services
@@ -323,23 +330,28 @@ app.MapRazorComponents<App>()
 var consolidationService = app.Services.GetRequiredService<IConsolidationService>();
 await consolidationService.CleanupOrphanedRunsAsync(CancellationToken.None);
 
-// Rehydrate queued consolidation runs (re-enqueue them for dispatch)
+// Rehydrate queued consolidation runs via IWorkDistributor (unified dispatch path)
 var queuedRuns = await consolidationService.RehydrateQueuedRunsAsync(CancellationToken.None);
 if (queuedRuns.Count > 0)
 {
-    var consolidationQueue = app.Services.GetRequiredService<ConsolidationQueueService>();
+    var workDistributor = app.Services.GetRequiredService<IWorkDistributor>();
     foreach (var run in queuedRuns)
     {
-        var job = new PendingConsolidationJob
+        var request = new JobDistributionRequest
         {
-            RunId = run.RunId,
-            Type = run.Type,
-            TemplateId = run.TemplateId,
-            WorkspacePath = Path.Combine(pipelineConfig.WorkspaceBaseDirectory, "consolidation", run.RunId),
-            RequiredLabels = run.QueuedRequiredLabels ?? [],
-            EnqueuedAt = run.StartedAtUtc
+            IssueIdentifier = run.RunId,
+            IssueProviderConfigId = "consolidation",
+            RepoProviderConfigId = "",
+            InitiatedBy = "consolidation",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = string.Join(",", run.QueuedRequiredLabels ?? []),
+            TimeoutSeconds = 0,
+            ConsolidationRunType = run.Type,
+            ConsolidationTemplateId = run.TemplateId,
+            ConsolidationWorkspacePath = Path.Combine(pipelineConfig.WorkspaceBaseDirectory, "consolidation", run.RunId),
+            RunId = run.RunId
         };
-        consolidationQueue.EnqueueJob(job);
+        await workDistributor.DistributeAsync(request, CancellationToken.None);
     }
 }
 

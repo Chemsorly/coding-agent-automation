@@ -23,8 +23,10 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
 
     private readonly ILogger _logger;
 
+    /// <summary>Guards compound queue operations (scan-and-re-enqueue). See docs/architecture/concurrency-model.md</summary>
     private readonly object _queueLock = new();
 
+    /// <summary>Serializes agent selection to prevent double-booking. See docs/architecture/concurrency-model.md</summary>
     private readonly object _selectionLock = new();
 
     public JobDispatcherService(IAgentRegistryService registry, ILogger logger)
@@ -217,6 +219,16 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
     }
 
     /// <summary>
+    /// Removes a queued job by its RunId (IssueIdentifier for consolidation jobs).
+    /// Used when a consolidation run is cancelled while queued.
+    /// </summary>
+    public bool RemoveJob(string runId)
+    {
+        ArgumentNullException.ThrowIfNull(runId);
+        return RemoveFromQueue(runId, "consolidation");
+    }
+
+    /// <summary>
     /// Marks an issue as no longer being processed (call after job completion or failure).
     /// </summary>
     public void MarkIssueComplete(string issueIdentifier, string issueProviderConfigId)
@@ -258,7 +270,6 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
     /// Resolves the required agent labels for a repository provider config.
     /// Delegates to <see cref="Pipeline.Services.LabelResolver.ResolveRequiredLabels"/> for the actual logic.
     /// Resolution order: <see cref="ProviderConfig.RequiredLabels"/> property →
-    /// repo <c>requiredAgentLabels</c> setting →
     /// <see cref="PipelineConfiguration.DefaultRequiredAgentLabels"/> → empty (any agent).
     /// </summary>
     public static IReadOnlyList<string> ResolveRequiredLabels(

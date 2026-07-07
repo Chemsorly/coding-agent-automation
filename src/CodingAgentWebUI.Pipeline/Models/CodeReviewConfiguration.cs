@@ -1,21 +1,7 @@
-using System.Text.Json.Serialization;
 using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using MessagePack;
 
 namespace CodingAgentWebUI.Pipeline.Models;
-
-/// <summary>
-/// Controls whether review agents share the codegen session or run in isolation.
-/// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter))]
-public enum ReviewIsolation
-{
-    /// <summary>Review agents share the codegen session (legacy behavior).</summary>
-    Shared,
-
-    /// <summary>Review agents run in fresh sessions with no shared context.</summary>
-    Isolated
-}
 
 [MessagePackObject]
 public sealed record CodeReviewConfiguration
@@ -40,10 +26,7 @@ public sealed record CodeReviewConfiguration
     [Key(2)]
     public int MaxIterations { get; init; } = 2;
 
-    /// <summary>
-    /// Controls whether review agents share the codegen session or run in fresh isolated sessions.
-    /// Default is Isolated to eliminate self-attribution bias.
-    /// </summary>
-    [Key(3)]
-    public ReviewIsolation ReviewIsolation { get; init; } = ReviewIsolation.Isolated;
+    // Key(3) retired: was ReviewIsolation enum (Shared/Isolated).
+    // All review agents now unconditionally run in isolated sessions.
+    // Slot kept reserved for MessagePack backward compatibility with old payloads.
 }

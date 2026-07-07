@@ -305,13 +305,13 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Date:** 2026-07-04
 **Category:** architecture
 
-**Decision:** `LabelResolver.ResolveRequiredLabels` determines which agent runs a job. The intended resolution is: `ProviderConfig.RequiredLabels` on the repository provider → `PipelineConfiguration.DefaultRequiredAgentLabels` global fallback → empty (any agent). This allows different repos to target different agent stacks (dotnet repo → `kiro,dotnet` agent, python repo → `kiro,python` agent) without requiring per-repo config when a global default suffices. Note: there's a legacy `Settings["requiredAgentLabels"]` path in the code that may be dead code — needs verification.
+**Decision:** `LabelResolver.ResolveRequiredLabels` determines which agent runs a job. The resolution is: `ProviderConfig.RequiredLabels` on the repository provider → `PipelineConfiguration.DefaultRequiredAgentLabels` global fallback → empty (any agent). This allows different repos to target different agent stacks (dotnet repo → `kiro,dotnet` agent, python repo → `kiro,python` agent) without requiring per-repo config when a global default suffices.
 
 **Context:** GitHub Actions uses `runs-on` labels for runner selection. Kubernetes uses node selectors. The layered approach handles shared infrastructure where most repos use the default but specific repos need specialized agents.
 
 **Alternatives considered:** Single-level (template-only selector), per-issue label routing (too granular).
 
-**Reassess when:** If the legacy Settings dictionary path is confirmed dead code, remove it to simplify the resolution chain. Issue #1048 tracks removal.
+**Reassess when:** If a third resolution layer is needed (e.g., per-issue or per-template label overrides).
 
 ---
 

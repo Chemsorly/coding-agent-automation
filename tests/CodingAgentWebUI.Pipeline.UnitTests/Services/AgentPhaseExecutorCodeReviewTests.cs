@@ -50,8 +50,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
             CodeReview = new CodeReviewConfiguration
             {
                 MaxIterations = 2,
-                FixPrompt = "Fix the critical issues",
-                ReviewIsolation = ReviewIsolation.Isolated
+                FixPrompt = "Fix the critical issues"
             }
         };
 
@@ -218,7 +217,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
             }
         };
 
-        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null, ReviewIsolation = ReviewIsolation.Isolated } };
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null } };
 
         await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, reviewers);
 

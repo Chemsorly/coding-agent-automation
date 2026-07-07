@@ -106,6 +106,8 @@ public class AgentCodingPageService : IDisposable
 
     private CancellationTokenSource? _drawerCts;
 
+    public CancellationToken DrawerCancellationToken => _drawerCts?.Token ?? CancellationToken.None;
+
     // ── Initialization ──
 
     public async Task<string?> InitializeAsync()

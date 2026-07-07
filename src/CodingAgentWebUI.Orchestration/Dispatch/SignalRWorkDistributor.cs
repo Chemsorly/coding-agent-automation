@@ -66,6 +66,14 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        // Consolidation items always insert as Pending and let PendingWorkItemDrainService handle dispatch.
+        // This avoids a circular DI dependency (SignalRWorkDistributor → IConsolidationDispatcher → IWorkDistributor).
+        // The drain service picks it up within 5 seconds (acceptable for low-priority background work).
+        if (request.TaskType == WorkItemTaskType.Consolidation)
+        {
+            return await InsertConsolidationAsPendingAsync(request, ct);
+        }
+
         // Use orchestration-assigned RunId if available; otherwise generate a new ID.
         // This ensures the agent's jobId matches the in-memory PipelineRun.RunId for hub routing.
         var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedId)
@@ -227,6 +235,55 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             workItemId, connectionId);
 
         return new DistributionResult(true, workItemId.ToString(), null);
+    }
+
+    /// <summary>
+    /// Inserts a consolidation WorkItem directly as Pending (no agent resolution).
+    /// PendingWorkItemDrainService handles actual dispatch with token vending at drain time.
+    /// </summary>
+    private async Task<DistributionResult> InsertConsolidationAsPendingAsync(JobDistributionRequest request, CancellationToken ct)
+    {
+        var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedId)
+            ? parsedId
+            : Guid.NewGuid();
+        var now = DateTimeOffset.UtcNow;
+
+        var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        var entity = new WorkItemEntity
+        {
+            Id = workItemId,
+            TaskType = WorkItemTaskType.Consolidation,
+            IssueIdentifier = request.IssueIdentifier,
+            IssueProviderConfigId = request.IssueProviderConfigId,
+            Status = WorkItemStatus.Pending,
+            Payload = payloadJson,
+            AgentSelector = request.AgentSelector,
+            CreatedAt = now,
+            TimeoutSeconds = request.TimeoutSeconds,
+            ProjectId = request.ProjectId
+        };
+
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        db.WorkItems.Add(entity);
+
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex)
+        {
+            _logger.LogError(ex, "Failed to insert consolidation WorkItem for run {RunId}", request.IssueIdentifier);
+            // TODO: Avoid leaking internal DB schema details in error message returned to callers.
+            // Use a generic message here and keep details in the log only. (#1084 follow-up)
+            return new DistributionResult(false, null, $"DB insert failed: {ex.Message}");
+        }
+
+        _logger.LogInformation(
+            "Consolidation WorkItem {WorkItemId} created (Pending) for run {RunId}",
+            workItemId, request.IssueIdentifier);
+
+        return new DistributionResult(true, workItemId.ToString(), "Queued — consolidation item pending drain", Queued: true);
     }
 
     /// <inheritdoc />

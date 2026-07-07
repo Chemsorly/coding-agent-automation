@@ -30,4 +30,18 @@ public sealed record PendingJob
     /// Null for non-decomposition runs.
     /// </summary>
     public string? DecompositionSource { get; init; }
+
+    // --- Consolidation-specific (Legacy mode queueing) ---
+
+    /// <summary>The consolidation run type. When set, this PendingJob represents a consolidation job rather than a pipeline job.</summary>
+    public ConsolidationRunType? ConsolidationRunType { get; init; }
+
+    /// <summary>Template ID for template-scoped consolidation runs.</summary>
+    public string? ConsolidationTemplateId { get; init; }
+
+    /// <summary>Workspace path for the consolidation run.</summary>
+    public string? ConsolidationWorkspacePath { get; init; }
+
+    /// <summary>Whether this pending job is a consolidation job (convenience check).</summary>
+    public bool IsConsolidation => ConsolidationRunType.HasValue;
 }

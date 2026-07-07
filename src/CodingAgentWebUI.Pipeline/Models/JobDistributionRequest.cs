@@ -116,6 +116,17 @@ public record JobDistributionRequest
     /// <summary>Source of decomposition request (e.g., epic issue URL).</summary>
     public string? DecompositionSource { get; init; }
 
+    // --- Consolidation-specific ---
+
+    /// <summary>The consolidation run type (Brain, RefactoringDetection, HarnessSuggestions).</summary>
+    public ConsolidationRunType? ConsolidationRunType { get; init; }
+
+    /// <summary>Template ID for template-scoped consolidation runs (null for global).</summary>
+    public string? ConsolidationTemplateId { get; init; }
+
+    /// <summary>Workspace path for the consolidation run.</summary>
+    public string? ConsolidationWorkspacePath { get; init; }
+
     /// <summary>
     /// Pre-assigned run/job ID from orchestration. When set, the work distributor
     /// should use this as the WorkItem ID instead of generating a new one.

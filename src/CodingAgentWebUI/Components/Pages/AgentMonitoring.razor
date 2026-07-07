@@ -18,7 +18,6 @@
 @inject IConsolidationService ConsolidationService
 @inject IPendingWorkQuery PendingWorkQuery
 @inject IWorkDistributor WorkDistributor
-@inject ConsolidationQueueService ConsolidationQueue
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
 @inject ILabelSwapper LabelSwapper
 @inject IPipelineRunHistoryService HistoryService
@@ -416,7 +415,13 @@
                             <tr>
                                 <td>@position</td>
                                 <td>
-                                    @if (job.RunType == PipelineRunType.Review)
+                                    @if (job.IsConsolidation)
+                                    {
+                                        <span class="run-type-badge run-type-consolidation" title="@FormatConsolidationRunType(job.ConsolidationRunType!.Value)">
+                                            <Icon Name="@GetConsolidationTypeIconName(job.ConsolidationRunType!.Value)" Size="14" /> @FormatConsolidationRunTypeShort(job.ConsolidationRunType!.Value)
+                                        </span>
+                                    }
+                                    else if (job.RunType == PipelineRunType.Review)
                                     {
                                         <span class="run-type-badge run-type-review" title="PR Review"><Icon Name="search" Size="14" /> Review</span>
                                     }

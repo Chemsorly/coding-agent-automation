@@ -173,9 +173,7 @@ public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Progr
         if (consolidationService is ConsolidationService cs)
             cs.Reset();
 
-        // Reset consolidation queue
-        var queueService = Services.GetRequiredService<ConsolidationQueueService>();
-        queueService.Reset();
+
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
