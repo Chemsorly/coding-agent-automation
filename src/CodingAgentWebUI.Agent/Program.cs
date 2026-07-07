@@ -88,6 +88,7 @@ try
 
     // Use Serilog
     builder.Host.UseSerilog();
+    builder.Services.AddSingleton(Log.Logger);
 
     // Configure OpenTelemetry (tracing + metrics)
     builder.Services.AddOpenTelemetry()
@@ -251,6 +252,7 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Agent Worker terminated unexpectedly");
+    Environment.ExitCode = 1;
 }
 finally
 {
