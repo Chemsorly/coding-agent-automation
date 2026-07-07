@@ -950,4 +950,71 @@ public class AgentCodingPageServiceTests
         AgentSelector = "dotnet,kiro",
         TimeoutSeconds = 3600
     };
+
+    // ── DrawerCancellationToken Tests ──
+
+    [Fact]
+    public void DrawerCancellationToken_ReturnsNone_WhenNoDrawerOpen()
+    {
+        Assert.Equal(CancellationToken.None, _service.DrawerCancellationToken);
+    }
+
+    [Fact]
+    public async Task DrawerCancellationToken_IsValid_WhenDrawerOpen()
+    {
+        var template = MakeTemplate();
+        _service.Templates.Add(template);
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+        SetupMockIssueProvider();
+
+        await _service.OpenIssueDrawerAsync("t-1");
+
+        var token = _service.DrawerCancellationToken;
+        Assert.NotEqual(CancellationToken.None, token);
+        Assert.False(token.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task DrawerCancellationToken_IsCancelled_AfterDrawerClose()
+    {
+        var template = MakeTemplate();
+        _service.Templates.Add(template);
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+        SetupMockIssueProvider();
+
+        await _service.OpenIssueDrawerAsync("t-1");
+        var token = _service.DrawerCancellationToken;
+
+        _service.CloseIssueDrawer();
+
+        Assert.True(token.IsCancellationRequested);
+    }
+
+    // TODO: This test uses its own pre-cancelled CTS rather than the service's DrawerCancellationToken.
+    // Add a test that opens the drawer, captures DrawerCancellationToken, closes the drawer (cancelling the CTS),
+    // and verifies the token is cancelled — to validate the actual integration path (issue #1057 criterion #4).
+    [Fact]
+    public async Task CheckDrawerDependenciesAsync_ThrowsOperationCanceled_WhenTokenCancelled()
+    {
+        var template = MakeTemplate();
+        _service.Templates.Add(template);
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+        SetupMockIssueProvider();
+
+        await _service.OpenIssueDrawerAsync("t-1");
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => _service.CheckDrawerDependenciesAsync(template, null, cts.Token));
+    }
+
+    // TODO: Add tests for the undo-callback stale-capture fix (issue #1057 criterion #2).
+    // Specifically, test the no-op case when a template is removed between toggle and undo click —
+    // the undo lambda should re-resolve from PageService.Templates by ID and return early if null.
+
+    // TODO: Add tests for HandleGlobalEscape exception-handling fix (issue #1057 criterion #1).
+    // The method now catches ObjectDisposedException and guards against _disposed. A bUnit test
+    // could verify that calling HandleGlobalEscape after component disposal does not throw.
 }
