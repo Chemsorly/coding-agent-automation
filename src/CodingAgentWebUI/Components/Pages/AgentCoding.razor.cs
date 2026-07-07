@@ -138,38 +138,32 @@ public partial class AgentCoding : IDisposable
     private void CancelDelete() => _showDeleteConfirm = false;
     private void ConfirmRemoveTemplate(PipelineJobTemplate template) { _deletingTemplate = template; _showDeleteConfirm = true; }
 
+    // TODO: Add component-level tests verifying snackbar and _recentlyToggled fire unconditionally (regardless of IsLoopActive state) to guard against regression.
     private async Task ToggleTemplateEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleTemplateEnabledAsync(args.template, args.enabled);
         if (!success) { _errorMessage = error; return; }
-        if (LoopService.IsLoopActive)
+        _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
+        var prev = !args.enabled;
+        // TODO: Undo lambda captures args.template by reference — if template is deleted before Undo is clicked, callback operates on stale object.
+        await _undoSnackbar.Show($"Template {(args.enabled ? "enabled" : "disabled")}.", async () =>
         {
-            _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
-            var prev = !args.enabled;
-            // TODO: Undo lambda captures args.template by reference — if template is deleted before Undo is clicked, callback operates on stale object.
-            await _undoSnackbar.Show($"Template {(args.enabled ? "enabled" : "disabled")}.", async () =>
-            {
-                await PageService.ToggleTemplateEnabledAsync(args.template, prev);
-                await InvokeAsync(StateHasChanged);
-            });
-        }
+            await PageService.ToggleTemplateEnabledAsync(args.template, prev);
+            await InvokeAsync(StateHasChanged);
+        });
     }
 
     private async Task ToggleImplementationEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleImplementationEnabledAsync(args.template, args.enabled);
         if (!success) { _errorMessage = error; return; }
-        // TODO: _recentlyToggled is added unconditionally here but conditionally in ToggleTemplateEnabled — inconsistent behavior when loop is inactive.
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
-        if (LoopService.IsLoopActive)
+        var prev = !args.enabled;
+        await _undoSnackbar.Show($"Implementation {(args.enabled ? "enabled" : "disabled")}.", async () =>
         {
-            var prev = !args.enabled;
-            await _undoSnackbar.Show($"Implementation {(args.enabled ? "enabled" : "disabled")}.", async () =>
-            {
-                await PageService.ToggleImplementationEnabledAsync(args.template, prev);
-                await InvokeAsync(StateHasChanged);
-            });
-        }
+            await PageService.ToggleImplementationEnabledAsync(args.template, prev);
+            await InvokeAsync(StateHasChanged);
+        });
     }
 
     private async Task ToggleReviewEnabled((PipelineJobTemplate template, bool enabled) args)
@@ -177,15 +171,12 @@ public partial class AgentCoding : IDisposable
         var (success, error) = await PageService.ToggleReviewEnabledAsync(args.template, args.enabled);
         if (!success) { _errorMessage = error; return; }
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
-        if (LoopService.IsLoopActive)
+        var prev = !args.enabled;
+        await _undoSnackbar.Show($"Review {(args.enabled ? "enabled" : "disabled")}.", async () =>
         {
-            var prev = !args.enabled;
-            await _undoSnackbar.Show($"Review {(args.enabled ? "enabled" : "disabled")}.", async () =>
-            {
-                await PageService.ToggleReviewEnabledAsync(args.template, prev);
-                await InvokeAsync(StateHasChanged);
-            });
-        }
+            await PageService.ToggleReviewEnabledAsync(args.template, prev);
+            await InvokeAsync(StateHasChanged);
+        });
     }
 
     private async Task ToggleDecompositionEnabled((PipelineJobTemplate template, bool enabled) args)
@@ -193,15 +184,12 @@ public partial class AgentCoding : IDisposable
         var (success, error) = await PageService.ToggleDecompositionEnabledAsync(args.template, args.enabled);
         if (!success) { _errorMessage = error; return; }
         _recentlyToggled.Add(args.template.Id); _ = ClearRecentlyToggledAfterDelay(args.template.Id);
-        if (LoopService.IsLoopActive)
+        var prev = !args.enabled;
+        await _undoSnackbar.Show($"Decomposition {(args.enabled ? "enabled" : "disabled")}.", async () =>
         {
-            var prev = !args.enabled;
-            await _undoSnackbar.Show($"Decomposition {(args.enabled ? "enabled" : "disabled")}.", async () =>
-            {
-                await PageService.ToggleDecompositionEnabledAsync(args.template, prev);
-                await InvokeAsync(StateHasChanged);
-            });
-        }
+            await PageService.ToggleDecompositionEnabledAsync(args.template, prev);
+            await InvokeAsync(StateHasChanged);
+        });
     }
 
     private async Task AddTemplate()
