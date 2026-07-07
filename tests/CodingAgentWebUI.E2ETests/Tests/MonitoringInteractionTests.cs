@@ -361,8 +361,8 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
         await WaitUntilAsync(() => runService.GetActiveRuns().Any(r =>
             r.IssueIdentifier == "80" && r.AgentId == "late-agent-1"));
 
-        // Refresh monitoring page (wait for 2s refresh cycle)
-        await Page.WaitForTimeoutAsync(3000);
+        // Refresh monitoring page (wait for 5s refresh cycle)
+        await Page.WaitForTimeoutAsync(6000);
 
         // Assert: Active Runs now shows the issue
         var updatedActiveRunCount = await monitoringPage.GetActiveRunCountAsync();
