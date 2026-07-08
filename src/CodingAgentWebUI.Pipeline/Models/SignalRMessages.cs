@@ -217,6 +217,22 @@ public sealed record JobAssignmentMessage
     /// </summary>
     [Key(31)]
     public string? IssueProviderConfigId { get; init; }
+
+    /// <summary>Task type discriminator — distinguishes implementation, review, decomposition, and consolidation.</summary>
+    [Key(32)]
+    public WorkItemTaskType TaskType { get; init; } = WorkItemTaskType.Implementation;
+
+    /// <summary>Consolidation run type (Brain, RefactoringDetection, HarnessSuggestions). Only set for consolidation tasks.</summary>
+    [Key(33)]
+    public ConsolidationRunType? ConsolidationRunType { get; init; }
+
+    /// <summary>Template ID for template-scoped consolidation runs. Null for global runs.</summary>
+    [Key(34)]
+    public string? ConsolidationTemplateId { get; init; }
+
+    /// <summary>Workspace path for consolidation runs, as determined by the orchestrator.</summary>
+    [Key(35)]
+    public string? ConsolidationWorkspacePath { get; init; }
 }
 
 /// <summary>

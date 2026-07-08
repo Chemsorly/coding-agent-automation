@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -18,15 +17,17 @@ namespace CodingAgentWebUI.Agent;
 /// <remarks>
 /// Replaces <see cref="AgentWorkerService"/> in K8s mode. The agent is ephemeral —
 /// one pod per work item, exits after completion.
+/// Uses <see cref="AgentConnectionManager"/> for shared connection lifecycle (heartbeat,
+/// resilience, reconnection, CancelJob handling, deregistration).
+/// Uses <see cref="IWorkItemExecutor"/> for unified task execution (routes by TaskType internally).
 /// </remarks>
-public sealed class WorkItemAgentService : BackgroundService
+public sealed class WorkItemAgentService : BackgroundService, IAgentService
 {
     private readonly string _workItemId;
-    private readonly WorkItemHttpClient _workItemClient;
-    private readonly HubConnectionManager _hubManager;
-    private readonly HubConnectionManagerFactory _hubManagerFactory;
-    private readonly LocalPipelineExecutor _executor;
-    private readonly LocalConsolidationExecutor _consolidationExecutor;
+    private readonly IWorkItemLifecycleClient _workItemClient;
+    private readonly IAgentConnectionManager _connectionManager;
+    private readonly IWorkItemExecutor _workItemExecutor;
+    private readonly IJobCompletionReporter _completionReporter;
     private readonly AgentIdentity _agentIdentity;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly Serilog.ILogger _logger;
@@ -36,35 +37,50 @@ public sealed class WorkItemAgentService : BackgroundService
 
     public WorkItemAgentService(
         string workItemId,
-        WorkItemHttpClient workItemClient,
-        HubConnectionManager hubManager,
-        HubConnectionManagerFactory hubManagerFactory,
-        LocalPipelineExecutor executor,
-        LocalConsolidationExecutor consolidationExecutor,
+        IWorkItemLifecycleClient workItemClient,
+        IAgentConnectionManager connectionManager,
+        IWorkItemExecutor workItemExecutor,
+        IJobCompletionReporter completionReporter,
         AgentIdentity agentIdentity,
         IHostApplicationLifetime lifetime,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(workItemId);
         ArgumentNullException.ThrowIfNull(workItemClient);
-        ArgumentNullException.ThrowIfNull(hubManager);
-        ArgumentNullException.ThrowIfNull(hubManagerFactory);
-        ArgumentNullException.ThrowIfNull(executor);
-        ArgumentNullException.ThrowIfNull(consolidationExecutor);
+        ArgumentNullException.ThrowIfNull(connectionManager);
+        ArgumentNullException.ThrowIfNull(workItemExecutor);
+        ArgumentNullException.ThrowIfNull(completionReporter);
         ArgumentNullException.ThrowIfNull(agentIdentity);
         ArgumentNullException.ThrowIfNull(lifetime);
         ArgumentNullException.ThrowIfNull(logger);
 
         _workItemId = workItemId;
         _workItemClient = workItemClient;
-        _hubManager = hubManager;
-        _hubManagerFactory = hubManagerFactory;
-        _executor = executor;
-        _consolidationExecutor = consolidationExecutor;
+        _workItemExecutor = workItemExecutor;
+        _completionReporter = completionReporter;
         _agentIdentity = agentIdentity;
         _lifetime = lifetime;
         _logger = logger;
+
+        // Use the injected connection manager
+        _connectionManager = connectionManager;
+
+        // Wire CancelJob to cancel the pipeline
+        _connectionManager.OnCancelJobReceived += HandleCancelJobAsync;
+        _connectionManager.OnForceDisconnect += HandleForceDisconnectAsync;
     }
+
+    /// <inheritdoc/>
+    public bool IsBusy => _pipelineCts is not null && !_pipelineCts.IsCancellationRequested;
+
+    /// <inheritdoc/>
+    public PipelineStep? CurrentStep => null; // K8s mode doesn't track steps at the service level (delegated to IWorkItemExecutor)
+
+    /// <inheritdoc/>
+    public bool IsConnected => _connectionManager.IsConnected;
+
+    /// <inheritdoc/>
+    public void CancelCurrentJob() => CancelPipeline();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -95,6 +111,9 @@ public sealed class WorkItemAgentService : BackgroundService
         }
         finally
         {
+            // Graceful deregistration + connection cleanup
+            await _connectionManager.DisposeAsync();
+
             activity?.SetTag("exit_code", exitCode);
             if (exitCode != 0)
                 activity?.SetStatus(ActivityStatusCode.Error);
@@ -134,60 +153,52 @@ public sealed class WorkItemAgentService : BackgroundService
             return 1;
         }
 
-        // Step 3: Connect SignalR for logs/tokens
-        try
-        {
-            await _hubManager.StartAsync(ct);
-        }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
-        {
-            _logger.Error(ex, "Failed to connect SignalR hub for work item {WorkItemId}, posting Failed", _workItemId);
-            await PostFailedStatusAsync($"SignalR connection failed: {ex.Message}");
-            return 1;
-        }
-        _logger.Information("Connected to SignalR hub for log streaming/token vending");
+        // Step 3: Connect, register, and start heartbeat via AgentConnectionManager
+        var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;
+        var labels = labelsEnv
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList()
+            .AsReadOnly();
 
-        // Step 3b: Register agent with orchestrator hub.
-        // Required for [RequiresActiveJob] filter to pass on hub method invocations
-        // (token refresh, step transitions, output reporting, etc.).
+        var registration = new AgentRegistrationMessage
+        {
+            AgentId = _agentIdentity.Id,
+            Hostname = Environment.MachineName,
+            Labels = labels,
+            ActiveJob = new ActiveJobState
+            {
+                RunId = _workItemId,
+                IssueIdentifier = assignment.IssueIdentifier,
+                IssueTitle = assignment.IssueDetail?.Title ?? assignment.IssueIdentifier,
+                IssueProviderConfigId = assignment.IssueProviderConfigId ?? assignment.RepoProviderConfigId,
+                RepoProviderConfigId = assignment.RepoProviderConfigId,
+                AgentProviderConfigId = assignment.AgentProviderConfigId,
+                BrainProviderConfigId = assignment.BrainProviderConfigId,
+                PipelineProviderConfigId = assignment.PipelineProviderConfigId,
+                InitiatedBy = assignment.InitiatedBy,
+                ResolvedProfileId = assignment.ResolvedProfileId,
+                ProjectId = assignment.ProjectId,
+                ProjectName = assignment.ProjectName,
+                CurrentStep = PipelineStep.Created,
+                StartedAt = DateTimeOffset.UtcNow,
+                RunType = assignment.RunType
+            }
+        };
+
         try
         {
-            var registration = new AgentRegistrationMessage
-            {
-                AgentId = _agentIdentity.Id,
-                Hostname = Environment.MachineName,
-                Labels = [],
-                ActiveJob = new ActiveJobState
-                {
-                    RunId = _workItemId,
-                    IssueIdentifier = assignment.IssueIdentifier,
-                    IssueTitle = assignment.IssueDetail?.Title ?? assignment.IssueIdentifier,
-                    IssueProviderConfigId = assignment.IssueProviderConfigId ?? assignment.RepoProviderConfigId,
-                    RepoProviderConfigId = assignment.RepoProviderConfigId,
-                    AgentProviderConfigId = assignment.AgentProviderConfigId,
-                    BrainProviderConfigId = assignment.BrainProviderConfigId,
-                    PipelineProviderConfigId = assignment.PipelineProviderConfigId,
-                    InitiatedBy = assignment.InitiatedBy,
-                    ResolvedProfileId = assignment.ResolvedProfileId,
-                    ProjectId = assignment.ProjectId,
-                    ProjectName = assignment.ProjectName,
-                    CurrentStep = PipelineStep.Created,
-                    StartedAt = DateTimeOffset.UtcNow,
-                    RunType = assignment.RunType
-                }
-            };
-            await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, ct);
+            await _connectionManager.ConnectAndRegisterAsync(registration, ct);
             _logger.Information("Registered agent {AgentId} with orchestrator hub (ActiveJob={WorkItemId})",
                 _agentIdentity.Id, _workItemId);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
-            _logger.Error(ex, "Failed to register agent with hub for work item {WorkItemId} — token refresh will not work, aborting", _workItemId);
-            await PostFailedStatusAsync($"Agent registration failed: {ex.Message}");
+            _logger.Error(ex, "Failed to connect/register for work item {WorkItemId}, posting Failed", _workItemId);
+            await PostFailedStatusAsync($"Connection/registration failed: {ex.Message}");
             return 1;
         }
 
-        // Step 4: Execute pipeline
+        // Step 4: Execute work item via unified executor
         using var pipelineCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _pipelineCts = pipelineCts;
         var pipelineCt = pipelineCts.Token;
@@ -197,8 +208,8 @@ public sealed class WorkItemAgentService : BackgroundService
         {
             try
             {
-                await _hubManager.Connection.InvokeAsync(
-                    HubMethodNames.ReportOutputLines, assignment.JobId, lines);
+                await _connectionManager.InvokeAsync(
+                    (conn, token) => conn.InvokeAsync(HubMethodNames.ReportOutputLines, assignment.JobId, lines, token), ct);
             }
             catch (Exception ex)
             {
@@ -209,9 +220,9 @@ public sealed class WorkItemAgentService : BackgroundService
         JobCompletionPayload? completion = null;
         try
         {
-            completion = await _executor.ExecuteAsync(
-                assignment, _hubManager.Connection, outputBatcher,
-                step => { /* K8s mode doesn't need step tracking for heartbeats */ },
+            completion = await _workItemExecutor.ExecuteAsync(
+                assignment, _connectionManager.Connection, outputBatcher,
+                step => _connectionManager.UpdateCurrentStep(step),
                 pipelineCt);
         }
         catch (OperationCanceledException) when (pipelineCt.IsCancellationRequested && !ct.IsCancellationRequested)
@@ -241,54 +252,23 @@ public sealed class WorkItemAgentService : BackgroundService
             };
         }
 
-        // Step 5: POST terminal status
-        var terminalStatus = completion.FinalStep switch
-        {
-            PipelineStep.Completed => "Succeeded",
-            PipelineStep.Cancelled => "Cancelled",
-            _ => "Failed"
-        };
-
-        var terminalUpdate = new WorkItemStatusUpdate
-        {
-            Status = terminalStatus,
-            AgentId = _agentIdentity.Id,
-            Result = SerializeResult(completion),
-            ErrorMessage = completion.FailureReason
-        };
-
+        // Step 5: Report completion via unified reporter
         try
         {
             _terminalStatusPosted = true;
-            await _workItemClient.PostStatusAsync(_workItemId, terminalUpdate, CancellationToken.None);
+            await _completionReporter.ReportCompletionAsync(assignment.JobId, completion, CancellationToken.None);
         }
         catch (WorkItemStatusPostException ex)
         {
-            // All retries exhausted for terminal status POST.
-            // ReconciliationService will catch via Job status. Log and exit non-zero.
-            _logger.Error(ex, "Failed to POST terminal status for work item {WorkItemId}, exiting non-zero", _workItemId);
+            _logger.Error(ex, "Failed to report completion for work item {WorkItemId}, exiting non-zero", _workItemId);
             return 1;
-        }
-
-        // Also report completion via SignalR (for real-time UI updates)
-        try
-        {
-            await _hubManager.Connection.InvokeAsync(
-                HubMethodNames.ReportJobCompleted, assignment.JobId, completion);
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to report completion via SignalR (non-fatal, HTTP status already posted)");
-        }
-        finally
-        {
-            try { await _hubManager.StopAsync(CancellationToken.None); }
-            catch { /* best-effort cleanup */ }
+            _logger.Warning(ex, "Non-fatal error during completion reporting for work item {WorkItemId}", _workItemId);
         }
 
         // Exit non-zero when pipeline did not complete successfully.
-        // This ensures K8s marks the pod as Failed (not Completed), enabling proper
-        // observability and alerting on pipeline failures.
         return completion.FinalStep == PipelineStep.Completed ? 0 : 1;
     }
 
@@ -301,9 +281,23 @@ public sealed class WorkItemAgentService : BackgroundService
         catch (ObjectDisposedException) { }
     }
 
+    private Task HandleCancelJobAsync(string jobId)
+    {
+        _logger.Information("Received CancelJob for {JobId}, cancelling pipeline", jobId);
+        CancelPipeline();
+        return Task.CompletedTask;
+    }
+
+    private Task HandleForceDisconnectAsync()
+    {
+        _logger.Warning("Received ForceDisconnect, cancelling pipeline for graceful shutdown");
+        CancelPipeline();
+        return Task.CompletedTask;
+    }
+
     private async Task PostCancelledStatusAsync()
     {
-        if (_terminalStatusPosted) return; // Terminal already posted, skip
+        if (_terminalStatusPosted) return;
 
         try
         {
@@ -343,17 +337,4 @@ public sealed class WorkItemAgentService : BackgroundService
         }
     }
 
-    private string? SerializeResult(JobCompletionPayload? completion)
-    {
-        if (completion is null) return null;
-        try
-        {
-            return JsonSerializer.Serialize(completion, PipelineJsonOptions.Default);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to serialize JobCompletionPayload — result field will be omitted from terminal status");
-            return null;
-        }
-    }
 }

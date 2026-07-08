@@ -61,7 +61,7 @@ public class HealthEndpointsTests : IAsyncDisposable
             new Mock<IHttpClientFactory>().Object,
             mockLogger.Object);
 
-        var workerService = new AgentWorkerService(hubManager, hubManagerFactory, executor, consolidationExecutor, mockOrchestrator.Object, new Mock<IHttpClientFactory>().Object, new AgentIdentity("test-agent"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
+        var workerService = new AgentWorkerService(hubManager, hubManagerFactory, executor, consolidationExecutor, Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, new Mock<IHttpClientFactory>().Object, new AgentIdentity("test-agent"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
 
         _host = await new HostBuilder()
             .ConfigureWebHost(webBuilder =>
@@ -71,6 +71,7 @@ public class HealthEndpointsTests : IAsyncDisposable
                     .ConfigureServices(services =>
                     {
                         services.AddSingleton(workerService);
+                        services.AddSingleton<IAgentService>(workerService);
                         services.AddRouting();
                     })
                     .Configure(app =>

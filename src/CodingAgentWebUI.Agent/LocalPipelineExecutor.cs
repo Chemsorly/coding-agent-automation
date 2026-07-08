@@ -39,7 +39,7 @@ namespace CodingAgentWebUI.Agent;
 /// server-side execution path, ensuring behavioral parity between local and remote execution.
 /// </para>
 /// </remarks>
-public sealed class LocalPipelineExecutor
+public sealed class LocalPipelineExecutor : IPipelineExecutor
 {
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly IHttpClientFactory _httpClientFactory;

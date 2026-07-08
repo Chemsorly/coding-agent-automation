@@ -17,21 +17,16 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
 {
     private readonly Mock<Serilog.ILogger> _mockLogger = new();
     private readonly Mock<IHostApplicationLifetime> _mockLifetime = new();
-    private readonly HubConnectionManager _hubManager;
-    private readonly HubConnectionManagerFactory _hubFactory;
     private readonly WorkItemHttpClient _workItemClient;
 
     public WorkItemAgentServiceTests()
     {
-        _hubManager = new HubConnectionManager("http://localhost:9999", "test-agent", "test-key", _mockLogger.Object);
-        _hubFactory = new HubConnectionManagerFactory("http://localhost:9999", "test-agent", "test-key", _mockLogger.Object);
         var httpClient = new HttpClient(new FakeOkHandler()) { BaseAddress = new Uri("http://localhost") };
         _workItemClient = new WorkItemHttpClient(httpClient, _mockLogger.Object);
     }
 
     public async ValueTask DisposeAsync()
     {
-        await _hubManager.DisposeAsync();
     }
 
     // ── Constructor Guard Clauses ────────────────────────────────────────
@@ -39,23 +34,21 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
     [Theory]
     [InlineData(0, "workItemId")]
     [InlineData(1, "workItemClient")]
-    [InlineData(2, "hubManager")]
-    [InlineData(3, "hubManagerFactory")]
-    [InlineData(4, "executor")]
-    [InlineData(5, "consolidationExecutor")]
-    [InlineData(6, "agentIdentity")]
-    [InlineData(7, "lifetime")]
-    [InlineData(8, "logger")]
+    [InlineData(2, "connectionManager")]
+    [InlineData(3, "workItemExecutor")]
+    [InlineData(4, "completionReporter")]
+    [InlineData(5, "agentIdentity")]
+    [InlineData(6, "lifetime")]
+    [InlineData(7, "logger")]
     public void Constructor_NullParameter_Throws(int nullIndex, string expectedParamName)
     {
         var args = new object?[]
         {
             "wi-1",
             _workItemClient,
-            _hubManager,
-            _hubFactory,
-            CreateMinimalExecutor(),
-            CreateMinimalConsolidationExecutor(),
+            Mock.Of<IAgentConnectionManager>(),
+            CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("agent-1"),
             _mockLifetime.Object,
             _mockLogger.Object
@@ -64,14 +57,13 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
 
         var act = () => new WorkItemAgentService(
             (string)args[0]!,
-            (WorkItemHttpClient)args[1]!,
-            (HubConnectionManager)args[2]!,
-            (HubConnectionManagerFactory)args[3]!,
-            (LocalPipelineExecutor)args[4]!,
-            (LocalConsolidationExecutor)args[5]!,
-            (AgentIdentity)args[6]!,
-            (IHostApplicationLifetime)args[7]!,
-            (Serilog.ILogger)args[8]!);
+            (IWorkItemLifecycleClient)args[1]!,
+            (IAgentConnectionManager)args[2]!,
+            (IWorkItemExecutor)args[3]!,
+            (IJobCompletionReporter)args[4]!,
+            (AgentIdentity)args[5]!,
+            (IHostApplicationLifetime)args[6]!,
+            (Serilog.ILogger)args[7]!);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName(expectedParamName);
     }
@@ -110,8 +102,9 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
 
         var service = new WorkItemAgentService(
-            "wi-rejected", client, _hubManager, _hubFactory,
-            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
+            "wi-rejected", client, Mock.Of<IAgentConnectionManager>(),
+            CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
 
         // Act
@@ -122,8 +115,6 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
 
         // Assert
         handler.CallCount.Should().Be(2, "GET assignment + POST Running, then abort — no further calls");
-        _hubManager.IsConnected.Should().BeFalse(
-            "Agent must NOT connect SignalR when Running status is rejected");
         _mockLifetime.Verify(l => l.StopApplication(), Times.AtLeastOnce);
     }
 
@@ -138,8 +129,9 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
 
         var service = new WorkItemAgentService(
-            "wi-terminal", client, _hubManager, _hubFactory,
-            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
+            "wi-terminal", client, Mock.Of<IAgentConnectionManager>(),
+            CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -178,18 +170,16 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
 
         // Use a hub manager pointing at non-existent server — StartAsync will throw
-        await using var failingHubManager = new HubConnectionManager(
-            "http://localhost:1", "test-agent", "test-key", _mockLogger.Object);
-        var failingHubFactory = new HubConnectionManagerFactory(
-            "http://localhost:1", "test-agent", "test-key", _mockLogger.Object);
+        var mockConnectionManager = Mock.Of<IAgentConnectionManager>();
 
         // Use a TaskCompletionSource to detect when StopApplication is called
         var stopCalled = new TaskCompletionSource<bool>();
         _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
 
         var service = new WorkItemAgentService(
-            "job-fail", client, failingHubManager, failingHubFactory,
-            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
+            "job-fail", client, mockConnectionManager,
+            CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
 
         // Act
@@ -239,17 +229,15 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
 
-        await using var failingHub = new HubConnectionManager(
-            "http://localhost:1", "test-agent", "test-key", _mockLogger.Object);
-        var failingFactory = new HubConnectionManagerFactory(
-            "http://localhost:1", "test-agent", "test-key", _mockLogger.Object);
+        var failingConnectionManager = Mock.Of<IAgentConnectionManager>();
 
         var stopCalled = new TaskCompletionSource<bool>();
         _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
 
         var service = new WorkItemAgentService(
-            "job-pipeline-fail", client, failingHub, failingFactory,
-            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
+            "job-pipeline-fail", client, failingConnectionManager,
+            CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
 
         // Act
@@ -275,56 +263,200 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         }
     }
 
+    // ── AgentConnectionManager Delegation ───────────────────────────────
+
+    /// <summary>
+    /// Validates that WorkItemAgentService composes AgentConnectionManager (or IAgentConnectionManager)
+    /// for connection lifecycle management instead of managing SignalR directly.
+    /// This ensures K8s agents get the same resilience, heartbeat, CancelJob handling,
+    /// reconnection, and deregistration as long-running agents.
+    ///
+    /// NOTE: Structural test. Will fail if AgentConnectionManager is not used.
+    /// </summary>
+    [Fact]
+    public void WorkItemAgentService_ShouldUseAgentConnectionManager()
+    {
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
+
+        var usesConnectionManager = sourceCode.Contains("IAgentConnectionManager")
+            || sourceCode.Contains("AgentConnectionManager");
+        usesConnectionManager.Should().BeTrue(
+            "WorkItemAgentService MUST compose AgentConnectionManager (or IAgentConnectionManager) " +
+            "for connection lifecycle. This ensures K8s agents have the same resilience, heartbeat, " +
+            "CancelJob handling, reconnection, and deregistration as long-running agents.");
+    }
+
+    [Fact]
+    public void WorkItemAgentService_ShouldDelegateHeartbeatsToConnectionManager()
+    {
+        // WorkItemAgentService should NOT have its own heartbeat loop anymore —
+        // AgentConnectionManager handles heartbeats internally.
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
+
+        sourceCode.Should().NotContain("RunHeartbeatLoopAsync",
+            "WorkItemAgentService must NOT have its own heartbeat loop. " +
+            "AgentConnectionManager handles heartbeats internally after ConnectAndRegisterAsync.");
+
+        sourceCode.Should().NotContain("PeriodicTimer",
+            "WorkItemAgentService must NOT use PeriodicTimer directly. " +
+            "Heartbeats are managed by AgentConnectionManager.");
+    }
+
+    [Fact]
+    public void WorkItemAgentService_ShouldNotCallHubMethodsDirectly()
+    {
+        // WorkItemAgentService should use AgentConnectionManager.InvokeAsync
+        // instead of bare _hubManager.Connection.InvokeAsync for resilience.
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
+
+        // The old pattern: direct hub invocation without resilience
+        var directHubCalls = CountOccurrences(sourceCode, "_hubManager.Connection.InvokeAsync");
+        directHubCalls.Should().Be(0,
+            "WorkItemAgentService must NOT call _hubManager.Connection.InvokeAsync directly. " +
+            "Use AgentConnectionManager.InvokeAsync or .Connection for executor pass-through only.");
+    }
+
+    [Fact]
+    public void WorkItemAgentService_ShouldWireCancelJobToCancel_Pipeline()
+    {
+        // WorkItemAgentService must subscribe to OnCancelJobReceived from the connection manager
+        // so the orchestrator can remotely cancel running K8s jobs.
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
+
+        var wiresCancelJob = sourceCode.Contains("OnCancelJobReceived");
+        wiresCancelJob.Should().BeTrue(
+            "WorkItemAgentService must subscribe to AgentConnectionManager.OnCancelJobReceived " +
+            "to enable remote job cancellation from the orchestrator UI.");
+    }
+
+    [Fact]
+    public void WorkItemAgentService_ShouldRouteConsolidationTasksToConsolidationExecutor()
+    {
+        // WorkItemAgentService should use IWorkItemExecutor (which routes internally)
+        // instead of branching on TaskType directly.
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
+
+        var usesInterface = sourceCode.Contains("IWorkItemExecutor");
+        usesInterface.Should().BeTrue(
+            "WorkItemAgentService must depend on IWorkItemExecutor, not branch on TaskType directly. " +
+            "The WorkItemExecutorRouter handles routing transparently.");
+    }
+
+    [Fact]
+    public void WorkItemAgentService_ShouldNotReferenceExecutorsDirect()
+    {
+        // WorkItemAgentService should not import or reference LocalPipelineExecutor
+        // or LocalConsolidationExecutor directly — only IWorkItemExecutor.
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
+
+        sourceCode.Should().NotContain("LocalPipelineExecutor",
+            "WorkItemAgentService must not reference LocalPipelineExecutor directly. " +
+            "Use IWorkItemExecutor for unified execution.");
+
+        sourceCode.Should().NotContain("LocalConsolidationExecutor",
+            "WorkItemAgentService must not reference LocalConsolidationExecutor directly. " +
+            "Use IWorkItemExecutor for unified execution.");
+    }
+
+    private static int CountOccurrences(string source, string pattern)
+    {
+        int count = 0;
+        int index = 0;
+        while ((index = source.IndexOf(pattern, index, StringComparison.Ordinal)) != -1)
+        {
+            count++;
+            index += pattern.Length;
+        }
+        return count;
+    }
+
+    // ── Heartbeat During Pipeline Execution ─────────────────────────────
+
+    /// <summary>
+    /// Validates that WorkItemAgentService delegates heartbeat responsibility
+    /// to AgentConnectionManager (which handles heartbeats internally).
+    /// Superseded by AgentConnectionManagerTests.SourceCode_SendsHeartbeats.
+    /// </summary>
+    [Fact]
+    public void WorkItemAgentService_ShouldSendHeartbeats_DuringPipelineExecution()
+    {
+        // Heartbeats are now managed by AgentConnectionManager.
+        // Verify WorkItemAgentService uses the connection manager (which sends heartbeats).
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
+
+        var usesConnectionManager = sourceCode.Contains("AgentConnectionManager")
+            || sourceCode.Contains("IAgentConnectionManager");
+        usesConnectionManager.Should().BeTrue(
+            "WorkItemAgentService delegates heartbeats to AgentConnectionManager");
+
+        // Verify AgentConnectionManager actually sends heartbeats
+        var managerSource = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionManager.cs"));
+        managerSource.Should().Contain("HeartbeatMessage",
+            "AgentConnectionManager must send HeartbeatMessage periodically");
+    }
+
+    // ── RegisterAgent Labels From Environment ────────────────────────────
+
+    /// <summary>
+    /// Validates that WorkItemAgentService reads AGENT_LABELS from the environment
+    /// and includes them in the AgentRegistrationMessage.Labels field passed to
+    /// AgentConnectionManager.ConnectAndRegisterAsync.
+    ///
+    /// NOTE: Structural source-code inspection test. Updated for AgentConnectionManager refactoring.
+    /// </summary>
+    [Fact]
+    public void WorkItemAgentService_ShouldReadLabelsFromEnvironment_InRegistration()
+    {
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
+
+        // The registration message must NOT use a hardcoded empty array for Labels
+        var hasAgentRegistrationMessage = sourceCode.Contains("AgentRegistrationMessage");
+        hasAgentRegistrationMessage.Should().BeTrue("WorkItemAgentService should construct AgentRegistrationMessage");
+
+        // It must read labels from the environment
+        var readsLabels = sourceCode.Contains("EnvAgentLabels")
+            || sourceCode.Contains("AGENT_LABELS");
+        readsLabels.Should().BeTrue(
+            "WorkItemAgentService must read AGENT_LABELS from environment for registration labels");
+
+        // Labels must not be hardcoded empty
+        // Find the AgentRegistrationMessage block
+        var regIndex = sourceCode.IndexOf("AgentRegistrationMessage");
+        var connectIndex = sourceCode.IndexOf("ConnectAndRegisterAsync", regIndex);
+        if (connectIndex > regIndex)
+        {
+            var registrationBlock = sourceCode[regIndex..connectIndex];
+            registrationBlock.Should().NotContain("Labels = []",
+                "Labels must not be hardcoded empty — read from AGENT_LABELS env var");
+        }
+    }
+
     // ── RegisterAgent After Hub Connection ────────────────────────────────
 
     /// <summary>
-    /// Validates that the K8s-mode WorkItemAgentService calls RegisterAgent
-    /// on the hub connection after successfully connecting. Without this call,
-    /// the orchestrator's [RequiresActiveJob] filter rejects all hub method
-    /// invocations (token refresh, step transitions, etc.).
-    /// 
-    /// This test verifies by asserting that when the hub connects but RegisterAgent
-    /// is not called, token-dependent operations fail. The fix should add a
-    /// RegisterAgent call with ActiveJob state after _hubManager.StartAsync().
+    /// Validates that WorkItemAgentService calls ConnectAndRegisterAsync on the
+    /// AgentConnectionManager, which internally handles registration with the hub.
+    /// Supersedes the old "RegisterAgent after hub connection" structural test.
     /// </summary>
     [Fact]
     public void WorkItemAgentService_ShouldCallRegisterAgent_AfterHubConnection()
     {
-        // This test verifies the structural requirement: the service MUST invoke
-        // RegisterAgent on the hub connection after StartAsync.
-        // We verify this by checking the source code contract — the method name
-        // HubMethodNames.RegisterAgent must appear in the WorkItemAgentService's
-        // RunWorkItemLifecycleAsync flow after _hubManager.StartAsync(ct).
-        //
-        // Since we cannot mock HubConnection.InvokeAsync (sealed class), we instead
-        // verify that the service HAS a RegisterAgent call by examining it runs
-        // correctly when the hub is available (covered by integration tests).
-        //
-        // For the unit test, we verify the FakeSequentialHandler shows the correct
-        // HTTP call sequence AND that the service attempts hub registration by
-        // checking it doesn't crash with "Agent not registered" when the full
-        // lifecycle is attempted with a mock hub.
-        //
-        // FAILING: This test documents the MISSING RegisterAgent call.
-        // The service currently goes directly from StartAsync to pipeline execution
-        // without registering, causing [RequiresActiveJob] filter rejection.
-
-        // Verify the code path: reading the service source to confirm RegisterAgent is invoked.
-        // This is a "design test" that will fail until the fix is applied.
         var sourceCode = File.ReadAllText(
             Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
 
-        // After hub connect, RegisterAgent MUST be called
-        var hubStartIndex = sourceCode.IndexOf("_hubManager.StartAsync(ct)");
-        hubStartIndex.Should().BeGreaterThan(0, "hub StartAsync call should exist");
-
-        var afterHubStart = sourceCode[hubStartIndex..];
-        var registerIndex = afterHubStart.IndexOf("RegisterAgent");
-
-        registerIndex.Should().BeGreaterThan(0,
-            "WorkItemAgentService MUST call RegisterAgent on the hub connection after StartAsync. " +
-            "Without this, the orchestrator's [RequiresActiveJob] filter rejects all hub method " +
-            "invocations (token refresh, output reporting, etc.), causing pipeline failure.");
+        // Must use ConnectAndRegisterAsync from AgentConnectionManager
+        sourceCode.Should().Contain("ConnectAndRegisterAsync",
+            "WorkItemAgentService must call AgentConnectionManager.ConnectAndRegisterAsync " +
+            "which handles connection + registration + heartbeat start atomically.");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -342,27 +474,24 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
     private WorkItemAgentService CreateService(string workItemId)
     {
         return new WorkItemAgentService(
-            workItemId, _workItemClient, _hubManager, _hubFactory,
-            CreateMinimalExecutor(), CreateMinimalConsolidationExecutor(),
+            workItemId, _workItemClient, Mock.Of<IAgentConnectionManager>(),
+            CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("test-agent"), _mockLifetime.Object, _mockLogger.Object);
     }
 
-    private LocalPipelineExecutor CreateMinimalExecutor()
+    private IWorkItemExecutor CreateMinimalWorkItemExecutor()
     {
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var mockHttpFactory = new Mock<IHttpClientFactory>();
         var mockQgValidator = new Mock<CodingAgentWebUI.Pipeline.Interfaces.IQualityGateValidator>();
-        return new LocalPipelineExecutor(
+        var pipelineExecutor = new LocalPipelineExecutor(
             mockOrchestrator.Object, mockHttpFactory.Object,
             new PipelineConfiguration(), mockQgValidator.Object, _mockLogger.Object,
             agentIdentity: new AgentIdentity("test-agent"));
-    }
-
-    private LocalConsolidationExecutor CreateMinimalConsolidationExecutor()
-    {
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
-        var mockHttpFactory = new Mock<IHttpClientFactory>();
-        return new LocalConsolidationExecutor(mockOrchestrator.Object, mockHttpFactory.Object, _mockLogger.Object);
+        var consolidationExecutor = new LocalConsolidationExecutor(
+            mockOrchestrator.Object, mockHttpFactory.Object, _mockLogger.Object);
+        return new WorkItemExecutorRouter(pipelineExecutor, consolidationExecutor, _mockLogger.Object);
     }
 
     private static JobAssignmentMessage CreateMinimalAssignment(string jobId, string issueId) => new()

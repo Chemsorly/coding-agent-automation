@@ -50,7 +50,7 @@ public class AgentWorkerServiceTests : IDisposable
         var mockConsolidationExecutor = CreateMockConsolidationExecutor();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var act = () => new AgentWorkerService(null!, CreateTestHubManagerFactory(), mockExecutor, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
+        var act = () => new AgentWorkerService(null!, CreateTestHubManagerFactory(), mockExecutor, mockConsolidationExecutor, Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("hubManager");
     }
 
@@ -62,7 +62,7 @@ public class AgentWorkerServiceTests : IDisposable
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), CreateTestHubManagerFactory(), null!, mockConsolidationExecutor, mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
+            CreateTestHubManager(), CreateTestHubManagerFactory(), null!, mockConsolidationExecutor, Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("executor");
     }
 
@@ -71,7 +71,7 @@ public class AgentWorkerServiceTests : IDisposable
     {
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var act = () => new AgentWorkerService(
-            CreateTestHubManager(), CreateTestHubManagerFactory(), CreateMockExecutor(), CreateMockConsolidationExecutor(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), null!);
+            CreateTestHubManager(), CreateTestHubManagerFactory(), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), new AgentIdentity("test"), Mock.Of<IHostApplicationLifetime>(), null!);
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
     }
 
@@ -471,21 +471,16 @@ public class AgentWorkerServiceTests : IDisposable
 
         // Assert: Check the critical message buffer for the buffered completion.
         // When the hub is disconnected, ReportJobCompleted fails and the payload is
-        // buffered in _criticalMessageBuffer for replay on reconnection.
-        var buffer = GetPrivateField<object>(service, "_criticalMessageBuffer")!;
-        var hasPending = (bool)buffer.GetType().GetProperty("HasPendingMessages")!.GetValue(buffer)!;
+        // buffered in the SignalRCompletionReporter's CriticalMessageBuffer for replay on reconnection.
+        var reporter = GetPrivateField<IJobCompletionReporter>(service, "_completionReporter")!;
+        var hasPending = reporter is SignalRCompletionReporter signalR && signalR.HasPendingMessages;
 
         if (hasPending)
         {
-            // Peek at the buffered message to verify FinalLabel
-            var peekMethod = buffer.GetType().GetMethod("PeekAll") ?? buffer.GetType().GetMethod("GetPendingMessages");
-            if (peekMethod is null)
-            {
-                // If we can't peek, at minimum verify the job slot is still held (buffer non-empty)
-                var activeJobId = GetPrivateField<string?>(service, "_activeJobId");
-                activeJobId.Should().Be("cancel-test-job",
-                    "job slot should be held when buffer has pending messages");
-            }
+            // Verify the job slot is still held (buffer non-empty → slot held for replay)
+            var activeJobId = GetPrivateField<string?>(service, "_activeJobId");
+            activeJobId.Should().Be("cancel-test-job",
+                "job slot should be held when buffer has pending messages");
         }
         else
         {
@@ -785,6 +780,50 @@ public class AgentWorkerServiceTests : IDisposable
 
     // ── Re-registration extended retry ──────────────────────────────────
 
+    /// <summary>
+    /// Validates that AgentWorkerService already implements the same connection lifecycle
+    /// patterns that AgentConnectionManager provides. This test documents the parity
+    /// requirement without forcing an immediate refactoring of the more complex
+    /// event-driven service.
+    ///
+    /// Future: AgentWorkerService should compose AgentConnectionManager for heartbeat,
+    /// registration, and resilience. For now, we validate the patterns are present.
+    /// </summary>
+    [Fact]
+    public void AgentWorkerService_HasConnectionLifecycleParity()
+    {
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
+
+        // Must have resilience pipeline
+        sourceCode.Should().Contain("ResiliencePipeline",
+            "AgentWorkerService must use Polly resilience for hub invocations");
+
+        // Must send heartbeats
+        sourceCode.Should().Contain("HeartbeatMessage",
+            "AgentWorkerService must send periodic heartbeats");
+
+        // Must handle reconnection
+        sourceCode.Should().Contain("HandleReconnectedAsync",
+            "AgentWorkerService must re-register on reconnection");
+
+        // Must handle CancelJob
+        sourceCode.Should().Contain("HandleCancelJobAsync",
+            "AgentWorkerService must handle CancelJob events");
+
+        // Must deregister on shutdown
+        sourceCode.Should().Contain("DeregisterAgent",
+            "AgentWorkerService must deregister on shutdown");
+    }
+
+    private static string GetSourceDirectory()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir is not null && !File.Exists(Path.Combine(dir, "CodingAgentAutomation.sln")))
+            dir = Path.GetDirectoryName(dir);
+        return dir ?? throw new InvalidOperationException("Could not find solution root");
+    }
+
     [Fact]
     public async Task HandleReconnectedAsync_AllRetriesFail_CallsStopApplication()
     {
@@ -798,6 +837,7 @@ public class AgentWorkerServiceTests : IDisposable
             CreateTestHubManagerFactory(),
             CreateMockExecutor(),
             CreateMockConsolidationExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             mockOrchestrator.Object,
             Mock.Of<IHttpClientFactory>(),
             new AgentIdentity("test-agent"),
@@ -858,11 +898,18 @@ public class AgentWorkerServiceTests : IDisposable
     {
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
+        var hubManager = CreateTestHubManager();
+        var completionReporter = new SignalRCompletionReporter(
+            hubManager,
+            CodingAgentWebUI.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger.Object),
+            new CriticalMessageBuffer(),
+            mockLogger.Object);
         return new AgentWorkerService(
-            CreateTestHubManager(),
+            hubManager,
             CreateTestHubManagerFactory(),
             CreateMockExecutor(),
             CreateMockConsolidationExecutor(),
+            completionReporter,
             mockOrchestrator.Object,
             Mock.Of<IHttpClientFactory>(),
             new AgentIdentity("test-agent"),
@@ -883,6 +930,7 @@ public class AgentWorkerServiceTests : IDisposable
             CreateTestHubManagerFactory(),
             CreateMockExecutor(),
             CreateMockConsolidationExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             orchestrator,
             Mock.Of<IHttpClientFactory>(),
             new AgentIdentity("test-agent"),

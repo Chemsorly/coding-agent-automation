@@ -429,6 +429,56 @@ public class JobSpecBuilderTests
 
     #endregion
 
+    #region AGENT_LABELS Env Var
+
+    [Fact]
+    public void Build_PropagatesTemplateLabelsAsEnvVar()
+    {
+        // K8s-mode WorkItemAgentService reads AGENT_LABELS from the environment
+        // to include them in its RegisterAgent message. JobSpecBuilder must inject
+        // this env var from the template so the pod has access to its own labels.
+        var template = CreateTemplate(labels: "kiro,dotnet,dotnet10");
+        var ctx = CreateContext();
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        var labelsEnv = container.Env.FirstOrDefault(e => e.Name == "AGENT_LABELS");
+        labelsEnv.Should().NotBeNull("AGENT_LABELS must be set so the agent can register with its labels");
+        labelsEnv!.Value.Should().Be("kiro,dotnet,dotnet10");
+    }
+
+    [Fact]
+    public void Build_SingleLabel_PropagatedCorrectly()
+    {
+        // Single label without comma separator should still be propagated
+        var template = CreateTemplate(labels: "gpu");
+        var ctx = CreateContext();
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        var labelsEnv = container.Env.FirstOrDefault(e => e.Name == "AGENT_LABELS");
+        labelsEnv.Should().NotBeNull("Single-label templates must still propagate AGENT_LABELS");
+        labelsEnv!.Value.Should().Be("gpu");
+    }
+
+    [Fact]
+    public void Build_EmptyLabels_DoesNotIncludeAgentLabelsEnvVar()
+    {
+        // When template has no labels, don't inject an empty env var
+        var template = CreateTemplate(labels: "");
+        var ctx = CreateContext();
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        var labelsEnv = container.Env.FirstOrDefault(e => e.Name == "AGENT_LABELS");
+        labelsEnv.Should().BeNull("Empty labels should not produce an AGENT_LABELS env var");
+    }
+
+    #endregion
+
     #region Full Job Spec Validation (K8s API compliance)
 
     /// <summary>

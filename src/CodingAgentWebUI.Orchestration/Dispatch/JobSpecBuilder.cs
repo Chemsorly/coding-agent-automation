@@ -1,4 +1,5 @@
 using System.Text.Json;
+using CodingAgentWebUI.Agent;
 using k8s.Models;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
@@ -59,6 +60,10 @@ public static class JobSpecBuilder
         var otelHeaders = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS");
         if (!string.IsNullOrEmpty(otelHeaders))
             envVars.Add(new V1EnvVar { Name = "OTEL_EXPORTER_OTLP_HEADERS", Value = otelHeaders });
+
+        // Propagate agent labels from the template so WorkItemAgentService can read them
+        if (!string.IsNullOrEmpty(template.Labels))
+            envVars.Add(new V1EnvVar { Name = AgentDefaults.EnvAgentLabels, Value = template.Labels });
 
         // ── Volumes & mounts ────────────────────────────────────────────────
         var volumeMounts = new List<V1VolumeMount>

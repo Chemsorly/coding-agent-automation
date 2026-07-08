@@ -76,7 +76,7 @@ public class DiResolutionSmokeTests
 
         // ── Pipeline executor ──
         services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
-        services.AddSingleton(sp => new LocalPipelineExecutor(
+        services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetRequiredService<PipelineConfiguration>(),
@@ -87,7 +87,7 @@ public class DiResolutionSmokeTests
             agentIdentity: sp.GetRequiredService<AgentIdentity>()));
 
         // ── Consolidation executor ──
-        services.AddSingleton(sp => new LocalConsolidationExecutor(
+        services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             Log.Logger));
@@ -106,14 +106,35 @@ public class DiResolutionSmokeTests
         // ── IHostApplicationLifetime mock (needed by WorkItemAgentService) ──
         services.AddSingleton(Mock.Of<IHostApplicationLifetime>());
 
+        // ── IWorkItemExecutor (router) ──
+        services.AddSingleton<IWorkItemExecutor>(sp => new WorkItemExecutorRouter(
+            sp.GetRequiredService<IPipelineExecutor>(),
+            sp.GetRequiredService<IConsolidationExecutor>(),
+            Log.Logger));
+
+        // ── IWorkItemLifecycleClient ──
+        services.AddSingleton<IWorkItemLifecycleClient>(sp =>
+            sp.GetRequiredService<WorkItemHttpClient>());
+
         // ── WorkItemAgentService ──
+        services.AddSingleton<IAgentConnectionManager>(sp =>
+        {
+            var factory = sp.GetRequiredService<HubConnectionManagerFactory>();
+            var hubManager = sp.GetRequiredService<HubConnectionManager>();
+            return new AgentConnectionManager(
+                hubManager,
+                factory,
+                sp.GetRequiredService<AgentIdentity>(),
+                Log.Logger);
+        });
+        services.AddSingleton<IJobCompletionReporter>(sp =>
+            Mock.Of<IJobCompletionReporter>());
         services.AddSingleton(sp => new WorkItemAgentService(
             "smoke-test-work-item-id",
-            sp.GetRequiredService<WorkItemHttpClient>(),
-            sp.GetRequiredService<HubConnectionManager>(),
-            sp.GetRequiredService<HubConnectionManagerFactory>(),
-            sp.GetRequiredService<LocalPipelineExecutor>(),
-            sp.GetRequiredService<LocalConsolidationExecutor>(),
+            sp.GetRequiredService<IWorkItemLifecycleClient>(),
+            sp.GetRequiredService<IAgentConnectionManager>(),
+            sp.GetRequiredService<IWorkItemExecutor>(),
+            sp.GetRequiredService<IJobCompletionReporter>(),
             sp.GetRequiredService<AgentIdentity>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
@@ -158,23 +179,25 @@ public class DiResolutionSmokeTests
     }
 
     [Fact]
-    public async Task K8sMode_CanResolve_LocalPipelineExecutor()
+    public async Task K8sMode_CanResolve_IPipelineExecutor()
     {
         await using var sp = BuildK8sModeContainer();
 
-        var executor = sp.GetRequiredService<LocalPipelineExecutor>();
+        var executor = sp.GetRequiredService<IPipelineExecutor>();
 
         Assert.NotNull(executor);
+        Assert.IsType<LocalPipelineExecutor>(executor);
     }
 
     [Fact]
-    public async Task K8sMode_CanResolve_LocalConsolidationExecutor()
+    public async Task K8sMode_CanResolve_IConsolidationExecutor()
     {
         await using var sp = BuildK8sModeContainer();
 
-        var executor = sp.GetRequiredService<LocalConsolidationExecutor>();
+        var executor = sp.GetRequiredService<IConsolidationExecutor>();
 
         Assert.NotNull(executor);
+        Assert.IsType<LocalConsolidationExecutor>(executor);
     }
 
     [Fact]
@@ -279,7 +302,7 @@ public class DiResolutionSmokeTests
 
         // ── Pipeline executor ──
         services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
-        services.AddSingleton(sp => new LocalPipelineExecutor(
+        services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetRequiredService<PipelineConfiguration>(),
@@ -290,7 +313,7 @@ public class DiResolutionSmokeTests
             agentIdentity: sp.GetRequiredService<AgentIdentity>()));
 
         // ── Consolidation executor ──
-        services.AddSingleton(sp => new LocalConsolidationExecutor(
+        services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             Log.Logger));
@@ -299,11 +322,14 @@ public class DiResolutionSmokeTests
         services.AddSingleton(Mock.Of<IHostApplicationLifetime>());
 
         // ── SignalR-mode: AgentWorkerService (not WorkItemHttpClient) ──
+        services.AddSingleton<IJobCompletionReporter>(sp =>
+            Mock.Of<IJobCompletionReporter>());
         services.AddSingleton(sp => new AgentWorkerService(
             sp.GetRequiredService<HubConnectionManager>(),
             sp.GetRequiredService<HubConnectionManagerFactory>(),
-            sp.GetRequiredService<LocalPipelineExecutor>(),
-            sp.GetRequiredService<LocalConsolidationExecutor>(),
+            sp.GetRequiredService<IPipelineExecutor>(),
+            sp.GetRequiredService<IConsolidationExecutor>(),
+            sp.GetRequiredService<IJobCompletionReporter>(),
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetRequiredService<AgentIdentity>(),
@@ -328,23 +354,25 @@ public class DiResolutionSmokeTests
     }
 
     [Fact]
-    public async Task SignalRMode_CanResolve_LocalPipelineExecutor()
+    public async Task SignalRMode_CanResolve_IPipelineExecutor()
     {
         await using var sp = BuildSignalRModeContainer();
 
-        var executor = sp.GetRequiredService<LocalPipelineExecutor>();
+        var executor = sp.GetRequiredService<IPipelineExecutor>();
 
         Assert.NotNull(executor);
+        Assert.IsType<LocalPipelineExecutor>(executor);
     }
 
     [Fact]
-    public async Task SignalRMode_CanResolve_LocalConsolidationExecutor()
+    public async Task SignalRMode_CanResolve_IConsolidationExecutor()
     {
         await using var sp = BuildSignalRModeContainer();
 
-        var executor = sp.GetRequiredService<LocalConsolidationExecutor>();
+        var executor = sp.GetRequiredService<IConsolidationExecutor>();
 
         Assert.NotNull(executor);
+        Assert.IsType<LocalConsolidationExecutor>(executor);
     }
 
     [Fact]
