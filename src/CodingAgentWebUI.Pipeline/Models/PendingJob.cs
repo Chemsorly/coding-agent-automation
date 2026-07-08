@@ -5,6 +5,12 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// </summary>
 public sealed record PendingJob
 {
+    /// <summary>
+    /// The WorkItem ID (DB modes only). Null in legacy/in-memory mode.
+    /// Used by the UI to cancel pending items via <see cref="IWorkDistributor.CancelJobAsync"/>.
+    /// </summary>
+    public string? WorkItemId { get; init; }
+
     public required string IssueIdentifier { get; init; }
     public string? IssueTitle { get; init; }
     public required string IssueProviderId { get; init; }

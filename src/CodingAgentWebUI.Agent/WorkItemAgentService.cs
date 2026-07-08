@@ -269,7 +269,9 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         }
 
         // Exit non-zero when pipeline did not complete successfully.
-        return completion.FinalStep == PipelineStep.Completed ? 0 : 1;
+        // Cancelled exits 0 because it's an intentional termination requested by the orchestrator —
+        // K8s should NOT restart the pod on cancel.
+        return completion.FinalStep is PipelineStep.Completed or PipelineStep.Cancelled ? 0 : 1;
     }
 
     /// <summary>

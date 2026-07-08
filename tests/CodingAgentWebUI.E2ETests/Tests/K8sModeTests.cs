@@ -139,7 +139,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         Assert.NotNull(candidate);
 
         var isTimedOut = ReconciliationService.IsTimedOut(
-            candidate.CreatedAt, candidate.TimeoutSeconds, DateTimeOffset.UtcNow);
+            candidate.DispatchedAt ?? candidate.CreatedAt, candidate.TimeoutSeconds, DateTimeOffset.UtcNow);
         Assert.True(isTimedOut, "Item should be detected as timed out");
 
         // Transition to Failed (simulating what ReconciliationService does)

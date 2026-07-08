@@ -18,6 +18,9 @@ graph TB
     end
     
     subgraph Agents["Agent Containers"]
+        AgentHost[Agent Host<br/>connection, lifecycle, health]
+        AgentKiro[Agent.KiroCli<br/>Kiro CLI process provider]
+        AgentOC[Agent.OpenCode<br/>OpenCode HTTP provider]
         A1[Kiro Agent .NET ×2]
         A2[Kiro Agent Python]
         A3[Kiro Agent Java]
@@ -33,7 +36,10 @@ graph TB
     Infra --> Pipeline
     Pipeline --> CodeReview
     Pipeline --> KiroLib
-    Orch -->|SignalR / K8s Jobs<br/>work distribution| Agents
+    Orch -->|SignalR / K8s Jobs<br/>work distribution| AgentHost
+    AgentHost --> AgentKiro
+    AgentHost --> AgentOC
+    AgentKiro --> KiroLib
 ```
 
 - **WebUI** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI, SignalR hub, API endpoints, background services (OrphanedLabelRecovery, LoopStatePersistence).
@@ -42,7 +48,10 @@ graph TB
 - **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline orchestration (`PipelineOrchestrationService`, facades, `PipelineLoopService`), step execution, models, interfaces, constants.
 - **Pipeline.CodeReview** (`CodingAgentWebUI.Pipeline.CodeReview`) — Review findings parsing, inline comment selection, severity filtering.
 - **KiroCliLib** — Shared library for Kiro CLI configuration parsing. Referenced by Pipeline, Agent.KiroCli, and Agent.OpenCode.
-- **Agent Containers** — Worker containers connecting via SignalR. Two backends: Kiro CLI (process) and OpenCode (HTTP API). Scale by adding containers.
+- **Agent Host** (`CodingAgentWebUI.Agent`) — Agent executable. Manages SignalR/HTTP connection to orchestrator, work item lifecycle, health endpoints, heartbeat, and reconnection logic.
+- **Agent.KiroCli** (`CodingAgentWebUI.Agent.KiroCli`) — Kiro CLI agent provider. Spawns kiro-cli processes and translates pipeline operations into CLI invocations.
+- **Agent.OpenCode** (`CodingAgentWebUI.Agent.OpenCode`) — OpenCode agent provider. Communicates with the OpenCode HTTP API for LLM-driven code generation.
+- **Agent Containers** — Worker containers connecting via SignalR or HTTP. Two backends: Kiro CLI (process) and OpenCode (HTTP API). Scale by adding containers.
 
 ## Docker Compose
 
@@ -205,7 +214,7 @@ The chart deploys:
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
 | `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
 
-In Kubernetes mode, Job pod specs (image, resources, nodeSelector, tolerations, initContainers, podSecurityContext, maxConcurrent) are configured in the `jobTemplates[]` list and rendered into a ConfigMap consumed by `DispatchService`. If `jobTemplates` is empty, the chart falls back to deriving templates from the `agents[]` list for backward compatibility.
+In Kubernetes mode, Job pod specs (image, imagePullPolicy, resources, nodeSelector, tolerations, initContainers, podSecurityContext, maxConcurrent) are configured in the `jobTemplates[]` list and rendered into a ConfigMap consumed by `DispatchService`. If `jobTemplates` is empty, the chart falls back to deriving templates from the `agents[]` list for backward compatibility.
 
 ### Scaling Agents
 

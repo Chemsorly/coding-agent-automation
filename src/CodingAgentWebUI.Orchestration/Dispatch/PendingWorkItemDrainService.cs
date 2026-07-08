@@ -234,9 +234,24 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                         "PendingWorkItemDrainService: consolidation dispatch failed for WorkItem {WorkItemId}",
                         item.Id);
                     _agentResolver.ReleaseAgent(agentId);
-                    // TODO: Revert WorkItem from Dispatched to Pending here (matching the non-exception failure path).
-                    // Currently the WorkItem remains stuck in Dispatched until the stuck-item detector fires (~5 min).
-                    // Add: await _transitionService.TransitionAsync(item.Id, WorkItemStatus.Pending, entity => { entity.DispatchedAt = null; entity.AssignedAgentId = null; }, ct);
+                    // Revert WorkItem from Dispatched to Pending so it's available for the next drain cycle
+                    // (previously this was left stuck in Dispatched until the stuck-item detector fired ~5 min later)
+                    try
+                    {
+                        await _transitionService.TransitionAsync(
+                            item.Id, WorkItemStatus.Pending,
+                            entity =>
+                            {
+                                entity.DispatchedAt = null;
+                                entity.AssignedAgentId = null;
+                            }, ct);
+                    }
+                    catch (Exception revertEx)
+                    {
+                        _logger.LogWarning(revertEx,
+                            "PendingWorkItemDrainService: failed to revert WorkItem {WorkItemId} to Pending after dispatch exception — stuck-item detector will handle",
+                            item.Id);
+                    }
                 }
 
                 continue;

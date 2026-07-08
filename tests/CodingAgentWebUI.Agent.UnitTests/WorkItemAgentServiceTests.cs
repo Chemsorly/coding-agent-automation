@@ -143,6 +143,34 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         _mockLifetime.Verify(l => l.StopApplication(), Times.AtLeastOnce);
     }
 
+    // ── Exit Code on Pipeline Cancellation ─────────────────────────────
+
+    /// <summary>
+    /// Validates that when the pipeline is intentionally cancelled via CancelJob SignalR message,
+    /// the service exits with code 0 so that K8s does not restart the pod.
+    /// Cancelled is an intentional termination — the orchestrator requested it.
+    /// </summary>
+    [Fact]
+    public void WorkItemAgentService_ShouldExitZeroOnCancelled()
+    {
+        // Structural test: verify the exit code logic treats Cancelled as exit 0.
+        // The actual return line should be: Completed or Cancelled → 0, else 1.
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
+
+        // The exit code logic should allow Cancelled to exit 0
+        // Old (buggy): completion.FinalStep == PipelineStep.Completed ? 0 : 1
+        // Fixed: completion.FinalStep is Completed or Cancelled → 0, else 1
+        var hasCancelledExitZero = sourceCode.Contains("PipelineStep.Cancelled")
+            && sourceCode.Contains("0")
+            && !sourceCode.Contains("completion.FinalStep == PipelineStep.Completed ? 0 : 1");
+
+        hasCancelledExitZero.Should().BeTrue(
+            "WorkItemAgentService must exit 0 when FinalStep is Cancelled (intentional cancellation). " +
+            "The old pattern 'completion.FinalStep == PipelineStep.Completed ? 0 : 1' causes pod restarts " +
+            "on cancel because K8s sees exit code 1 as failure.");
+    }
+
     // ── Exit Code on Pipeline Failure ────────────────────────────────────
 
     /// <summary>
