@@ -200,13 +200,17 @@ try
             options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
         });
 
+        builder.Services.AddSingleton<IWorkItemExecutor>(sp => new WorkItemExecutorRouter(
+            sp.GetRequiredService<LocalPipelineExecutor>(),
+            sp.GetRequiredService<LocalConsolidationExecutor>(),
+            Log.Logger));
+
         builder.Services.AddSingleton(sp => new WorkItemAgentService(
             workItemId!,
             sp.GetRequiredService<WorkItemHttpClient>(),
             sp.GetRequiredService<HubConnectionManager>(),
             sp.GetRequiredService<HubConnectionManagerFactory>(),
-            sp.GetRequiredService<LocalPipelineExecutor>(),
-            sp.GetRequiredService<LocalConsolidationExecutor>(),
+            sp.GetRequiredService<IWorkItemExecutor>(),
             sp.GetRequiredService<AgentIdentity>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));

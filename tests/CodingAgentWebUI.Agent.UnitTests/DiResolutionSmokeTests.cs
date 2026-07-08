@@ -106,14 +106,19 @@ public class DiResolutionSmokeTests
         // ── IHostApplicationLifetime mock (needed by WorkItemAgentService) ──
         services.AddSingleton(Mock.Of<IHostApplicationLifetime>());
 
+        // ── IWorkItemExecutor (router) ──
+        services.AddSingleton<IWorkItemExecutor>(sp => new WorkItemExecutorRouter(
+            sp.GetRequiredService<LocalPipelineExecutor>(),
+            sp.GetRequiredService<LocalConsolidationExecutor>(),
+            Log.Logger));
+
         // ── WorkItemAgentService ──
         services.AddSingleton(sp => new WorkItemAgentService(
             "smoke-test-work-item-id",
             sp.GetRequiredService<WorkItemHttpClient>(),
             sp.GetRequiredService<HubConnectionManager>(),
             sp.GetRequiredService<HubConnectionManagerFactory>(),
-            sp.GetRequiredService<LocalPipelineExecutor>(),
-            sp.GetRequiredService<LocalConsolidationExecutor>(),
+            sp.GetRequiredService<IWorkItemExecutor>(),
             sp.GetRequiredService<AgentIdentity>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));

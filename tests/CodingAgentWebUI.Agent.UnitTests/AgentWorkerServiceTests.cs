@@ -785,6 +785,50 @@ public class AgentWorkerServiceTests : IDisposable
 
     // ── Re-registration extended retry ──────────────────────────────────
 
+    /// <summary>
+    /// Validates that AgentWorkerService already implements the same connection lifecycle
+    /// patterns that AgentConnectionManager provides. This test documents the parity
+    /// requirement without forcing an immediate refactoring of the more complex
+    /// event-driven service.
+    ///
+    /// Future: AgentWorkerService should compose AgentConnectionManager for heartbeat,
+    /// registration, and resilience. For now, we validate the patterns are present.
+    /// </summary>
+    [Fact]
+    public void AgentWorkerService_HasConnectionLifecycleParity()
+    {
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentWorkerService.cs"));
+
+        // Must have resilience pipeline
+        sourceCode.Should().Contain("ResiliencePipeline",
+            "AgentWorkerService must use Polly resilience for hub invocations");
+
+        // Must send heartbeats
+        sourceCode.Should().Contain("HeartbeatMessage",
+            "AgentWorkerService must send periodic heartbeats");
+
+        // Must handle reconnection
+        sourceCode.Should().Contain("HandleReconnectedAsync",
+            "AgentWorkerService must re-register on reconnection");
+
+        // Must handle CancelJob
+        sourceCode.Should().Contain("HandleCancelJobAsync",
+            "AgentWorkerService must handle CancelJob events");
+
+        // Must deregister on shutdown
+        sourceCode.Should().Contain("DeregisterAgent",
+            "AgentWorkerService must deregister on shutdown");
+    }
+
+    private static string GetSourceDirectory()
+    {
+        var dir = AppContext.BaseDirectory;
+        while (dir is not null && !File.Exists(Path.Combine(dir, "CodingAgentAutomation.sln")))
+            dir = Path.GetDirectoryName(dir);
+        return dir ?? throw new InvalidOperationException("Could not find solution root");
+    }
+
     [Fact]
     public async Task HandleReconnectedAsync_AllRetriesFail_CallsStopApplication()
     {

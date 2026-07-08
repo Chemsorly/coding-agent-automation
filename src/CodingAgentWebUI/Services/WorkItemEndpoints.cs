@@ -72,6 +72,11 @@ public sealed class WorkItemAssignmentDto
     // Decomposition-specific
     public DecompositionProjectContext? ProjectContext { get; init; }
     public string? DecompositionSource { get; init; }
+
+    // Consolidation-specific
+    public ConsolidationRunType? ConsolidationRunType { get; init; }
+    public string? ConsolidationTemplateId { get; init; }
+    public string? ConsolidationWorkspacePath { get; init; }
 }
 
 /// <summary>
@@ -236,6 +241,9 @@ public static class WorkItemEndpoints
         ProjectSteeringContent = request.ProjectSteeringContent,
         RepoSteeringContent = request.RepoSteeringContent,
         TraceContext = request.TraceContext,
-        LinkedIssueContexts = request.LinkedIssueContexts
+        LinkedIssueContexts = request.LinkedIssueContexts,
+        ConsolidationRunType = request.ConsolidationRunType,
+        ConsolidationTemplateId = request.ConsolidationTemplateId,
+        ConsolidationWorkspacePath = request.ConsolidationWorkspacePath
     };
 }
