@@ -1017,4 +1017,44 @@ public class AgentCodingPageServiceTests
     // TODO: Add tests for HandleGlobalEscape exception-handling fix (issue #1057 criterion #1).
     // The method now catches ObjectDisposedException and guards against _disposed. A bUnit test
     // could verify that calling HandleGlobalEscape after component disposal does not throw.
+
+    [Fact]
+    public async Task StartLoopAsync_WhenLoopServiceThrows_ReturnsErrorTuple()
+    {
+        // Simulate config store throwing during StartLoopAsync's config-load phase.
+        // With the fix in PipelineLoopService, this returns (false, error) instead of throwing.
+        // But if something else throws (e.g., UpdatePipelineConfigAsync on success path),
+        // AgentCodingPageService should catch and surface it.
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Database locked"));
+
+        var (success, error) = await _service.StartLoopAsync();
+
+        Assert.False(success);
+        Assert.NotNull(error);
+    }
+
+    [Fact]
+    public async Task StartLoopAsync_WhenUpdateConfigThrows_ReturnsErrorTuple()
+    {
+        // Setup so StartLoopAsync succeeds (loop starts), but UpdatePipelineConfigAsync throws
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(TestPipelineConfig.Default());
+        _mockConfigStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>
+            {
+                new() { Id = "t-1", Name = "T", IssueProviderId = "ip-1", RepoProviderId = "rp-1", Enabled = true }
+            });
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { MakeProvider("ip-1") });
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { MakeProvider("rp-1", ProviderKind.Repository) });
+        _mockConfigStore.Setup(s => s.UpdatePipelineConfigAsync(It.IsAny<Func<PipelineConfiguration, PipelineConfiguration>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("Disk full"));
+
+        var (success, error) = await _service.StartLoopAsync();
+
+        Assert.False(success);
+        Assert.Contains("Disk full", error!);
+    }
 }

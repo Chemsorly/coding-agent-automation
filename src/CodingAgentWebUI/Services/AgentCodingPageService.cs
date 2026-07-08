@@ -245,15 +245,22 @@ public class AgentCodingPageService : IDisposable
 
     public async Task<(bool Success, string? Error)> StartLoopAsync()
     {
-        var started = await _loopService.StartLoopAsync();
-        if (!started)
+        try
         {
-            if (_loopService.ValidationErrors.Count > 0) return (false, "Loop failed to start due to validation errors (see below).");
-            if (_loopService.IsLoopActive) return (false, "Loop is already active.");
-            return (false, "A manual run is in progress. Wait for it to complete.");
+            var started = await _loopService.StartLoopAsync();
+            if (!started)
+            {
+                if (_loopService.ValidationErrors.Count > 0) return (false, "Loop failed to start due to validation errors (see below).");
+                if (_loopService.IsLoopActive) return (false, "Loop is already active.");
+                return (false, "A manual run is in progress. Wait for it to complete.");
+            }
+            await _configStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, CancellationToken.None);
+            return (true, null);
         }
-        await _configStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, CancellationToken.None);
-        return (true, null);
+        catch (Exception ex)
+        {
+            return (false, $"Failed to start loop: {ex.Message}");
+        }
     }
 
     public async Task StopLoopAsync()

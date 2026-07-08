@@ -1376,6 +1376,65 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         try { await svc.StopAsync(CancellationToken.None); } catch { }
     }
 
+    [Fact]
+    public async Task StartLoop_WhenConfigStoreThrows_ReturnsFalseAndSetsValidationError()
+    {
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("SQLite database is locked"));
+        var svc = CreateService();
+
+        var result = await svc.StartLoopAsync();
+
+        Assert.False(result);
+        Assert.False(svc.IsLoopActive);
+        Assert.Single(svc.ValidationErrors);
+        Assert.Contains("SQLite database is locked", svc.ValidationErrors[0]);
+    }
+
+    [Fact]
+    public async Task StartLoop_WhenProviderConfigStoreThrows_ReturnsFalseAndSetsValidationError()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("Network path not found"));
+        var svc = CreateService();
+
+        var result = await svc.StartLoopAsync();
+
+        Assert.False(result);
+        Assert.False(svc.IsLoopActive);
+        Assert.Single(svc.ValidationErrors);
+        Assert.Contains("Network path not found", svc.ValidationErrors[0]);
+    }
+
+    [Fact]
+    public async Task StartLoop_WhenTemplateStoreThrows_ReturnsFalseAndLogsError()
+    {
+        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new TimeoutException("Connection timed out"));
+        var svc = CreateService();
+
+        var result = await svc.StartLoopAsync();
+
+        Assert.False(result);
+        Assert.False(svc.IsLoopActive);
+        Assert.Single(svc.ValidationErrors);
+        Assert.Contains("Connection timed out", svc.ValidationErrors[0]);
+    }
+
+    [Fact]
+    public async Task StartLoop_WhenConfigStoreThrows_NotifiesChange()
+    {
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Store unavailable"));
+        var svc = CreateService();
+        var changeNotified = false;
+        svc.OnChange += () => changeNotified = true;
+
+        await svc.StartLoopAsync();
+
+        Assert.True(changeNotified);
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (_loopService is not null)
