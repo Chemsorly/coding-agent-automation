@@ -453,6 +453,99 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     #endregion
 
+    #region RequestTokenRefresh — K8s Mode Fallback
+
+    [Fact]
+    public async Task RequestTokenRefresh_WithPipelineRun_UsesRunRepoConfigId()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-cfg-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Settings = new Dictionary<string, string> { ["privateKeyBase64"] = "key123", ["clientId"] = "c", ["installationId"] = "1" }
+        };
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-cfg-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfig);
+        _mockTokenVending.Setup(t => t.GenerateAgentTokenAsync(repoConfig, It.IsAny<CancellationToken>(), false))
+            .ReturnsAsync(("fresh-token", DateTimeOffset.UtcNow.AddHours(1)));
+
+        var hub = CreateHub();
+        var result = await hub.RequestTokenRefresh("job-1", ProviderKind.Repository);
+
+        result.Token.Should().Be("fresh-token");
+        _mockTokenVending.Verify(t => t.GenerateAgentTokenAsync(repoConfig, It.IsAny<CancellationToken>(), false), Times.Once);
+    }
+
+    [Fact]
+    public async Task RequestTokenRefresh_NoPipelineRun_FallsBackToWorkItemPayload()
+    {
+        // K8s mode: no PipelineRun exists — falls back to WorkItem payload lookup
+        _mockFacade.Setup(f => f.GetRun("wi-k8s-1")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        _mockFacade.Setup(f => f.GetWorkItemProviderConfigIdsAsync("wi-k8s-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("repo-from-payload", "brain-from-payload"));
+
+        var repoConfig = new ProviderConfig
+        {
+            Id = "repo-from-payload", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo",
+            Settings = new Dictionary<string, string> { ["privateKeyBase64"] = "key", ["clientId"] = "c", ["installationId"] = "1" }
+        };
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-from-payload", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfig);
+        _mockTokenVending.Setup(t => t.GenerateAgentTokenAsync(repoConfig, It.IsAny<CancellationToken>(), false))
+            .ReturnsAsync(("k8s-token", DateTimeOffset.UtcNow.AddHours(1)));
+
+        var hub = CreateHub();
+        var result = await hub.RequestTokenRefresh("wi-k8s-1", ProviderKind.Repository);
+
+        result.Token.Should().Be("k8s-token");
+        _mockFacade.Verify(f => f.GetWorkItemProviderConfigIdsAsync("wi-k8s-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task RequestTokenRefresh_NoPipelineRunAndNoWorkItem_ThrowsHubException()
+    {
+        _mockFacade.Setup(f => f.GetRun("nonexistent")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        _mockFacade.Setup(f => f.GetWorkItemProviderConfigIdsAsync("nonexistent", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(((string?, string?)?)null);
+
+        var hub = CreateHub();
+        var act = () => hub.RequestTokenRefresh("nonexistent", ProviderKind.Repository);
+
+        await act.Should().ThrowAsync<HubException>().WithMessage("*No active run or work item*");
+    }
+
+    [Fact]
+    public async Task RequestTokenRefresh_K8sFallback_BrainKind_UsesBrainConfigId()
+    {
+        _mockFacade.Setup(f => f.GetRun("wi-brain-1")).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        _mockFacade.Setup(f => f.GetWorkItemProviderConfigIdsAsync("wi-brain-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(("repo-cfg", "brain-cfg"));
+
+        var brainConfig = new ProviderConfig
+        {
+            Id = "brain-cfg", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Brain",
+            Settings = new Dictionary<string, string> { ["privateKeyBase64"] = "brainkey", ["clientId"] = "c", ["installationId"] = "1" }
+        };
+        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("brain-cfg", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(brainConfig);
+        _mockTokenVending.Setup(t => t.GenerateAgentTokenAsync(brainConfig, It.IsAny<CancellationToken>(), false))
+            .ReturnsAsync(("brain-token", DateTimeOffset.UtcNow.AddHours(1)));
+
+        var hub = CreateHub();
+        var result = await hub.RequestTokenRefresh("wi-brain-1", ProviderKind.Brain);
+
+        result.Token.Should().Be("brain-token");
+        _mockFacade.Verify(f => f.GetProviderConfigByIdAsync("brain-cfg", ProviderKind.Repository, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    #endregion
+
     #region Helpers
 
     private AgentHub CreateHubWithOrchestration(string connectionId = "conn-1")
