@@ -311,8 +311,18 @@ public sealed class PipelineRun
     /// <summary>Pre-fetched linked issue details for review runs.</summary>
     public IReadOnlyList<LinkedIssueContext>? LinkedIssueContexts { get; init; }
 
-    /// <summary>Which agent is executing this run, or null for test runs.</summary>
-    public string? AgentId { get; set; }
+    /// <summary>
+    /// Which agent is executing this run, or null for test runs.
+    /// Uses <see cref="Volatile"/> read/write to ensure cross-thread visibility since this is
+    /// written by dispatch paths (SignalRWorkDistributor, PendingWorkItemDrainService,
+    /// RunLifecycleManager.AgentAcceptedRunAsync) and read by HeartbeatMonitorService.
+    /// </summary>
+    public string? AgentId
+    {
+        get => Volatile.Read(ref _agentId);
+        set => Volatile.Write(ref _agentId, value);
+    }
+    private string? _agentId;
 
     /// <summary>Agent provider config ID used for this run, or null for test runs.</summary>
     public string? AgentProviderConfigId { get; init; }

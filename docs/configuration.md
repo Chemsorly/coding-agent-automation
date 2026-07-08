@@ -219,7 +219,7 @@ API endpoints:
 | `OPENROUTER_API_KEY` | OpenRouter API key for LLM access (optional, for OpenRouter-backed agents) |
 | `LOG_LEVEL` | Serilog log level (default: `Information`) |
 
-> **Operator note:** The `docker-compose.yml` intentionally does not pass through sensitive credentials (`OPENCODE_SERVER_PASSWORD`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`) or optional tuning variables (`DB_LOG_LEVEL`, `PIPELINE_LOOP_STARTUP_DELAY_SECONDS`, `READINESS_DRAIN_DELAY_SECONDS`). If needed, add them manually to the relevant service's `environment` block or source them from your `.env` file. The Helm chart exposes these explicitly via `values.yaml`.
+> **Operator note:** The `docker-compose.yml` intentionally does not pass through sensitive credentials (`OPENCODE_SERVER_PASSWORD`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`). If needed, add them manually to the relevant service's `environment` block or source them from your `.env` file. The Helm chart exposes these explicitly via `values.yaml`.
 
 ## Environment Setup Steps
 
