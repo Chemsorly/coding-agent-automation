@@ -152,11 +152,17 @@ public sealed class WorkItemAgentService : BackgroundService
         // (token refresh, step transitions, output reporting, etc.).
         try
         {
+            var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;
+            var labels = labelsEnv
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList()
+                .AsReadOnly();
+
             var registration = new AgentRegistrationMessage
             {
                 AgentId = _agentIdentity.Id,
                 Hostname = Environment.MachineName,
-                Labels = [],
+                Labels = labels,
                 ActiveJob = new ActiveJobState
                 {
                     RunId = _workItemId,

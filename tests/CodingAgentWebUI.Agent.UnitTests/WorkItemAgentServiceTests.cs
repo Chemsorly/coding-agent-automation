@@ -275,6 +275,61 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         }
     }
 
+    // ── RegisterAgent Labels From Environment ────────────────────────────
+
+    /// <summary>
+    /// Validates that WorkItemAgentService reads AGENT_LABELS from the environment
+    /// and includes them in the AgentRegistrationMessage.Labels field.
+    /// Without this, agents registered via the K8s work-item path always have empty
+    /// labels, making them invisible in the Agent Monitoring UI labels column
+    /// and breaking label-based routing assertions.
+    /// 
+    /// NOTE: This is a structural source-code inspection test rather than a behavioral test
+    /// because HubConnection is sealed and cannot be mocked to intercept InvokeAsync calls.
+    /// If HubConnection becomes mockable in the future, replace this with a behavioral test
+    /// that captures the actual AgentRegistrationMessage sent during registration.
+    /// This test will false-fail if the registration logic is extracted to a helper method
+    /// or significantly restructured — in that case, update the search patterns.
+    /// </summary>
+    [Fact]
+    public void WorkItemAgentService_ShouldReadLabelsFromEnvironment_InRegistration()
+    {
+        // Source-code level structural test: the registration message MUST NOT use
+        // a hardcoded empty array for Labels. It should read from AGENT_LABELS env var.
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemAgentService.cs"));
+
+        // Find the RegisterAgent registration message construction
+        var registerIndex = sourceCode.IndexOf("RegisterAgent");
+        registerIndex.Should().BeGreaterThan(0, "RegisterAgent call should exist");
+
+        // Find the Labels assignment in the registration block near RegisterAgent
+        // Look backwards from RegisterAgent to find the AgentRegistrationMessage construction
+        var beforeRegister = sourceCode[..registerIndex];
+        var registrationMsgIndex = beforeRegister.LastIndexOf("AgentRegistrationMessage");
+        registrationMsgIndex.Should().BeGreaterThan(0, "AgentRegistrationMessage should be constructed before RegisterAgent");
+
+        var registrationBlock = sourceCode[registrationMsgIndex..registerIndex];
+
+        // The Labels field must NOT be hardcoded to empty
+        registrationBlock.Should().NotContain("Labels = []",
+            "WorkItemAgentService MUST read labels from AGENT_LABELS environment variable, " +
+            "not use a hardcoded empty array. Without this, K8s-mode agents show no labels " +
+            "in the Agent Monitoring table.");
+
+        // It should reference the AGENT_LABELS env var (directly or via AgentDefaults.EnvAgentLabels)
+        // Search the broader registration section (from Step 3b comment through RegisterAgent)
+        var step3bIndex = sourceCode.LastIndexOf("Step 3b", registerIndex);
+        var registrationSection = step3bIndex > 0
+            ? sourceCode[step3bIndex..registerIndex]
+            : sourceCode[registrationMsgIndex..registerIndex];
+
+        var readsEnvLabels = registrationSection.Contains("EnvAgentLabels")
+            || registrationSection.Contains("AGENT_LABELS");
+        readsEnvLabels.Should().BeTrue(
+            "WorkItemAgentService must read AGENT_LABELS from environment for registration labels");
+    }
+
     // ── RegisterAgent After Hub Connection ────────────────────────────────
 
     /// <summary>
