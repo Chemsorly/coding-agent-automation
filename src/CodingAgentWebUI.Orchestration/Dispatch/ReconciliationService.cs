@@ -482,6 +482,22 @@ public sealed class ReconciliationService : BackgroundService
             if (!IsTimedOut(anchor, item.TimeoutSeconds, now))
                 continue;
 
+            // Canary invariant: refuse to timeout items with suspiciously low execution age.
+            var executionAge = (now - anchor).TotalSeconds;
+            if (!ShouldEnforceTimeout(anchor, item.TimeoutSeconds, now))
+            {
+                Log.Error(
+                    "CANARY VIOLATION: WorkItem {WorkItemId} appears timed out but execution age is only {ExecutionAge:F1}s " +
+                    "(minimum: {Minimum}s). Queue time was {QueueTime:F0}s. Refusing to kill — likely a timestamp bug.",
+                    item.Id, executionAge, MinimumExecutionAgeSeconds,
+                    item.DispatchedAt.HasValue ? (item.DispatchedAt.Value - item.CreatedAt).TotalSeconds : -1);
+                WorkDistributionTelemetry.TimeoutCanaryViolations.Add(1);
+                continue;
+            }
+
+            // Record execution age at timeout for canary alerting
+            WorkDistributionTelemetry.TimeoutExecutionAge.Record(executionAge);
+
             Log.Warning("ReconciliationService: timeout — WorkItem {WorkItemId} exceeded {Timeout}s",
                 item.Id, item.TimeoutSeconds);
 
@@ -511,6 +527,33 @@ public sealed class ReconciliationService : BackgroundService
     /// </summary>
     internal static bool IsTimedOut(DateTimeOffset dispatchedAt, int timeoutSeconds, DateTimeOffset now)
         => now >= dispatchedAt.AddSeconds(timeoutSeconds);
+
+    /// <summary>
+    /// Canary invariant: returns true only if the item is genuinely timed out AND the execution
+    /// age passes a minimum plausibility threshold (60 seconds). If the execution age is below
+    /// this floor, it indicates a timestamp/anchor bug — the item should NOT be killed.
+    /// </summary>
+    /// <remarks>
+    /// This guards against regressions where timeout is computed from the wrong anchor
+    /// (e.g., CreatedAt instead of DispatchedAt), which would cause items to be killed
+    /// immediately after dispatch when they've been queued for a long time.
+    /// </remarks>
+    internal static bool ShouldEnforceTimeout(DateTimeOffset dispatchedAt, int timeoutSeconds, DateTimeOffset now)
+    {
+        if (!IsTimedOut(dispatchedAt, timeoutSeconds, now))
+            return false;
+
+        // Canary: execution age must be at least MinimumExecutionAgeSeconds.
+        // If timeout fires but execution is < 60s, something is wrong with the anchor.
+        var executionAge = (now - dispatchedAt).TotalSeconds;
+        return executionAge >= MinimumExecutionAgeSeconds;
+    }
+
+    /// <summary>
+    /// Minimum execution age (seconds) before a timeout enforcement is considered plausible.
+    /// Any timeout that fires with less execution time than this is blocked as a canary violation.
+    /// </summary>
+    internal const int MinimumExecutionAgeSeconds = 60;
 
     // ── Stale Cleanup ────────────────────────────────────────────────────
 

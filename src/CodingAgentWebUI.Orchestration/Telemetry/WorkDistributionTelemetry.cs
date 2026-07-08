@@ -35,6 +35,23 @@ public static class WorkDistributionTelemetry
             "Total execution duration of dispatched jobs");
 
     /// <summary>
+    /// Histogram: execution age (seconds since dispatch) at the moment a timeout is enforced.
+    /// Used as a canary: if values cluster near zero, the timeout anchor is wrong.
+    /// Alert rule: p10 &lt; configured timeout → indicates a timestamp bug.
+    /// </summary>
+    public static readonly Histogram<double> TimeoutExecutionAge =
+        Meter.CreateHistogram<double>("workdistribution.timeout_execution_age_seconds", "s",
+            "Execution age at timeout enforcement — canary for anchor correctness");
+
+    /// <summary>
+    /// Counter: timeout enforcement skipped due to canary invariant violation.
+    /// Any non-zero value indicates a bug in timestamp handling.
+    /// </summary>
+    public static readonly Counter<long> TimeoutCanaryViolations =
+        Meter.CreateCounter<long>("workdistribution.timeout_canary_violations", "{violation}",
+            "Timeout enforcement blocked by canary invariant — indicates timestamp bug");
+
+    /// <summary>
     /// Gauge: epoch seconds of the last DispatchService poll cycle.
     /// Used for alerting on silent dispatch failures (stale poll = dispatch starvation).
     /// </summary>

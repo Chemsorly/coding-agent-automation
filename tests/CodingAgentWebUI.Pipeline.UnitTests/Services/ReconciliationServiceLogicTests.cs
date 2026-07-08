@@ -118,6 +118,65 @@ public class ReconciliationServiceLogicTests
             .Should().BeFalse("freshly dispatched item must not timeout regardless of queue time");
     }
 
+    // ── Canary Invariant: Minimum Execution Age ─────────────────────────
+
+    [Fact]
+    public void ShouldEnforceTimeout_ReturnsFalse_WhenExecutionTimeBelowMinimum()
+    {
+        // Canary: if an item appears timed out but has been executing for < 60s,
+        // something is wrong with the timestamp — refuse to kill it.
+        var now = DateTimeOffset.UtcNow;
+        var dispatchedAt = now.AddSeconds(-30); // only 30s of execution
+
+        ReconciliationService.ShouldEnforceTimeout(dispatchedAt, timeoutSeconds: 10, now)
+            .Should().BeFalse("canary: execution time (30s) below minimum plausible threshold for a real timeout");
+    }
+
+    [Fact]
+    public void ShouldEnforceTimeout_ReturnsTrue_WhenExecutionTimeAboveMinimumAndTimedOut()
+    {
+        // Normal timeout: item has been running for 2.5h with a 2h timeout.
+        var now = DateTimeOffset.UtcNow;
+        var dispatchedAt = now.AddHours(-2.5);
+
+        ReconciliationService.ShouldEnforceTimeout(dispatchedAt, timeoutSeconds: 7200, now)
+            .Should().BeTrue("legitimate timeout: 2.5h execution exceeds 2h limit");
+    }
+
+    [Fact]
+    public void ShouldEnforceTimeout_ReturnsFalse_WhenNotTimedOut()
+    {
+        // Not timed out at all — should not enforce regardless.
+        var now = DateTimeOffset.UtcNow;
+        var dispatchedAt = now.AddMinutes(-30);
+
+        ReconciliationService.ShouldEnforceTimeout(dispatchedAt, timeoutSeconds: 7200, now)
+            .Should().BeFalse("not timed out yet");
+    }
+
+    [Fact]
+    public void ShouldEnforceTimeout_ReturnsFalse_WhenTimeoutIs10s_ButExecutionOnly5s()
+    {
+        // Edge case: very short timeout configured, but execution time even shorter.
+        // This catches "timeout computed from wrong anchor" bugs.
+        var now = DateTimeOffset.UtcNow;
+        var dispatchedAt = now.AddSeconds(-5);
+
+        ReconciliationService.ShouldEnforceTimeout(dispatchedAt, timeoutSeconds: 3, now)
+            .Should().BeFalse("canary: execution time (5s) below minimum plausible threshold");
+    }
+
+    [Fact]
+    public void ShouldEnforceTimeout_ReturnsTrue_WhenTimeoutAndExecutionBothExceedMinimum()
+    {
+        // Short timeout (5 min) with sufficient execution (10 min) — valid timeout.
+        var now = DateTimeOffset.UtcNow;
+        var dispatchedAt = now.AddMinutes(-10);
+
+        ReconciliationService.ShouldEnforceTimeout(dispatchedAt, timeoutSeconds: 300, now)
+            .Should().BeTrue("10 min execution exceeds 5 min timeout and exceeds minimum threshold");
+    }
+
     // ── Stale Cleanup Threshold ──────────────────────────────────────────
 
     [Fact]
