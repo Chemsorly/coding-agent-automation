@@ -2,7 +2,7 @@
 
 An automated development pipeline that uses AI coding agents to implement issues end-to-end: analyze the issue, generate code, run quality gates, and create a pull request — all orchestrated through a web UI running in Containers.
 
-Note: This system has been mainly build by AI.
+Note: This system has been build with a little help of AI. Just kidding, it's entirely made by it.
 
 ## How It Works
 
