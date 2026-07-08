@@ -154,7 +154,8 @@ public class K8sEdgeCaseTests : IDisposable
         // Act: verify timeout detection
         await using var db = await _dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.FirstOrDefaultAsync(w => w.Id == workItemId);
-        var isTimedOut = ReconciliationService.IsTimedOut(item!.CreatedAt, item.TimeoutSeconds, DateTimeOffset.UtcNow);
+        var anchor = item!.DispatchedAt ?? item.CreatedAt;
+        var isTimedOut = ReconciliationService.IsTimedOut(anchor, item.TimeoutSeconds, DateTimeOffset.UtcNow);
 
         isTimedOut.Should().BeTrue("item created 2h ago with 1h timeout should be timed out");
 
@@ -204,6 +205,63 @@ public class K8sEdgeCaseTests : IDisposable
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.FailureReason.Should().Be(FailureReason.Timeout);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Regression: timeout must use DispatchedAt, not CreatedAt
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task EnforceTimeouts_QueuedItemRecentlyDispatched_ShouldNotTimeout()
+    {
+        // Regression test for the bug where items queued for 2h+ were immediately
+        // killed after dispatch because timeout was measured from CreatedAt.
+        // The fix: timeout must measure from DispatchedAt (when execution starts).
+        var workItemId = Guid.NewGuid();
+        var createdAt = DateTimeOffset.UtcNow.AddHours(-3); // created 3h ago
+        var dispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5); // dispatched only 5 min ago
+
+        await InsertWorkItem(workItemId, "owner/repo#queued-long", "kiro,dotnet", WorkItemStatus.Dispatched,
+            createdAt: createdAt,
+            timeoutSeconds: 7200, // 2h timeout
+            k8sJobName: "caa-queued-long",
+            dispatchedAt: dispatchedAt);
+
+        // Act: check if ReconciliationService would timeout this item
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FirstOrDefaultAsync(w => w.Id == workItemId);
+
+        // The timeout anchor must be DispatchedAt, not CreatedAt
+        var anchor = item!.DispatchedAt ?? item.CreatedAt;
+        var isTimedOut = ReconciliationService.IsTimedOut(anchor, item.TimeoutSeconds, DateTimeOffset.UtcNow);
+
+        isTimedOut.Should().BeFalse(
+            "item was dispatched only 5 minutes ago — timeout should measure from dispatch time, not creation time");
+    }
+
+    [Fact]
+    public async Task EnforceTimeouts_QueuedItemDispatchedPastTimeout_ShouldTimeout()
+    {
+        // Counterpart: item created long ago AND dispatched long ago — should timeout.
+        var workItemId = Guid.NewGuid();
+        var createdAt = DateTimeOffset.UtcNow.AddHours(-5);
+        var dispatchedAt = DateTimeOffset.UtcNow.AddHours(-3); // dispatched 3h ago
+
+        await InsertWorkItem(workItemId, "owner/repo#dispatched-long", "kiro,dotnet", WorkItemStatus.Running,
+            createdAt: createdAt,
+            timeoutSeconds: 7200, // 2h timeout — 3h since dispatch exceeds this
+            k8sJobName: "caa-dispatched-long",
+            assignedAgentId: "caa-pod-xyz",
+            dispatchedAt: dispatchedAt);
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FirstOrDefaultAsync(w => w.Id == workItemId);
+
+        var anchor = item!.DispatchedAt ?? item.CreatedAt;
+        var isTimedOut = ReconciliationService.IsTimedOut(anchor, item.TimeoutSeconds, DateTimeOffset.UtcNow);
+
+        isTimedOut.Should().BeTrue(
+            "item was dispatched 3h ago with 2h timeout — should be timed out");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -426,9 +484,11 @@ public class K8sEdgeCaseTests : IDisposable
 
     private async Task InsertWorkItem(Guid id, string issueId, string selector, WorkItemStatus status,
         DateTimeOffset? createdAt = null, int timeoutSeconds = 3600,
-        string? k8sJobName = null, string? claimedPvc = null, string? assignedAgentId = null)
+        string? k8sJobName = null, string? claimedPvc = null, string? assignedAgentId = null,
+        DateTimeOffset? dispatchedAt = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
+        var effectiveCreatedAt = createdAt ?? DateTimeOffset.UtcNow;
         db.WorkItems.Add(new WorkItemEntity
         {
             Id = id,
@@ -436,13 +496,13 @@ public class K8sEdgeCaseTests : IDisposable
             IssueProviderConfigId = "provider-1",
             Status = status,
             AgentSelector = selector,
-            CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
+            CreatedAt = effectiveCreatedAt,
             TimeoutSeconds = timeoutSeconds,
             Payload = "{}",
             K8sJobName = k8sJobName,
             ClaimedPvcName = claimedPvc,
             AssignedAgentId = assignedAgentId,
-            DispatchedAt = status >= WorkItemStatus.Dispatched ? (createdAt ?? DateTimeOffset.UtcNow) : null
+            DispatchedAt = dispatchedAt ?? (status >= WorkItemStatus.Dispatched ? effectiveCreatedAt : null)
         });
         await db.SaveChangesAsync();
     }

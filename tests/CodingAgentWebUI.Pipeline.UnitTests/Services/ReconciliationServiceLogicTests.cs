@@ -16,22 +16,22 @@ public class ReconciliationServiceLogicTests
     [Fact]
     public void IsTimedOut_ReturnsFalse_WhenTimeoutNotElapsed()
     {
-        var createdAt = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var dispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-5);
         var timeoutSeconds = 600; // 10 minutes
         var now = DateTimeOffset.UtcNow;
 
-        ReconciliationService.IsTimedOut(createdAt, timeoutSeconds, now)
+        ReconciliationService.IsTimedOut(dispatchedAt, timeoutSeconds, now)
             .Should().BeFalse();
     }
 
     [Fact]
     public void IsTimedOut_ReturnsTrue_WhenTimeoutElapsed()
     {
-        var createdAt = DateTimeOffset.UtcNow.AddMinutes(-15);
+        var dispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-15);
         var timeoutSeconds = 600; // 10 minutes
         var now = DateTimeOffset.UtcNow;
 
-        ReconciliationService.IsTimedOut(createdAt, timeoutSeconds, now)
+        ReconciliationService.IsTimedOut(dispatchedAt, timeoutSeconds, now)
             .Should().BeTrue();
     }
 
@@ -39,10 +39,10 @@ public class ReconciliationServiceLogicTests
     public void IsTimedOut_ReturnsTrue_ExactlyAtBoundary()
     {
         var now = DateTimeOffset.UtcNow;
-        var createdAt = now.AddSeconds(-300);
+        var dispatchedAt = now.AddSeconds(-300);
         var timeoutSeconds = 300;
 
-        ReconciliationService.IsTimedOut(createdAt, timeoutSeconds, now)
+        ReconciliationService.IsTimedOut(dispatchedAt, timeoutSeconds, now)
             .Should().BeTrue();
     }
 
@@ -50,10 +50,10 @@ public class ReconciliationServiceLogicTests
     public void IsTimedOut_ReturnsFalse_OneSecondBeforeBoundary()
     {
         var now = DateTimeOffset.UtcNow;
-        var createdAt = now.AddSeconds(-299);
+        var dispatchedAt = now.AddSeconds(-299);
         var timeoutSeconds = 300;
 
-        ReconciliationService.IsTimedOut(createdAt, timeoutSeconds, now)
+        ReconciliationService.IsTimedOut(dispatchedAt, timeoutSeconds, now)
             .Should().BeFalse();
     }
 
@@ -64,9 +64,9 @@ public class ReconciliationServiceLogicTests
     public void IsTimedOut_VariousTimeouts_WhenElapsed(int timeoutSeconds, bool expected)
     {
         var now = DateTimeOffset.UtcNow;
-        var createdAt = now.AddSeconds(-(timeoutSeconds + 100));
+        var dispatchedAt = now.AddSeconds(-(timeoutSeconds + 100));
 
-        ReconciliationService.IsTimedOut(createdAt, timeoutSeconds, now)
+        ReconciliationService.IsTimedOut(dispatchedAt, timeoutSeconds, now)
             .Should().Be(expected);
     }
 
@@ -74,11 +74,48 @@ public class ReconciliationServiceLogicTests
     public void IsTimedOut_HandlesLargeTimeout()
     {
         var now = DateTimeOffset.UtcNow;
-        var createdAt = now.AddHours(-1);
+        var dispatchedAt = now.AddHours(-1);
         var timeoutSeconds = 7200; // 2 hours
 
-        ReconciliationService.IsTimedOut(createdAt, timeoutSeconds, now)
+        ReconciliationService.IsTimedOut(dispatchedAt, timeoutSeconds, now)
             .Should().BeFalse();
+    }
+
+    // ── Dispatch-anchored Timeout (Bug Fix) ──────────────────────────────
+
+    [Fact]
+    public void IsTimedOut_UsesDispatchTime_NotCreationTime()
+    {
+        // Scenario: Item created 2h ago but dispatched only 5 minutes ago.
+        // With a 7200s timeout, it should NOT be timed out — execution just started.
+        var now = DateTimeOffset.UtcNow;
+        var dispatchedAt = now.AddMinutes(-5); // dispatched 5 min ago
+
+        ReconciliationService.IsTimedOut(dispatchedAt, 7200, now)
+            .Should().BeFalse("timeout should measure from dispatch, not creation");
+    }
+
+    [Fact]
+    public void IsTimedOut_ReturnsTrue_WhenDispatchTimeExceedsTimeout()
+    {
+        // Scenario: Item dispatched 3h ago with 2h timeout — should be timed out.
+        var now = DateTimeOffset.UtcNow;
+        var dispatchedAt = now.AddHours(-3);
+
+        ReconciliationService.IsTimedOut(dispatchedAt, 7200, now)
+            .Should().BeTrue("3h elapsed since dispatch exceeds 2h timeout");
+    }
+
+    [Fact]
+    public void IsTimedOut_QueuedItemDispatchedJustNow_ShouldNotTimeout()
+    {
+        // Regression: Item sat in queue for 4h, then dispatched now.
+        // Should NOT timeout even though creation was 4h ago.
+        var now = DateTimeOffset.UtcNow;
+        var dispatchedAt = now; // just dispatched
+
+        ReconciliationService.IsTimedOut(dispatchedAt, 7200, now)
+            .Should().BeFalse("freshly dispatched item must not timeout regardless of queue time");
     }
 
     // ── Stale Cleanup Threshold ──────────────────────────────────────────

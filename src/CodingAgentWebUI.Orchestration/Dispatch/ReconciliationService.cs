@@ -457,7 +457,8 @@ public sealed class ReconciliationService : BackgroundService
     // ── Timeout Enforcement ──────────────────────────────────────────────
 
     /// <summary>
-    /// CreatedAt + TimeoutSeconds elapsed → Failed (Timeout) + delete Job.
+    /// DispatchedAt + TimeoutSeconds elapsed → Failed (Timeout) + delete Job.
+    /// Uses dispatch time (not creation time) so queue wait doesn't count toward timeout.
     /// </summary>
     internal async Task EnforceTimeoutsAsync(CancellationToken ct)
     {
@@ -467,14 +468,18 @@ public sealed class ReconciliationService : BackgroundService
         var candidates = await db.WorkItems
             .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
                         && w.TimeoutSeconds > 0)
-            .Select(w => new { w.Id, w.CreatedAt, w.TimeoutSeconds, w.K8sJobName })
+            .Select(w => new { w.Id, w.DispatchedAt, w.CreatedAt, w.TimeoutSeconds, w.K8sJobName })
             .ToListAsync(ct);
 
         foreach (var item in candidates)
         {
             if (ct.IsCancellationRequested) break;
 
-            if (!IsTimedOut(item.CreatedAt, item.TimeoutSeconds, now))
+            // Use DispatchedAt as the timeout anchor — this is when execution actually started.
+            // Fall back to CreatedAt only for legacy items that lack DispatchedAt (should not happen
+            // for Dispatched/Running items, but defensive).
+            var anchor = item.DispatchedAt ?? item.CreatedAt;
+            if (!IsTimedOut(anchor, item.TimeoutSeconds, now))
                 continue;
 
             Log.Warning("ReconciliationService: timeout — WorkItem {WorkItemId} exceeded {Timeout}s",
@@ -488,7 +493,8 @@ public sealed class ReconciliationService : BackgroundService
                     w.ErrorMessage = $"Timeout exceeded: {item.TimeoutSeconds}s";
                 }, ct);
 
-            LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.Timeout);
+            LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.Timeout,
+                dispatchedAt: item.DispatchedAt);
 
             // Delete the K8s Job
             if (!string.IsNullOrEmpty(item.K8sJobName))
@@ -499,11 +505,12 @@ public sealed class ReconciliationService : BackgroundService
     }
 
     /// <summary>
-    /// Determines whether a work item has timed out based on CreatedAt and TimeoutSeconds.
+    /// Determines whether a work item has timed out based on its dispatch time and TimeoutSeconds.
+    /// Uses DispatchedAt (when execution started) as the anchor, NOT CreatedAt.
     /// Exposed as internal static for unit testing.
     /// </summary>
-    internal static bool IsTimedOut(DateTimeOffset createdAt, int timeoutSeconds, DateTimeOffset now)
-        => now >= createdAt.AddSeconds(timeoutSeconds);
+    internal static bool IsTimedOut(DateTimeOffset dispatchedAt, int timeoutSeconds, DateTimeOffset now)
+        => now >= dispatchedAt.AddSeconds(timeoutSeconds);
 
     // ── Stale Cleanup ────────────────────────────────────────────────────
 
