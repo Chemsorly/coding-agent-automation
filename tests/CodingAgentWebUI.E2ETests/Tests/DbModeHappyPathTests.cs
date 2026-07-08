@@ -1,6 +1,8 @@
 using CodingAgentWebUI.E2ETests.Fakes;
 using CodingAgentWebUI.E2ETests.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
+using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -318,5 +320,157 @@ public sealed class DbModeHappyPathTests : DbModeE2ETestBase, IClassFixture<DbMo
             workItemId2, WorkItemStatus.Succeeded, TimeSpan.FromSeconds(15));
         Assert.Equal(WorkItemStatus.Succeeded, succeeded1.Status);
         Assert.Equal(WorkItemStatus.Succeeded, succeeded2.Status);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Token Refresh — validates that the in-memory PipelineRun path works
+    // for DB+SignalR mode (created during dispatch, used by RequestTokenRefresh)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task DbMode_TokenRefresh_AfterJobAccepted_ReturnsValidToken()
+    {
+        // Arrange: seed a repo provider config with a static AccessToken
+        await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig
+        {
+            Id = "repo-db-token-test",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "DB Token Test Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.AccessToken] = "fake-db-mode-token-e2e"
+            }
+        }, CancellationToken.None);
+
+        // Seed issue + template using the token-bearing repo provider
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "50",
+            Title = "Token refresh test issue",
+            Description = "## Requirements\nNeeds token\n\n## Acceptance Criteria\n- [ ] Done",
+            Labels = new[] { "enhancement", "agent:next" }
+        });
+
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-db-token-e2e",
+            Name = "DB Token Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-db-token-test", // Uses the provider with AccessToken
+            Enabled = true
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-db-token-e2e",
+            DisplayName = "DB Token Agent Profile",
+            MatchLabels = new[] { "db-e2e" },
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        // Connect agent
+        await using var agent = new FakeAgentClient("db-agent-token", "db-e2e");
+        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+
+        // Act: dispatch issue
+        var result = await DispatchIssueAsync("50");
+        Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
+
+        // Wait for agent to receive the job
+        var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal("50", assignment.IssueIdentifier);
+
+        // Accept the job (this sets ActiveJobId on the agent in the registry)
+        await agent.AcceptJobAsync(assignment.JobId);
+
+        // Act: call RequestTokenRefresh — this is the operation missing from all prior E2E tests
+        var tokenResponse = await agent.RequestTokenRefreshAsync(assignment.JobId, ProviderKind.Repository);
+
+        // Assert: token vending worked through the in-memory PipelineRun path
+        Assert.NotNull(tokenResponse);
+        Assert.Equal("fake-db-mode-token-e2e", tokenResponse.Token);
+        Assert.True(tokenResponse.ExpiresAt > DateTimeOffset.UtcNow);
+
+        // Cleanup: complete the job so it doesn't block other tests
+        await agent.AcceptAndCompleteJobAsync(assignment.JobId);
+    }
+
+    [Fact]
+    public async Task DbMode_TokenRefresh_BrainProvider_ReturnsSeparateToken()
+    {
+        // Arrange: seed both repo and brain providers with different tokens
+        await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig
+        {
+            Id = "repo-db-brain-main",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitLab",
+            DisplayName = "DB Brain Main Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.AccessToken] = "fake-db-repo-token"
+            }
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveProviderConfigAsync(new ProviderConfig
+        {
+            Id = "brain-db-e2e",
+            Kind = ProviderKind.Repository, // Brain is Repository-kind
+            ProviderType = "GitLab",
+            DisplayName = "DB Brain Knowledge Repo",
+            Settings = new Dictionary<string, string>
+            {
+                [ProviderSettingKeys.AccessToken] = "fake-db-brain-token"
+            }
+        }, CancellationToken.None);
+
+        Fixture.IssueProvider.Issues.Add(new IssueDetail
+        {
+            Identifier = "51",
+            Title = "Brain token test",
+            Description = "## Requirements\nNeeds brain\n\n## Acceptance Criteria\n- [ ] Done",
+            Labels = new[] { "enhancement", "agent:next" }
+        });
+
+        await Fixture.ConfigStore.SaveTemplateAsync(WellKnownIds.DefaultProjectId, new PipelineJobTemplate
+        {
+            Id = "template-db-brain-e2e",
+            Name = "DB Brain Template",
+            IssueProviderId = "issue-e2e",
+            RepoProviderId = "repo-db-brain-main",
+            BrainProviderId = "brain-db-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        await Fixture.ConfigStore.SaveAgentProfileAsync(new AgentProfile
+        {
+            Id = "profile-db-brain-e2e",
+            DisplayName = "DB Brain Agent Profile",
+            MatchLabels = new[] { "db-e2e" },
+            AgentProviderConfigId = "agent-e2e",
+            Enabled = true
+        }, CancellationToken.None);
+
+        await using var agent = new FakeAgentClient("db-agent-brain", "db-e2e");
+        await agent.ConnectAsync(BaseUrl, Fixture.ApiKey);
+
+        // Act: dispatch
+        var result = await DispatchIssueAsync("51");
+        Assert.True(result.Success, $"Distribution failed: {result.ErrorMessage}");
+
+        var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await agent.AcceptJobAsync(assignment.JobId);
+
+        // Act: request both repo and brain tokens
+        var repoToken = await agent.RequestTokenRefreshAsync(assignment.JobId, ProviderKind.Repository);
+        var brainToken = await agent.RequestTokenRefreshAsync(assignment.JobId, ProviderKind.Brain);
+
+        // Assert: different tokens for different scopes
+        Assert.Equal("fake-db-repo-token", repoToken.Token);
+        Assert.Equal("fake-db-brain-token", brainToken.Token);
+
+        // Cleanup
+        await agent.AcceptAndCompleteJobAsync(assignment.JobId);
     }
 }
