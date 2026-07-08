@@ -421,4 +421,72 @@ public class MessageSerializationPropertyTests
             RunType = runType
         };
     }
+
+    // ── JobAssignmentMessage Consolidation Fields (Keys 32-35) ────────────
+
+    /// <summary>
+    /// Round-trip test for JobAssignmentMessage with consolidation fields populated (Keys 32-35).
+    /// Validates that TaskType, ConsolidationRunType, ConsolidationTemplateId, and
+    /// ConsolidationWorkspacePath survive MessagePack serialization.
+    /// </summary>
+    [Fact]
+    public void JobAssignmentMessage_RoundTrip_WithConsolidationFields()
+    {
+        var original = CreateMinimalJobAssignmentMessage(PipelineRunType.Implementation) with
+        {
+            TaskType = WorkItemTaskType.Consolidation,
+            ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
+            ConsolidationTemplateId = "template-abc",
+            ConsolidationWorkspacePath = "/tmp/consolidation/brain"
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<JobAssignmentMessage>(bytes, MsgPackOptions);
+
+        deserialized.TaskType.Should().Be(WorkItemTaskType.Consolidation);
+        deserialized.ConsolidationRunType.Should().Be(ConsolidationRunType.BrainConsolidation);
+        deserialized.ConsolidationTemplateId.Should().Be("template-abc");
+        deserialized.ConsolidationWorkspacePath.Should().Be("/tmp/consolidation/brain");
+    }
+
+    /// <summary>
+    /// Round-trip test for JobAssignmentMessage with default consolidation fields (backward compat).
+    /// When consolidation fields are absent, TaskType defaults to Implementation and
+    /// consolidation-specific fields are null.
+    /// </summary>
+    [Fact]
+    public void JobAssignmentMessage_RoundTrip_WithoutConsolidationFields_DefaultsCorrectly()
+    {
+        var original = CreateMinimalJobAssignmentMessage(PipelineRunType.Review);
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<JobAssignmentMessage>(bytes, MsgPackOptions);
+
+        deserialized.TaskType.Should().Be(WorkItemTaskType.Implementation,
+            "TaskType defaults to Implementation for backward compatibility");
+        deserialized.ConsolidationRunType.Should().BeNull();
+        deserialized.ConsolidationTemplateId.Should().BeNull();
+        deserialized.ConsolidationWorkspacePath.Should().BeNull();
+    }
+
+    /// <summary>
+    /// Round-trip for all ConsolidationRunType enum values to catch serialization mismatches.
+    /// </summary>
+    [Theory]
+    [InlineData(ConsolidationRunType.BrainConsolidation)]
+    [InlineData(ConsolidationRunType.RefactoringDetection)]
+    [InlineData(ConsolidationRunType.HarnessSuggestions)]
+    public void JobAssignmentMessage_RoundTrip_AllConsolidationRunTypes(ConsolidationRunType runType)
+    {
+        var original = CreateMinimalJobAssignmentMessage(PipelineRunType.Implementation) with
+        {
+            TaskType = WorkItemTaskType.Consolidation,
+            ConsolidationRunType = runType
+        };
+
+        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        var deserialized = MessagePackSerializer.Deserialize<JobAssignmentMessage>(bytes, MsgPackOptions);
+
+        deserialized.ConsolidationRunType.Should().Be(runType);
+    }
 }

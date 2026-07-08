@@ -25,7 +25,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
 
-    private AgentRegistrationMessage? _currentRegistration;
+    private volatile AgentRegistrationMessage? _currentRegistration;
     private PipelineStep? _currentStep;
     private CancellationTokenSource? _heartbeatCts;
     private Task? _heartbeatTask;
@@ -121,13 +121,8 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     /// </summary>
     public async ValueTask DisposeAsync()
     {
-        // Stop heartbeat
-        if (_heartbeatCts is not null)
-        {
-            await _heartbeatCts.CancelAsync();
-            _heartbeatCts.Dispose();
-            _heartbeatCts = null;
-        }
+        // Stop heartbeat (thread-safe: prevents double-dispose race with HandleForceDisconnectAsync)
+        await StopHeartbeatAsync();
 
         // Deregister (best-effort)
         try
@@ -200,13 +195,8 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
             }
         }
 
-        // Stop heartbeat
-        if (_heartbeatCts is not null)
-        {
-            await _heartbeatCts.CancelAsync();
-            _heartbeatCts.Dispose();
-            _heartbeatCts = null;
-        }
+        // Stop heartbeat (thread-safe: prevents double-dispose race with DisposeAsync)
+        await StopHeartbeatAsync();
     }
 
     private async Task HandleReconnectedAsync(string? connectionId)
@@ -334,6 +324,29 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     }
 
     // ── Private: Utilities ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Thread-safe heartbeat cancellation: uses Interlocked.Exchange to atomically
+    /// claim the CTS, preventing double-dispose races between ForceDisconnect and DisposeAsync.
+    /// Also awaits the heartbeat task to ensure no in-flight sends race with connection disposal.
+    /// </summary>
+    private async Task StopHeartbeatAsync()
+    {
+#pragma warning disable 0420 // volatile field passed by reference to Interlocked — safe by design
+        var cts = Interlocked.Exchange(ref _heartbeatCts, null);
+#pragma warning restore 0420
+        if (cts is not null)
+        {
+            await cts.CancelAsync();
+            // Await the heartbeat task to ensure no in-flight hub calls race with connection disposal
+            if (_heartbeatTask is not null)
+            {
+                try { await _heartbeatTask; }
+                catch { /* heartbeat loop handles its own exceptions */ }
+            }
+            cts.Dispose();
+        }
+    }
 
     private async ValueTask SafeDisposeAsync(HubConnectionManager? manager)
     {
