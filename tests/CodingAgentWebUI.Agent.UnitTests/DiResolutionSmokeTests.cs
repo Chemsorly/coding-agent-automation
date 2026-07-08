@@ -51,7 +51,7 @@ public class DiResolutionSmokeTests
         services.AddSingleton<IKiroCliOrchestrator>(sp =>
         {
             var cfg = sp.GetRequiredService<Configuration>();
-            return new KiroCliOrchestrator(cfg, callbackHandler: null, Log.Logger);
+            return new KiroCliOrchestrator(cfg, Log.Logger);
         });
 
         // ── Pipeline configuration ──
@@ -254,7 +254,7 @@ public class DiResolutionSmokeTests
         services.AddSingleton<IKiroCliOrchestrator>(sp =>
         {
             var cfg = sp.GetRequiredService<Configuration>();
-            return new KiroCliOrchestrator(cfg, callbackHandler: null, Log.Logger);
+            return new KiroCliOrchestrator(cfg, Log.Logger);
         });
 
         // ── Pipeline configuration ──
