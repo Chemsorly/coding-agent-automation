@@ -28,7 +28,7 @@ namespace CodingAgentWebUI.Agent;
 ///   <item><see cref="ConsolidationRunType.HarnessSuggestions"/> → <see cref="HarnessSuggestionExecutor"/></item>
 /// </list>
 /// </remarks>
-public sealed class LocalConsolidationExecutor
+public sealed class LocalConsolidationExecutor : IConsolidationExecutor
 {
     private readonly ConsolidationProviderResolver _resolver;
     private readonly Serilog.ILogger _logger;

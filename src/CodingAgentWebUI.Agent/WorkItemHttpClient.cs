@@ -16,7 +16,7 @@ namespace CodingAgentWebUI.Agent;
 /// <para><b>GET /api/work-items/{id}/assignment</b> — single call; transient failures retried by handler.</para>
 /// <para><b>POST /api/work-items/{id}/status</b> — single call; transient failures retried by handler.</para>
 /// </remarks>
-public sealed class WorkItemHttpClient
+public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
 {
     private readonly HttpClient _httpClient;
     private readonly Serilog.ILogger _logger;

@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -22,12 +21,13 @@ namespace CodingAgentWebUI.Agent;
 /// resilience, reconnection, CancelJob handling, deregistration).
 /// Uses <see cref="IWorkItemExecutor"/> for unified task execution (routes by TaskType internally).
 /// </remarks>
-public sealed class WorkItemAgentService : BackgroundService
+public sealed class WorkItemAgentService : BackgroundService, IAgentService
 {
     private readonly string _workItemId;
-    private readonly WorkItemHttpClient _workItemClient;
+    private readonly IWorkItemLifecycleClient _workItemClient;
     private readonly IAgentConnectionManager _connectionManager;
     private readonly IWorkItemExecutor _workItemExecutor;
+    private readonly IJobCompletionReporter _completionReporter;
     private readonly AgentIdentity _agentIdentity;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly Serilog.ILogger _logger;
@@ -37,19 +37,19 @@ public sealed class WorkItemAgentService : BackgroundService
 
     public WorkItemAgentService(
         string workItemId,
-        WorkItemHttpClient workItemClient,
-        HubConnectionManager hubManager,
-        HubConnectionManagerFactory hubManagerFactory,
+        IWorkItemLifecycleClient workItemClient,
+        IAgentConnectionManager connectionManager,
         IWorkItemExecutor workItemExecutor,
+        IJobCompletionReporter completionReporter,
         AgentIdentity agentIdentity,
         IHostApplicationLifetime lifetime,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(workItemId);
         ArgumentNullException.ThrowIfNull(workItemClient);
-        ArgumentNullException.ThrowIfNull(hubManager);
-        ArgumentNullException.ThrowIfNull(hubManagerFactory);
+        ArgumentNullException.ThrowIfNull(connectionManager);
         ArgumentNullException.ThrowIfNull(workItemExecutor);
+        ArgumentNullException.ThrowIfNull(completionReporter);
         ArgumentNullException.ThrowIfNull(agentIdentity);
         ArgumentNullException.ThrowIfNull(lifetime);
         ArgumentNullException.ThrowIfNull(logger);
@@ -57,17 +57,30 @@ public sealed class WorkItemAgentService : BackgroundService
         _workItemId = workItemId;
         _workItemClient = workItemClient;
         _workItemExecutor = workItemExecutor;
+        _completionReporter = completionReporter;
         _agentIdentity = agentIdentity;
         _lifetime = lifetime;
         _logger = logger;
 
-        // Compose AgentConnectionManager for connection lifecycle
-        _connectionManager = new AgentConnectionManager(hubManager, hubManagerFactory, agentIdentity, logger);
+        // Use the injected connection manager
+        _connectionManager = connectionManager;
 
         // Wire CancelJob to cancel the pipeline
         _connectionManager.OnCancelJobReceived += HandleCancelJobAsync;
         _connectionManager.OnForceDisconnect += HandleForceDisconnectAsync;
     }
+
+    /// <inheritdoc/>
+    public bool IsBusy => _pipelineCts is not null && !_pipelineCts.IsCancellationRequested;
+
+    /// <inheritdoc/>
+    public PipelineStep? CurrentStep => null; // K8s mode doesn't track steps at the service level (delegated to IWorkItemExecutor)
+
+    /// <inheritdoc/>
+    public bool IsConnected => _connectionManager.IsConnected;
+
+    /// <inheritdoc/>
+    public void CancelCurrentJob() => CancelPipeline();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -239,43 +252,20 @@ public sealed class WorkItemAgentService : BackgroundService
             };
         }
 
-        // Step 5: POST terminal status
-        var terminalStatus = completion.FinalStep switch
-        {
-            PipelineStep.Completed => "Succeeded",
-            PipelineStep.Cancelled => "Cancelled",
-            _ => "Failed"
-        };
-
-        var terminalUpdate = new WorkItemStatusUpdate
-        {
-            Status = terminalStatus,
-            AgentId = _agentIdentity.Id,
-            Result = SerializeResult(completion),
-            ErrorMessage = completion.FailureReason
-        };
-
+        // Step 5: Report completion via unified reporter
         try
         {
             _terminalStatusPosted = true;
-            await _workItemClient.PostStatusAsync(_workItemId, terminalUpdate, CancellationToken.None);
+            await _completionReporter.ReportCompletionAsync(assignment.JobId, completion, CancellationToken.None);
         }
         catch (WorkItemStatusPostException ex)
         {
-            _logger.Error(ex, "Failed to POST terminal status for work item {WorkItemId}, exiting non-zero", _workItemId);
+            _logger.Error(ex, "Failed to report completion for work item {WorkItemId}, exiting non-zero", _workItemId);
             return 1;
-        }
-
-        // Also report completion via SignalR (with resilience)
-        try
-        {
-            await _connectionManager.InvokeAsync(
-                (conn, token) => conn.InvokeAsync(HubMethodNames.ReportJobCompleted, assignment.JobId, completion, token),
-                CancellationToken.None);
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to report completion via SignalR (non-fatal, HTTP status already posted)");
+            _logger.Warning(ex, "Non-fatal error during completion reporting for work item {WorkItemId}", _workItemId);
         }
 
         // Exit non-zero when pipeline did not complete successfully.
@@ -347,17 +337,4 @@ public sealed class WorkItemAgentService : BackgroundService
         }
     }
 
-    private string? SerializeResult(JobCompletionPayload? completion)
-    {
-        if (completion is null) return null;
-        try
-        {
-            return JsonSerializer.Serialize(completion, PipelineJsonOptions.Default);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to serialize JobCompletionPayload — result field will be omitted from terminal status");
-            return null;
-        }
-    }
 }

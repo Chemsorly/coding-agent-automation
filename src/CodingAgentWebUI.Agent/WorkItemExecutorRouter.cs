@@ -12,13 +12,13 @@ namespace CodingAgentWebUI.Agent;
 /// </summary>
 public sealed class WorkItemExecutorRouter : IWorkItemExecutor
 {
-    private readonly LocalPipelineExecutor _pipelineExecutor;
-    private readonly LocalConsolidationExecutor _consolidationExecutor;
+    private readonly IPipelineExecutor _pipelineExecutor;
+    private readonly IConsolidationExecutor _consolidationExecutor;
     private readonly Serilog.ILogger _logger;
 
     public WorkItemExecutorRouter(
-        LocalPipelineExecutor pipelineExecutor,
-        LocalConsolidationExecutor consolidationExecutor,
+        IPipelineExecutor pipelineExecutor,
+        IConsolidationExecutor consolidationExecutor,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(pipelineExecutor);

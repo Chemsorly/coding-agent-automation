@@ -251,6 +251,7 @@ public class AgentWorkerServiceJobSlotTests
             hubManagerFactory,
             executor,
             consolidationExecutor,
+            Mock.Of<IJobCompletionReporter>(),
             mockOrchestrator.Object,
             Mock.Of<IHttpClientFactory>(),
             new AgentIdentity("test-agent"),

@@ -98,6 +98,7 @@ public class AgentWorkerServiceReconnectionTests
             null!,
             CreateMockExecutor(),
             CreateMockConsolidationExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             mockOrchestrator.Object,
             Mock.Of<IHttpClientFactory>(),
             new AgentIdentity("test"),

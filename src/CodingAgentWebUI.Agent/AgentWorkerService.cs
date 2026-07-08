@@ -40,12 +40,13 @@ namespace CodingAgentWebUI.Agent;
 /// to detect stale agents via <c>HeartbeatMonitorService</c>.
 /// </para>
 /// </remarks>
-public sealed class AgentWorkerService : BackgroundService
+public sealed class AgentWorkerService : BackgroundService, IAgentService
 {
     private volatile HubConnectionManager _hubManager;
     private readonly HubConnectionManagerFactory _hubManagerFactory;
-    private readonly LocalPipelineExecutor _executor;
-    private readonly LocalConsolidationExecutor _consolidationExecutor;
+    private readonly IPipelineExecutor _executor;
+    private readonly IConsolidationExecutor _consolidationExecutor;
+    private readonly IJobCompletionReporter _completionReporter;
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IHostApplicationLifetime _hostApplicationLifetime;
@@ -66,8 +67,6 @@ public sealed class AgentWorkerService : BackgroundService
     private PipelineStep? _currentStep;
     private readonly object _busyLock = new();
 
-    private readonly CriticalMessageBuffer _criticalMessageBuffer = new();
-
     private volatile CancellationTokenSource? _chatCts;
     private Task? _activeChatTask;
     private string? _activeChatSessionId;
@@ -75,8 +74,9 @@ public sealed class AgentWorkerService : BackgroundService
     public AgentWorkerService(
         HubConnectionManager hubManager,
         HubConnectionManagerFactory hubManagerFactory,
-        LocalPipelineExecutor executor,
-        LocalConsolidationExecutor consolidationExecutor,
+        IPipelineExecutor executor,
+        IConsolidationExecutor consolidationExecutor,
+        IJobCompletionReporter completionReporter,
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
         AgentIdentity agentIdentity,
@@ -87,6 +87,7 @@ public sealed class AgentWorkerService : BackgroundService
         ArgumentNullException.ThrowIfNull(hubManagerFactory);
         ArgumentNullException.ThrowIfNull(executor);
         ArgumentNullException.ThrowIfNull(consolidationExecutor);
+        ArgumentNullException.ThrowIfNull(completionReporter);
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(agentIdentity);
@@ -97,6 +98,7 @@ public sealed class AgentWorkerService : BackgroundService
         _hubManagerFactory = hubManagerFactory;
         _executor = executor;
         _consolidationExecutor = consolidationExecutor;
+        _completionReporter = completionReporter;
         _orchestrator = orchestrator;
         _httpClientFactory = httpClientFactory;
         _hostApplicationLifetime = hostApplicationLifetime;
@@ -122,6 +124,14 @@ public sealed class AgentWorkerService : BackgroundService
 
     /// <summary>Whether the hub connection is active.</summary>
     public bool IsConnected => _hubManager.IsConnected;
+
+    /// <inheritdoc/>
+    public void CancelCurrentJob()
+    {
+        var cts = _jobCts;
+        try { cts?.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -360,24 +370,9 @@ public sealed class AgentWorkerService : BackgroundService
             }
             finally
             {
-                // Report completion
-                using var completionActivity = PipelineTelemetry.ActivitySource.StartActivity("Agent.ReportCompletion");
-                completionActivity?.SetTag("job_id", message.JobId);
-                completionActivity?.SetTag("success", completion?.FinalStep is not (PipelineStep.Failed or PipelineStep.Cancelled));
-                try
-                {
-                    if (completion is not null)
-                        await _signalRPipeline.ExecuteAsync(async token =>
-                            await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportJobCompleted, message.JobId, completion, token), CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    completionActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-                    completionActivity?.AddException(ex);
-                    _logger.Error(ex, "Failed to report job completion for {JobId}, buffering for replay", message.JobId);
-                    if (completion is not null)
-                        _criticalMessageBuffer.Enqueue(new BufferedJobCompleted(message.JobId, completion, DateTimeOffset.UtcNow));
-                }
+                // Report completion via the unified reporter
+                if (completion is not null)
+                    await _completionReporter.ReportCompletionAsync(message.JobId, completion, CancellationToken.None);
 
                 // Only release slot if buffer is empty — otherwise keep _activeJobId set
                 // so reconnection re-registers with ActiveJob state, allowing replay
@@ -385,10 +380,14 @@ public sealed class AgentWorkerService : BackgroundService
                 // and this code path both call ReleaseJobSlotAndSignalReadyAsync concurrently.
                 // Not a crash (null-conditional on CTS, _busyLock guards _activeJobId), but could
                 // send duplicate AgentReady signals. Consider adding a guard or idempotent check.
-                if (!_criticalMessageBuffer.HasPendingMessages)
-                    await ReleaseJobSlotAndSignalReadyAsync();
-                else
+                if (_completionReporter is SignalRCompletionReporter signalRReporter && signalRReporter.HasPendingMessages)
+                {
                     _logger.Warning("Job slot held for {JobId} — buffer has pending messages awaiting replay", message.JobId);
+                }
+                else
+                {
+                    await ReleaseJobSlotAndSignalReadyAsync();
+                }
             }
         });
     }
@@ -877,11 +876,12 @@ public sealed class AgentWorkerService : BackgroundService
     /// </remarks>
     private async Task DrainBufferAsync()
     {
-        if (!_criticalMessageBuffer.HasPendingMessages)
+        if (_completionReporter is not SignalRCompletionReporter signalRReporter || !signalRReporter.HasPendingMessages)
             return;
 
+        var criticalMessageBuffer = signalRReporter.Buffer;
         const int maxDrainAttempts = 3;
-        var messages = _criticalMessageBuffer.DrainAll();
+        var messages = criticalMessageBuffer.DrainAll();
         _logger.Information("Draining critical message buffer: {Count} message(s) pending", messages.Count);
 
         for (var i = 0; i < messages.Count; i++)
@@ -925,13 +925,13 @@ public sealed class AgentWorkerService : BackgroundService
                     BufferedJobCompleted c => c with { DrainAttempts = c.DrainAttempts + 1 },
                     _ => msg
                 };
-                _criticalMessageBuffer.Enqueue((BufferedCriticalMessage)rebuffered);
+                criticalMessageBuffer.Enqueue((BufferedCriticalMessage)rebuffered);
 
                 // Re-buffer all remaining unprocessed messages to prevent data loss.
                 // These were already dequeued by DrainAll() and would be lost if not re-buffered.
                 for (var j = i + 1; j < messages.Count; j++)
                 {
-                    _criticalMessageBuffer.Enqueue(messages[j]);
+                    criticalMessageBuffer.Enqueue(messages[j]);
                 }
 
                 break; // Stop draining — will retry on next reconnection
@@ -939,7 +939,7 @@ public sealed class AgentWorkerService : BackgroundService
         }
 
         // After drain, release slot if buffer is now empty
-        if (!_criticalMessageBuffer.HasPendingMessages)
+        if (!signalRReporter.HasPendingMessages)
             await ReleaseJobSlotAndSignalReadyAsync();
         else
             _logger.Warning("Buffer still has pending messages after drain — job slot remains held");
