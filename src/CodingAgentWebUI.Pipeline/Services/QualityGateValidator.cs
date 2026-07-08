@@ -567,6 +567,14 @@ public class QualityGateValidator : IQualityGateValidator
             try { await stderrTask.WaitAsync(drainCts.Token); } catch { }
             throw new TimeoutException($"Process '{fileName} {arguments}' timed out after {timeout.TotalSeconds}s");
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            using var drainCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try { await stdoutTask.WaitAsync(drainCts.Token); } catch { }
+            try { await stderrTask.WaitAsync(drainCts.Token); } catch { }
+            throw;
+        }
 
         var stdout = await stdoutTask;
         var stderr = await stderrTask;

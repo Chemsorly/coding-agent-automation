@@ -225,4 +225,38 @@ public class QualityGateValidatorIntegrationTests : IDisposable
 
         await act.Should().ThrowAsync<System.ComponentModel.Win32Exception>();
     }
+
+    // TODO: Add [SkipOnPlatform] or [SupportedOSPlatform("linux")] guard — `sleep` is Unix-only,
+    // this test will throw Win32Exception on Windows instead of OperationCanceledException.
+    // TODO: Consider adding [Fact(Timeout = 5000)] to convert a potential hang (if kill is broken)
+    // into a clear failure rather than relying on implicit test runner timeout.
+    [Fact]
+    public async Task ExternalCancellation_KillsProcessAndThrowsOperationCancelled()
+    {
+        var validator = new ProcessExposingValidator();
+        using var cts = new CancellationTokenSource();
+        var workDir = Path.GetTempPath();
+
+        // Start a long-running process and cancel after a brief delay.
+        // If the process is NOT killed, WaitForExitAsync blocks for 60s and the test times out.
+        var task = validator.CallRunProcessAsync("sleep", "60", workDir, cts.Token, TimeSpan.FromMinutes(5));
+
+        // TODO: The 500ms delay is a time-based race — on heavily loaded CI runners the process may not
+        // have entered WaitForExitAsync before cancellation fires. Consider polling for process start
+        // before cancelling to make the test deterministic.
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+        await cts.CancelAsync();
+
+        var act = () => task;
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    private sealed class ProcessExposingValidator : QualityGateValidator
+    {
+        public ProcessExposingValidator() : base(Log.Logger) { }
+
+        public Task<(int ExitCode, string Stdout, string Stderr)> CallRunProcessAsync(
+            string fileName, string arguments, string workingDirectory, CancellationToken ct, TimeSpan timeout)
+            => RunProcessAsync(fileName, arguments, workingDirectory, ct, timeout);
+    }
 }
