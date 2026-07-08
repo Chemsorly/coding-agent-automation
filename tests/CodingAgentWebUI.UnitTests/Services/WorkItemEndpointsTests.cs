@@ -332,6 +332,60 @@ public class WorkItemEndpointsTests : IDisposable
         result.Should().BeOfType<BadRequest<string>>();
     }
 
+    // ── JSON Enum Serialization (validates ConfigureHttpJsonOptions fix) ──
+
+    [Fact]
+    public void WorkItemStatusRequest_DeserializesEnumFromString()
+    {
+        // This test validates that the agent's JSON payload (enum-as-string)
+        // correctly deserializes into WorkItemStatusRequest.
+        // The agent sends: {"status": "Running", "agentId": "pod-xyz"}
+        // Without JsonStringEnumConverter, this fails with a JsonException.
+        var agentJson = """{"status": "Running", "agentId": "caa-pod-xyz"}""";
+
+        // Use the same options the host configures via ConfigureHttpJsonOptions
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+
+        var request = JsonSerializer.Deserialize<WorkItemStatusRequest>(agentJson, options);
+
+        request.Should().NotBeNull();
+        request!.Status.Should().Be(WorkItemStatus.Running);
+        request.AgentId.Should().Be("caa-pod-xyz");
+    }
+
+    [Theory]
+    [InlineData("Running", WorkItemStatus.Running)]
+    [InlineData("Succeeded", WorkItemStatus.Succeeded)]
+    [InlineData("Failed", WorkItemStatus.Failed)]
+    [InlineData("Cancelled", WorkItemStatus.Cancelled)]
+    public void WorkItemStatusRequest_DeserializesAllEnumValues_FromString(string statusString, WorkItemStatus expected)
+    {
+        var json = $$"""{"status": "{{statusString}}", "agentId": "test"}""";
+
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+
+        var request = JsonSerializer.Deserialize<WorkItemStatusRequest>(json, options);
+
+        request.Should().NotBeNull();
+        request!.Status.Should().Be(expected);
+    }
+
+    [Fact]
+    public void WorkItemStatusRequest_WithoutEnumConverter_FailsOnStringValue()
+    {
+        // Proves the bug: without JsonStringEnumConverter, "Running" can't deserialize
+        var agentJson = """{"status": "Running", "agentId": "caa-pod-xyz"}""";
+
+        var optionsWithoutConverter = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        // No JsonStringEnumConverter — this is what was happening before the fix
+
+        var act = () => JsonSerializer.Deserialize<WorkItemStatusRequest>(agentJson, optionsWithoutConverter);
+
+        act.Should().Throw<JsonException>();
+    }
+
     // ── Authentication enforcement ──────────────────────────────────────
 
     // NOTE: Authentication enforcement (RequireAuthorization("AgentApiKey")) is configured
