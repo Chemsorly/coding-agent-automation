@@ -147,6 +147,46 @@ public sealed class WorkItemAgentService : BackgroundService
         }
         _logger.Information("Connected to SignalR hub for log streaming/token vending");
 
+        // Step 3b: Register agent with orchestrator hub.
+        // Required for [RequiresActiveJob] filter to pass on hub method invocations
+        // (token refresh, step transitions, output reporting, etc.).
+        try
+        {
+            var registration = new AgentRegistrationMessage
+            {
+                AgentId = _agentIdentity.Id,
+                Hostname = Environment.MachineName,
+                Labels = [],
+                ActiveJob = new ActiveJobState
+                {
+                    RunId = _workItemId,
+                    IssueIdentifier = assignment.IssueIdentifier,
+                    IssueTitle = assignment.IssueDetail?.Title ?? assignment.IssueIdentifier,
+                    IssueProviderConfigId = assignment.IssueProviderConfigId ?? assignment.RepoProviderConfigId,
+                    RepoProviderConfigId = assignment.RepoProviderConfigId,
+                    AgentProviderConfigId = assignment.AgentProviderConfigId,
+                    BrainProviderConfigId = assignment.BrainProviderConfigId,
+                    PipelineProviderConfigId = assignment.PipelineProviderConfigId,
+                    InitiatedBy = assignment.InitiatedBy,
+                    ResolvedProfileId = assignment.ResolvedProfileId,
+                    ProjectId = assignment.ProjectId,
+                    ProjectName = assignment.ProjectName,
+                    CurrentStep = PipelineStep.Created,
+                    StartedAt = DateTimeOffset.UtcNow,
+                    RunType = assignment.RunType
+                }
+            };
+            await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, ct);
+            _logger.Information("Registered agent {AgentId} with orchestrator hub (ActiveJob={WorkItemId})",
+                _agentIdentity.Id, _workItemId);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            _logger.Error(ex, "Failed to register agent with hub for work item {WorkItemId} — token refresh will not work, aborting", _workItemId);
+            await PostFailedStatusAsync($"Agent registration failed: {ex.Message}");
+            return 1;
+        }
+
         // Step 4: Execute pipeline
         using var pipelineCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _pipelineCts = pipelineCts;
@@ -246,7 +286,10 @@ public sealed class WorkItemAgentService : BackgroundService
             catch { /* best-effort cleanup */ }
         }
 
-        return 0;
+        // Exit non-zero when pipeline did not complete successfully.
+        // This ensures K8s marks the pod as Failed (not Completed), enabling proper
+        // observability and alerting on pipeline failures.
+        return completion.FinalStep == PipelineStep.Completed ? 0 : 1;
     }
 
     /// <summary>
