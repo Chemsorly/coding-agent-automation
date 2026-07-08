@@ -17,21 +17,16 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
 {
     private readonly Mock<Serilog.ILogger> _mockLogger = new();
     private readonly Mock<IHostApplicationLifetime> _mockLifetime = new();
-    private readonly HubConnectionManager _hubManager;
-    private readonly HubConnectionManagerFactory _hubFactory;
     private readonly WorkItemHttpClient _workItemClient;
 
     public WorkItemAgentServiceTests()
     {
-        _hubManager = new HubConnectionManager("http://localhost:9999", "test-agent", "test-key", _mockLogger.Object);
-        _hubFactory = new HubConnectionManagerFactory("http://localhost:9999", "test-agent", "test-key", _mockLogger.Object);
         var httpClient = new HttpClient(new FakeOkHandler()) { BaseAddress = new Uri("http://localhost") };
         _workItemClient = new WorkItemHttpClient(httpClient, _mockLogger.Object);
     }
 
     public async ValueTask DisposeAsync()
     {
-        await _hubManager.DisposeAsync();
     }
 
     // ── Constructor Guard Clauses ────────────────────────────────────────
@@ -39,9 +34,9 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
     [Theory]
     [InlineData(0, "workItemId")]
     [InlineData(1, "workItemClient")]
-    [InlineData(2, "hubManager")]
-    [InlineData(3, "hubManagerFactory")]
-    [InlineData(4, "workItemExecutor")]
+    [InlineData(2, "connectionManager")]
+    [InlineData(3, "workItemExecutor")]
+    [InlineData(4, "completionReporter")]
     [InlineData(5, "agentIdentity")]
     [InlineData(6, "lifetime")]
     [InlineData(7, "logger")]
@@ -51,9 +46,9 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         {
             "wi-1",
             _workItemClient,
-            _hubManager,
-            _hubFactory,
+            Mock.Of<IAgentConnectionManager>(),
             CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("agent-1"),
             _mockLifetime.Object,
             _mockLogger.Object
@@ -62,10 +57,10 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
 
         var act = () => new WorkItemAgentService(
             (string)args[0]!,
-            (WorkItemHttpClient)args[1]!,
-            (HubConnectionManager)args[2]!,
-            (HubConnectionManagerFactory)args[3]!,
-            (IWorkItemExecutor)args[4]!,
+            (IWorkItemLifecycleClient)args[1]!,
+            (IAgentConnectionManager)args[2]!,
+            (IWorkItemExecutor)args[3]!,
+            (IJobCompletionReporter)args[4]!,
             (AgentIdentity)args[5]!,
             (IHostApplicationLifetime)args[6]!,
             (Serilog.ILogger)args[7]!);
@@ -107,8 +102,9 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
 
         var service = new WorkItemAgentService(
-            "wi-rejected", client, _hubManager, _hubFactory,
+            "wi-rejected", client, Mock.Of<IAgentConnectionManager>(),
             CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
 
         // Act
@@ -119,8 +115,6 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
 
         // Assert
         handler.CallCount.Should().Be(2, "GET assignment + POST Running, then abort — no further calls");
-        _hubManager.IsConnected.Should().BeFalse(
-            "Agent must NOT connect SignalR when Running status is rejected");
         _mockLifetime.Verify(l => l.StopApplication(), Times.AtLeastOnce);
     }
 
@@ -135,8 +129,9 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
 
         var service = new WorkItemAgentService(
-            "wi-terminal", client, _hubManager, _hubFactory,
+            "wi-terminal", client, Mock.Of<IAgentConnectionManager>(),
             CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -175,18 +170,16 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
 
         // Use a hub manager pointing at non-existent server — StartAsync will throw
-        await using var failingHubManager = new HubConnectionManager(
-            "http://localhost:1", "test-agent", "test-key", _mockLogger.Object);
-        var failingHubFactory = new HubConnectionManagerFactory(
-            "http://localhost:1", "test-agent", "test-key", _mockLogger.Object);
+        var mockConnectionManager = Mock.Of<IAgentConnectionManager>();
 
         // Use a TaskCompletionSource to detect when StopApplication is called
         var stopCalled = new TaskCompletionSource<bool>();
         _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
 
         var service = new WorkItemAgentService(
-            "job-fail", client, failingHubManager, failingHubFactory,
+            "job-fail", client, mockConnectionManager,
             CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
 
         // Act
@@ -236,17 +229,15 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
 
-        await using var failingHub = new HubConnectionManager(
-            "http://localhost:1", "test-agent", "test-key", _mockLogger.Object);
-        var failingFactory = new HubConnectionManagerFactory(
-            "http://localhost:1", "test-agent", "test-key", _mockLogger.Object);
+        var failingConnectionManager = Mock.Of<IAgentConnectionManager>();
 
         var stopCalled = new TaskCompletionSource<bool>();
         _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
 
         var service = new WorkItemAgentService(
-            "job-pipeline-fail", client, failingHub, failingFactory,
+            "job-pipeline-fail", client, failingConnectionManager,
             CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
 
         // Act
@@ -483,8 +474,9 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
     private WorkItemAgentService CreateService(string workItemId)
     {
         return new WorkItemAgentService(
-            workItemId, _workItemClient, _hubManager, _hubFactory,
+            workItemId, _workItemClient, Mock.Of<IAgentConnectionManager>(),
             CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("test-agent"), _mockLifetime.Object, _mockLogger.Object);
     }
 

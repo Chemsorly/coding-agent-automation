@@ -33,9 +33,9 @@ public class WorkItemExecutorRouterTests
         var sourceCode = File.ReadAllText(
             Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemExecutorRouter.cs"));
 
-        // Must reference LocalPipelineExecutor
-        sourceCode.Should().Contain("LocalPipelineExecutor",
-            "WorkItemExecutorRouter must delegate pipeline tasks to LocalPipelineExecutor");
+        // Must reference IPipelineExecutor (interface dependency)
+        sourceCode.Should().Contain("IPipelineExecutor",
+            "WorkItemExecutorRouter must delegate pipeline tasks via IPipelineExecutor interface");
     }
 
     [Fact]
@@ -44,9 +44,9 @@ public class WorkItemExecutorRouterTests
         var sourceCode = File.ReadAllText(
             Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "WorkItemExecutorRouter.cs"));
 
-        // Must reference LocalConsolidationExecutor
-        sourceCode.Should().Contain("LocalConsolidationExecutor",
-            "WorkItemExecutorRouter must delegate consolidation tasks to LocalConsolidationExecutor");
+        // Must reference IConsolidationExecutor (interface, not concrete class)
+        sourceCode.Should().Contain("IConsolidationExecutor",
+            "WorkItemExecutorRouter must delegate consolidation tasks via IConsolidationExecutor interface");
 
         // Must check TaskType for routing
         var checksTaskType = sourceCode.Contains("TaskType")
