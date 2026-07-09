@@ -196,7 +196,20 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
             }
             else
             {
-                _logger.Debug("Agent {AgentId} active job {RunId} already tracked", message.AgentId, message.ActiveJob.RunId);
+                // Run already exists in-memory (e.g., created by K8s DispatchService with AgentId=null).
+                // Ensure the agent is linked to it and transitioned to Busy.
+                if (existingRun.AgentId is null)
+                    existingRun.AgentId = message.AgentId;
+
+                var trackedEntry = _facade.GetByAgentId(message.AgentId);
+                if (trackedEntry is not null && trackedEntry.ActiveJobId is null)
+                {
+                    trackedEntry.ActiveJobId = message.ActiveJob.RunId;
+                    _facade.TransitionStatus(message.AgentId, AgentStatus.Busy);
+                }
+
+                _logger.Debug("Agent {AgentId} active job {RunId} already tracked — linked agent to run",
+                    message.AgentId, message.ActiveJob.RunId);
             }
         }
 
