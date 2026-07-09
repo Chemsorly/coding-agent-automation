@@ -503,7 +503,6 @@ select option { background: var(--surface); color: var(--text); }
 .agent-header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .agent-header h1 { font-size: 1.25rem; font-weight: 600; }
 .agent-content-layout { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-.agent-content-layout.with-sidebar .agent-main { flex: 1; min-width: 0; }
 .agent-main { flex: 1; padding: 20px; overflow-y: auto; }
 
 .step-badge { padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; background: var(--surface-alt); color: var(--text-muted); }
@@ -573,29 +572,7 @@ select option { background: var(--surface); color: var(--text); }
 .label-chip-agent.label-chip-selected { border-style: solid; }
 .label-filter-count { font-size: 0.82rem; color: var(--text-muted); margin-bottom: 6px; }
 
-/* Pipeline Summary */
-.pipeline-summary { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
-.summary-header { display: flex; flex-direction: column; gap: 4px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
-.summary-title { display: flex; align-items: center; gap: 10px; }
-.summary-icon { font-size: 1.5rem; }
-.summary-title h2 { font-size: 1.25rem; font-weight: 600; margin: 0; }
-.summary-meta { font-size: 0.85rem; color: var(--text-muted); }
-.summary-branch { font-family: monospace; font-size: 0.8rem; word-break: break-all; }
-.summary-failure-callout { color: var(--error); font-size: 0.9rem; padding: 10px 14px; background: var(--bg-error); border-radius: var(--radius); border-left: 3px solid var(--error); }
-.summary-blacklist-warning { color: var(--warning); font-size: 0.85rem; padding: 10px 14px; background: #3a2e1a; border-radius: var(--radius); border-left: 3px solid var(--warning); }
-.summary-blacklist-warning ul { margin: 4px 0 0 16px; padding: 0; }
-.summary-blacklist-warning li { font-family: monospace; font-size: 0.8rem; }
-.summary-cancelled-step { font-size: 0.9rem; color: var(--text-muted); padding: 8px 0; }
-.result-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 12px 14px; background: var(--surface-alt); border-radius: var(--radius); font-size: 0.85rem; }
-.result-strip-sep { color: var(--border); }
-.summary-pr-link { font-size: 0.9rem; }
-.summary-pr-link a { color: var(--accent-light); text-decoration: none; }
-.summary-pr-link a:hover { text-decoration: underline; }
-
-/* Progress View */
-.progress-view { display: flex; flex-direction: column; gap: 14px; height: 100%; }
-.progress-view h2 { font-size: 1rem; font-weight: 600; color: var(--accent-light); }
-.elapsed-time { font-size: 0.85rem; color: var(--text-muted); }
+/* Progress View — output-panel/output-line shared with Agent Monitoring */
 .output-panel { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; flex: 1; overflow-y: auto; font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.8rem; line-height: 1.4; }
 .output-line { color: var(--text-muted); white-space: pre-wrap; word-break: break-all; }
 
@@ -698,7 +675,6 @@ select option { background: var(--surface); color: var(--text); }
 
 /* Responsive: collapse pipeline sidebar on narrow viewports */
 @media (max-width: 900px) {
-    .agent-content-layout.with-sidebar { flex-direction: column; }
     .pipeline-sidebar { width: 100%; min-width: 0; max-width: none; max-height: 40vh; border-left: none; border-top: 1px solid var(--border); }
 }
 
