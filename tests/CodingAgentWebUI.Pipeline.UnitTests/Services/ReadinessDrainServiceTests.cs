@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Services;
+using Microsoft.Extensions.Time.Testing;
 using Serilog;
 using Xunit;
 
@@ -40,16 +41,21 @@ public class ReadinessDrainServiceTests
     {
         var state = new ReadinessState();
         var delay = TimeSpan.FromMilliseconds(200);
-        var service = new ReadinessDrainService(state, _logger, drainDelay: delay);
+        var fakeTime = new FakeTimeProvider();
+        var service = new ReadinessDrainService(state, _logger, drainDelay: delay, timeProvider: fakeTime);
 
         using var cts = new CancellationTokenSource();
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await service.StoppingAsync(cts.Token);
-        sw.Stop();
+        var task = service.StoppingAsync(cts.Token);
 
-        // Should have waited at least the drain delay
-        Assert.True(sw.Elapsed >= TimeSpan.FromMilliseconds(150),
-            $"Expected at least 150ms, got {sw.Elapsed.TotalMilliseconds}ms");
+        // Task should be waiting on the delay — not yet completed
+        Assert.False(task.IsCompleted, "Task should be waiting on drain delay");
+
+        // Advance past the drain delay
+        fakeTime.Advance(delay);
+        await task;
+
+        // State should have been flipped
+        Assert.False(state.IsReady);
     }
 
     [Fact]
@@ -57,16 +63,19 @@ public class ReadinessDrainServiceTests
     {
         var state = new ReadinessState();
         var delay = TimeSpan.FromSeconds(30); // long delay
-        var service = new ReadinessDrainService(state, _logger, drainDelay: delay);
+        var fakeTime = new FakeTimeProvider();
+        var service = new ReadinessDrainService(state, _logger, drainDelay: delay, timeProvider: fakeTime);
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+        using var cts = new CancellationTokenSource();
+        var task = service.StoppingAsync(cts.Token);
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await service.StoppingAsync(cts.Token);
-        sw.Stop();
+        // Task should be waiting on the 30s delay
+        Assert.False(task.IsCompleted, "Task should be waiting on drain delay");
 
-        // Should not have waited 30 seconds — cancelled early
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5));
+        // Cancel instead of advancing time
+        cts.Cancel();
+        await task;
+
         // State still flipped before cancellation
         Assert.False(state.IsReady);
     }
