@@ -13,6 +13,7 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// - Kubernetes mode outside cluster → InvalidOperationException
 /// Validates: Requirements 1.9, 8.6
 /// </summary>
+[Collection("EnvironmentVariables")]
 public class WorkDistributionRegistrationTests
 {
     [Theory]

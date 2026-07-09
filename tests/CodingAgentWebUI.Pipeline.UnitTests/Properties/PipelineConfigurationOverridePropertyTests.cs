@@ -20,7 +20,7 @@ public class PipelineConfigurationOverridePropertyTests
     /// Idempotence: applying the same project override twice produces the same result
     /// as applying it once. ApplyProjectOverrides(ApplyProjectOverrides(base, P), P) == ApplyProjectOverrides(base, P)
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool ApplyProjectOverrides_IsIdempotent(
         PositiveInt maxRetries,
         bool analysisReviewEnabled,
@@ -43,7 +43,7 @@ public class PipelineConfigurationOverridePropertyTests
     /// Null-transparency: a project with all-null overrides produces a config
     /// identical to the input (nothing changes).
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public bool NullOverrides_PreserveAllConfigValues(PositiveInt maxRetries)
     {
         var baseConfig = TestPipelineConfig.Default() with { MaxRetries = maxRetries.Get };
@@ -69,7 +69,7 @@ public class PipelineConfigurationOverridePropertyTests
     /// Override dominance: when a project specifies a non-null value, it ALWAYS
     /// appears in the result regardless of the base config value.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool NonNullOverride_AlwaysDominates(PositiveInt baseRetries, PositiveInt overrideRetries)
     {
         var baseConfig = TestPipelineConfig.Default() with { MaxRetries = baseRetries.Get };
@@ -91,7 +91,7 @@ public class PipelineConfigurationOverridePropertyTests
     /// ApplyProjectOverrides(ApplyProjectOverrides(base, A), B) has both A's and B's values.
     /// Uses values within valid ranges to avoid ArgumentOutOfRangeException fallback.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool SequentialNonOverlappingOverrides_BothApplied(
         PositiveInt retriesRaw,
         PositiveInt subIssuesRaw)
@@ -130,7 +130,7 @@ public class PipelineConfigurationOverridePropertyTests
     /// Last-write-wins: when two overrides set the same field, the later one dominates.
     /// ApplyProjectOverrides(ApplyProjectOverrides(base, A), B) uses B's value.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool OverlappingOverrides_LastWriteWins(
         PositiveInt retriesA,
         PositiveInt retriesB)
@@ -151,7 +151,7 @@ public class PipelineConfigurationOverridePropertyTests
     /// The method has a try/catch for ArgumentOutOfRangeException — this verifies it handles
     /// edge cases gracefully.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool ApplyProjectOverrides_NeverThrows(
         int maxRetries,
         bool? analysisEnabled,

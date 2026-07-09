@@ -53,6 +53,7 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Resilience handler exhausted retries (TimeoutRejectedException, HttpRequestException, etc.)
+            _logger.Error(ex, "All retries exhausted for GET /api/work-items/{WorkItemId}/assignment", workItemId);
             throw new WorkItemFetchException(
                 $"All retries exhausted for GET /api/work-items/{workItemId}/assignment: {ex.Message}", ex);
         }
@@ -63,17 +64,24 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
             {
                 case HttpStatusCode.OK:
                     var message = await response.Content.ReadFromJsonAsync<JobAssignmentMessage>(JsonOptions, ct);
-                    return message ?? throw new WorkItemFetchException("Response deserialized to null");
+                    if (message is null)
+                    {
+                        _logger.Error("GET /api/work-items/{WorkItemId}/assignment returned 200 but deserialized to null", workItemId);
+                        throw new WorkItemFetchException("Response deserialized to null");
+                    }
+                    return message;
 
                 case HttpStatusCode.Gone:
                     _logger.Information("Work item {WorkItemId} is in terminal status (410 Gone), exiting gracefully", workItemId);
                     return null;
 
                 case HttpStatusCode.NotFound:
+                    _logger.Error("Work item {WorkItemId} not found (404) for assignment fetch", workItemId);
                     throw new WorkItemFetchException($"Work item {workItemId} not found (404)");
 
                 default:
                     // TODO: Add explicit >= 500 check with "retries exhausted" message for consistency with PostStatusAsync
+                    _logger.Error("Unexpected status {StatusCode} from GET /api/work-items/{WorkItemId}/assignment", (int)response.StatusCode, workItemId);
                     throw new WorkItemFetchException(
                         $"Unexpected status {(int)response.StatusCode} from GET /api/work-items/{workItemId}/assignment");
             }
@@ -100,6 +108,7 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             // Resilience handler exhausted retries (TimeoutRejectedException, HttpRequestException, etc.)
+            _logger.Error(ex, "All retries exhausted for POST status={Status} for work item {WorkItemId}", update.Status, workItemId);
             throw new WorkItemStatusPostException(
                 $"All retries exhausted for POST status={update.Status} for work item {workItemId}: {ex.Message}", ex);
         }
@@ -126,6 +135,8 @@ public sealed class WorkItemHttpClient : IWorkItemLifecycleClient
                     if ((int)response.StatusCode >= 500)
                     {
                         // 5xx leaked through after resilience handler exhaustion
+                        _logger.Error("Server error {StatusCode} from POST status={Status} for work item {WorkItemId} (retries exhausted)",
+                            (int)response.StatusCode, update.Status, workItemId);
                         throw new WorkItemStatusPostException(
                             $"Server error {(int)response.StatusCode} from POST status={update.Status} for work item {workItemId} (retries exhausted)");
                     }

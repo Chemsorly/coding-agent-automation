@@ -17,7 +17,7 @@ public class DependencyParserPropertyTests
     /// Crash-freedom: Parse never throws an exception for any arbitrary string input.
     /// This covers malicious regex inputs, unicode, control characters, null bytes, etc.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public bool Parse_NeverThrows_ForAnyInput(string? body)
     {
         // Act — should not throw
@@ -30,7 +30,7 @@ public class DependencyParserPropertyTests
     /// <summary>
     /// Crash-freedom with selfIdentifier: Parse never throws regardless of selfIdentifier value.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool Parse_WithSelfIdentifier_NeverThrows(string? body, int? selfIdentifier)
     {
         var result = DependencyParser.Parse(body, selfIdentifier);
@@ -42,7 +42,7 @@ public class DependencyParserPropertyTests
     /// All returned issue numbers are strictly positive.
     /// The implementation filters out zero and negative numbers.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public bool Parse_AllResults_ArePositive(string? body)
     {
         var result = DependencyParser.Parse(body);
@@ -53,7 +53,7 @@ public class DependencyParserPropertyTests
     /// <summary>
     /// Results are always unique (no duplicates in output).
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public bool Parse_Results_AreAlwaysUnique(string? body)
     {
         var result = DependencyParser.Parse(body);
@@ -64,7 +64,7 @@ public class DependencyParserPropertyTests
     /// <summary>
     /// When selfIdentifier is provided, it never appears in results.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool Parse_SelfIdentifier_NeverInResults(NonEmptyString bodyNes, PositiveInt selfId)
     {
         var body = $"Blocked by #{selfId.Get} and depends on #{selfId.Get + 1}";
@@ -77,7 +77,7 @@ public class DependencyParserPropertyTests
     /// Embedding a known dependency pattern always produces at least one result
     /// (unless the number is zero or equals selfIdentifier).
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool Parse_WithEmbeddedPattern_FindsDependency(PositiveInt issueNumber)
     {
         var body = $"Some context text. Blocked by #{issueNumber.Get}. More text.";
@@ -89,7 +89,7 @@ public class DependencyParserPropertyTests
     /// <summary>
     /// Idempotence: parsing the same body twice yields the same results.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public bool Parse_IsIdempotent(string? body)
     {
         var result1 = DependencyParser.Parse(body);

@@ -77,7 +77,10 @@ public sealed class CreateBranchStep : IPipelineStep
     private static async Task<StepResult> CreateNewBranchAsync(PipelineStepContext context, CancellationToken ct)
     {
         if (context.Issue is null)
+        {
+            context.Logger.Error("Issue must be fetched before creating a branch (RunId={RunId})", context.Run.RunId);
             throw new InvalidOperationException("Issue must be fetched before creating a branch. Ensure FetchIssueStep runs before CreateBranchStep.");
+        }
 
         context.Callbacks.EmitOutputLine("🌿 Creating branch...");
         return await context.TryCriticalAsync(async () =>

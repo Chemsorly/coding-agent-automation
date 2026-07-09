@@ -16,6 +16,7 @@ namespace CodingAgentWebUI.Agent.UnitTests.OpenCode;
 /// Feature: opencode-agent-executor
 /// **Validates: Requirements 6.1, 6.4, 6.5, 6.7, 1.7**
 /// </summary>
+[Collection("EnvironmentVariables")]
 [Trait("Feature", "opencode-agent-executor")]
 public class OpenCodeFactoryAndLifecycleTests
 {

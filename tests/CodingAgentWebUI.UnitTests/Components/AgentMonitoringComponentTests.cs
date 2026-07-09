@@ -266,6 +266,54 @@ public class AgentMonitoringComponentTests : BunitContext
         });
     }
 
+    [Fact]
+    public void RemoveFromQueue_DbMode_CallsWorkDistributorCancelJobAsync()
+    {
+        // Arrange: use a mock IPendingWorkQuery that returns a job with WorkItemId (DB mode)
+        var workItemId = Guid.NewGuid().ToString();
+        var mockPendingQuery = new Mock<IPendingWorkQuery>();
+        mockPendingQuery.Setup(q => q.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PendingJob>
+            {
+                new PendingJob
+                {
+                    WorkItemId = workItemId,
+                    IssueIdentifier = "org/repo#55",
+                    IssueProviderId = "ip-1",
+                    RepoProviderId = "rp-1",
+                    EnqueuedAt = DateTimeOffset.UtcNow,
+                    InitiatedBy = "loop"
+                }
+            });
+
+        var mockWorkDistributor = new Mock<IWorkDistributor>();
+        mockWorkDistributor.Setup(w => w.CancelJobAsync(workItemId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        // Override the default registrations
+        Services.AddSingleton<IPendingWorkQuery>(mockPendingQuery.Object);
+        Services.AddSingleton<IWorkDistributor>(mockWorkDistributor.Object);
+
+        var cut = Render<AgentMonitoring>();
+
+        // Verify job appears
+        cut.WaitForAssertion(() => Assert.Contains("org/repo#55", cut.Markup));
+
+        // Act: click the Remove button
+        var removeBtn = cut.FindAll("button")
+            .First(b => b.TextContent.Contains("Remove"));
+        removeBtn.Click();
+
+        // Assert: WorkDistributor.CancelJobAsync was called with the WorkItemId
+        cut.WaitForAssertion(() =>
+        {
+            mockWorkDistributor.Verify(
+                w => w.CancelJobAsync(workItemId, It.IsAny<CancellationToken>()),
+                Times.Once,
+                "In DB/K8s mode, Remove should call WorkDistributor.CancelJobAsync with the WorkItemId");
+        });
+    }
+
     private static PipelineRun CreateRun(string issueTitle) => new()
     {
         RunId = "abcd1234-5678-9012-3456-789012345678",

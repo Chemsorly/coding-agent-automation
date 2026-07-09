@@ -2,6 +2,7 @@ using System.Net;
 
 namespace CodingAgentWebUI.IntegrationTests.Smoke;
 
+[Collection("SmokeTests")]
 public class AppStartupTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly CustomWebApplicationFactory _factory;

@@ -11,7 +11,10 @@ public class FileSystemMonitor : IFileSystemMonitor
     {
         ArgumentNullException.ThrowIfNull(workspaceDirectory);
         if (!Directory.Exists(workspaceDirectory))
+        {
+            Serilog.Log.Error("Workspace directory not found: {WorkspaceDirectory}", workspaceDirectory);
             throw new DirectoryNotFoundException($"Workspace directory not found: {workspaceDirectory}");
+        }
 
         var snapshots = new List<FileSnapshot>();
         try
@@ -24,6 +27,7 @@ public class FileSystemMonitor : IFileSystemMonitor
         }
         catch (UnauthorizedAccessException ex)
         {
+            Serilog.Log.Error(ex, "Access denied while scanning workspace: {WorkspaceDirectory}", workspaceDirectory);
             throw new InvalidOperationException($"Access denied while scanning workspace: {workspaceDirectory}", ex);
         }
         return snapshots;

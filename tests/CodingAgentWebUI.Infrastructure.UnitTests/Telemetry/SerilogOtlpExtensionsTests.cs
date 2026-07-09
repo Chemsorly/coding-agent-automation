@@ -3,7 +3,7 @@ using Serilog;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Telemetry;
 
-// TODO: Add [Collection("EnvironmentVariables")] to prevent parallel test interference from env var mutations
+[Collection("EnvironmentVariables")]
 public class SerilogOtlpExtensionsTests : IDisposable
 {
     private readonly string? _originalEndpoint;

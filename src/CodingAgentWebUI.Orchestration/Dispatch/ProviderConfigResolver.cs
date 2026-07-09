@@ -55,6 +55,9 @@ internal static class ProviderConfigResolver
 
         if (required)
         {
+            logger.Error(
+                "Critical provider config {ConfigId} ({Kind}) not found in store after DB fallback. Cannot dispatch.",
+                id, kind);
             throw new InvalidOperationException(
                 $"Critical provider config '{id}' ({kind}) not found in store. Cannot dispatch.");
         }

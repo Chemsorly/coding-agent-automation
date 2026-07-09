@@ -109,6 +109,7 @@ All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans mark
 | `TokenVending.GenerateToken` | — | Token generation HTTP call |
 | `Agent.ReceiveJob` | `job_id`, `run_type` | Agent job receipt and acceptance/rejection decision |
 | `Agent.ReportCompletion` | `job_id`, `success` | Reporting job completion to orchestrator |
+| `WorkItemAgent.Execute` | `work_item_id`, `agent_id` | Top-level span for K8s work-item agent lifecycle (connect, execute, report) |
 | `ExecuteConsolidation` | `pipeline.run_id`, `pipeline.consolidation_type` | Top-level span wrapping a consolidation run (brain, refactoring, or harness) |
 | `BrainConsolidation.Clone` | `pipeline.run_id` | Brain repo clone during consolidation |
 | `BrainConsolidation.AgentExecution` | `pipeline.run_id` | Main agent LLM call for brain consolidation |

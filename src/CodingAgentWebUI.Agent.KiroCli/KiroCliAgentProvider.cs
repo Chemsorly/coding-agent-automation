@@ -176,8 +176,12 @@ public partial class KiroCliAgentProvider : IAgentProvider
             CreateNoWindow = true
         };
 
-        using var process = _processStarter.Start(psi)
-            ?? throw new InvalidOperationException("Failed to start kiro-cli doctor process");
+        using var process = _processStarter.Start(psi);
+        if (process is null)
+        {
+            _logger.Error("Failed to start kiro-cli doctor process");
+            throw new InvalidOperationException("Failed to start kiro-cli doctor process");
+        }
 
         var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
         var stderrTask = process.StandardError.ReadToEndAsync(ct);
@@ -188,6 +192,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
         if (process.ExitCode != 0)
         {
             var details = !string.IsNullOrWhiteSpace(stderr) ? stderr.Trim() : stdout.Trim();
+            _logger.Error("kiro-cli doctor exited with code {ExitCode}. {Details}", process.ExitCode, details);
             throw new InvalidOperationException(
                 $"kiro-cli doctor exited with code {process.ExitCode}. {details}");
         }

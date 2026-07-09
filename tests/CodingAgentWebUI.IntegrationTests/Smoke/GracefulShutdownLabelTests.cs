@@ -21,6 +21,7 @@ namespace CodingAgentWebUI.IntegrationTests.Smoke;
 /// <summary>
 /// Verifies that graceful shutdown swaps agent:cancelled label on active runs.
 /// </summary>
+[Collection("SmokeTests")]
 public class GracefulShutdownLabelTests : IAsyncLifetime
 {
     private readonly Mock<IIssueProvider> _mockIssueProvider = new();
@@ -80,6 +81,8 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("Database:Host", "");
+            // Reset Serilog to prevent "logger is already frozen" across multiple factory instances
+            Log.Logger = new LoggerConfiguration().MinimumLevel.Warning().WriteTo.Console().CreateBootstrapLogger();
             builder.ConfigureServices(services =>
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
@@ -182,6 +185,8 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("Database:Host", "");
+            // Reset Serilog to prevent "logger is already frozen" across multiple factory instances
+            Log.Logger = new LoggerConfiguration().MinimumLevel.Warning().WriteTo.Console().CreateBootstrapLogger();
             builder.ConfigureServices(services =>
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
@@ -238,6 +243,8 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("Database:Host", "");
+            // Reset Serilog to prevent "logger is already frozen" across multiple factory instances
+            Log.Logger = new LoggerConfiguration().MinimumLevel.Warning().WriteTo.Console().CreateBootstrapLogger();
             builder.ConfigureServices(services =>
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));
@@ -321,6 +328,8 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         _factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {
             builder.UseSetting("Database:Host", "");
+            // Reset Serilog to prevent "logger is already frozen" across multiple factory instances
+            Log.Logger = new LoggerConfiguration().MinimumLevel.Warning().WriteTo.Console().CreateBootstrapLogger();
             builder.ConfigureServices(services =>
             {
                 services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(5));

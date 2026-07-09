@@ -33,6 +33,7 @@ public static class PipelineStepRunner
             catch (Exception ex)
             {
                 Activity.Current?.RecordError(ex, ct);
+                Serilog.Log.Error(ex, "Pipeline step {StepName} failed for run {RunId}", step.StepName, context.Run.RunId);
                 throw;
             }
             finally

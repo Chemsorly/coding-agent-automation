@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build-and-test:
-    runs-on: arc-runner-set-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     container:
       image: mcr.microsoft.com/dotnet/sdk:10.0
@@ -63,7 +63,7 @@ jobs:
 
   # Secret scanning — detect leaked credentials in code
   gitleaks:
-    runs-on: arc-runner-set-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -77,7 +77,7 @@ jobs:
 
   # Helm chart validation — runs on ALL branches/PRs to catch chart errors early
   helm-lint:
-    runs-on: arc-runner-set-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -93,12 +93,10 @@ jobs:
       - name: Helm template
         run: helm template test-release helm/coding-agent-automation/ -f helm/coding-agent-automation/ci-values.yaml > /dev/null
 
-  docker:
+  docker-build:
     needs: [build-and-test]
-    runs-on: arc-runner-set-arm
-    timeout-minutes: 120
-    container:
-      image: quay.io/buildah/stable
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
 
     permissions:
       contents: read
@@ -106,7 +104,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
+        arch:
+          - amd64
+          - arm64
+        image:
           - dockerfile: dockerfiles/webui.Dockerfile
             tag: coding-agent-webui
           - dockerfile: dockerfiles/kiro/agent-kiro-dotnet10.Dockerfile
@@ -121,12 +122,18 @@ jobs:
             tag: coding-agent-opencode-java21
           - dockerfile: dockerfiles/opencode/agent-opencode-python312.Dockerfile
             tag: coding-agent-opencode-python312
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - name: Build and push ${{ matrix.tag }}
-        shell: sh
+      - name: Build and push ${{ matrix.image.tag }} (${{ matrix.arch }})
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -134,12 +141,8 @@ jobs:
           # Configure registry auth
           AUTH=$(echo -n "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" | base64)
           echo "::add-mask::${AUTH}"
-          mkdir -p /run/containers/0
-          echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > /run/containers/0/auth.json
-
-          # Use vfs storage driver (no mount syscall needed, works in any container)
-          export BUILDAH_ISOLATION=chroot
-          sed -i 's/^driver =.*/driver = "vfs"/' /etc/containers/storage.conf 2>/dev/null || true
+          mkdir -p "${XDG_RUNTIME_DIR}/containers"
+          echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > "${XDG_RUNTIME_DIR}/containers/auth.json"
 
           # Build args for build-info (only relevant for webui, ignored by other Dockerfiles)
           BUILD_ARGS=""
@@ -148,58 +151,104 @@ jobs:
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_RUN_ID=${{ github.run_id }}"
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_RUN_NUMBER=${{ github.run_number }}"
-          BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_IMAGE_TAG=chemsorly/coding-agent:${{ matrix.tag }}-latest"
+          BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_IMAGE_TAG=chemsorly/coding-agent:${{ matrix.image.tag }}-latest"
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}"
 
-          # Build multi-arch image (SDK runs natively on ARM via $BUILDPLATFORM, cross-compiles via $TARGETARCH)
-          # Builds for both amd64 and arm64, producing a manifest list
+          # Build single-arch image natively
           buildah build \
-            --isolation chroot \
-            --storage-driver vfs \
-            --platform linux/amd64,linux/arm64 \
-            -f ${{ matrix.dockerfile }} \
-            --manifest docker.io/chemsorly/dev:${{ matrix.tag }} \
+            --platform ${{ matrix.platform }} \
+            -f ${{ matrix.image.dockerfile }} \
+            -t docker.io/chemsorly/coding-agent:${{ matrix.image.tag }}-${{ matrix.arch }} \
             ${BUILD_ARGS} \
             .
 
-          # Push manifests only on main branch or tag pushes
+          # Push per-arch image (used by manifest merge job)
           if [ "${{ github.ref }}" = "refs/heads/main" ] || echo "${{ github.ref }}" | grep -q "^refs/tags/v"; then
-            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            buildah push \
+              --authfile "${XDG_RUNTIME_DIR}/containers/auth.json" \
+              docker.io/chemsorly/coding-agent:${{ matrix.image.tag }}-${{ matrix.arch }} \
+              docker://docker.io/chemsorly/coding-agent:${{ matrix.image.tag }}-${{ matrix.arch }}
+          fi
 
-            # Push SHA-tagged image (pinnable version)
-            buildah manifest push \
-              --storage-driver vfs \
-              --authfile /run/containers/0/auth.json \
-              --all \
-              docker.io/chemsorly/dev:${{ matrix.tag }} \
-              docker://docker.io/chemsorly/coding-agent:${{ matrix.tag }}-${SHORT_SHA}
+  # Gate job for branch protection — matrix jobs report as "docker-build (arch, ...)"
+  # but branch protection requires a single named check. This aggregates the result.
+  docker-build-gate:
+    needs: [docker-build]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - run: |
+          if [[ "${{ needs.docker-build.result }}" != "success" ]]; then
+            echo "::error::docker-build matrix failed or was cancelled"
+            exit 1
+          fi
 
-            # Push latest-tagged image (mutable tag for dev/testing)
-            buildah manifest push \
-              --storage-driver vfs \
-              --authfile /run/containers/0/auth.json \
-              --all \
-              docker.io/chemsorly/dev:${{ matrix.tag }} \
-              docker://docker.io/chemsorly/coding-agent:${{ matrix.tag }}-latest
+  docker-push:
+    needs: [docker-build]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
 
-            # Push version-tagged image on tag pushes (e.g., coding-agent-webui-1.2.3)
-            if echo "${{ github.ref }}" | grep -q "^refs/tags/v"; then
-              VERSION="${{ github.ref_name }}"
-              VERSION="${VERSION#v}"
-              buildah manifest push \
-                --storage-driver vfs \
-                --authfile /run/containers/0/auth.json \
-                --all \
-                docker.io/chemsorly/dev:${{ matrix.tag }} \
-                docker://docker.io/chemsorly/coding-agent:${{ matrix.tag }}-${VERSION}
-            fi
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tag: coding-agent-webui
+          - tag: coding-agent-kiro-dotnet10
+          - tag: coding-agent-kiro-python312
+          - tag: coding-agent-kiro-java21
+          - tag: coding-agent-opencode-dotnet10
+          - tag: coding-agent-opencode-java21
+          - tag: coding-agent-opencode-python312
+
+    steps:
+      - name: Create and push multi-arch manifest for ${{ matrix.tag }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          # Configure registry auth
+          AUTH=$(echo -n "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" | base64)
+          echo "::add-mask::${AUTH}"
+          mkdir -p "${XDG_RUNTIME_DIR}/containers"
+          echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > "${XDG_RUNTIME_DIR}/containers/auth.json"
+          AUTHFILE="${XDG_RUNTIME_DIR}/containers/auth.json"
+
+          IMG="docker.io/chemsorly/coding-agent"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+
+          # Create manifest from per-arch images
+          buildah manifest create "${IMG}:${{ matrix.tag }}"
+          buildah manifest add --authfile "${AUTHFILE}" "${IMG}:${{ matrix.tag }}" "docker://${IMG}:${{ matrix.tag }}-amd64"
+          buildah manifest add --authfile "${AUTHFILE}" "${IMG}:${{ matrix.tag }}" "docker://${IMG}:${{ matrix.tag }}-arm64"
+
+          # Push SHA-tagged manifest (pinnable version)
+          buildah manifest push --authfile "${AUTHFILE}" --all \
+            "${IMG}:${{ matrix.tag }}" \
+            "docker://${IMG}:${{ matrix.tag }}-${SHORT_SHA}"
+
+          # Push latest-tagged manifest
+          buildah manifest push --authfile "${AUTHFILE}" --all \
+            "${IMG}:${{ matrix.tag }}" \
+            "docker://${IMG}:${{ matrix.tag }}-latest"
+
+          # Push version-tagged manifest on tag pushes
+          if echo "${{ github.ref }}" | grep -q "^refs/tags/v"; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+            buildah manifest push --authfile "${AUTHFILE}" --all \
+              "${IMG}:${{ matrix.tag }}" \
+              "docker://${IMG}:${{ matrix.tag }}-${VERSION}"
           fi
 
   # Chart publishing — only on tag pushes (release)
   publish-chart:
-    needs: [build-and-test, helm-lint, docker]
+    needs: [build-and-test, helm-lint, docker-push]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: arc-runner-set-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

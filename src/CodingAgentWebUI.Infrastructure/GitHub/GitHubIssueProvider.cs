@@ -177,7 +177,10 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         ParseIssueIdentifier(issueIdentifier);
 
         if (!int.TryParse(commentId, out var commentIdParsed))
+        {
+            Log.Warning("Invalid comment identifier '{CommentId}' — expected numeric comment ID", commentId);
             throw new ArgumentException($"Invalid comment identifier: '{commentId}'. Expected a numeric comment ID.", nameof(commentId));
+        }
 
         await ExecuteWithResilienceAsync(
             client => client.Issue.Comment.Update(Owner, Repo, commentIdParsed, body),
@@ -265,18 +268,22 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
         }
         catch (GitHubAuthException ex) when (ex.ErrorKind == GitHubAuthErrorKind.PrivateKeyDecodeFailure)
         {
+            Log.Error(ex, "Invalid private key: could not decode from base64 for {Owner}/{Repo}", Owner, Repo);
             throw new InvalidOperationException("Invalid private key: could not decode from base64", ex);
         }
         catch (GitHubAuthException ex) when (ex.ErrorKind == GitHubAuthErrorKind.TokenExchangeFailure)
         {
+            Log.Error(ex, "Authentication failed during token exchange for {Owner}/{Repo}: {Reason}", Owner, Repo, ex.InnerException?.Message ?? ex.Message);
             throw new InvalidOperationException($"Authentication failed: {ex.InnerException?.Message ?? ex.Message}", ex);
         }
         catch (AuthorizationException ex)
         {
+            Log.Error(ex, "Authentication failed: installation token was rejected for {Owner}/{Repo}", Owner, Repo);
             throw new InvalidOperationException("Authentication failed: installation token was rejected", ex);
         }
         catch (NotFoundException ex)
         {
+            Log.Error(ex, "Repository not found or app lacks access: {Owner}/{Repo}", Owner, Repo);
             throw new InvalidOperationException("Repository not found or app lacks access", ex);
         }
     }

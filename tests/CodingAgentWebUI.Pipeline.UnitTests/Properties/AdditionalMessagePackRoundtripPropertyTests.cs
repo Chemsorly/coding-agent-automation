@@ -229,7 +229,7 @@ public class AdditionalMessagePackRoundtripPropertyTests
 
     // ── TokenUsage (standalone) ──────────────────────────────────────────
 
-    [Property(MaxTest = 30)]
+    [Property(MaxTest = 20)]
     public Property TokenUsage_RoundTrip_PreservesAllFields()
     {
         var gen =

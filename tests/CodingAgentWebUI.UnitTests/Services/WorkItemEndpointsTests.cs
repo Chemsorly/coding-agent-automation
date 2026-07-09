@@ -97,8 +97,8 @@ public class WorkItemEndpointsTests : IDisposable
 
         var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
 
-        result.Should().BeOfType<Ok<WorkItemAssignmentDto>>();
-        var okResult = (Ok<WorkItemAssignmentDto>)result;
+        result.Should().BeOfType<Ok<JobAssignmentMessage>>();
+        var okResult = (Ok<JobAssignmentMessage>)result;
         okResult.Value.Should().NotBeNull();
         okResult.Value!.IssueIdentifier.Should().Be("owner/repo#1");
         okResult.Value.RepoProviderConfigId.Should().Be("repo-1");
@@ -204,8 +204,8 @@ public class WorkItemEndpointsTests : IDisposable
 
         var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
 
-        result.Should().BeOfType<Ok<WorkItemAssignmentDto>>();
-        var okResult = (Ok<WorkItemAssignmentDto>)result;
+        result.Should().BeOfType<Ok<JobAssignmentMessage>>();
+        var okResult = (Ok<JobAssignmentMessage>)result;
         okResult.Value.Should().NotBeNull();
         okResult.Value!.JobId.Should().Be(id.ToString());
     }
@@ -220,16 +220,13 @@ public class WorkItemEndpointsTests : IDisposable
 
         var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
 
-        var okResult = (Ok<WorkItemAssignmentDto>)result;
+        var okResult = (Ok<JobAssignmentMessage>)result;
         var dto = okResult.Value!;
         dto.JobId.Should().Be(id.ToString());
         dto.IssueIdentifier.Should().Be(sourcePayload.IssueIdentifier);
         dto.IssueProviderConfigId.Should().Be(sourcePayload.IssueProviderConfigId);
         dto.RepoProviderConfigId.Should().Be(sourcePayload.RepoProviderConfigId);
         dto.InitiatedBy.Should().Be(sourcePayload.InitiatedBy);
-        dto.TaskType.Should().Be(sourcePayload.TaskType);
-        dto.AgentSelector.Should().Be(sourcePayload.AgentSelector);
-        dto.TimeoutSeconds.Should().Be(sourcePayload.TimeoutSeconds);
         dto.IssueDetail.Should().NotBeNull();
         dto.IssueDetail!.Title.Should().Be("Test Issue");
         dto.ParsedIssue.Should().NotBeNull();
