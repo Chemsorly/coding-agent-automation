@@ -37,6 +37,7 @@ public sealed class ReconciliationService : BackgroundService
     private readonly IRunLifecycleManager? _lifecycleManager;
     private readonly IConsolidationService? _consolidationService;
     private readonly IConfigurationStore? _configStore;
+    private readonly IJobDeduplicationGuard? _dedupGuard;
     private readonly ReconciliationServiceOptions _options;
 
     private string? _lastResourceVersion;
@@ -50,7 +51,8 @@ public sealed class ReconciliationService : BackgroundService
         ILabelSwapper? labelSwapper = null,
         IRunLifecycleManager? lifecycleManager = null,
         IConsolidationService? consolidationService = null,
-        IConfigurationStore? configStore = null)
+        IConfigurationStore? configStore = null,
+        IJobDeduplicationGuard? dedupGuard = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
@@ -60,6 +62,7 @@ public sealed class ReconciliationService : BackgroundService
         _lifecycleManager = lifecycleManager;
         _consolidationService = consolidationService;
         _configStore = configStore;
+        _dedupGuard = dedupGuard;
         _options = new ReconciliationServiceOptions();
         configuration.GetSection("WorkDistribution:Reconciliation").Bind(_options);
 
@@ -480,7 +483,7 @@ public sealed class ReconciliationService : BackgroundService
         var candidates = await db.WorkItems
             .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
                         && w.TimeoutSeconds > 0)
-            .Select(w => new { w.Id, w.DispatchedAt, w.CreatedAt, w.TimeoutSeconds, w.K8sJobName, w.LastProgressAt })
+            .Select(w => new { w.Id, w.DispatchedAt, w.CreatedAt, w.TimeoutSeconds, w.K8sJobName, w.LastProgressAt, w.IssueIdentifier, w.IssueProviderConfigId })
             .ToListAsync(ct);
 
         foreach (var item in candidates)
@@ -524,6 +527,7 @@ public sealed class ReconciliationService : BackgroundService
             }
 
             // Fallback: if no lifecycle manager or run wasn't in memory, do direct DB transition
+            // plus best-effort label swap and dedup release (prevents stale labels and permanent dispatch blocking)
             if (!lifecycleHandled)
             {
                 await _transitionService.TransitionAsync(item.Id, WorkItemStatus.Failed,
@@ -533,6 +537,24 @@ public sealed class ReconciliationService : BackgroundService
                         w.FailureReason = FailureReason.Timeout;
                         w.ErrorMessage = timeoutReason;
                     }, ct);
+
+                // Best-effort label swap to agent:error (prevents stale agent:in-progress on GitHub)
+                if (_labelSwapper is not null)
+                {
+                    try
+                    {
+                        await _labelSwapper.SwapLabelAsync(
+                            item.IssueProviderConfigId, item.IssueIdentifier,
+                            AgentLabels.Error, LabelTargetKind.Issue, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        Log.Warning(ex, "ReconciliationService: label swap to agent:error failed for WorkItem {WorkItemId} (non-fatal)", item.Id);
+                    }
+                }
+
+                // Release dedup guard (prevents issue from being permanently blocked from re-dispatch)
+                _dedupGuard?.MarkIssueComplete(item.IssueIdentifier, item.IssueProviderConfigId);
             }
 
             LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.Timeout,

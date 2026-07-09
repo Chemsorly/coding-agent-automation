@@ -259,7 +259,8 @@ public static class WorkDistributionRegistration
             sp.GetService<ILabelSwapper>(),
             sp.GetService<IRunLifecycleManager>(),
             sp.GetService<IConsolidationService>(),
-            sp.GetService<IConfigurationStore>()));
+            sp.GetService<IConfigurationStore>(),
+            sp.GetService<IJobDeduplicationGuard>()));
 
         // HeartbeatMonitorService NOT registered in K8s mode (agent liveness via ReconciliationService)
         // JobQueueDrainService NOT registered (work distribution via IWorkDistributor)

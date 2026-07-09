@@ -410,7 +410,11 @@ public class ReconciliationServiceLifecycleTests : IDisposable
             .Setup(m => m.FailRunAsync(workItemId.ToString(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((PipelineRun?)null); // Simulate "not in memory" — fallback path
 
-        var service = CreateService(lifecycleManager: mockLifecycle.Object);
+        var mockLabelSwapper = new Mock<ILabelSwapper>();
+        var mockDedupGuard = new Mock<IJobDeduplicationGuard>();
+
+        var service = CreateService(lifecycleManager: mockLifecycle.Object,
+            labelSwapper: mockLabelSwapper.Object, dedupGuard: mockDedupGuard.Object);
 
         // Act
         await service.EnforceTimeoutsAsync(CancellationToken.None);
@@ -421,10 +425,18 @@ public class ReconciliationServiceLifecycleTests : IDisposable
             It.Is<string>(s => s.Contains("Timeout")),
             It.IsAny<CancellationToken>()), Times.Once);
 
-        // Fallback: when FailRunAsync returns null (run not in memory), TransitionAsync still fires
+        // Fallback: DB transition fires
         await using var db = await _dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
+
+        // Fallback: label swap to agent:error fires
+        mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "provider-1", "owner/repo#lifecycle1", "agent:error",
+            LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+
+        // Fallback: dedup guard released
+        mockDedupGuard.Verify(d => d.MarkIssueComplete("owner/repo#lifecycle1", "provider-1"), Times.Once);
     }
 
     [Fact]
@@ -471,7 +483,8 @@ public class ReconciliationServiceLifecycleTests : IDisposable
 
     private ReconciliationService CreateService(int retentionDays = 7, LeaderElectionService? leaderElection = null,
         IRunLifecycleManager? lifecycleManager = null, IConsolidationService? consolidationService = null,
-        IConfigurationStore? configStore = null)
+        IConfigurationStore? configStore = null, ILabelSwapper? labelSwapper = null,
+        IJobDeduplicationGuard? dedupGuard = null)
     {
         var configData = new Dictionary<string, string?>
         {
@@ -498,8 +511,8 @@ public class ReconciliationServiceLifecycleTests : IDisposable
 
         return new ReconciliationService(
             _dbFactory, leaderElection, _mockKube.Object,
-            _transitionService, config, null, lifecycleManager,
-            consolidationService, configStore);
+            _transitionService, config, labelSwapper, lifecycleManager,
+            consolidationService, configStore, dedupGuard);
     }
 
     private async Task InvokeExecuteAsync(ReconciliationService service, CancellationToken stoppingToken)
