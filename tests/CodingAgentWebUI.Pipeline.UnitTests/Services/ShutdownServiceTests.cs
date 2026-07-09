@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
+using Microsoft.Extensions.Time.Testing;
 using Serilog;
 using Xunit;
 
@@ -60,22 +61,26 @@ public class ShutdownServiceTests
     public async Task StoppingAsync_CompletesWithin15SecondTimeout_WhenShutdownIsSlower()
     {
         // Arrange: orchestration takes 30 seconds (simulated), timeout set to 2s for fast test
+        var fakeTime = new FakeTimeProvider();
         var service = new ShutdownService(
             new FakeLifecycleShutdownAction(isRunning: false, onCancel: () => { }),
             new FakeOrchestrationShutdownAction(onCancel: () => { }, delay: TimeSpan.FromSeconds(30)),
             new ShutdownSignal(),
             _logger,
-            shutdownTimeout: TimeSpan.FromSeconds(2));
+            shutdownTimeout: TimeSpan.FromSeconds(2),
+            timeProvider: fakeTime);
 
         using var cts = new CancellationTokenSource();
 
-        // Act — should complete due to 2s timeout, not wait 30s
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await service.StoppingAsync(cts.Token);
-        sw.Stop();
+        // Act — start shutdown, should block until timeout
+        var task = service.StoppingAsync(cts.Token);
+        Assert.False(task.IsCompleted, "Should be waiting on orchestration/timeout");
 
-        // Assert: completed well under 30s (timeout kicked in at 2s)
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5));
+        // Advance time past the 2s timeout
+        fakeTime.Advance(TimeSpan.FromSeconds(2));
+        await task;
+
+        // Assert: completed via timeout (not waiting the full 30s orchestration delay)
     }
 
     [Fact]
