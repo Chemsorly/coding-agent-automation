@@ -19,12 +19,14 @@ public sealed class ReadinessDrainService : IHostedLifecycleService
     private readonly ReadinessState _readinessState;
     private readonly TimeSpan _drainDelay;
     private readonly Serilog.ILogger _logger;
+    private readonly TimeProvider _timeProvider;
 
-    public ReadinessDrainService(ReadinessState readinessState, Serilog.ILogger logger, TimeSpan? drainDelay = null)
+    public ReadinessDrainService(ReadinessState readinessState, Serilog.ILogger logger, TimeSpan? drainDelay = null, TimeProvider? timeProvider = null)
     {
         _readinessState = readinessState;
         _logger = logger;
         _drainDelay = drainDelay ?? ResolveDrainDelay();
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -45,7 +47,7 @@ public sealed class ReadinessDrainService : IHostedLifecycleService
 
         try
         {
-            await Task.Delay(_drainDelay, cancellationToken);
+            await Task.Delay(_drainDelay, _timeProvider, cancellationToken);
         }
         catch (OperationCanceledException)
         {
