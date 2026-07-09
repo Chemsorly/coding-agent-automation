@@ -170,6 +170,19 @@ jobs:
               docker://docker.io/chemsorly/coding-agent:${{ matrix.image.tag }}-${{ matrix.arch }}
           fi
 
+  # Gate job for branch protection — matrix jobs report as "docker-build (arch, ...)"
+  # but branch protection requires a single named check. This aggregates the result.
+  docker-build-gate:
+    needs: [docker-build]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - run: |
+          if [[ "${{ needs.docker-build.result }}" != "success" ]]; then
+            echo "::error::docker-build matrix failed or was cancelled"
+            exit 1
+          fi
+
   docker-push:
     needs: [docker-build]
     if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
