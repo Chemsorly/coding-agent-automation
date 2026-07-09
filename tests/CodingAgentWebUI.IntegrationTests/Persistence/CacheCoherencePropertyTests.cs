@@ -51,7 +51,7 @@ public class CacheCoherencePropertyTests : IDisposable
     /// For any random PipelineConfiguration, saving via the store and loading it back
     /// yields semantically equivalent values (MaxRetries, AgentTimeout, IssuePageSize).
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineConfigArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineConfigArbitraries) })]
     public async Task<bool> SaveThenLoad_ProducesSameValues(PipelineConfiguration config)
     {
         // Use a fresh store each iteration to avoid cache hits

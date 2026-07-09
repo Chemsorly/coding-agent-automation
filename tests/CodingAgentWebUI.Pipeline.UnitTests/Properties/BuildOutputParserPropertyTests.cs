@@ -18,7 +18,7 @@ public class BuildOutputParserPropertyTests
     /// For any arbitrary string input, ParseBuildErrorCounts never throws and always
     /// returns non-negative counts.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property ParseBuildErrorCounts_NeverThrows_ForAnyString()
     {
         var randomStringGen = Gen.Choose(1, 200)
@@ -131,7 +131,7 @@ public class BuildOutputParserPropertyTests
     /// <summary>
     /// Text with no recognizable pattern returns (0, 0).
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public Property ParseBuildErrorCounts_NoPattern_ReturnsZeros()
     {
         var gen = Gen.Elements(

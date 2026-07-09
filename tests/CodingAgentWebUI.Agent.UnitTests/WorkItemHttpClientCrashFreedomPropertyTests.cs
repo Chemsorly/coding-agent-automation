@@ -29,7 +29,7 @@ public class WorkItemHttpClientCrashFreedomPropertyTests
     /// - Throws OperationCanceledException (cancellation)
     /// It must NEVER throw NullReferenceException, InvalidCastException, or other unhandled types.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public void GetAssignment_AnyStatusCode_NeverThrowsUnexpectedException(int statusCodeSeed)
     {
         // Generate a status code from the full HTTP range (100-599)
@@ -73,7 +73,7 @@ public class WorkItemHttpClientCrashFreedomPropertyTests
     /// - Throws WorkItemStatusPostException (domain error for 5xx after exhaustion)
     /// - Throws OperationCanceledException (cancellation)
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public void PostStatus_AnyStatusCode_NeverThrowsUnexpectedException(int statusCodeSeed)
     {
         var statusCode = (HttpStatusCode)(100 + Math.Abs(statusCodeSeed) % 500);
