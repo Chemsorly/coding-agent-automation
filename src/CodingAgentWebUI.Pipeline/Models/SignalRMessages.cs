@@ -233,6 +233,14 @@ public sealed record JobAssignmentMessage
     /// <summary>Workspace path for consolidation runs, as determined by the orchestrator.</summary>
     [Key(35)]
     public string? ConsolidationWorkspacePath { get; init; }
+
+    /// <summary>Configured model name from the agent provider config (e.g., "claude-sonnet-4.6"). Used for ActiveJobState propagation on orchestrator restart.</summary>
+    [Key(36)]
+    public string? ModelName { get; init; }
+
+    /// <summary>Repository full name (e.g., "owner/repo"). Used for ActiveJobState propagation on orchestrator restart.</summary>
+    [Key(37)]
+    public string? RepositoryName { get; init; }
 }
 
 /// <summary>

@@ -953,6 +953,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         ActiveJob = BuildActiveJobState()
     };
 
+    // TODO: Add unit test for BuildActiveJobState() covering RepositoryName/ModelName propagation
+    // from _activeJobAssignment in SignalR/Docker mode (BUG-04 defense-in-depth).
     private ActiveJobState? BuildActiveJobState()
     {
         lock (_busyLock)
@@ -977,8 +979,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 CurrentStep = _currentStep ?? PipelineStep.GeneratingCode,
                 StartedAt = _activeJobStartedAt ?? DateTimeOffset.UtcNow,
                 RunType = _activeJobRunType,
-                RepositoryName = null, // Not available on agent side from assignment message
-                ModelName = null       // Not available on agent side from assignment message
+                RepositoryName = _activeJobAssignment.RepositoryName,
+                ModelName = _activeJobAssignment.ModelName
             };
         }
     }

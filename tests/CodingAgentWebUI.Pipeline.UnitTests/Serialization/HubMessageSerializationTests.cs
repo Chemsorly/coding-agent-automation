@@ -516,7 +516,9 @@ public class HubMessageSerializationTests
             {
                 ["traceparent"] = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
                 ["tracestate"] = "congo=t61rcWkgMzE"
-            }
+            },
+            ModelName = "claude-sonnet-4.6",
+            RepositoryName = "org/widget-repo"
         };
 
         var deserialized = RoundTrip(original);
@@ -662,6 +664,10 @@ public class HubMessageSerializationTests
         deserialized.TraceContext!.Should().HaveCount(2);
         deserialized.TraceContext["traceparent"].Should().Be("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
         deserialized.TraceContext["tracestate"].Should().Be("congo=t61rcWkgMzE");
+
+        // ModelName / RepositoryName (Keys 36-37)
+        deserialized.ModelName.Should().Be("claude-sonnet-4.6");
+        deserialized.RepositoryName.Should().Be("org/widget-repo");
     }
 
     /// <summary>

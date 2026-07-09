@@ -431,6 +431,61 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             "AgentConnectionManager must send HeartbeatMessage periodically");
     }
 
+    // ── ModelName/RepositoryName Propagation ────────────────────────────
+
+    /// <summary>
+    /// Validates that WorkItemAgentService populates ModelName and RepositoryName
+    /// from the JobAssignmentMessage into ActiveJobState during registration.
+    /// This ensures orchestrator restart resilience — the agent can report accurate
+    /// metadata during re-registration.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteAsync_PopulatesModelNameAndRepositoryName_InActiveJobState()
+    {
+        // Arrange: HTTP handler that returns assignment with ModelName/RepositoryName on GET,
+        // and accepts POST status updates
+        var assignment = CreateMinimalAssignment("job-model-test", "org/repo#42") with
+        {
+            ModelName = "claude-sonnet-4.6",
+            RepositoryName = "org/test-repo"
+        };
+        var assignmentJson = JsonSerializer.Serialize(assignment, PipelineJsonOptions.Default);
+
+        var handler = new FakeSequentialHandler([
+            (System.Net.HttpStatusCode.OK, assignmentJson),       // GET /api/work-items/{id}/assignment
+            (System.Net.HttpStatusCode.OK, "{}"),                  // POST /api/work-items/{id}/status (Running)
+        ]);
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
+
+        // Mock connection manager to capture the registration message
+        AgentRegistrationMessage? capturedRegistration = null;
+        var mockConnectionManager = new Mock<IAgentConnectionManager>();
+        mockConnectionManager
+            .Setup(m => m.ConnectAndRegisterAsync(It.IsAny<AgentRegistrationMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<AgentRegistrationMessage, CancellationToken>((reg, _) => capturedRegistration = reg)
+            .Returns(Task.CompletedTask);
+        mockConnectionManager.SetupGet(m => m.Connection).Returns((Microsoft.AspNetCore.SignalR.Client.HubConnection)null!);
+
+        var service = new WorkItemAgentService(
+            "wi-model-test", client, mockConnectionManager.Object,
+            CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
+            new AgentIdentity("agent-model"), _mockLifetime.Object, _mockLogger.Object);
+
+        // Act
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await service.StartAsync(cts.Token);
+        await Task.Delay(800);
+        await service.StopAsync(CancellationToken.None);
+
+        // Assert: registration was called and ActiveJobState carries ModelName/RepositoryName
+        capturedRegistration.Should().NotBeNull("ConnectAndRegisterAsync should have been called");
+        capturedRegistration!.ActiveJob.Should().NotBeNull("ActiveJob should be populated");
+        capturedRegistration.ActiveJob!.ModelName.Should().Be("claude-sonnet-4.6");
+        capturedRegistration.ActiveJob.RepositoryName.Should().Be("org/test-repo");
+    }
+
     // ── RegisterAgent Labels From Environment ────────────────────────────
 
     /// <summary>

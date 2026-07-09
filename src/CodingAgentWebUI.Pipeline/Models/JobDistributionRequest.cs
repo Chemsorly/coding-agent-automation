@@ -135,6 +135,12 @@ public record JobDistributionRequest
     /// </summary>
     public string? RunId { get; init; }
 
+    /// <summary>Configured model name from the agent provider config (e.g., "claude-sonnet-4.6").</summary>
+    public string? ModelName { get; init; }
+
+    /// <summary>Repository full name (e.g., "owner/repo") resolved at dispatch time.</summary>
+    public string? RepositoryName { get; init; }
+
     // --- Factory methods ---
 
     /// <summary>

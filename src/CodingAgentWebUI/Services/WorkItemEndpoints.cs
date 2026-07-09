@@ -77,6 +77,10 @@ public sealed class WorkItemAssignmentDto
     public ConsolidationRunType? ConsolidationRunType { get; init; }
     public string? ConsolidationTemplateId { get; init; }
     public string? ConsolidationWorkspacePath { get; init; }
+
+    // Run metadata (defense-in-depth for orchestrator restart resilience)
+    public string? ModelName { get; init; }
+    public string? RepositoryName { get; init; }
 }
 
 /// <summary>
@@ -244,6 +248,8 @@ public static class WorkItemEndpoints
         LinkedIssueContexts = request.LinkedIssueContexts,
         ConsolidationRunType = request.ConsolidationRunType,
         ConsolidationTemplateId = request.ConsolidationTemplateId,
-        ConsolidationWorkspacePath = request.ConsolidationWorkspacePath
+        ConsolidationWorkspacePath = request.ConsolidationWorkspacePath,
+        ModelName = request.ModelName,
+        RepositoryName = request.RepositoryName
     };
 }

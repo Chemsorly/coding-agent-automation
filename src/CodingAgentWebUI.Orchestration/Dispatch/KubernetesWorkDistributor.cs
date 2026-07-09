@@ -52,7 +52,11 @@ public sealed class KubernetesWorkDistributor : IWorkDistributor
             return new DistributionResult(false, null, "Consolidation not supported in Kubernetes mode");
         }
 
-        var workItemId = Guid.NewGuid();
+        // Use orchestration-assigned RunId if available; otherwise generate a new ID.
+        // This ensures the agent's jobId matches the in-memory PipelineRun.RunId for hub routing.
+        var workItemId = !string.IsNullOrEmpty(request.RunId) && Guid.TryParse(request.RunId, out var parsedId)
+            ? parsedId
+            : Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
 
         // Serialize the request to JSONB payload

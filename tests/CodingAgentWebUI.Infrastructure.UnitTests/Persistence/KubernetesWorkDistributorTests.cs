@@ -334,6 +334,76 @@ public class KubernetesWorkDistributorTests : IDisposable
         active.Should().BeEmpty();
     }
 
+    // ── RunId Honor ─────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task DistributeAsync_UsesPreAssignedRunId_WhenPopulated()
+    {
+        var preAssignedId = Guid.NewGuid();
+        var request = CreateRequest("owner/repo#runid-1", "provider-runid") with
+        {
+            RunId = preAssignedId.ToString()
+        };
+
+        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.WorkItemId.Should().Be(preAssignedId.ToString());
+
+        // Verify DB row uses the pre-assigned ID
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FirstOrDefaultAsync(w => w.Id == preAssignedId);
+        item.Should().NotBeNull();
+        item!.IssueIdentifier.Should().Be("owner/repo#runid-1");
+    }
+
+    [Fact]
+    public async Task DistributeAsync_GeneratesNewGuid_WhenRunIdIsNull()
+    {
+        var request = CreateRequest("owner/repo#null-runid", "provider-null") with
+        {
+            RunId = null
+        };
+
+        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.WorkItemId.Should().NotBeNullOrEmpty();
+        Guid.TryParse(result.WorkItemId, out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DistributeAsync_GeneratesNewGuid_WhenRunIdIsEmpty()
+    {
+        var request = CreateRequest("owner/repo#empty-runid", "provider-empty") with
+        {
+            RunId = ""
+        };
+
+        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.WorkItemId.Should().NotBeNullOrEmpty();
+        Guid.TryParse(result.WorkItemId, out _).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task DistributeAsync_GeneratesNewGuid_WhenRunIdIsInvalidGuid()
+    {
+        var request = CreateRequest("owner/repo#invalid-runid", "provider-invalid") with
+        {
+            RunId = "not-a-valid-guid"
+        };
+
+        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.WorkItemId.Should().NotBeNullOrEmpty();
+        Guid.TryParse(result.WorkItemId, out _).Should().BeTrue();
+        // The generated ID should NOT be the invalid string
+        result.WorkItemId.Should().NotBe("not-a-valid-guid");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static JobDistributionRequest CreateRequest(string issueId, string providerId) => new()

@@ -211,7 +211,9 @@ public class JobDistributionRequestArbitraries
                         RepoProviderId = repoProviderConfigId
                     }]
                 } : null,
-                DecompositionSource = hasDecompContext ? decompSource : null
+                DecompositionSource = hasDecompContext ? decompSource : null,
+                ModelName = hasProject ? "claude-sonnet-4.6" : null,
+                RepositoryName = hasProject ? $"{issueId.Split('#')[0]}" : null
             };
 
         return gen.ToArbitrary();

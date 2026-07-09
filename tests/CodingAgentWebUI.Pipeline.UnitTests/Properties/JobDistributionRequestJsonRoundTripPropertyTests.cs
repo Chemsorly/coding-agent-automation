@@ -92,6 +92,8 @@ public class JobDistributionRequestArbitraries
         from reviewPrAuthor in GenNullableString()
         from projectContext in GenNullable(GenDecompositionProjectContext())
         from decompositionSource in GenNullableString()
+        from modelName in GenNullableString()
+        from repositoryName in GenNullableString()
         select new JobDistributionRequest
         {
             IssueIdentifier = issueId,
@@ -121,7 +123,9 @@ public class JobDistributionRequestArbitraries
             ReviewPrDescription = reviewPrDescription,
             ReviewPrAuthor = reviewPrAuthor,
             ProjectContext = projectContext,
-            DecompositionSource = decompositionSource
+            DecompositionSource = decompositionSource,
+            ModelName = modelName,
+            RepositoryName = repositoryName
         };
 
     private static Gen<string> GenString() =>

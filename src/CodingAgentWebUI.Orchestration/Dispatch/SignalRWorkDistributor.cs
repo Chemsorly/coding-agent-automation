@@ -468,7 +468,9 @@ public sealed class SignalRWorkDistributor : IWorkDistributor
             ProjectSteeringContent = request.ProjectSteeringContent,
             RepoSteeringContent = request.RepoSteeringContent,
             TraceContext = request.TraceContext,
-            IssueProviderConfigId = request.IssueProviderConfigId
+            IssueProviderConfigId = request.IssueProviderConfigId,
+            ModelName = request.ModelName,
+            RepositoryName = request.RepositoryName
             // NOTE: ProjectSecrets are NOT serialized to WorkItem payload (security).
             // In SignalR mode, secrets are injected at DistributeAsync/DrainPendingItemsAsync time
             // from IProjectStore after the message is built.

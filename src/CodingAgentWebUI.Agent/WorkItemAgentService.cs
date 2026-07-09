@@ -181,7 +181,9 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
                 ProjectName = assignment.ProjectName,
                 CurrentStep = PipelineStep.Created,
                 StartedAt = DateTimeOffset.UtcNow,
-                RunType = assignment.RunType
+                RunType = assignment.RunType,
+                ModelName = assignment.ModelName,
+                RepositoryName = assignment.RepositoryName
             }
         };
 
