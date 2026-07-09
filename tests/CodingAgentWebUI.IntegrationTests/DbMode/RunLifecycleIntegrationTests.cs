@@ -281,6 +281,227 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
 
     #endregion
 
+    #region Test 3b: CancelRunAsync_DeletesK8sJob_WhenJobClientProvided
+
+    [Fact]
+    public async Task CancelRunAsync_DeletesK8sJob_WhenJobClientProvided()
+    {
+        // Arrange: Insert a WorkItem in Running status WITH a K8sJobName
+        var runId = Guid.NewGuid();
+        const string k8sJobName = "caa-c211d2ad";
+        const string k8sNamespace = "coding-agent";
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = runId,
+                IssueIdentifier = "owner/repo#350",
+                IssueProviderConfigId = "ip-3b",
+                Status = WorkItemStatus.Running,
+                CreatedAt = DateTimeOffset.UtcNow,
+                TaskType = WorkItemTaskType.Implementation,
+                K8sJobName = k8sJobName
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Create a PipelineRun
+        var pipelineRun = new PipelineRun
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "owner/repo#350",
+            IssueTitle = "Cancel K8s Job Test",
+            IssueProviderConfigId = "ip-3b",
+            RepoProviderConfigId = "rp-3b",
+            StartedAt = DateTime.UtcNow,
+            AgentId = "agent-cancel-k8s"
+        };
+        _runService.AddRun(pipelineRun);
+
+        // Register a Busy agent
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-cancel-k8s",
+            Hostname = "host-3b",
+            Labels = new[] { "dotnet" }
+        }, "conn-3b");
+        agent.ActiveJobId = runId.ToString();
+        _registry.TransitionStatus("agent-cancel-k8s", AgentStatus.Busy);
+
+        // Create lifecycle manager WITH a mock K8s job client
+        var mockJobClient = new Mock<IKubernetesJobClient>();
+        mockJobClient
+            .Setup(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var lifecycleWithK8s = new RunLifecycleManager(
+            _runService,
+            _mockHistoryService.Object,
+            _registry,
+            _mockLabelSwapper.Object,
+            _dispatcher,
+            _mockLogger.Object,
+            _transitionService,
+            _dbFactory,
+            mockJobClient.Object,
+            k8sNamespace);
+
+        // Act
+        var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+
+        // K8s Job deletion was called with the correct job name and namespace
+        mockJobClient.Verify(c => c.DeleteJobAsync(
+            k8sJobName, k8sNamespace, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_NoK8sJobName_DoesNotCallDeleteJob()
+    {
+        // Arrange: WorkItem WITHOUT K8sJobName (e.g., SignalR mode)
+        var runId = Guid.NewGuid();
+        const string k8sNamespace = "coding-agent";
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = runId,
+                IssueIdentifier = "owner/repo#351",
+                IssueProviderConfigId = "ip-3c",
+                Status = WorkItemStatus.Running,
+                CreatedAt = DateTimeOffset.UtcNow,
+                TaskType = WorkItemTaskType.Implementation,
+                K8sJobName = null // No K8s job
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var pipelineRun = new PipelineRun
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "owner/repo#351",
+            IssueTitle = "Cancel No-K8s Test",
+            IssueProviderConfigId = "ip-3c",
+            RepoProviderConfigId = "rp-3c",
+            StartedAt = DateTime.UtcNow,
+            AgentId = "agent-cancel-nok8s"
+        };
+        _runService.AddRun(pipelineRun);
+
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-cancel-nok8s",
+            Hostname = "host-3c",
+            Labels = new[] { "dotnet" }
+        }, "conn-3c");
+        agent.ActiveJobId = runId.ToString();
+        _registry.TransitionStatus("agent-cancel-nok8s", AgentStatus.Busy);
+
+        var mockJobClient = new Mock<IKubernetesJobClient>();
+
+        var lifecycleWithK8s = new RunLifecycleManager(
+            _runService,
+            _mockHistoryService.Object,
+            _registry,
+            _mockLabelSwapper.Object,
+            _dispatcher,
+            _mockLogger.Object,
+            _transitionService,
+            _dbFactory,
+            mockJobClient.Object,
+            k8sNamespace);
+
+        // Act
+        var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
+
+        // Assert
+        result.Should().NotBeNull();
+        mockJobClient.Verify(c => c.DeleteJobAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_K8sDeleteReturns404_SucceedsWithoutWarning()
+    {
+        // Arrange: WorkItem with K8sJobName — but the Job was already deleted (race with ReconciliationService)
+        var runId = Guid.NewGuid();
+        const string k8sJobName = "caa-already-gone";
+        const string k8sNamespace = "coding-agent";
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = runId,
+                IssueIdentifier = "owner/repo#352",
+                IssueProviderConfigId = "ip-3d",
+                Status = WorkItemStatus.Running,
+                CreatedAt = DateTimeOffset.UtcNow,
+                TaskType = WorkItemTaskType.Implementation,
+                K8sJobName = k8sJobName
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var pipelineRun = new PipelineRun
+        {
+            RunId = runId.ToString(),
+            IssueIdentifier = "owner/repo#352",
+            IssueTitle = "Cancel 404 Test",
+            IssueProviderConfigId = "ip-3d",
+            RepoProviderConfigId = "rp-3d",
+            StartedAt = DateTime.UtcNow,
+            AgentId = "agent-cancel-404"
+        };
+        _runService.AddRun(pipelineRun);
+
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-cancel-404",
+            Hostname = "host-3d",
+            Labels = new[] { "dotnet" }
+        }, "conn-3d");
+        agent.ActiveJobId = runId.ToString();
+        _registry.TransitionStatus("agent-cancel-404", AgentStatus.Busy);
+
+        // Mock throws 404 — simulating Job already deleted by ReconciliationService
+        var mockJobClient = new Mock<IKubernetesJobClient>();
+        var response404 = new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.NotFound);
+        mockJobClient
+            .Setup(c => c.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new k8s.Autorest.HttpOperationException { Response = new k8s.Autorest.HttpResponseMessageWrapper(response404, "") });
+
+        var lifecycleWithK8s = new RunLifecycleManager(
+            _runService,
+            _mockHistoryService.Object,
+            _registry,
+            _mockLabelSwapper.Object,
+            _dispatcher,
+            _mockLogger.Object,
+            _transitionService,
+            _dbFactory,
+            mockJobClient.Object,
+            k8sNamespace);
+
+        // Act — should not throw despite 404
+        var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
+
+        // Assert: cancel succeeded
+        result.Should().NotBeNull();
+
+        // No Warning-level log for 404 (only Debug)
+        _mockLogger.Verify(l => l.Warning(
+            It.IsAny<Exception>(),
+            It.IsAny<string>(),
+            It.IsAny<object[]>()), Times.Never);
+    }
+
+    #endregion
+
     #region Test 4: CompleteRunAsync_TransitionsWorkItemToSucceeded
 
     [Fact]

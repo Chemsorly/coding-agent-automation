@@ -150,7 +150,12 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<ILabelSwapper>(),
             sp.GetRequiredService<JobDispatcherService>(),
             Log.Logger,
-            sp.GetRequiredService<WorkItemTransitionService>()));
+            sp.GetRequiredService<WorkItemTransitionService>(),
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetService<IKubernetesJobClient>(),
+            configuration.GetValue<string>("WorkDistribution:Namespace")
+                ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
+                ?? "default"));
 
         // ── PostgresConfigurationStore (replaces JsonConfigurationStore) ─────
         // Singleton: consumed by singleton services (LabelSwapper, DispatchResolutionService,

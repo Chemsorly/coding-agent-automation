@@ -199,10 +199,10 @@ public class PipelineConfigurationOverridePropertyTests
     }
 
     /// <summary>
-    /// CodeReview REPLACE semantics: non-null CodeReview replaces the entire nested object.
+    /// CodeReview deep-merge semantics: non-null CodeReview override deep-merges with global.
     /// </summary>
     [Fact]
-    public void CodeReviewOverride_ReplacesEntireObject()
+    public void CodeReviewOverride_DeepMergesWithGlobal()
     {
         var baseConfig = TestPipelineConfig.Default() with
         {
@@ -213,13 +213,14 @@ public class PipelineConfigurationOverridePropertyTests
         {
             Id = "proj-cr",
             Name = "CR",
-            CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null }
+            CodeReview = new CodeReviewOverrides { MaxIterations = 1 }
         };
 
         var result = PipelineConfiguration.ApplyProjectOverrides(baseConfig, project);
 
+        // MaxIterations overridden, FixPrompt preserved from global
         result.CodeReview.MaxIterations.Should().Be(1);
-        result.CodeReview.FixPrompt.Should().BeNull();
+        result.CodeReview.FixPrompt.Should().Be("original");
     }
 
     private static PipelineProject CreateOverrideProject(int maxRetries, bool analysisReviewEnabled, bool hasCodeReview)
@@ -232,7 +233,7 @@ public class PipelineConfigurationOverridePropertyTests
             AgentTimeout = TimeSpan.FromMinutes(20),
             AnalysisReviewEnabled = analysisReviewEnabled,
             CodeReview = hasCodeReview
-                ? new CodeReviewConfiguration { MaxIterations = 3, FixPrompt = "fix it" }
+                ? new CodeReviewOverrides { MaxIterations = 3, FixPrompt = "fix it" }
                 : null
         };
     }

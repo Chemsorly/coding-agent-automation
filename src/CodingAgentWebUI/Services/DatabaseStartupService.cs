@@ -18,6 +18,7 @@ public sealed class DatabaseStartupService
     private readonly IConfiguration _configuration;
     private readonly Serilog.ILogger _logger;
     private readonly IDatabaseProbe? _probe;
+    private readonly TimeProvider _timeProvider;
 
     private const string MigrationLockKey = "caa_schema_migration";
     internal const int MaxRetryAttempts = 10;
@@ -29,13 +30,15 @@ public sealed class DatabaseStartupService
         IDistributedLockProvider lockProvider,
         IConfiguration configuration,
         Serilog.ILogger logger,
-        IDatabaseProbe? probe = null)
+        IDatabaseProbe? probe = null,
+        TimeProvider? timeProvider = null)
     {
         _dbFactory = dbFactory;
         _lockProvider = lockProvider;
         _configuration = configuration;
         _logger = logger;
         _probe = probe;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -78,7 +81,7 @@ public sealed class DatabaseStartupService
                 _logger.Warning(ex, "Database connection attempt {Attempt}/{Max} failed. Retrying in {Delay}s",
                     attempt, MaxRetryAttempts, delay.TotalSeconds);
 
-                await Task.Delay(delay, ct);
+                await Task.Delay(delay, _timeProvider, ct);
                 delay = TimeSpan.FromSeconds(Math.Min(delay.TotalSeconds * 2, MaxDelay.TotalSeconds));
             }
             catch (OperationCanceledException)
