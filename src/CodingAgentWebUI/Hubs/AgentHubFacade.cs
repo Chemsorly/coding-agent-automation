@@ -1,12 +1,15 @@
+using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
 namespace CodingAgentWebUI.Hubs;
@@ -26,6 +29,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly IProviderFactory _providerFactory;
     private readonly WorkItemTransitionService? _workItemTransition;
     private readonly PendingWorkItemDrainService? _pendingDrainService;
+    private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
     private readonly ILogger<AgentHubFacade> _logger;
 
     public AgentHubFacade(
@@ -38,7 +42,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
         IProviderFactory providerFactory,
         ILogger<AgentHubFacade> logger,
         WorkItemTransitionService? workItemTransition = null,
-        PendingWorkItemDrainService? pendingDrainService = null)
+        PendingWorkItemDrainService? pendingDrainService = null,
+        IDbContextFactory<PipelineDbContext>? dbFactory = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(runService);
@@ -59,6 +64,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _logger = logger;
         _workItemTransition = workItemTransition;
         _pendingDrainService = pendingDrainService;
+        _dbFactory = dbFactory;
     }
 
     // ── Registry operations ─────────────────────────────────────────────
@@ -231,6 +237,41 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _logger.LogInformation("WorkItem {WorkItemId} re-queued as Pending (retry after rejection)", workItemId);
     }
 
+    /// <inheritdoc />
+    public async Task<(string? RepoProviderConfigId, string? BrainProviderConfigId)?> GetWorkItemProviderConfigIdsAsync(
+        string workItemId, CancellationToken ct)
+    {
+        if (_dbFactory is null || !Guid.TryParse(workItemId, out var id))
+            return null;
+
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var payload = await db.WorkItems
+                .AsNoTracking()
+                .Where(w => w.Id == id)
+                .Select(w => w.Payload)
+                .FirstOrDefaultAsync(ct);
+
+            if (payload is null) return null;
+
+            using var doc = System.Text.Json.JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+
+            var repoConfigId = root.TryGetProperty("repoProviderConfigId", out var repoProp)
+                ? repoProp.GetString() : null;
+            var brainConfigId = root.TryGetProperty("brainProviderConfigId", out var brainProp)
+                ? brainProp.GetString() : null;
+
+            return (repoConfigId, brainConfigId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to resolve provider config IDs from WorkItem {WorkItemId}", workItemId);
+            return null;
+        }
+    }
+
     // ── History ─────────────────────────────────────────────────────────
 
     /// <inheritdoc />
@@ -258,4 +299,42 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public IRepositoryProvider CreateRepositoryProvider(ProviderConfig config)
         => _providerFactory.CreateRepositoryProvider(config);
+
+    // ── Progress tracking ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Throttle interval for LastProgressAt DB writes. Only writes when the existing
+    /// DB value is null or older than this threshold.
+    /// </summary>
+    private static readonly TimeSpan ProgressWriteThrottle = TimeSpan.FromMinutes(5);
+
+    /// <inheritdoc />
+    public async Task TouchLastProgressAsync(string jobId, DateTimeOffset timestamp, CancellationToken ct)
+    {
+        if (_dbFactory is null || !Guid.TryParse(jobId, out var workItemId))
+            return;
+
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var item = await db.WorkItems.FindAsync([workItemId], ct);
+
+            if (item is null)
+                return;
+
+            // Throttle: skip write if DB value is recent enough (uses wall clock, not agent timestamp,
+            // to avoid clock-skew issues where a behind-clock agent could permanently suppress writes)
+            if (item.LastProgressAt.HasValue &&
+                (DateTimeOffset.UtcNow - item.LastProgressAt.Value) < ProgressWriteThrottle)
+                return;
+
+            item.LastProgressAt = timestamp;
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            WorkDistributionTelemetry.ProgressWriteFailures.Add(1);
+            _logger.LogWarning(ex, "Failed to update LastProgressAt for WorkItem {WorkItemId}", workItemId);
+        }
+    }
 }

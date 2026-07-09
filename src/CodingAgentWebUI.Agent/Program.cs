@@ -3,6 +3,7 @@ using System.Text;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure;
+using CodingAgentWebUI.Infrastructure.Resilience;
 using CodingAgentWebUI.Infrastructure.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -88,6 +89,7 @@ try
 
     // Use Serilog
     builder.Host.UseSerilog();
+    builder.Services.AddSingleton(Log.Logger);
 
     // Configure OpenTelemetry (tracing + metrics)
     builder.Services.AddOpenTelemetry()
@@ -163,7 +165,7 @@ try
 
     // ── Pipeline executor ──
     builder.Services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
-    builder.Services.AddSingleton(sp => new LocalPipelineExecutor(
+    builder.Services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(
         sp.GetRequiredService<IKiroCliOrchestrator>(),
         sp.GetRequiredService<IHttpClientFactory>(),
         sp.GetRequiredService<PipelineConfiguration>(),
@@ -174,7 +176,7 @@ try
         agentIdentity: sp.GetRequiredService<AgentIdentity>()));
 
     // ── Consolidation executor ──
-    builder.Services.AddSingleton(sp => new LocalConsolidationExecutor(
+    builder.Services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
         sp.GetRequiredService<IKiroCliOrchestrator>(),
         sp.GetRequiredService<IHttpClientFactory>(),
         Log.Logger));
@@ -199,32 +201,61 @@ try
             options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
         });
 
-        builder.Services.AddSingleton(sp => new WorkItemAgentService(
-            workItemId!,
-            sp.GetRequiredService<WorkItemHttpClient>(),
+        builder.Services.AddSingleton<IWorkItemExecutor>(sp => new WorkItemExecutorRouter(
+            sp.GetRequiredService<IPipelineExecutor>(),
+            sp.GetRequiredService<IConsolidationExecutor>(),
+            Log.Logger));
+
+        builder.Services.AddSingleton<IWorkItemLifecycleClient>(sp =>
+            sp.GetRequiredService<WorkItemHttpClient>());
+
+        builder.Services.AddSingleton<IAgentConnectionManager>(sp => new AgentConnectionManager(
             sp.GetRequiredService<HubConnectionManager>(),
             sp.GetRequiredService<HubConnectionManagerFactory>(),
-            sp.GetRequiredService<LocalPipelineExecutor>(),
-            sp.GetRequiredService<LocalConsolidationExecutor>(),
+            sp.GetRequiredService<AgentIdentity>(),
+            Log.Logger));
+
+        builder.Services.AddSingleton<IJobCompletionReporter>(sp => new HttpPrimaryCompletionReporter(
+            workItemId!,
+            sp.GetRequiredService<IWorkItemLifecycleClient>(),
+            sp.GetRequiredService<IAgentConnectionManager>(),
+            sp.GetRequiredService<AgentIdentity>(),
+            Log.Logger));
+
+        builder.Services.AddSingleton(sp => new WorkItemAgentService(
+            workItemId!,
+            sp.GetRequiredService<IWorkItemLifecycleClient>(),
+            sp.GetRequiredService<IAgentConnectionManager>(),
+            sp.GetRequiredService<IWorkItemExecutor>(),
+            sp.GetRequiredService<IJobCompletionReporter>(),
             sp.GetRequiredService<AgentIdentity>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkItemAgentService>());
+        builder.Services.AddSingleton<IAgentService>(sp => sp.GetRequiredService<WorkItemAgentService>());
     }
     else
     {
         // SignalR mode: register AgentWorkerService (existing behavior)
+        builder.Services.AddSingleton<CriticalMessageBuffer>();
+        builder.Services.AddSingleton<IJobCompletionReporter>(sp => new SignalRCompletionReporter(
+            sp.GetRequiredService<HubConnectionManager>(),
+            ResiliencePipelineFactory.CreateSignalRPipeline(Log.Logger),
+            sp.GetRequiredService<CriticalMessageBuffer>(),
+            Log.Logger));
         builder.Services.AddSingleton(sp => new AgentWorkerService(
             sp.GetRequiredService<HubConnectionManager>(),
             sp.GetRequiredService<HubConnectionManagerFactory>(),
-            sp.GetRequiredService<LocalPipelineExecutor>(),
-            sp.GetRequiredService<LocalConsolidationExecutor>(),
+            sp.GetRequiredService<IPipelineExecutor>(),
+            sp.GetRequiredService<IConsolidationExecutor>(),
+            sp.GetRequiredService<IJobCompletionReporter>(),
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetRequiredService<AgentIdentity>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
+        builder.Services.AddSingleton<IAgentService>(sp => sp.GetRequiredService<AgentWorkerService>());
     }
 
     var app = builder.Build();
@@ -251,6 +282,7 @@ try
 catch (Exception ex)
 {
     Log.Fatal(ex, "Agent Worker terminated unexpectedly");
+    Environment.ExitCode = 1;
 }
 finally
 {

@@ -20,6 +20,7 @@ namespace CodingAgentWebUI.IntegrationTests.Smoke;
 /// - "hide Data Management section in JSON-file mode to prevent circuit crash" (FeatureFlags)
 /// - Missing IConsolidationRunStore, ILoopStateStore, IHarnessSuggestionStore registrations
 /// </summary>
+[Collection("SmokeTests")]
 public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
 {
     private readonly DbModeWebApplicationFactory _factory;

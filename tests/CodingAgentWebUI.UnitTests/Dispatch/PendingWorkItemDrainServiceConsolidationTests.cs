@@ -328,3 +328,147 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(new PipelineDbContext(_options));
     }
 }
+
+/// <summary>
+/// Verifies that when consolidation dispatch throws an exception, the WorkItem is
+/// reverted from Dispatched back to Pending (rather than remaining stuck in Dispatched
+/// until the stuck-item detector fires ~5 minutes later).
+/// Regression test for exploratory-validation finding 1A-03.
+/// </summary>
+public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDisposable
+{
+    private readonly DbContextOptions<PipelineDbContext> _dbOptions;
+    private readonly InMemoryDbContextFactory _dbFactory;
+    private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
+    private readonly Mock<IAgentCommunication> _mockAgentComm = new();
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
+    private readonly Mock<IConsolidationDispatcher> _mockConsolidationDispatcher = new();
+    private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
+    private readonly OrchestratorRunService _runService;
+    private readonly WorkItemTransitionService _transitionService;
+
+    public PendingWorkItemDrainServiceConsolidationExceptionTests()
+    {
+        _dbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase($"DrainConsolidationExceptionTest_{Guid.NewGuid()}")
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .Options;
+        _dbFactory = new InMemoryDbContextFactory(_dbOptions);
+        _runService = new OrchestratorRunService(Serilog.Log.Logger);
+        _transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
+        _mockPendingWork.Setup(p => p.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PendingJob>().AsReadOnly());
+    }
+
+    [Fact]
+    public async Task DrainPendingItems_ConsolidationItem_DispatchThrowsException_RevertsWorkItemToPending()
+    {
+        // Arrange: insert a consolidation WorkItem
+        var runId = Guid.NewGuid().ToString();
+        var workItemId = Guid.Parse(runId);
+        await InsertConsolidationWorkItem(workItemId, runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws");
+
+        // Setup: idle agent available
+        _mockResolver.Setup(r => r.ResolveAgent("dotnet"))
+            .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
+
+        // Setup: run exists and is Queued
+        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
+
+        // Setup: dispatch THROWS an exception
+        _mockConsolidationDispatcher
+            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Token vending failed"));
+
+        var service = CreateService();
+
+        // Act
+        await InvokeDrainAsync(service);
+
+        // Assert: WorkItem should be reverted to Pending (not stuck in Dispatched)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Pending);
+        item.AssignedAgentId.Should().BeNull();
+        item.DispatchedAt.Should().BeNull();
+    }
+
+    private PendingWorkItemDrainService CreateService()
+    {
+        return new PendingWorkItemDrainService(
+            _dbFactory,
+            _mockResolver.Object,
+            _mockAgentComm.Object,
+            _runService,
+            _transitionService,
+            _mockPendingWork.Object,
+            _mockLabelSwapper.Object,
+            NullLogger<PendingWorkItemDrainService>.Instance,
+            null, // IProjectStore
+            _mockConsolidationDispatcher.Object,
+            _mockConsolidationRunStore.Object);
+    }
+
+    private async Task InsertConsolidationWorkItem(
+        Guid workItemId, string runId, ConsolidationRunType runType, string? templateId, string workspacePath)
+    {
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = runId,
+            IssueProviderConfigId = "consolidation",
+            RepoProviderConfigId = "",
+            InitiatedBy = "consolidation",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = runType == ConsolidationRunType.BrainConsolidation ? "dotnet" : "",
+            TimeoutSeconds = 0,
+            ConsolidationRunType = runType,
+            ConsolidationTemplateId = templateId,
+            ConsolidationWorkspacePath = workspacePath,
+            RunId = runId
+        };
+        var payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = workItemId,
+            TaskType = WorkItemTaskType.Consolidation,
+            IssueIdentifier = runId,
+            IssueProviderConfigId = "consolidation",
+            Status = WorkItemStatus.Pending,
+            Payload = payload,
+            AgentSelector = request.AgentSelector,
+            CreatedAt = DateTimeOffset.UtcNow,
+            TimeoutSeconds = 0
+        });
+        await db.SaveChangesAsync();
+    }
+
+    private static async Task InvokeDrainAsync(PendingWorkItemDrainService service)
+    {
+        using var cts = new CancellationTokenSource();
+        service.Signal();
+        var task = service.StartAsync(cts.Token);
+        await Task.Delay(3000);
+        cts.Cancel();
+        try { await task; } catch (OperationCanceledException) { }
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    public void Dispose()
+    {
+        using var db = new PipelineDbContext(_dbOptions);
+        db.Database.EnsureDeleted();
+    }
+
+    private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
+    {
+        private readonly DbContextOptions<PipelineDbContext> _options;
+        public InMemoryDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
+        public PipelineDbContext CreateDbContext() => new(_options);
+        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(new PipelineDbContext(_options));
+    }
+}

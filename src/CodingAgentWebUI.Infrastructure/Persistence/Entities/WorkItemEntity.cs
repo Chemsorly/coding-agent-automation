@@ -36,6 +36,13 @@ public class WorkItemEntity
 
     public string? ProjectId { get; set; }
 
+    /// <summary>
+    /// Last time the agent reported progress (step transition or heartbeat with active step).
+    /// Updated with throttling (only when current DB value is >5 min stale) to reduce write load.
+    /// Used by ReconciliationService for progress-aware timeout enforcement.
+    /// </summary>
+    public DateTimeOffset? LastProgressAt { get; set; }
+
     /// <summary>PVC name claimed from the pool for kiro agents, null for other agent types.</summary>
     public string? ClaimedPvcName { get; set; }
 

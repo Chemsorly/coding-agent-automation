@@ -1,5 +1,7 @@
 using System.Text.Json;
+using CodingAgentWebUI.Agent;
 using k8s.Models;
+using Serilog;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
@@ -41,7 +43,15 @@ public static class JobSpecBuilder
         var envVars = new List<V1EnvVar>
         {
             new() { Name = "ORCHESTRATOR_URL", Value = ctx.OrchestratorUrl },
-            new() { Name = "AGENT_API_KEY_FILE", Value = "/var/run/secrets/agent-api-key/agent-api-key" }
+            new() { Name = "AGENT_API_KEY_FILE", Value = "/var/run/secrets/agent-api-key/agent-api-key" },
+            new()
+            {
+                Name = "AGENT_ID",
+                ValueFrom = new V1EnvVarSource
+                {
+                    FieldRef = new V1ObjectFieldSelector { FieldPath = "metadata.name" }
+                }
+            }
         };
 
         var otelEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
@@ -51,6 +61,10 @@ public static class JobSpecBuilder
         var otelHeaders = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS");
         if (!string.IsNullOrEmpty(otelHeaders))
             envVars.Add(new V1EnvVar { Name = "OTEL_EXPORTER_OTLP_HEADERS", Value = otelHeaders });
+
+        // Propagate agent labels from the template so WorkItemAgentService can read them
+        if (!string.IsNullOrEmpty(template.Labels))
+            envVars.Add(new V1EnvVar { Name = AgentDefaults.EnvAgentLabels, Value = template.Labels });
 
         // ── Volumes & mounts ────────────────────────────────────────────────
         var volumeMounts = new List<V1VolumeMount>
@@ -136,6 +150,7 @@ public static class JobSpecBuilder
         {
             Name = "agent",
             Image = template.Image,
+            ImagePullPolicy = template.ImagePullPolicy,
             Args = [$"--work-item-id={ctx.WorkItemId}"],
             Env = envVars,
             VolumeMounts = volumeMounts,
@@ -199,7 +214,7 @@ public static class JobSpecBuilder
                     ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
                     ["app.kubernetes.io/component"] = "agent-job",
                     ["caa/work-item-id"] = ctx.WorkItemId.ToString(),
-                    ["caa/agent-selector"] = ctx.AgentSelector
+                    ["caa/agent-selector"] = ctx.AgentSelector.Replace(',', '.')
                 }
             },
             Spec = new V1JobSpec
@@ -240,8 +255,13 @@ public static class JobSpecBuilder
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             PropertyNameCaseInsensitive = true
         };
-        return element.Deserialize<T>(options)
-            ?? throw new InvalidOperationException($"Failed to deserialize JsonElement to {typeof(T).Name}");
+        var result = element.Deserialize<T>(options);
+        if (result is null)
+        {
+            Log.Error("Failed to deserialize JsonElement to {TypeName}", typeof(T).Name);
+            throw new InvalidOperationException($"Failed to deserialize JsonElement to {typeof(T).Name}");
+        }
+        return result;
     }
 
     private static bool IsKiroAgent(string providerType) =>

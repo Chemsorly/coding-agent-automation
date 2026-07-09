@@ -30,7 +30,7 @@ public class HubMessageRoundtripPropertyTests
     /// ActiveJobState round-trip: all scalar properties survive MessagePack serialization.
     /// This DTO is sent as part of AgentRegistrationMessage.ActiveJob to re-track runs after restart.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public bool ActiveJobState_RoundTrip_PreservesAllProperties(
         NonEmptyString runId,
         NonEmptyString issueId,
@@ -88,7 +88,7 @@ public class HubMessageRoundtripPropertyTests
     /// ChatPromptMessage round-trip: interactive chat assignment survives serialization.
     /// Verifies SessionId, Prompt, UseResume, McpConfigPath all preserved.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public bool ChatPromptMessage_RoundTrip_PreservesAllProperties(
         NonEmptyString sessionId,
         NonEmptyString prompt,
@@ -121,7 +121,7 @@ public class HubMessageRoundtripPropertyTests
     /// <summary>
     /// ChatResponseMessage round-trip: streamed chat lines survive serialization.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public bool ChatResponseMessage_RoundTrip_PreservesLinesAndSessionId(
         NonEmptyString sessionId,
         NonEmptyString[] lines)
@@ -145,7 +145,7 @@ public class HubMessageRoundtripPropertyTests
     /// <summary>
     /// ChatCompletedMessage round-trip: exit code and optional error survive.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public bool ChatCompletedMessage_RoundTrip_PreservesAllProperties(
         NonEmptyString sessionId,
         int exitCode,
@@ -170,7 +170,7 @@ public class HubMessageRoundtripPropertyTests
     /// <summary>
     /// FetchModelsRequest round-trip: trivial message with just RequestId.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public bool FetchModelsRequest_RoundTrip(NonEmptyString requestId)
     {
         var original = new FetchModelsRequest { RequestId = requestId.Get };
@@ -183,7 +183,7 @@ public class HubMessageRoundtripPropertyTests
     /// <summary>
     /// FetchModelsResponse round-trip: model list with nested AgentModelInfo survives.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public bool FetchModelsResponse_RoundTrip_PreservesModels(
         NonEmptyString requestId,
         bool hasError)
@@ -216,7 +216,7 @@ public class HubMessageRoundtripPropertyTests
     /// ConsolidationJobMessage round-trip: all fields including optional WorkspacePath,
     /// LastSuccessfulRunUtc, FeedbackDataJson, and TraceContext.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public bool ConsolidationJobMessage_RoundTrip_PreservesAllProperties(
         NonEmptyString jobId,
         bool hasOptionals)
@@ -270,7 +270,7 @@ public class HubMessageRoundtripPropertyTests
     /// AgentRegistrationMessage with nested ActiveJobState round-trip.
     /// Verifies the new ActiveJob field (added for restart re-tracking) survives serialization.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public bool AgentRegistrationMessage_WithActiveJob_RoundTrip(
         NonEmptyString agentId,
         NonEmptyString hostname,

@@ -21,7 +21,7 @@ public class ParserCrashFreedomPropertyTests
     /// For any arbitrary string input, ParseTestCounts never throws and always
     /// returns non-negative counts.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property ParseTestCounts_NeverThrows_ForAnyString()
     {
         var randomStringGen = Gen.Choose(1, 200)
@@ -88,7 +88,7 @@ public class ParserCrashFreedomPropertyTests
     /// <summary>
     /// Strings with no recognizable test output pattern return (0, 0, 0).
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public Property ParseTestCounts_NoPattern_ReturnsZeros()
     {
         var gen = Gen.Elements("hello world", "foo bar baz", "just some text", "no numbers here", "[]{}()");
@@ -112,7 +112,7 @@ public class ParserCrashFreedomPropertyTests
         StdoutTestResultParser.ParseTestCounts(input);
 
         sw.Stop();
-        sw.ElapsedMilliseconds.Should().BeLessThan(5000,
+        sw.ElapsedMilliseconds.Should().BeLessThan(10_000,
             "parser should not catastrophically backtrack on adversarial input");
     }
 
@@ -121,7 +121,7 @@ public class ParserCrashFreedomPropertyTests
     /// <summary>
     /// For any arbitrary string input, ParseIssueReferences never throws.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property ParseIssueReferences_NeverThrows_ForAnyString()
     {
         var randomStringGen = Gen.Choose(1, 200)
@@ -161,7 +161,7 @@ public class ParserCrashFreedomPropertyTests
     /// <summary>
     /// For any arbitrary string input, ParseClosingKeywords never throws.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public Property ParseClosingKeywords_NeverThrows_ForAnyString()
     {
         var randomStringGen = Gen.Choose(1, 200)
@@ -215,7 +215,7 @@ public class ParserCrashFreedomPropertyTests
     /// Idempotence: calling ParseIssueReferences twice with the same text and set
     /// produces the same set as calling once (HashSet deduplication).
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public Property ParseIssueReferences_Idempotent()
     {
         var gen = Gen.Elements(

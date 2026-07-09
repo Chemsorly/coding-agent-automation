@@ -128,7 +128,11 @@ public partial class AgentPhaseExecutor
 
                         var analysisLength = new FileInfo(analysisFilePath).Length;
                         if (analysisLength < MinAnalysisLength)
+                        {
+                            _logger.Warning("Pipeline {RunId} analysis.md too short ({Length} bytes, minimum {MinLength})",
+                                run.RunId, analysisLength, MinAnalysisLength);
                             throw new AnalysisIncompleteException($"analysis.md too short ({analysisLength} bytes, minimum {MinAnalysisLength})");
+                        }
 
                         run.AnalysisContent = await File.ReadAllTextAsync(analysisFilePath, ct);
                         _logger.Information("Pipeline {RunId} read analysis from {AnalysisFilePath}", run.RunId, analysisFilePath);
@@ -290,24 +294,35 @@ public partial class AgentPhaseExecutor
     {
         var assessmentPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.AnalysisAssessmentFilePath);
         if (!File.Exists(assessmentPath))
+        {
+            _logger.Warning("Pipeline {RunId} analysis-assessment.json not found at {Path}", run.RunId, assessmentPath);
             throw new AnalysisIncompleteException("analysis-assessment.json not found after agent execution");
+        }
 
         try
         {
             var json = await File.ReadAllTextAsync(assessmentPath, ct);
             var result = JsonSerializer.Deserialize<AnalysisAssessment>(json, PipelineJsonOptions.Lenient);
             if (result is null)
+            {
+                _logger.Warning("Pipeline {RunId} analysis-assessment.json deserialized to null", run.RunId);
                 throw new AnalysisIncompleteException("analysis-assessment.json deserialized to null");
+            }
             if (string.IsNullOrWhiteSpace(result.Recommendation))
+            {
+                _logger.Warning("Pipeline {RunId} analysis-assessment.json missing 'recommendation' field", run.RunId);
                 throw new AnalysisIncompleteException("analysis-assessment.json missing required 'recommendation' field");
+            }
             return result;
         }
         catch (JsonException ex)
         {
+            _logger.Warning(ex, "Pipeline {RunId} analysis-assessment.json contains malformed JSON", run.RunId);
             throw new AnalysisIncompleteException("analysis-assessment.json contains malformed JSON", ex);
         }
         catch (IOException ex)
         {
+            _logger.Warning(ex, "Pipeline {RunId} failed to read analysis-assessment.json", run.RunId);
             throw new AnalysisIncompleteException($"Failed to read analysis-assessment.json: {ex.Message}", ex);
         }
     }

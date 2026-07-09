@@ -2,6 +2,7 @@ using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
+using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -21,57 +22,6 @@ public sealed class WorkItemStatusRequest
     public string? AgentId { get; init; }
     public string? Result { get; init; }
     public string? ErrorMessage { get; init; }
-}
-
-/// <summary>
-/// JSON DTO returned by GET /api/work-items/{id}/assignment.
-/// Maps from <see cref="JobDistributionRequest"/> to a plain JSON object (NOT MessagePack).
-/// </summary>
-public sealed class WorkItemAssignmentDto
-{
-    public required string JobId { get; init; }
-    public required string IssueIdentifier { get; init; }
-    public required string IssueProviderConfigId { get; init; }
-    public required string RepoProviderConfigId { get; init; }
-    public string? BrainProviderConfigId { get; init; }
-    public string? PipelineProviderConfigId { get; init; }
-    public required string InitiatedBy { get; init; }
-    public required WorkItemTaskType TaskType { get; init; }
-    public required string AgentSelector { get; init; }
-    public required int TimeoutSeconds { get; init; }
-    public string? ProjectId { get; init; }
-    public string? ProjectName { get; init; }
-    public PipelineRunType RunType { get; init; }
-
-    // Issue context
-    public IssueDetail? IssueDetail { get; init; }
-    public ParsedIssue? ParsedIssue { get; init; }
-    public IReadOnlyList<IssueComment>? IssueComments { get; init; }
-    public string? ExistingAnalysis { get; init; }
-
-    // Provider configs
-    public IReadOnlyList<ProviderConfig>? ProviderConfigs { get; init; }
-    public PipelineConfiguration? PipelineConfiguration { get; init; }
-    public string? ResolvedProfileId { get; init; }
-    public string? AgentProviderConfigId { get; init; }
-    public IReadOnlyList<QualityGateConfiguration>? QualityGateConfigs { get; init; }
-    public IReadOnlyList<ReviewerConfiguration>? ReviewerConfigs { get; init; }
-    public IReadOnlyList<McpServerConfig>? McpServers { get; init; }
-    public bool ForceRefreshAnalysis { get; init; }
-    public string? ProjectSteeringContent { get; init; }
-    public string? RepoSteeringContent { get; init; }
-    public Dictionary<string, string>? TraceContext { get; init; }
-    public IReadOnlyList<LinkedIssueContext>? LinkedIssueContexts { get; init; }
-
-    // Review-specific
-    public LinkedPullRequest? LinkedPullRequest { get; init; }
-    public string? ReviewPrTargetBranch { get; init; }
-    public string? ReviewPrDescription { get; init; }
-    public string? ReviewPrAuthor { get; init; }
-
-    // Decomposition-specific
-    public DecompositionProjectContext? ProjectContext { get; init; }
-    public string? DecompositionSource { get; init; }
 }
 
 /// <summary>
@@ -101,8 +51,9 @@ public static class WorkItemEndpoints
 
     /// <summary>
     /// GET /api/work-items/{id}/assignment
-    /// Loads Payload JSONB, deserializes, maps to WorkItemAssignmentDto (JSON, not MessagePack).
-    /// Returns 200 with DTO, 404 if not found, 410 if terminal status.
+    /// Loads Payload JSONB, deserializes, maps to <see cref="JobAssignmentMessage"/> via
+    /// <see cref="DbWorkDistributorBase.BuildJobAssignmentMessage"/>.
+    /// Returns 200 with assignment, 404 if not found, 410 if terminal status.
     /// </summary>
     internal static async Task<IResult> GetAssignment(
         Guid id,
@@ -129,8 +80,8 @@ public static class WorkItemEndpoints
         if (request is null)
             return TypedResults.NotFound();
 
-        var dto = MapToAssignmentDto(id, request);
-        return TypedResults.Ok(dto);
+        var message = Orchestration.Dispatch.DbWorkDistributorBase.BuildJobAssignmentMessage(id, request);
+        return TypedResults.Ok(message);
     }
 
     /// <summary>
@@ -199,43 +150,4 @@ public static class WorkItemEndpoints
 
         return TypedResults.Ok();
     }
-
-    private static WorkItemAssignmentDto MapToAssignmentDto(Guid workItemId, JobDistributionRequest request) => new()
-    {
-        JobId = workItemId.ToString(),
-        IssueIdentifier = request.IssueIdentifier,
-        IssueProviderConfigId = request.IssueProviderConfigId,
-        RepoProviderConfigId = request.RepoProviderConfigId,
-        BrainProviderConfigId = request.BrainProviderConfigId,
-        PipelineProviderConfigId = request.PipelineProviderConfigId,
-        InitiatedBy = request.InitiatedBy,
-        TaskType = request.TaskType,
-        AgentSelector = request.AgentSelector,
-        TimeoutSeconds = request.TimeoutSeconds,
-        ProjectId = request.ProjectId,
-        ProjectName = request.ProjectName,
-        RunType = request.RunType,
-        IssueDetail = request.IssueDetail,
-        ParsedIssue = request.ParsedIssue,
-        IssueComments = request.IssueComments,
-        ExistingAnalysis = request.ExistingAnalysis,
-        ForceRefreshAnalysis = request.ForceRefreshAnalysis,
-        ProviderConfigs = request.ProviderConfigs,
-        PipelineConfiguration = request.PipelineConfiguration,
-        ResolvedProfileId = request.ResolvedProfileId,
-        AgentProviderConfigId = request.AgentProviderConfigId,
-        QualityGateConfigs = request.QualityGateConfigs,
-        ReviewerConfigs = request.ReviewerConfigs,
-        McpServers = request.McpServers,
-        LinkedPullRequest = request.LinkedPullRequest,
-        ReviewPrTargetBranch = request.ReviewPrTargetBranch,
-        ReviewPrDescription = request.ReviewPrDescription,
-        ReviewPrAuthor = request.ReviewPrAuthor,
-        ProjectContext = request.ProjectContext,
-        DecompositionSource = request.DecompositionSource,
-        ProjectSteeringContent = request.ProjectSteeringContent,
-        RepoSteeringContent = request.RepoSteeringContent,
-        TraceContext = request.TraceContext,
-        LinkedIssueContexts = request.LinkedIssueContexts
-    };
 }

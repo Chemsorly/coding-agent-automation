@@ -42,33 +42,11 @@ public sealed class FakeAgentClient : IAsyncDisposable
     /// </summary>
     public async Task ConnectAsync(string serverAddress, string apiKey)
     {
-        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(apiKey));
-        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(AgentId));
-        var derivedToken = Convert.ToHexString(hash).ToLowerInvariant();
-
-        _connection = new HubConnectionBuilder()
-            .WithUrl($"{serverAddress}{HubRoutes.Agent}?agentId={AgentId}&access_token={derivedToken}")
-            .AddMessagePackProtocol()
-            .Build();
-
-        // Register all IAgentHubClient handlers
-        _connection.On<JobAssignmentMessage>("AssignJob", OnAssignJob);
-        _connection.On<string>("CancelJob", _ => { });
-        _connection.On<ChatPromptMessage>("AssignChatPrompt", msg => ChatPromptAssigned.TrySetResult(msg));
-        _connection.On<string>("CancelChat", _ => { });
-        _connection.On<FetchModelsRequest>("RequestFetchModels", _ => { });
-        _connection.On<string, ConsolidationJobMessage>("AssignConsolidationJob", OnAssignConsolidationJob);
-        _connection.On("ForceDisconnect", async () =>
-        {
-            if (_connection is not null)
-                await _connection.StopAsync();
-        });
-
-        await _connection.StartAsync();
+        await BuildAndStartConnectionAsync(serverAddress, apiKey);
 
         // Register with the hub — InvokeAsync is request-response, so when this returns
         // the agent IS in the registry with Idle status. No Task.Delay needed.
-        await _connection.InvokeAsync("RegisterAgent", new AgentRegistrationMessage
+        await _connection!.InvokeAsync("RegisterAgent", new AgentRegistrationMessage
         {
             AgentId = AgentId,
             Hostname = "fake-agent-host",
@@ -280,6 +258,83 @@ public sealed class FakeAgentClient : IAsyncDisposable
     {
         if (_connection is null) throw new InvalidOperationException("Not connected");
         return await _connection.InvokeAsync<CreatedIssueResult>("RequestCreateIssue", jobId, title, body, labels);
+    }
+
+    /// <summary>
+    /// Connects and registers with an ActiveJob — simulates K8s-mode agent that already has a work item.
+    /// This is the pattern used by WorkItemAgentService after our fix (RegisterAgent with ActiveJobState).
+    /// </summary>
+    public async Task ConnectWithActiveJobAsync(
+        string serverAddress,
+        string apiKey,
+        string workItemId,
+        string issueIdentifier,
+        string repoProviderConfigId,
+        string? brainProviderConfigId = null)
+    {
+        await BuildAndStartConnectionAsync(serverAddress, apiKey);
+
+        // Register with ActiveJob (K8s mode pattern)
+        await _connection!.InvokeAsync("RegisterAgent", new AgentRegistrationMessage
+        {
+            AgentId = AgentId,
+            Hostname = "fake-k8s-pod",
+            Labels = Labels,
+            ActiveJob = new ActiveJobState
+            {
+                RunId = workItemId,
+                IssueIdentifier = issueIdentifier,
+                IssueTitle = $"Test issue {issueIdentifier}",
+                IssueProviderConfigId = "issue-e2e",
+                RepoProviderConfigId = repoProviderConfigId,
+                AgentProviderConfigId = "agent-e2e",
+                BrainProviderConfigId = brainProviderConfigId,
+                InitiatedBy = "k8s-e2e-test",
+                CurrentStep = PipelineStep.Created,
+                StartedAt = DateTimeOffset.UtcNow,
+                RunType = PipelineRunType.Implementation
+            }
+        });
+    }
+
+    /// <summary>
+    /// Invokes RequestTokenRefresh on the hub (requires prior registration with ActiveJob).
+    /// Returns the token response. Throws HubException if the request is rejected.
+    /// </summary>
+    public async Task<TokenRefreshResponse> RequestTokenRefreshAsync(string jobId, ProviderKind providerKind)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+        return await _connection.InvokeAsync<TokenRefreshResponse>("RequestTokenRefresh", jobId, providerKind);
+    }
+
+    /// <summary>
+    /// Builds the SignalR connection, wires up client-side handlers, and starts it.
+    /// Shared between ConnectAsync and ConnectWithActiveJobAsync.
+    /// </summary>
+    private async Task BuildAndStartConnectionAsync(string serverAddress, string apiKey)
+    {
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(apiKey));
+        var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(AgentId));
+        var derivedToken = Convert.ToHexString(hash).ToLowerInvariant();
+
+        _connection = new HubConnectionBuilder()
+            .WithUrl($"{serverAddress}{HubRoutes.Agent}?agentId={AgentId}&access_token={derivedToken}")
+            .AddMessagePackProtocol()
+            .Build();
+
+        _connection.On<JobAssignmentMessage>("AssignJob", OnAssignJob);
+        _connection.On<string>("CancelJob", _ => { });
+        _connection.On<ChatPromptMessage>("AssignChatPrompt", msg => ChatPromptAssigned.TrySetResult(msg));
+        _connection.On<string>("CancelChat", _ => { });
+        _connection.On<FetchModelsRequest>("RequestFetchModels", _ => { });
+        _connection.On<string, ConsolidationJobMessage>("AssignConsolidationJob", OnAssignConsolidationJob);
+        _connection.On("ForceDisconnect", async () =>
+        {
+            if (_connection is not null)
+                await _connection.StopAsync();
+        });
+
+        await _connection.StartAsync();
     }
 
     public async ValueTask DisposeAsync()

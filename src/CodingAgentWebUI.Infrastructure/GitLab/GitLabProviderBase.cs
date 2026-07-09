@@ -53,10 +53,16 @@ public abstract class GitLabProviderBase : IAsyncDisposable
     protected GitLabProviderBase(string apiUrl, string accessToken, int projectId)
     {
         if (string.IsNullOrWhiteSpace(apiUrl))
+        {
+            Log.Error("GitLab provider configuration error: API URL is required but was empty/whitespace");
             throw new ArgumentException("A valid API URL is required.", nameof(apiUrl));
+        }
         ValidateApiUrlScheme(apiUrl);
         if (string.IsNullOrWhiteSpace(accessToken))
+        {
+            Log.Error("GitLab provider configuration error: access token is required but was empty/whitespace");
             throw new ArgumentException("A valid access token is required.", nameof(accessToken));
+        }
 
         ApiUrl = apiUrl;
         ProjectId = projectId;
@@ -72,7 +78,10 @@ public abstract class GitLabProviderBase : IAsyncDisposable
     protected GitLabProviderBase(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider, int projectId)
     {
         if (string.IsNullOrWhiteSpace(apiUrl))
+        {
+            Log.Error("GitLab provider configuration error: API URL is required but was empty/whitespace");
             throw new ArgumentException("A valid API URL is required.", nameof(apiUrl));
+        }
         ValidateApiUrlScheme(apiUrl);
         ArgumentNullException.ThrowIfNull(tokenProvider);
 
@@ -173,6 +182,7 @@ public abstract class GitLabProviderBase : IAsyncDisposable
         {
             // NGitLab does not expose Retry-After header — estimate reset time
             var resetAt = DateTimeOffset.UtcNow.AddSeconds(60);
+            Log.Warning(ex, "GitLab API rate limit exceeded, reset at {Reset}", resetAt);
             throw new PipelineRateLimitExceededException(resetAt, ex);
         }
         finally
@@ -225,6 +235,7 @@ public abstract class GitLabProviderBase : IAsyncDisposable
         catch (GitLabException ex) when ((int)ex.StatusCode == 429)
         {
             var resetAt = DateTimeOffset.UtcNow.AddSeconds(60);
+            Log.Warning(ex, "GitLab API rate limit exceeded, reset at {Reset}", resetAt);
             throw new PipelineRateLimitExceededException(resetAt, ex);
         }
         finally
@@ -263,9 +274,12 @@ public abstract class GitLabProviderBase : IAsyncDisposable
     protected static int ParseIdentifier(string identifier, string entityType = "issue")
     {
         if (!int.TryParse(identifier, out var iid))
+        {
+            Log.Warning("Invalid {EntityType} identifier '{Identifier}' — expected numeric IID", entityType, identifier);
             throw new ArgumentException(
                 $"Invalid {entityType} identifier: '{identifier}'. Expected a numeric IID.",
                 nameof(identifier));
+        }
         return iid;
     }
 

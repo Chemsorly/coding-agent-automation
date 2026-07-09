@@ -245,15 +245,22 @@ public class AgentCodingPageService : IDisposable
 
     public async Task<(bool Success, string? Error)> StartLoopAsync()
     {
-        var started = await _loopService.StartLoopAsync();
-        if (!started)
+        try
         {
-            if (_loopService.ValidationErrors.Count > 0) return (false, "Loop failed to start due to validation errors (see below).");
-            if (_loopService.IsLoopActive) return (false, "Loop is already active.");
-            return (false, "A manual run is in progress. Wait for it to complete.");
+            var started = await _loopService.StartLoopAsync();
+            if (!started)
+            {
+                if (_loopService.ValidationErrors.Count > 0) return (false, "Loop failed to start due to validation errors (see below).");
+                if (_loopService.IsLoopActive) return (false, "Loop is already active.");
+                return (false, "A manual run is in progress. Wait for it to complete.");
+            }
+            await _configStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, CancellationToken.None);
+            return (true, null);
         }
-        await _configStore.UpdatePipelineConfigAsync(c => c with { ClosedLoopAutoStart = true }, CancellationToken.None);
-        return (true, null);
+        catch (Exception ex)
+        {
+            return (false, $"Failed to start loop: {ex.Message}");
+        }
     }
 
     public async Task StopLoopAsync()
@@ -365,40 +372,26 @@ public class AgentCodingPageService : IDisposable
         // DB mode: use full orchestration to build a complete request with ProviderConfigs + token vending
         if (_dispatchOrchestration is not null)
         {
-            var project = GetParentProject(template.Id) ?? new PipelineProject { Id = "", Name = "Unknown" };
-            var request = await _dispatchOrchestration.PrepareDistributionRequestAsync(
-                issue.Identifier,
-                template.IssueProviderId, template.RepoProviderId,
-                template.BrainProviderId, template.PipelineProviderId,
-                "manual", project,
-                ct: CancellationToken.None);
-
-            if (request is null)
-                return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
-
-            var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
-            if (!result.Success)
-            {
-                await _dispatchOrchestration.RevertFailedDistributionAsync(request, CancellationToken.None);
-                return (false, "Could not dispatch — distribution failed.", null);
-            }
-
-            if (!result.Queued)
-                // TODO: Consider propagating the request's cancellation token instead of CancellationToken.None
-                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, CancellationToken.None);
-
-            return (true, null, result.Queued
-                ? $"⏳ Queued #{issue.Identifier} — waiting for an idle agent"
-                : $"✅ Dispatched #{issue.Identifier}");
+            return await DispatchWithOrchestrationAsync(
+                template.Id,
+                project => _dispatchOrchestration.PrepareDistributionRequestAsync(
+                    issue.Identifier,
+                    template.IssueProviderId, template.RepoProviderId,
+                    template.BrainProviderId, template.PipelineProviderId,
+                    "manual", project,
+                    ct: CancellationToken.None),
+                "Could not dispatch — distribution failed.",
+                $"⏳ Queued #{issue.Identifier} — waiting for an idle agent",
+                $"✅ Dispatched #{issue.Identifier}");
         }
 
         // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
         var minimalRequest = JobDistributionRequest.FromTemplate(
             template, issue, initiatedBy: "manual", timeoutSeconds: 3600,
             projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
-        var legacyResult = await _workDistributor.DistributeAsync(minimalRequest, CancellationToken.None);
-        if (legacyResult.Success) return (true, null, $"✅ Dispatched #{issue.Identifier}");
-        return (false, "Could not dispatch — issue is already being processed or queued, or no agents are available.", null);
+        return await DispatchLegacyAsync(minimalRequest,
+            $"✅ Dispatched #{issue.Identifier}",
+            "Could not dispatch — issue is already being processed or queued, or no agents are available.");
     }
 
     // ── PR Drawer ──
@@ -452,49 +445,39 @@ public class AgentCodingPageService : IDisposable
         // DB mode: use full orchestration for ProviderConfigs + RunId + token vending
         if (_dispatchOrchestration is not null)
         {
-            var project = GetParentProject(template.Id) ?? new PipelineProject { Id = "", Name = "Unknown" };
-            var reviewRequest = new ReviewDispatchRequest
-            {
-                PrIdentifier = pr.Identifier,
-                PrBranchName = pr.BranchName,
-                PrTitle = pr.Title ?? "",
-                PrUrl = pr.Url,
-                PrTargetBranch = pr.TargetBranch,
-                PrDescription = pr.Description,
-                PrAuthor = pr.Author,
-                IssueProviderId = template.IssueProviderId,
-                RepoProviderId = template.RepoProviderId,
-                BrainProviderId = template.BrainProviderId,
-                InitiatedBy = "manual"
-            };
-            var request = await _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
-                reviewRequest, project, CancellationToken.None);
-
-            if (request is null)
-                return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
-
-            var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
-            if (!result.Success)
-            {
-                await _dispatchOrchestration.RevertFailedDistributionAsync(request, CancellationToken.None);
-                return (false, $"PR #{pr.Identifier} is already being processed or queued.", null);
-            }
-
-            if (!result.Queued)
-                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, CancellationToken.None);
-
-            return (true, null, result.Queued
-                ? $"⏳ Queued PR #{pr.Identifier} for review — waiting for an idle agent"
-                : $"PR #{pr.Identifier} dispatched for review.");
+            return await DispatchWithOrchestrationAsync(
+                template.Id,
+                project =>
+                {
+                    var reviewRequest = new ReviewDispatchRequest
+                    {
+                        PrIdentifier = pr.Identifier,
+                        PrBranchName = pr.BranchName,
+                        PrTitle = pr.Title ?? "",
+                        PrUrl = pr.Url,
+                        PrTargetBranch = pr.TargetBranch,
+                        PrDescription = pr.Description,
+                        PrAuthor = pr.Author,
+                        IssueProviderId = template.IssueProviderId,
+                        RepoProviderId = template.RepoProviderId,
+                        BrainProviderId = template.BrainProviderId,
+                        InitiatedBy = "manual"
+                    };
+                    return _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
+                        reviewRequest, project, CancellationToken.None);
+                },
+                $"PR #{pr.Identifier} is already being processed or queued.",
+                $"⏳ Queued PR #{pr.Identifier} for review — waiting for an idle agent",
+                $"PR #{pr.Identifier} dispatched for review.");
         }
 
         // Legacy mode
         var minimalRequest = JobDistributionRequest.FromTemplate(
             template, pr, initiatedBy: "manual", timeoutSeconds: 3600,
             projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
-        var legacyResult = await _workDistributor.DistributeAsync(minimalRequest, CancellationToken.None);
-        if (legacyResult.Success) return (true, null, $"PR #{pr.Identifier} dispatched for review.");
-        return (false, $"PR #{pr.Identifier} is already being processed or queued.", null);
+        return await DispatchLegacyAsync(minimalRequest,
+            $"PR #{pr.Identifier} dispatched for review.",
+            $"PR #{pr.Identifier} is already being processed or queued.");
     }
 
     // ── Epic Drawer ──
@@ -512,11 +495,11 @@ public class AgentCodingPageService : IDisposable
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
 
             // Build label filter: always include epic markers + any user-selected labels
-            var epicLabels = new List<string> { "agent:epic" };
+            var epicLabels = new List<string> { AgentLabels.Epic };
             if (EpicDrawerSelectedLabels.Count > 0)
                 epicLabels.AddRange(EpicDrawerSelectedLabels);
 
-            var approvedLabels = new List<string> { "agent:epic-approved" };
+            var approvedLabels = new List<string> { AgentLabels.EpicApproved };
             if (EpicDrawerSelectedLabels.Count > 0)
                 approvedLabels.AddRange(EpicDrawerSelectedLabels);
 
@@ -546,7 +529,7 @@ public class AgentCodingPageService : IDisposable
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
             var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
             // Exclude the epic markers themselves from the filter UI
-            EpicDrawerLabels = labels.Where(l => !l.StartsWith("agent:epic", StringComparison.OrdinalIgnoreCase)).ToList();
+            EpicDrawerLabels = labels.Where(l => !l.StartsWith(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)).ToList();
             return null;
         }
         catch { EpicDrawerLabels.Clear(); return null; }
@@ -570,44 +553,31 @@ public class AgentCodingPageService : IDisposable
         if (_workDistributor is LegacyWorkDistributor && _agentRegistry.GetAllAgents().Count == 0)
             return (false, "Could not dispatch — no agents are currently connected.", null);
 
-        var phaseType = issue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase)
+        var phaseType = issue.Labels.Contains(AgentLabels.EpicApproved, StringComparer.OrdinalIgnoreCase)
             ? PipelineRunType.Decomposition : PipelineRunType.DecompositionAnalysis;
+        var phaseLabel = phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
 
         // DB mode: use full orchestration
         if (_dispatchOrchestration is not null)
         {
-            var project = GetParentProject(template.Id) ?? new PipelineProject { Id = "", Name = "Unknown" };
-            var request = await _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
-                issue.Identifier, issue.Title ?? "", phaseType,
-                template.IssueProviderId, template.RepoProviderId, template.BrainProviderId,
-                "manual", project, ct: CancellationToken.None);
-
-            if (request is null)
-                return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
-
-            var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
-            if (!result.Success)
-            {
-                await _dispatchOrchestration.RevertFailedDistributionAsync(request, CancellationToken.None);
-                return (false, "Could not dispatch — epic is already being processed or queued, or no agents are available.", null);
-            }
-
-            if (!result.Queued)
-                await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, CancellationToken.None);
-
-            var phaseLabel = phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
-            return (true, null, result.Queued
-                ? $"⏳ Queued epic #{issue.Identifier} for {phaseLabel} — waiting for an idle agent"
-                : $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}");
+            return await DispatchWithOrchestrationAsync(
+                template.Id,
+                project => _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
+                    issue.Identifier, issue.Title ?? "", phaseType,
+                    template.IssueProviderId, template.RepoProviderId, template.BrainProviderId,
+                    "manual", project, ct: CancellationToken.None),
+                "Could not dispatch — epic is already being processed or queued, or no agents are available.",
+                $"⏳ Queued epic #{issue.Identifier} for {phaseLabel} — waiting for an idle agent",
+                $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}");
         }
 
         // Legacy mode
         var minimalRequest = JobDistributionRequest.FromTemplate(
             template, issue, phaseType, initiatedBy: "manual", timeoutSeconds: 3600,
             projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
-        var legacyResult = await _workDistributor.DistributeAsync(minimalRequest, CancellationToken.None);
-        if (legacyResult.Success) return (true, null, $"✅ Dispatched epic #{issue.Identifier} for {(phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition")}");
-        return (false, "Could not dispatch — epic is already being processed or queued, or no agents are available.", null);
+        return await DispatchLegacyAsync(minimalRequest,
+            $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}",
+            "Could not dispatch — epic is already being processed or queued, or no agents are available.");
     }
 
     // ── Drawer Orchestration ──
@@ -808,6 +778,50 @@ public class AgentCodingPageService : IDisposable
     }
 
     // ── Helpers ──
+
+    /// <summary>
+    /// Shared orchestration dispatch flow: resolve project → prepare request → distribute →
+    /// revert on failure / confirm label on direct dispatch → return result tuple.
+    /// </summary>
+    private async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchWithOrchestrationAsync(
+        string templateId,
+        Func<PipelineProject, Task<JobDistributionRequest?>> prepareAsync,
+        string distributionFailedError,
+        string queuedMessage,
+        string dispatchedMessage)
+    {
+        var project = GetParentProject(templateId) ?? new PipelineProject { Id = "", Name = "Unknown" };
+        var request = await prepareAsync(project);
+
+        if (request is null)
+            return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
+
+        var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
+        if (!result.Success)
+        {
+            await _dispatchOrchestration!.RevertFailedDistributionAsync(request, CancellationToken.None);
+            return (false, distributionFailedError, null);
+        }
+
+        if (!result.Queued)
+            await _dispatchOrchestration!.ConfirmDistributionLabelAsync(request, CancellationToken.None);
+
+        return (true, null, result.Queued ? queuedMessage : dispatchedMessage);
+    }
+
+    /// <summary>
+    /// Shared legacy dispatch flow: distribute a pre-built request and return success/failure messages.
+    /// </summary>
+    private async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchLegacyAsync(
+        JobDistributionRequest request,
+        string successMessage,
+        string failureError)
+    {
+        var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
+        return result.Success
+            ? (true, null, successMessage)
+            : (false, failureError, null);
+    }
 
     /// <summary>
     /// Checks if an issue is currently distributed (Pending, Dispatched, or Running)

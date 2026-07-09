@@ -97,8 +97,8 @@ public class WorkItemEndpointsTests : IDisposable
 
         var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
 
-        result.Should().BeOfType<Ok<WorkItemAssignmentDto>>();
-        var okResult = (Ok<WorkItemAssignmentDto>)result;
+        result.Should().BeOfType<Ok<JobAssignmentMessage>>();
+        var okResult = (Ok<JobAssignmentMessage>)result;
         okResult.Value.Should().NotBeNull();
         okResult.Value!.IssueIdentifier.Should().Be("owner/repo#1");
         okResult.Value.RepoProviderConfigId.Should().Be("repo-1");
@@ -204,8 +204,8 @@ public class WorkItemEndpointsTests : IDisposable
 
         var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
 
-        result.Should().BeOfType<Ok<WorkItemAssignmentDto>>();
-        var okResult = (Ok<WorkItemAssignmentDto>)result;
+        result.Should().BeOfType<Ok<JobAssignmentMessage>>();
+        var okResult = (Ok<JobAssignmentMessage>)result;
         okResult.Value.Should().NotBeNull();
         okResult.Value!.JobId.Should().Be(id.ToString());
     }
@@ -220,16 +220,13 @@ public class WorkItemEndpointsTests : IDisposable
 
         var result = await WorkItemEndpoints.GetAssignment(id, _dbFactory);
 
-        var okResult = (Ok<WorkItemAssignmentDto>)result;
+        var okResult = (Ok<JobAssignmentMessage>)result;
         var dto = okResult.Value!;
         dto.JobId.Should().Be(id.ToString());
         dto.IssueIdentifier.Should().Be(sourcePayload.IssueIdentifier);
         dto.IssueProviderConfigId.Should().Be(sourcePayload.IssueProviderConfigId);
         dto.RepoProviderConfigId.Should().Be(sourcePayload.RepoProviderConfigId);
         dto.InitiatedBy.Should().Be(sourcePayload.InitiatedBy);
-        dto.TaskType.Should().Be(sourcePayload.TaskType);
-        dto.AgentSelector.Should().Be(sourcePayload.AgentSelector);
-        dto.TimeoutSeconds.Should().Be(sourcePayload.TimeoutSeconds);
         dto.IssueDetail.Should().NotBeNull();
         dto.IssueDetail!.Title.Should().Be("Test Issue");
         dto.ParsedIssue.Should().NotBeNull();
@@ -330,6 +327,60 @@ public class WorkItemEndpointsTests : IDisposable
             id, request, _transitionService, _runService.Object, _dbFactory);
 
         result.Should().BeOfType<BadRequest<string>>();
+    }
+
+    // ── JSON Enum Serialization (validates ConfigureHttpJsonOptions fix) ──
+
+    [Fact]
+    public void WorkItemStatusRequest_DeserializesEnumFromString()
+    {
+        // This test validates that the agent's JSON payload (enum-as-string)
+        // correctly deserializes into WorkItemStatusRequest.
+        // The agent sends: {"status": "Running", "agentId": "pod-xyz"}
+        // Without JsonStringEnumConverter, this fails with a JsonException.
+        var agentJson = """{"status": "Running", "agentId": "caa-pod-xyz"}""";
+
+        // Use the same options the host configures via ConfigureHttpJsonOptions
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+
+        var request = JsonSerializer.Deserialize<WorkItemStatusRequest>(agentJson, options);
+
+        request.Should().NotBeNull();
+        request!.Status.Should().Be(WorkItemStatus.Running);
+        request.AgentId.Should().Be("caa-pod-xyz");
+    }
+
+    [Theory]
+    [InlineData("Running", WorkItemStatus.Running)]
+    [InlineData("Succeeded", WorkItemStatus.Succeeded)]
+    [InlineData("Failed", WorkItemStatus.Failed)]
+    [InlineData("Cancelled", WorkItemStatus.Cancelled)]
+    public void WorkItemStatusRequest_DeserializesAllEnumValues_FromString(string statusString, WorkItemStatus expected)
+    {
+        var json = $$"""{"status": "{{statusString}}", "agentId": "test"}""";
+
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+
+        var request = JsonSerializer.Deserialize<WorkItemStatusRequest>(json, options);
+
+        request.Should().NotBeNull();
+        request!.Status.Should().Be(expected);
+    }
+
+    [Fact]
+    public void WorkItemStatusRequest_WithoutEnumConverter_FailsOnStringValue()
+    {
+        // Proves the bug: without JsonStringEnumConverter, "Running" can't deserialize
+        var agentJson = """{"status": "Running", "agentId": "caa-pod-xyz"}""";
+
+        var optionsWithoutConverter = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        // No JsonStringEnumConverter — this is what was happening before the fix
+
+        var act = () => JsonSerializer.Deserialize<WorkItemStatusRequest>(agentJson, optionsWithoutConverter);
+
+        act.Should().Throw<JsonException>();
     }
 
     // ── Authentication enforcement ──────────────────────────────────────

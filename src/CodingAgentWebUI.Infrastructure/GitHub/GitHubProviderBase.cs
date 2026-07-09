@@ -109,9 +109,12 @@ public abstract class GitHubProviderBase : IAsyncDisposable
     protected static int ParseIssueIdentifier(string identifier)
     {
         if (!int.TryParse(identifier, out var issueNumber))
+        {
+            Log.Warning("Invalid issue identifier '{Identifier}' — expected numeric issue number", identifier);
             throw new ArgumentException(
                 $"Invalid issue identifier: '{identifier}'. Expected a numeric issue number.",
                 nameof(identifier));
+        }
         return issueNumber;
     }
 
@@ -135,6 +138,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
         }
         catch (Octokit.RateLimitExceededException ex)
         {
+            Log.Warning(ex, "GitHub API rate limit exceeded, reset at {Reset}", ex.Reset);
             throw new PipelineRateLimitExceededException(ex.Reset, ex);
         }
         catch (AbuseException ex)
@@ -142,6 +146,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
             var resetAt = ex.RetryAfterSeconds.HasValue
                 ? _timeProvider.GetUtcNow().AddSeconds(ex.RetryAfterSeconds.Value)
                 : _timeProvider.GetUtcNow().Add(DefaultRateLimitWait);
+            Log.Warning(ex, "GitHub API rate limit exceeded, reset at {Reset}", resetAt);
             throw new PipelineRateLimitExceededException(resetAt, ex);
         }
         finally
@@ -176,6 +181,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
         }
         catch (Octokit.RateLimitExceededException ex)
         {
+            Log.Warning(ex, "GitHub API rate limit exceeded, reset at {Reset}", ex.Reset);
             throw new PipelineRateLimitExceededException(ex.Reset, ex);
         }
         catch (AbuseException ex)
@@ -183,6 +189,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
             var resetAt = ex.RetryAfterSeconds.HasValue
                 ? _timeProvider.GetUtcNow().AddSeconds(ex.RetryAfterSeconds.Value)
                 : _timeProvider.GetUtcNow().Add(DefaultRateLimitWait);
+            Log.Warning(ex, "GitHub API rate limit exceeded, reset at {Reset}", resetAt);
             throw new PipelineRateLimitExceededException(resetAt, ex);
         }
     }
@@ -198,6 +205,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
         }
         catch (Octokit.RateLimitExceededException ex)
         {
+            Log.Warning(ex, "GitHub API rate limit exceeded, reset at {Reset}", ex.Reset);
             throw new PipelineRateLimitExceededException(ex.Reset, ex);
         }
         catch (AbuseException ex)
@@ -205,6 +213,7 @@ public abstract class GitHubProviderBase : IAsyncDisposable
             var resetAt = ex.RetryAfterSeconds.HasValue
                 ? _timeProvider.GetUtcNow().AddSeconds(ex.RetryAfterSeconds.Value)
                 : _timeProvider.GetUtcNow().Add(DefaultRateLimitWait);
+            Log.Warning(ex, "GitHub API rate limit exceeded, reset at {Reset}", resetAt);
             throw new PipelineRateLimitExceededException(resetAt, ex);
         }
     }

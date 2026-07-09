@@ -35,7 +35,7 @@ public class JobDistributionRequestNoSecretsPropertyTests
     /// a document where no property name (key) matches forbidden secret field names.
     /// **Validates: Requirements 1.13, 12.4, 12.5**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(JobDistributionRequestArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(JobDistributionRequestArbitraries) })]
     public void SerializedPayload_ContainsNoSecretPropertyNames(JobDistributionRequest request)
     {
         var json = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);

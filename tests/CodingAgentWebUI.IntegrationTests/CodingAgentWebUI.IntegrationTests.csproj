@@ -35,6 +35,7 @@
 
   <ItemGroup>
     <Content Include="Fixtures\**\*" CopyToOutputDirectory="PreserveNewest" Exclude="Fixtures\**\bin\**;Fixtures\**\obj\**" />
+    <Content Include="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Remove="Fixtures\**" />
   </ItemGroup>
 

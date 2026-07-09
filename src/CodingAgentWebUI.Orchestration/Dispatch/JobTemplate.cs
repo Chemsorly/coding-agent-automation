@@ -20,6 +20,10 @@ public sealed record JobTemplate
     [JsonPropertyName("image")]
     public required string Image { get; init; }
 
+    /// <summary>Image pull policy: Always, IfNotPresent, or Never. Defaults to Always for ephemeral Job pods.</summary>
+    [JsonPropertyName("imagePullPolicy")]
+    public string ImagePullPolicy { get; init; } = "Always";
+
     /// <summary>Agent provider type: "kiro" or "opencode". Determines volume mount profile.</summary>
     [JsonPropertyName("providerType")]
     public required string ProviderType { get; init; }

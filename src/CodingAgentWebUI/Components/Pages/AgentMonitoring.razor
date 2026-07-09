@@ -41,7 +41,7 @@
             }
             else
             {
-                <text>Last updated: @FormatTimeAgo(_lastSuccessfulRefresh) · Refreshing every 2s</text>
+                <text>Last updated: @FormatTimeAgo(_lastSuccessfulRefresh) · Refreshing every 5s</text>
             }
         </span>
     </header>
@@ -782,8 +782,8 @@
         PipelineService.OnChange += HandleStateChanged;
         ConsolidationService.OnChange += HandleStateChanged;
 
-        // Refresh every 2 seconds for heartbeat/elapsed updates
-        _refreshTimer = new Timer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
+        // Refresh every 5 seconds for heartbeat/elapsed updates
+        _refreshTimer = new Timer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
 
         try
         {
@@ -1082,7 +1082,26 @@
 
     private async Task RemoveFromQueue(string issueIdentifier, string issueProviderId)
     {
-        Dispatcher.RemoveFromQueue(issueIdentifier, issueProviderId);
+        // In DB/K8s mode, pending jobs are WorkItem rows — cancel via WorkDistributor.
+        // Find the WorkItemId from the cached queue data.
+        var job = _queuedJobs.FirstOrDefault(j => j.IssueIdentifier == issueIdentifier && j.IssueProviderId == issueProviderId);
+        if (job?.WorkItemId is not null)
+        {
+            try
+            {
+                await WorkDistributor.CancelJobAsync(job.WorkItemId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to cancel pending WorkItem {WorkItemId} for issue {IssueIdentifier}", job.WorkItemId, issueIdentifier);
+            }
+        }
+        else
+        {
+            // Legacy in-memory mode fallback
+            Dispatcher.RemoveFromQueue(issueIdentifier, issueProviderId);
+        }
+
         await RefreshDataAsync();
         StateHasChanged();
     }

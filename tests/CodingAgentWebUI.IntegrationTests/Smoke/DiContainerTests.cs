@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace CodingAgentWebUI.IntegrationTests.Smoke;
 
+[Collection("SmokeTests")]
 public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly CustomWebApplicationFactory _factory;

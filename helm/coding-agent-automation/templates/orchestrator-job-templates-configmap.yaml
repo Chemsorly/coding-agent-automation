@@ -8,10 +8,12 @@ metadata:
     app.kubernetes.io/component: orchestrator
 data:
   job-templates.yaml: |
-    {{- range .Values.agents }}
-    {{- if .enabled }}
+    {{- if .Values.jobTemplates }}
+    {{- /* Primary path: dedicated jobTemplates section (K8s-native schema) */}}
+    {{- range .Values.jobTemplates }}
     - labels: {{ .labels | quote }}
-      image: "{{ .image.repository }}:{{ .image.tag }}"
+      image: {{ .image | quote }}
+      imagePullPolicy: {{ .imagePullPolicy | default "Always" | quote }}
       providerType: {{ .providerType | quote }}
       maxConcurrent: {{ .maxConcurrent | default 0 }}
       {{- if .resources }}
@@ -45,6 +47,48 @@ data:
       tolerations:
         {{- toYaml .tolerations | nindent 8 }}
       {{- end }}
+    {{- end }}
+    {{- else }}
+    {{- /* Fallback: derive from agents list (backward compatibility) */}}
+    {{- range .Values.agents }}
+    {{- if .enabled }}
+    - labels: {{ .labels | quote }}
+      image: "{{ .image.repository }}:{{ .image.tag }}"
+      imagePullPolicy: {{ .imagePullPolicy | default "Always" | quote }}
+      providerType: {{ .providerType | quote }}
+      maxConcurrent: {{ .maxConcurrent | default 0 }}
+      {{- if .resources }}
+      resources:
+        {{- if .resources.requests }}
+        requests:
+          {{- range $k, $v := .resources.requests }}
+          {{ $k }}: {{ $v | quote }}
+          {{- end }}
+        {{- end }}
+        {{- if .resources.limits }}
+        limits:
+          {{- range $k, $v := .resources.limits }}
+          {{ $k }}: {{ $v | quote }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      {{- if .podSecurityContext }}
+      podSecurityContext:
+        {{- toYaml .podSecurityContext | nindent 8 }}
+      {{- end }}
+      {{- if .nodeSelector }}
+      nodeSelector:
+        {{- toYaml .nodeSelector | nindent 8 }}
+      {{- end }}
+      {{- if .initContainers }}
+      initContainers:
+        {{- toYaml .initContainers | nindent 8 }}
+      {{- end }}
+      {{- if .tolerations }}
+      tolerations:
+        {{- toYaml .tolerations | nindent 8 }}
+      {{- end }}
+    {{- end }}
     {{- end }}
     {{- end }}
 {{- end }}

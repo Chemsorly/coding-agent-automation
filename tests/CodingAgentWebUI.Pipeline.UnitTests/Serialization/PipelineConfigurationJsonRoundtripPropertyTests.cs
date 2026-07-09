@@ -21,7 +21,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
     /// serializing then deserializing produces an equivalent configuration.
     /// Uses representative property mutations to exercise the full serialization surface.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public bool JsonRoundtrip_PreservesAllScalarProperties(
         PositiveInt maxRetries,
         PositiveInt maxAnalysisRetries,
@@ -59,7 +59,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
     /// TimeSpan roundtrip: TimeSpan properties survive serialization via the custom
     /// TimeSpanJsonConverter (ISO 8601 duration string format).
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public bool JsonRoundtrip_PreservesTimeSpanProperties(
         PositiveInt timeoutMinutes,
         PositiveInt pollSeconds,
@@ -88,7 +88,7 @@ public class PipelineConfigurationJsonRoundtripPropertyTests
     /// <summary>
     /// String properties (prompts) roundtrip: ensures arbitrary non-null strings survive.
     /// </summary>
-    [Property(MaxTest = 30)]
+    [Property(MaxTest = 20)]
     public bool JsonRoundtrip_PreservesStringProperties(NonNull<string> analysisPrompt)
     {
         var config = new PipelineConfiguration

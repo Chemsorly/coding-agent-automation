@@ -59,6 +59,7 @@ public sealed class AgentProviderFactory : IProviderFactory
         if (config.ProviderType.Equals("GitLab", StringComparison.OrdinalIgnoreCase))
             return CreateGitLabRepositoryProvider(config);
 
+        Serilog.Log.Error("Unsupported repository provider type: {ProviderType}", config.ProviderType);
         throw new NotSupportedException(
             $"Unsupported repository provider type: '{config.ProviderType}'");
     }
@@ -73,6 +74,7 @@ public sealed class AgentProviderFactory : IProviderFactory
         if (config.ProviderType.Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase))
             return CreateOpenCodeAgentProvider(config);
 
+        Serilog.Log.Error("Unsupported agent provider type: {ProviderType}", config.ProviderType);
         throw new NotSupportedException(
             $"Unsupported agent provider type: '{config.ProviderType}'");
     }
@@ -87,6 +89,7 @@ public sealed class AgentProviderFactory : IProviderFactory
         if (config.ProviderType.Equals("GitLab", StringComparison.OrdinalIgnoreCase))
             return Task.FromResult<IPipelineProvider>(CreateGitLabPipelineProvider(config));
 
+        Serilog.Log.Error("Unsupported pipeline provider type: {ProviderType}", config.ProviderType);
         throw new NotSupportedException(
             $"Unsupported pipeline provider type: '{config.ProviderType}'");
     }
@@ -131,14 +134,19 @@ public sealed class AgentProviderFactory : IProviderFactory
         if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri) ||
             (uri.Scheme != "http" && uri.Scheme != "https"))
         {
+            Serilog.Log.Error("Provider '{DisplayName}' has invalid baseUrl: '{BaseUrl}'", config.DisplayName, baseUrl);
             throw new ArgumentException(
                 $"Provider '{config.DisplayName}' has invalid baseUrl: '{baseUrl}'.",
                 nameof(config));
         }
 
         // Validate password is available at construction time
-        _ = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword)
-            ?? throw new InvalidOperationException("OPENCODE_SERVER_PASSWORD not set.");
+        var openCodePassword = Environment.GetEnvironmentVariable(AgentDefaults.EnvOpenCodeServerPassword);
+        if (openCodePassword is null)
+        {
+            Serilog.Log.Error("OPENCODE_SERVER_PASSWORD not set");
+            throw new InvalidOperationException("OPENCODE_SERVER_PASSWORD not set.");
+        }
 
         var model = config.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
         return new OpenCodeAgentProvider(_httpClientFactory, Serilog.Log.Logger, model);
@@ -169,9 +177,12 @@ public sealed class AgentProviderFactory : IProviderFactory
         var apiUrl = GetRequiredSetting(config, ProviderSettingKeys.ApiUrl);
         var projectIdStr = GetRequiredSetting(config, ProviderSettingKeys.ProjectId);
         if (!int.TryParse(projectIdStr, out var projectId))
+        {
+            Serilog.Log.Error("Provider '{DisplayName}' has invalid projectId: '{ProjectId}'", config.DisplayName, projectIdStr);
             throw new ArgumentException(
                 $"Provider '{config.DisplayName}' has invalid projectId: '{projectIdStr}'.",
                 nameof(config));
+        }
         var baseBranch = config.Settings.TryGetValue(ProviderSettingKeys.BaseBranch, out var bb)
             && !string.IsNullOrWhiteSpace(bb) ? bb : ProviderSettingKeys.DefaultBaseBranch;
 
@@ -194,9 +205,12 @@ public sealed class AgentProviderFactory : IProviderFactory
         var apiUrl = GetRequiredSetting(config, ProviderSettingKeys.ApiUrl);
         var projectIdStr = GetRequiredSetting(config, ProviderSettingKeys.ProjectId);
         if (!int.TryParse(projectIdStr, out var projectId))
+        {
+            Serilog.Log.Error("Provider '{DisplayName}' has invalid projectId: '{ProjectId}'", config.DisplayName, projectIdStr);
             throw new ArgumentException(
                 $"Provider '{config.DisplayName}' has invalid projectId: '{projectIdStr}'.",
                 nameof(config));
+        }
 
         if (_orchestratorProxy is not null)
         {
@@ -214,6 +228,7 @@ public sealed class AgentProviderFactory : IProviderFactory
         if (config.Settings.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
             return value;
 
+        Serilog.Log.Error("Provider '{DisplayName}' (type: {ProviderType}) is missing required setting: '{Key}'", config.DisplayName, config.ProviderType, key);
         throw new ArgumentException(
             $"Provider '{config.DisplayName}' (type: {config.ProviderType}) is missing required setting: '{key}'",
             nameof(config));

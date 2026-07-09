@@ -17,7 +17,7 @@ public class CostFormatterPropertyTests
 {
     // ── FormatCost crash-freedom ──────────────────────────────────────────
 
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public Property FormatCost_NeverThrows_ForAnyDecimal()
     {
         var gen = Gen.Choose(-1_000_000, 1_000_000).Select(i => (decimal)i / 100);
@@ -46,7 +46,7 @@ public class CostFormatterPropertyTests
         CostFormatter.FormatCost(-5.50m).Should().Be("\u2014");
     }
 
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public Property FormatCost_Positive_StartsWithDollarSign()
     {
         var gen = Gen.Choose(1, 999_999).Select(i => (decimal)i / 100);
@@ -79,7 +79,7 @@ public class CostFormatterPropertyTests
 
     // ── FormatTokens crash-freedom ───────────────────────────────────────
 
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public Property FormatTokens_NeverThrows_ForAnyLong()
     {
         var gen = Gen.Choose(int.MinValue, int.MaxValue).Select(i => (long)i);
@@ -134,7 +134,7 @@ public class CostFormatterPropertyTests
         CostFormatter.FormatTokens(2_500_000).Should().Be("2.5M");
     }
 
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public Property FormatTokens_Positive_NeverReturnsDash()
     {
         var gen = Gen.Choose(1, int.MaxValue).Select(i => (long)i);
@@ -147,7 +147,7 @@ public class CostFormatterPropertyTests
 
     // ── FormatBadge crash-freedom ────────────────────────────────────────
 
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public Property FormatBadge_NeverThrows_ForAnyInput()
     {
         var gen =

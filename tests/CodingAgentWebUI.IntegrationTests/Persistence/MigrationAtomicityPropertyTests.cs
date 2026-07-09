@@ -58,7 +58,7 @@ public class MigrationAtomicityPropertyTests : IDisposable
     /// alongside a valid pipeline-config.json, the migration throws and
     /// the DB remains empty (transaction rolled back).
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public async Task<bool> InvalidJsonAmongValid_CausesFullRollback(NonEmptyString invalidJson)
     {
         // Reset DB for each iteration

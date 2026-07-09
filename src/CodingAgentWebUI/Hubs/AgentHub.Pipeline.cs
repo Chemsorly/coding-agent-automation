@@ -278,6 +278,9 @@ public sealed partial class AgentHub
                 : DateTimeOffset.UtcNow;
             run.LastStepChangeAt = clampedTimestamp;
 
+            // Persist progress to DB for cross-replica timeout enforcement (throttled)
+            _ = _facade.TouchLastProgressAsync(jobId, clampedTimestamp, CancellationToken.None);
+
             // Update HighWaterMark — only advance, never go backward
             // Uses StepOrder.GetOrder (logical execution order) — NOT enum ordinals.
             // Terminal states (Failed, Cancelled) return -1 and are excluded.
@@ -547,31 +550,61 @@ public sealed partial class AgentHub
 
     /// <summary>
     /// Generates a fresh short-lived token via <see cref="ITokenVendingService"/>.
+    /// Supports both SignalR mode (PipelineRun in memory) and K8s mode (WorkItem payload in DB).
     /// </summary>
     [RequiresActiveJob]
     public async Task<TokenRefreshResponse> RequestTokenRefresh(string jobId, ProviderKind providerKind)
     {
+        // Resolve provider config IDs — from PipelineRun (SignalR mode) or WorkItem payload (K8s mode)
+        string? repoProviderConfigId;
+        string? brainProviderConfigId;
+
         var run = _facade.GetRun(jobId);
-        if (run is null)
-            throw new HubException($"No active run found for job {jobId}");
+        if (run is not null)
+        {
+            repoProviderConfigId = run.RepoProviderConfigId;
+            brainProviderConfigId = run.BrainProviderConfigId;
+        }
+        else
+        {
+            // K8s mode fallback: resolve from WorkItem payload in DB
+            var configIds = await _facade.GetWorkItemProviderConfigIdsAsync(jobId, CancellationToken.None);
+            if (configIds is null)
+            {
+                _logger.Warning("No active run or work item found for job {JobId}", jobId);
+                throw new HubException($"No active run or work item found for job {jobId}");
+            }
+
+            repoProviderConfigId = configIds.Value.RepoProviderConfigId;
+            brainProviderConfigId = configIds.Value.BrainProviderConfigId;
+
+            if (string.IsNullOrEmpty(repoProviderConfigId))
+            {
+                _logger.Warning("WorkItem {JobId} has no repoProviderConfigId in payload", jobId);
+                throw new HubException($"WorkItem {jobId} has no repoProviderConfigId in payload");
+            }
+        }
 
         // Resolve the correct provider config based on the requested kind.
         // Brain repos need their own scoped token (different repository scope).
         ProviderConfig? targetConfig = null;
 
-        if (providerKind == ProviderKind.Brain && !string.IsNullOrEmpty(run.BrainProviderConfigId))
+        if (providerKind == ProviderKind.Brain && !string.IsNullOrEmpty(brainProviderConfigId))
         {
-            targetConfig = await _facade.GetProviderConfigByIdAsync(run.BrainProviderConfigId, ProviderKind.Repository, CancellationToken.None);
+            targetConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId, ProviderKind.Repository, CancellationToken.None);
         }
 
         if (targetConfig is null)
         {
             // Default: use the work repo config (covers Repository kind and fallback)
-            targetConfig = await _facade.GetProviderConfigByIdAsync(run.RepoProviderConfigId, ProviderKind.Repository, CancellationToken.None);
+            targetConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId!, ProviderKind.Repository, CancellationToken.None);
         }
 
         if (targetConfig is null)
+        {
+            _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);
             throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
+        }
 
         // GitHub App auth: generate a short-lived scoped token via JWT exchange
         if (targetConfig.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64))
@@ -605,6 +638,7 @@ public sealed partial class AgentHub
             return new TokenRefreshResponse { Token = existingToken, ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) };
         }
 
+        _logger.Warning("Provider config for job {JobId} (kind: {ProviderKind}) has no supported authentication method", jobId, providerKind);
         throw new HubException($"Provider config for job {jobId} (kind: {providerKind}) has no supported authentication method. " +
             "Expected 'privateKeyBase64' (GitHub App), 'accessToken' (GitLab PAT), or 'token'.");
     }
