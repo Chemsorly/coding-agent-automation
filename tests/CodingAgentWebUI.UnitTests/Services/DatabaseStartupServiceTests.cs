@@ -3,6 +3,7 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 using Serilog;
 
@@ -16,14 +17,15 @@ public class DatabaseStartupServiceTests
 
     private DatabaseStartupService CreateService(
         IDatabaseProbe probe,
-        Dictionary<string, string?>? configValues = null)
+        Dictionary<string, string?>? configValues = null,
+        TimeProvider? timeProvider = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(configValues ?? new Dictionary<string, string?>())
             .Build();
 
         return new DatabaseStartupService(
-            _dbFactoryMock.Object, _lockProviderMock.Object, config, _logger, probe);
+            _dbFactoryMock.Object, _lockProviderMock.Object, config, _logger, probe, timeProvider);
     }
 
     #region Connection Retry Tests
@@ -122,17 +124,22 @@ public class DatabaseStartupServiceTests
     [Fact]
     public async Task WaitForDatabaseConnectionAsync_FirstRetryDelay_IsApproximately2Seconds()
     {
-        // Verify the first retry delay is ~2s (InitialDelay)
+        // Verify the first retry delay uses InitialDelay (2s) via FakeTimeProvider — no wall-clock dependency
+        var fakeTime = new FakeTimeProvider();
         var probe = new FakeProbe(failCount: 1);
-        var service = CreateService(probe);
+        var service = CreateService(probe, timeProvider: fakeTime);
 
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        await service.WaitForDatabaseConnectionAsync(CancellationToken.None);
-        sw.Stop();
+        var task = service.WaitForDatabaseConnectionAsync(CancellationToken.None);
 
-        // Should take ~2s (one delay of InitialDelay=2s)
-        Assert.True(sw.Elapsed >= TimeSpan.FromSeconds(1.8) && sw.Elapsed <= TimeSpan.FromSeconds(3.5),
-            $"Expected ~2s delay, got {sw.Elapsed.TotalSeconds}s");
+        // Task should be waiting on the 2s delay — not yet completed
+        Assert.False(task.IsCompleted, "Task should be waiting on delay");
+
+        // Advance time by exactly InitialDelay (2s) — should unblock
+        fakeTime.Advance(DatabaseStartupService.InitialDelay);
+        await task;
+
+        // Probe should have been called twice: first fail, then success after delay
+        Assert.Equal(2, probe.AttemptCount);
     }
 
     #endregion
