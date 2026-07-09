@@ -440,7 +440,7 @@ public sealed class DispatchService : BackgroundService
                 try
                 {
                     await _labelSwapper.SwapLabelAsync(
-                        item.IssueProviderConfigId, item.IssueIdentifier, "agent:in-progress", ct);
+                        item.IssueProviderConfigId, item.IssueIdentifier, AgentLabels.InProgress, ct);
                 }
                 catch (Exception ex)
                 {
