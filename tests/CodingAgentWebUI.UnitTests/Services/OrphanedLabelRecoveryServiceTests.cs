@@ -82,7 +82,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(labelSwapCalled.Task, Task.Delay(TimeSpan.FromSeconds(90)));
+        var completed = await Task.WhenAny(labelSwapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
 
         // Assert: the swap was called
         completed.Should().BeSameAs(labelSwapCalled.Task, "SwapLabelAsync should have been called after grace period");
@@ -113,7 +113,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         await service.StartAsync(_cts.Token);
 
         // Wait long enough for the grace period + sweep to run
-        await Task.Delay(TimeSpan.FromSeconds(65));
+        await Task.Delay(TimeSpan.FromSeconds(2));
 
         // Assert: SwapLabelAsync was NOT called
         _mockLabelSwapper.Verify(
@@ -153,7 +153,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(secondSwapCalled.Task, Task.Delay(TimeSpan.FromSeconds(90)));
+        var completed = await Task.WhenAny(secondSwapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
 
         // Assert: second issue was still processed despite first failure
         completed.Should().BeSameAs(secondSwapCalled.Task, "Second swap should succeed despite first failure");
@@ -203,7 +203,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(90)));
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
 
         // Assert: second provider was scanned despite first failure
         completed.Should().BeSameAs(swapCalled.Task, "Second provider should be scanned despite first provider failure");
@@ -223,7 +223,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         // Act: start and wait past grace period
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
-        await Task.Delay(TimeSpan.FromSeconds(65));
+        await Task.Delay(TimeSpan.FromSeconds(2));
 
         // Assert: no provider scans attempted
         _mockProviderConfigStore.Verify(
@@ -389,7 +389,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
 
-        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(90)));
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
         completed.Should().BeSameAs(swapCalled.Task);
 
         // Assert: provider was only scanned once (deduplicated)
@@ -476,7 +476,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         _mockProviderFactory.Object,
         _mockLabelSwapper.Object,
         _mockConfigStore.Object,
-        _mockLogger.Object);
+        _mockLogger.Object,
+        TimeSpan.FromMilliseconds(50)); // Short grace period for fast tests
 
     private void SetupTemplateWithProvider(string providerId)
     {

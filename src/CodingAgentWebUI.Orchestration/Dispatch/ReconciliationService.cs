@@ -34,6 +34,10 @@ public sealed class ReconciliationService : BackgroundService
     private readonly IKubernetes _kubeClient;
     private readonly WorkItemTransitionService _transitionService;
     private readonly ILabelSwapper? _labelSwapper;
+    private readonly IRunLifecycleManager? _lifecycleManager;
+    private readonly IConsolidationService? _consolidationService;
+    private readonly IConfigurationStore? _configStore;
+    private readonly IJobDeduplicationGuard? _dedupGuard;
     private readonly ReconciliationServiceOptions _options;
 
     private string? _lastResourceVersion;
@@ -44,13 +48,21 @@ public sealed class ReconciliationService : BackgroundService
         IKubernetes kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
-        ILabelSwapper? labelSwapper = null)
+        ILabelSwapper? labelSwapper = null,
+        IRunLifecycleManager? lifecycleManager = null,
+        IConsolidationService? consolidationService = null,
+        IConfigurationStore? configStore = null,
+        IJobDeduplicationGuard? dedupGuard = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
         _kubeClient = kubeClient;
         _transitionService = transitionService;
         _labelSwapper = labelSwapper;
+        _lifecycleManager = lifecycleManager;
+        _consolidationService = consolidationService;
+        _configStore = configStore;
+        _dedupGuard = dedupGuard;
         _options = new ReconciliationServiceOptions();
         configuration.GetSection("WorkDistribution:Reconciliation").Bind(_options);
 
@@ -405,6 +417,7 @@ public sealed class ReconciliationService : BackgroundService
     {
         await DetectOrphansAsync(ct);
         await EnforceTimeoutsAsync(ct);
+        await EnforceConsolidationTimeoutsAsync(ct);
         await DetectPodStartupFailuresAsync(ct);
         await CleanupStaleWorkItemsAsync(ct);
         await CleanupStalePipelineRunsAsync(ct);
@@ -457,8 +470,10 @@ public sealed class ReconciliationService : BackgroundService
     // ── Timeout Enforcement ──────────────────────────────────────────────
 
     /// <summary>
-    /// DispatchedAt + TimeoutSeconds elapsed → Failed (Timeout) + delete Job.
-    /// Uses dispatch time (not creation time) so queue wait doesn't count toward timeout.
+    /// Timeout enforcement with progress awareness.
+    /// Uses DB-persisted LastProgressAt as the timeout anchor when available,
+    /// matching the HeartbeatMonitor behavior in SignalR/Legacy mode.
+    /// Falls back to DispatchedAt when LastProgressAt is null.
     /// </summary>
     internal async Task EnforceTimeoutsAsync(CancellationToken ct)
     {
@@ -468,17 +483,16 @@ public sealed class ReconciliationService : BackgroundService
         var candidates = await db.WorkItems
             .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
                         && w.TimeoutSeconds > 0)
-            .Select(w => new { w.Id, w.DispatchedAt, w.CreatedAt, w.TimeoutSeconds, w.K8sJobName })
+            .Select(w => new { w.Id, w.DispatchedAt, w.CreatedAt, w.TimeoutSeconds, w.K8sJobName, w.LastProgressAt, w.IssueIdentifier, w.IssueProviderConfigId })
             .ToListAsync(ct);
 
         foreach (var item in candidates)
         {
             if (ct.IsCancellationRequested) break;
 
-            // Use DispatchedAt as the timeout anchor — this is when execution actually started.
-            // Fall back to CreatedAt only for legacy items that lack DispatchedAt (should not happen
-            // for Dispatched/Running items, but defensive).
-            var anchor = item.DispatchedAt ?? item.CreatedAt;
+            // Progress-aware anchor: use LastProgressAt when available (updated by heartbeats/step transitions).
+            // Falls back to DispatchedAt → CreatedAt for items that haven't reported progress yet.
+            var anchor = item.LastProgressAt ?? item.DispatchedAt ?? item.CreatedAt;
             if (!IsTimedOut(anchor, item.TimeoutSeconds, now))
                 continue;
 
@@ -501,18 +515,52 @@ public sealed class ReconciliationService : BackgroundService
             Log.Warning("ReconciliationService: timeout — WorkItem {WorkItemId} exceeded {Timeout}s",
                 item.Id, item.TimeoutSeconds);
 
-            await _transitionService.TransitionAsync(item.Id, WorkItemStatus.Failed,
-                w =>
+            var timeoutReason = $"Timeout exceeded: {item.TimeoutSeconds}s";
+
+            // Try full lifecycle cleanup first (label swap, history, dedup, agent state).
+            // FailRunAsync uses the in-memory PipelineRun — returns null if not in memory (e.g., different replica).
+            var lifecycleHandled = false;
+            if (_lifecycleManager is not null)
+            {
+                var result = await _lifecycleManager.FailRunAsync(item.Id.ToString(), timeoutReason, ct);
+                lifecycleHandled = result is not null;
+            }
+
+            // Fallback: if no lifecycle manager or run wasn't in memory, do direct DB transition
+            // plus best-effort label swap and dedup release (prevents stale labels and permanent dispatch blocking)
+            if (!lifecycleHandled)
+            {
+                await _transitionService.TransitionAsync(item.Id, WorkItemStatus.Failed,
+                    w =>
+                    {
+                        w.CompletedAt = DateTimeOffset.UtcNow;
+                        w.FailureReason = FailureReason.Timeout;
+                        w.ErrorMessage = timeoutReason;
+                    }, ct);
+
+                // Best-effort label swap to agent:error (prevents stale agent:in-progress on GitHub)
+                if (_labelSwapper is not null)
                 {
-                    w.CompletedAt = DateTimeOffset.UtcNow;
-                    w.FailureReason = FailureReason.Timeout;
-                    w.ErrorMessage = $"Timeout exceeded: {item.TimeoutSeconds}s";
-                }, ct);
+                    try
+                    {
+                        await _labelSwapper.SwapLabelAsync(
+                            item.IssueProviderConfigId, item.IssueIdentifier,
+                            AgentLabels.Error, LabelTargetKind.Issue, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        Log.Warning(ex, "ReconciliationService: label swap to agent:error failed for WorkItem {WorkItemId} (non-fatal)", item.Id);
+                    }
+                }
+
+                // Release dedup guard (prevents issue from being permanently blocked from re-dispatch)
+                _dedupGuard?.MarkIssueComplete(item.IssueIdentifier, item.IssueProviderConfigId);
+            }
 
             LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.Timeout,
                 dispatchedAt: item.DispatchedAt);
 
-            // Delete the K8s Job
+            // Always delete the K8s Job (FailRunAsync does NOT handle this)
             if (!string.IsNullOrEmpty(item.K8sJobName))
             {
                 await TryDeleteJobAsync(item.K8sJobName, ct);
@@ -554,6 +602,43 @@ public sealed class ReconciliationService : BackgroundService
     /// Any timeout that fires with less execution time than this is blocked as a canary violation.
     /// </summary>
     internal const int MinimumExecutionAgeSeconds = 60;
+
+    // ── Consolidation Timeout ────────────────────────────────────────────
+
+    /// <summary>
+    /// Enforces timeout on consolidation runs (brain consolidation, refactoring, harness suggestions).
+    /// Mirrors HeartbeatMonitor Phase 1.7 — consolidation runs that have been Running longer than
+    /// AgentBusyProgressTimeout are marked as Failed. No-op when IConsolidationService is not injected.
+    /// </summary>
+    internal async Task EnforceConsolidationTimeoutsAsync(CancellationToken ct)
+    {
+        if (_consolidationService is null || _configStore is null)
+            return;
+
+        var pipelineConfig = await _configStore.LoadPipelineConfigAsync(ct);
+        var progressTimeout = pipelineConfig.AgentBusyProgressTimeout;
+        var now = DateTimeOffset.UtcNow;
+
+        var runs = await _consolidationService.GetRunHistoryAsync(ct);
+        var runningRuns = runs.Where(r => r.Status == ConsolidationRunStatus.Running).ToList();
+
+        foreach (var run in runningRuns)
+        {
+            if (ct.IsCancellationRequested) break;
+
+            var elapsed = now - run.StartedAtUtc;
+            if (elapsed <= progressTimeout)
+                continue;
+
+            Log.Warning(
+                "ReconciliationService: consolidation run {RunId} (type={Type}) exceeded progress timeout " +
+                "({ElapsedMin:F0} min > {TimeoutMin:F0} min limit) — marking as Failed",
+                run.RunId, run.Type, elapsed.TotalMinutes, progressTimeout.TotalMinutes);
+
+            var failReason = $"Consolidation run exceeded progress timeout ({elapsed.TotalMinutes:F0} minutes > {progressTimeout.TotalMinutes:F0} minute limit)";
+            await _consolidationService.UpdateRunAsync(run.RunId, ConsolidationRunStatus.Failed, failReason, ct);
+        }
+    }
 
     // ── Stale Cleanup ────────────────────────────────────────────────────
 

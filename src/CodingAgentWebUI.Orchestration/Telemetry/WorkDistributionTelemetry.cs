@@ -52,6 +52,15 @@ public static class WorkDistributionTelemetry
             "Timeout enforcement blocked by canary invariant — indicates timestamp bug");
 
     /// <summary>
+    /// Counter: failed attempts to persist LastProgressAt to the DB.
+    /// Sustained non-zero rate indicates progress tracking degradation — agents may be
+    /// falsely timed out because ReconciliationService sees stale LastProgressAt values.
+    /// </summary>
+    public static readonly Counter<long> ProgressWriteFailures =
+        Meter.CreateCounter<long>("workdistribution.progress_write_failures", "{failure}",
+            "Failed LastProgressAt DB writes — sustained failures risk false-positive timeouts");
+
+    /// <summary>
     /// Gauge: epoch seconds of the last DispatchService poll cycle.
     /// Used for alerting on silent dispatch failures (stale poll = dispatch starvation).
     /// </summary>

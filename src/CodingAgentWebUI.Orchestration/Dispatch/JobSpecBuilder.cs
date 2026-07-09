@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CodingAgentWebUI.Agent;
 using k8s.Models;
+using Serilog;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
@@ -254,8 +255,13 @@ public static class JobSpecBuilder
             PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
             PropertyNameCaseInsensitive = true
         };
-        return element.Deserialize<T>(options)
-            ?? throw new InvalidOperationException($"Failed to deserialize JsonElement to {typeof(T).Name}");
+        var result = element.Deserialize<T>(options);
+        if (result is null)
+        {
+            Log.Error("Failed to deserialize JsonElement to {TypeName}", typeof(T).Name);
+            throw new InvalidOperationException($"Failed to deserialize JsonElement to {typeof(T).Name}");
+        }
+        return result;
     }
 
     private static bool IsKiroAgent(string providerType) =>

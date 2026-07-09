@@ -194,6 +194,7 @@ internal sealed class ConsolidationProviderResolver
         if (issueConfig.ProviderType.Equals("GitLab", StringComparison.OrdinalIgnoreCase))
             return CreateGitLabIssueProvider(issueConfig);
 
+        Serilog.Log.Error("Unsupported issue provider type for consolidation: '{ProviderType}'", issueConfig.ProviderType);
         throw new InvalidOperationException(
             $"Unsupported issue provider type for consolidation: '{issueConfig.ProviderType}'");
     }
@@ -201,15 +202,27 @@ internal sealed class ConsolidationProviderResolver
     private static GitHubIssueProvider CreateGitHubIssueProvider(ProviderConfig issueConfig)
     {
         var apiUrl = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, "https://api.github.com");
-        var token = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Token)
-            ?? throw new InvalidOperationException(
+        var token = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Token);
+        if (token is null)
+        {
+            Serilog.Log.Error("Issue provider '{DisplayName}' is missing 'token' setting for consolidation", issueConfig.DisplayName);
+            throw new InvalidOperationException(
                 $"Issue provider '{issueConfig.DisplayName}' is missing 'token' setting for consolidation");
-        var owner = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Owner)
-            ?? throw new InvalidOperationException(
+        }
+        var owner = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Owner);
+        if (owner is null)
+        {
+            Serilog.Log.Error("Issue provider '{DisplayName}' is missing 'owner' setting for consolidation", issueConfig.DisplayName);
+            throw new InvalidOperationException(
                 $"Issue provider '{issueConfig.DisplayName}' is missing 'owner' setting for consolidation");
-        var repo = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Repo)
-            ?? throw new InvalidOperationException(
+        }
+        var repo = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Repo);
+        if (repo is null)
+        {
+            Serilog.Log.Error("Issue provider '{DisplayName}' is missing 'repo' setting for consolidation", issueConfig.DisplayName);
+            throw new InvalidOperationException(
                 $"Issue provider '{issueConfig.DisplayName}' is missing 'repo' setting for consolidation");
+        }
 
         var connection = new GitHubConnectionInfo(apiUrl, owner, repo);
         return new GitHubIssueProvider(connection, token);
@@ -218,16 +231,27 @@ internal sealed class ConsolidationProviderResolver
     private static GitLabIssueProvider CreateGitLabIssueProvider(ProviderConfig issueConfig)
     {
         var apiUrl = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ApiUrl, ProviderSettingKeys.DefaultGitLabApiUrl);
-        var accessToken = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken)
-            ?? throw new InvalidOperationException(
+        var accessToken = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.AccessToken);
+        if (accessToken is null)
+        {
+            Serilog.Log.Error("Issue provider '{DisplayName}' is missing 'accessToken' setting for consolidation", issueConfig.DisplayName);
+            throw new InvalidOperationException(
                 $"Issue provider '{issueConfig.DisplayName}' is missing 'accessToken' setting for consolidation");
-        var projectIdStr = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId)
-            ?? throw new InvalidOperationException(
+        }
+        var projectIdStr = issueConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId);
+        if (projectIdStr is null)
+        {
+            Serilog.Log.Error("Issue provider '{DisplayName}' is missing 'projectId' setting for consolidation", issueConfig.DisplayName);
+            throw new InvalidOperationException(
                 $"Issue provider '{issueConfig.DisplayName}' is missing 'projectId' setting for consolidation");
+        }
 
         if (!int.TryParse(projectIdStr, out var projectId))
+        {
+            Serilog.Log.Error("Issue provider '{DisplayName}' has invalid projectId: '{ProjectId}'. Expected a numeric value", issueConfig.DisplayName, projectIdStr);
             throw new InvalidOperationException(
                 $"Issue provider '{issueConfig.DisplayName}' has invalid projectId: '{projectIdStr}'. Expected a numeric value.");
+        }
 
         return new GitLabIssueProvider(apiUrl, accessToken, projectId);
     }

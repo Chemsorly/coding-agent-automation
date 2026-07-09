@@ -338,6 +338,9 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                         ? message.Timestamp
                         : DateTimeOffset.UtcNow;
                     run.LastStepChangeAt = clampedTimestamp;
+
+                    // Persist progress to DB for cross-replica timeout enforcement (throttled)
+                    _ = _facade.TouchLastProgressAsync(agent.ActiveJobId, clampedTimestamp, CancellationToken.None);
                 }
             }
         }

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -12,9 +13,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(PipelineDbContext))]
-    partial class PipelineDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260709091023_AddLastProgressAtToWorkItems")]
+    partial class AddLastProgressAtToWorkItems
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

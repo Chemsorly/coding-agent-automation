@@ -122,10 +122,18 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         var providerFactory = new AgentProviderFactory(_orchestrator, _httpClientFactory, config, issueOps);
 
         // Resolve provider configs from the job assignment
-        var repoConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.RepoProviderConfigId)
-            ?? throw new InvalidOperationException($"Repository provider config '{job.RepoProviderConfigId}' not found in job assignment");
-        var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.AgentProviderConfigId)
-            ?? throw new InvalidOperationException($"Agent provider config '{job.AgentProviderConfigId}' not found in job assignment");
+        var repoConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.RepoProviderConfigId);
+        if (repoConfig is null)
+        {
+            _logger.Error("Repository provider config '{RepoProviderConfigId}' not found in job assignment for job {JobId}", job.RepoProviderConfigId, job.JobId);
+            throw new InvalidOperationException($"Repository provider config '{job.RepoProviderConfigId}' not found in job assignment");
+        }
+        var agentConfig = job.ProviderConfigs.FirstOrDefault(c => c.Id == job.AgentProviderConfigId);
+        if (agentConfig is null)
+        {
+            _logger.Error("Agent provider config '{AgentProviderConfigId}' not found in job assignment for job {JobId}", job.AgentProviderConfigId, job.JobId);
+            throw new InvalidOperationException($"Agent provider config '{job.AgentProviderConfigId}' not found in job assignment");
+        }
 
         // Override blacklist settings from repo provider config (per-repo takes precedence)
         config = PipelineConfiguration.ApplyBlacklistOverride(config, repoConfig);

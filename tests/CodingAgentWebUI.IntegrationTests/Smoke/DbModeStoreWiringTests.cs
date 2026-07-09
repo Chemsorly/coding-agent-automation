@@ -20,6 +20,7 @@ namespace CodingAgentWebUI.IntegrationTests.Smoke;
 /// their Postgres implementation. If any service falls through to a filesystem implementation,
 /// data is split across two stores and eventually lost during container restart.
 /// </summary>
+[Collection("SmokeTests")]
 public class DbModeStoreWiringTests : IClassFixture<DbModeWebApplicationFactory>
 {
     private readonly DbModeWebApplicationFactory _factory;

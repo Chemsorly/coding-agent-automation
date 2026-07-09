@@ -47,7 +47,10 @@ public class ProcessWrapper : IProcessWrapper
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(workspaceDirectory);
         if (_process != null)
+        {
+            _logger.Error("Process is already running. Call Kill() first");
             throw new InvalidOperationException("Process is already running. Call Kill() first.");
+        }
 
         // Write prompt to a temporary file and use Kiro's @path file reference syntax.
         // File references expand file contents inline before sending to the model.
@@ -97,7 +100,10 @@ public class ProcessWrapper : IProcessWrapper
         try
         {
             if (!_process.Start())
+            {
+                _logger.Error("Failed to start Kiro CLI process");
                 throw new InvalidOperationException("Failed to start Kiro CLI process.");
+            }
             _process.StandardInput.Close();
             _process.BeginOutputReadLine();
             _process.BeginErrorReadLine();
@@ -115,7 +121,7 @@ public class ProcessWrapper : IProcessWrapper
             return exitCode;
         }
         catch (OperationCanceledException) { Kill(); throw; }
-        catch (Exception ex) { Kill(); throw new InvalidOperationException("Failed to execute Kiro CLI process", ex); }
+        catch (Exception ex) { Kill(); _logger.Error(ex, "Failed to execute Kiro CLI process"); throw new InvalidOperationException("Failed to execute Kiro CLI process", ex); }
         finally
         {
             // Clean up the prompt file
