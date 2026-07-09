@@ -165,24 +165,8 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
             AgentId = _agentIdentity.Id,
             Hostname = Environment.MachineName,
             Labels = labels,
-            ActiveJob = new ActiveJobState
-            {
-                RunId = _workItemId,
-                IssueIdentifier = assignment.IssueIdentifier,
-                IssueTitle = assignment.IssueDetail?.Title ?? assignment.IssueIdentifier,
-                IssueProviderConfigId = assignment.IssueProviderConfigId ?? assignment.RepoProviderConfigId,
-                RepoProviderConfigId = assignment.RepoProviderConfigId,
-                AgentProviderConfigId = assignment.AgentProviderConfigId,
-                BrainProviderConfigId = assignment.BrainProviderConfigId,
-                PipelineProviderConfigId = assignment.PipelineProviderConfigId,
-                InitiatedBy = assignment.InitiatedBy,
-                ResolvedProfileId = assignment.ResolvedProfileId,
-                ProjectId = assignment.ProjectId,
-                ProjectName = assignment.ProjectName,
-                CurrentStep = PipelineStep.Created,
-                StartedAt = DateTimeOffset.UtcNow,
-                RunType = assignment.RunType
-            }
+            ActiveJob = ActiveJobStateFactory.Create(
+                _workItemId, assignment, PipelineStep.Created, DateTimeOffset.UtcNow)
         };
 
         try

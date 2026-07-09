@@ -960,26 +960,10 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             if (_activeJobId is null || _activeJobAssignment is null)
                 return null;
 
-            return new ActiveJobState
-            {
-                RunId = _activeJobId,
-                IssueIdentifier = _activeJobAssignment.IssueIdentifier,
-                IssueTitle = _activeJobAssignment.IssueDetail?.Title ?? _activeJobAssignment.IssueIdentifier,
-                IssueProviderConfigId = _activeJobAssignment.IssueProviderConfigId ?? _activeJobAssignment.RepoProviderConfigId,
-                RepoProviderConfigId = _activeJobAssignment.RepoProviderConfigId,
-                AgentProviderConfigId = _activeJobAssignment.AgentProviderConfigId,
-                BrainProviderConfigId = _activeJobAssignment.BrainProviderConfigId,
-                PipelineProviderConfigId = _activeJobAssignment.PipelineProviderConfigId,
-                InitiatedBy = _activeJobAssignment.InitiatedBy,
-                ResolvedProfileId = _activeJobAssignment.ResolvedProfileId,
-                ProjectId = _activeJobAssignment.ProjectId,
-                ProjectName = _activeJobAssignment.ProjectName,
-                CurrentStep = _currentStep ?? PipelineStep.GeneratingCode,
-                StartedAt = _activeJobStartedAt ?? DateTimeOffset.UtcNow,
-                RunType = _activeJobRunType,
-                RepositoryName = null, // Not available on agent side from assignment message
-                ModelName = null       // Not available on agent side from assignment message
-            };
+            return ActiveJobStateFactory.Create(
+                _activeJobId, _activeJobAssignment,
+                _currentStep ?? PipelineStep.GeneratingCode,
+                _activeJobStartedAt ?? DateTimeOffset.UtcNow);
         }
     }
 
