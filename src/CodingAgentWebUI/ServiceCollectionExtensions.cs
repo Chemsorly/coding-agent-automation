@@ -13,6 +13,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Logging;
 using Serilog;
@@ -296,7 +297,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILogger<AgentHubFacade>>(),
             sp.GetService<WorkItemTransitionService>(),
-            sp.GetService<PendingWorkItemDrainService>()));
+            sp.GetService<PendingWorkItemDrainService>(),
+            sp.GetService<IDbContextFactory<PipelineDbContext>>()));
 
         return services;
     }
