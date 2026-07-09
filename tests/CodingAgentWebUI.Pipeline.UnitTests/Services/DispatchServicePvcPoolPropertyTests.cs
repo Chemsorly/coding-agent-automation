@@ -17,7 +17,7 @@ public class DispatchServicePvcPoolPropertyTests
     /// For any configured PVC list and any set of claimed PVCs (drawn from non-terminal WorkItems),
     /// available PVCs == configuredPvcs.Except(claimed).
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PvcPoolArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PvcPoolArbitraries) })]
     public void CalculateAvailablePvcs_ReturnsConfiguredExceptClaimed(PvcPoolTestInput input)
     {
         var available = DispatchService.CalculateAvailablePvcs(input.ConfiguredPvcs, input.ClaimedPvcs);

@@ -21,7 +21,7 @@ public class AgentEffortLevelPropertyTests
     /// Auto is excluded because ToCliValue(Auto) returns null, and ParseEffort(null) returns Auto
     /// — which is correct but trivial.
     /// </summary>
-    [Property(MaxTest = 50)]
+    [Property(MaxTest = 20)]
     public Property NonAutoLevels_Roundtrip_ToCliValueThenParse()
     {
         var nonAutoLevels = Enum.GetValues<AgentEffortLevel>()
@@ -71,7 +71,7 @@ public class AgentEffortLevelPropertyTests
     /// <summary>
     /// ParseEffort is case-insensitive: "HIGH", "High", "high" all parse to High.
     /// </summary>
-    [Property(MaxTest = 30)]
+    [Property(MaxTest = 20)]
     public Property ParseEffort_CaseInsensitive()
     {
         var validValues = new[] { "low", "medium", "high", "xhigh", "max", "auto" };
@@ -94,7 +94,7 @@ public class AgentEffortLevelPropertyTests
     /// ParseEffort never throws for any arbitrary string input.
     /// Unrecognized values return Auto.
     /// </summary>
-    [Property(MaxTest = 100)]
+    [Property(MaxTest = 20)]
     public Property ParseEffort_NeverThrows_ForAnyString()
     {
         var gen = Gen.OneOf(

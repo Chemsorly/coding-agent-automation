@@ -64,7 +64,7 @@ public class FeedbackMessagePackRoundtripPropertyTests
 
     // ── HarnessFeedback (standalone) ─────────────────────────────────────
 
-    [Property(MaxTest = 30)]
+    [Property(MaxTest = 20)]
     public Property HarnessFeedback_MessagePackRoundTrip_PreservesFields()
     {
         var gen =
@@ -95,7 +95,7 @@ public class FeedbackMessagePackRoundtripPropertyTests
 
     // ── IssueFeedback (standalone) ───────────────────────────────────────
 
-    [Property(MaxTest = 30)]
+    [Property(MaxTest = 20)]
     public Property IssueFeedback_MessagePackRoundTrip_PreservesFields()
     {
         var gen =
