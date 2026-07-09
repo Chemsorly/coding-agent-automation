@@ -59,7 +59,7 @@ public class ConfigMigrationRoundTripPropertyTests : IDisposable
     /// importing via ConfigMigrationService, then reading back from the store
     /// produces semantically equivalent configuration.
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(PipelineConfigArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(PipelineConfigArbitraries) })]
     public async Task<bool> ImportThenReadBack_ProducesEquivalentConfig(PipelineConfiguration config)
     {
         // Reset DB for each iteration

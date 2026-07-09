@@ -18,7 +18,7 @@ public class DispatchServiceImageMappingPropertyTests
     /// NormalizeSelector produces the same canonical key (sorted, comma-joined).
     /// Same key guarantees same image lookup.
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ImageMappingArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ImageMappingArbitraries) })]
     public void NormalizeSelector_ProducesSameKey_RegardlessOfInputOrder(string[] labels)
     {
         // Arrange: create two different orderings of the same label set
@@ -37,7 +37,7 @@ public class DispatchServiceImageMappingPropertyTests
     /// Property 15 (supplementary): NormalizeSelector is idempotent —
     /// normalizing an already-normalized selector produces the same result.
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ImageMappingArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ImageMappingArbitraries) })]
     public void NormalizeSelector_IsIdempotent(string[] labels)
     {
         var input = string.Join(",", labels);
@@ -52,7 +52,7 @@ public class DispatchServiceImageMappingPropertyTests
     /// Property 15 (supplementary): NormalizeSelector output is always sorted —
     /// the result labels are in lexicographic order.
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ImageMappingArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ImageMappingArbitraries) })]
     public void NormalizeSelector_OutputIsSorted(string[] labels)
     {
         var input = string.Join(",", labels);

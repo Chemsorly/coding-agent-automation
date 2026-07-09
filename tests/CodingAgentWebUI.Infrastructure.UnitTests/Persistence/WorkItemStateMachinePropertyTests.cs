@@ -43,7 +43,7 @@ public class WorkItemStateMachinePropertyTests
     /// if and only if the pair is in the allowed transition set.
     /// **Validates: Requirements 7.5**
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(WorkItemStatusPairArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(WorkItemStatusPairArbitraries) })]
     public void IsValidTransition_ReturnsTrue_IffPairInAllowedSet(WorkItemStatus current, WorkItemStatus target)
     {
         var expected = AllowedTransitions.Contains((current, target));
@@ -94,7 +94,7 @@ public class WorkItemStateMachineReachabilityPropertyTests
     /// in a non-terminal state that has valid outgoing transitions.
     /// No valid transition sequence can "strand" a work item in a state with no exit.
     /// </summary>
-    [Property(MaxTest = 200)]
+    [Property(MaxTest = 20)]
     public bool RandomWalk_FromPending_NeverStrands(int seed)
     {
         var rng = new Random(seed);

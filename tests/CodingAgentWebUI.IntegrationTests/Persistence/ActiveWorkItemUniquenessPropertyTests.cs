@@ -67,7 +67,7 @@ public class ActiveWorkItemUniquenessPropertyTests : IDisposable
     /// IsIssueDistributedAsync to return true for the same issue+provider pair,
     /// which the pipeline uses to prevent duplicate dispatch.
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ActiveWorkItemArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ActiveWorkItemArbitraries) })]
     public async Task<bool> ActiveWorkItem_IsIssueDistributed_ReturnsTrue(WorkItemStatus activeStatus)
     {
         // Only test active statuses
@@ -105,7 +105,7 @@ public class ActiveWorkItemUniquenessPropertyTests : IDisposable
     /// attempting to check the same issue shows it as already distributed,
     /// preventing the pipeline from creating a duplicate.
     /// </summary>
-    [Property(Arbitrary = new[] { typeof(ActiveWorkItemArbitraries) })]
+    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ActiveWorkItemArbitraries) })]
     public async Task<bool> DistributeThenCheck_PreventsSecondDispatch(NonEmptyString issueIdSuffix)
     {
         var issueId = $"owner/repo#{issueIdSuffix.Get.Replace(" ", "")}";

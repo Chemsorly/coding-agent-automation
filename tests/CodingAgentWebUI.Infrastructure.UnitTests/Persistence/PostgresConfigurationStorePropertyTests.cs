@@ -127,7 +127,7 @@ public class PostgresConfigurationStorePropertyTests : IDisposable
     /// Property P3: Saving the same PipelineConfiguration twice does not create duplicates
     /// and the second save's values are what get loaded.
     /// </summary>
-    [Property(MaxTest = 10)]
+    [Property(MaxTest = 20)]
     public void PipelineConfig_SaveTwice_IsIdempotent(int seed)
     {
         var retries1 = Math.Abs(seed % 50);
@@ -152,7 +152,7 @@ public class PostgresConfigurationStorePropertyTests : IDisposable
     /// <summary>
     /// Property P4: Saving then deleting a ProviderConfig results in an empty list for that kind.
     /// </summary>
-    [Property(MaxTest = 10)]
+    [Property(MaxTest = 20)]
     public void ProviderConfig_SaveThenDelete_YieldsEmpty(byte kindSeed)
     {
         var kinds = Enum.GetValues<ProviderKind>();
@@ -183,7 +183,7 @@ public class PostgresConfigurationStorePropertyTests : IDisposable
     /// <summary>
     /// Property P5: GetProviderConfigByIdAsync returns the same config that was saved.
     /// </summary>
-    [Property(MaxTest = 10)]
+    [Property(MaxTest = 20)]
     public void ProviderConfig_GetById_ReturnsSavedConfig(
         byte kindSeed,
         NonEmptyString displayName)
