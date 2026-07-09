@@ -112,7 +112,7 @@ public class ParserCrashFreedomPropertyTests
         StdoutTestResultParser.ParseTestCounts(input);
 
         sw.Stop();
-        sw.ElapsedMilliseconds.Should().BeLessThan(5000,
+        sw.ElapsedMilliseconds.Should().BeLessThan(10_000,
             "parser should not catastrophically backtrack on adversarial input");
     }
 

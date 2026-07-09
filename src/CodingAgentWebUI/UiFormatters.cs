@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI;
 
 public static class UiFormatters
@@ -21,13 +23,13 @@ public static class UiFormatters
 
     public static string GetLabelClass(string label) => label switch
     {
-        "agent:next" => "label-agent-next",
-        "agent:in-progress" => "label-agent-progress",
-        "agent:error" => "label-agent-error",
-        "agent:needs-refinement" => "label-agent-refinement",
-        "agent:epic" => "label-agent-epic",
-        "agent:epic-approved" => "label-agent-epic-approved",
-        "agent:epic-review" => "label-agent-epic-review",
+        AgentLabels.Next => "label-agent-next",
+        AgentLabels.InProgress => "label-agent-progress",
+        AgentLabels.Error => "label-agent-error",
+        AgentLabels.NeedsRefinement => "label-agent-refinement",
+        AgentLabels.Epic => "label-agent-epic",
+        AgentLabels.EpicApproved => "label-agent-epic-approved",
+        AgentLabels.EpicReview => "label-agent-epic-review",
         _ => ""
     };
 }

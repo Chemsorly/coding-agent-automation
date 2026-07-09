@@ -220,7 +220,7 @@ public sealed class ReconciliationService : BackgroundService
             try
             {
                 await _labelSwapper.SwapLabelAsync(
-                    item.IssueProviderConfigId, item.IssueIdentifier, "agent:next", ct);
+                    item.IssueProviderConfigId, item.IssueIdentifier, AgentLabels.Next, ct);
                 Log.Information(
                     "ReconciliationService: startup label reconciliation — swapped to agent:next for {Issue}",
                     item.IssueIdentifier);
