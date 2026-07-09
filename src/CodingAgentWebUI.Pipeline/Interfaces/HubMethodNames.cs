@@ -34,6 +34,7 @@ public static class HubMethodNames
     public const string RequestCreateIssue = nameof(IAgentHub.RequestCreateIssue);
     public const string RequestCreateIssueForProvider = nameof(IAgentHub.RequestCreateIssueForProvider);
     public const string RequestListOpenIssues = nameof(IAgentHub.RequestListOpenIssues);
+    public const string RequestListClosedIssues = nameof(IAgentHub.RequestListClosedIssues);
     public const string RequestGetIssue = nameof(IAgentHub.RequestGetIssue);
     public const string RequestListComments = nameof(IAgentHub.RequestListComments);
     public const string RequestUpdateComment = nameof(IAgentHub.RequestUpdateComment);

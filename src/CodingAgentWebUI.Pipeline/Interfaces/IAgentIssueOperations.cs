@@ -66,4 +66,15 @@ public interface IAgentIssueOperations
     /// </summary>
     Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct)
         => throw new NotSupportedException("UpdateCommentAsync is not implemented by this provider.");
+
+    /// <summary>
+    /// Lists closed issues with optional label filtering and date cutoff.
+    /// Used by <see cref="IOpenIssueContextWriter"/> to include recently-closed sibling issues
+    /// in epic decomposition runs.
+    /// </summary>
+    // TODO: Default implementation throws NotSupportedException. Consider returning an empty
+    // PagedResult instead (matching IIssueProvider pattern) for resilience with providers
+    // that don't implement this method.
+    Task<PagedResult<IssueSummary>> ListClosedIssuesAsync(int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since, CancellationToken ct)
+        => throw new NotSupportedException("ListClosedIssuesAsync is not implemented by this provider.");
 }
