@@ -630,32 +630,29 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
             });
 
-        return new PipelineStepContext
-        {
-            Run = inputs.Run,
-            Config = inputs.Config,
-            RepoProvider = inputs.RepoProvider,
-            AgentProvider = inputs.AgentProvider,
-            BrainProvider = inputs.BrainProvider,
-            PipelineProvider = inputs.PipelineProvider,
-            Cts = inputs.LocalCts,
-            ConfigStore = new NullConfigurationStore(),
-            Callbacks = callbacks,
-            IssueOps = inputs.IssueOps,
-            AgentExecution = inputs.AgentExecution,
-            QualityGates = inputs.QualityGates,
-            BrainSync = inputs.BrainSync,
-            PrOrchestrator = inputs.PrOrchestrator,
-            PreResolvedReviewerConfigs = inputs.Job.ReviewerConfigs,
-            PreResolvedQualityGateConfigs = inputs.Job.QualityGateConfigs,
-            Logger = _logger,
-            QualityGateValidator = _qualityGateValidator,
-            ProjectContext = inputs.Job.ProjectContext,
-            // Pre-populate issue data from job (no IssueProvider on agent side)
-            Issue = inputs.Job.IssueDetail,
-            ParsedIssue = inputs.Job.ParsedIssue,
-            IssueComments = inputs.Job.IssueComments
-        };
+        return PipelineStepContext.ForAgent(
+            run: inputs.Run,
+            config: inputs.Config,
+            repoProvider: inputs.RepoProvider,
+            agentProvider: inputs.AgentProvider,
+            brainProvider: inputs.BrainProvider,
+            pipelineProvider: inputs.PipelineProvider,
+            cts: inputs.LocalCts,
+            configStore: new NullConfigurationStore(),
+            callbacks: callbacks,
+            issueOps: inputs.IssueOps,
+            agentExecution: inputs.AgentExecution,
+            qualityGates: inputs.QualityGates,
+            brainSync: inputs.BrainSync,
+            prOrchestrator: inputs.PrOrchestrator,
+            logger: _logger,
+            qualityGateValidator: _qualityGateValidator,
+            issue: inputs.Job.IssueDetail,
+            parsedIssue: inputs.Job.ParsedIssue,
+            issueComments: inputs.Job.IssueComments,
+            preResolvedReviewerConfigs: inputs.Job.ReviewerConfigs,
+            preResolvedQualityGateConfigs: inputs.Job.QualityGateConfigs,
+            projectContext: inputs.Job.ProjectContext);
     }
 
     private async Task CreatePullRequestAsync(
