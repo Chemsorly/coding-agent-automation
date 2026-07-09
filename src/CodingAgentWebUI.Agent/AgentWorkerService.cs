@@ -342,20 +342,10 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             JobCompletionPayload? completion = null;
             try
             {
-                completion = await _executor.ExecuteAsync(
-                    message, _hubManager.Connection, outputBatcher,
+                completion = await AgentJobRunner.ExecuteAsync(
+                    _executor, message, _hubManager.Connection, outputBatcher,
                     step => _currentStep = step,
-                    jobCts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                completion = new JobCompletionPayload
-                {
-                    FinalStep = PipelineStep.Cancelled,
-                    CompletedAt = DateTimeOffset.UtcNow,
-                    IsRework = message.LinkedPullRequest is not null,
-                    FinalLabel = AgentLabels.Cancelled
-                };
+                    jobCts.Token, cancelledLabel: AgentLabels.Cancelled);
             }
             catch (Exception ex)
             {

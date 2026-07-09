@@ -21,38 +21,37 @@ namespace CodingAgentWebUI.Agent;
 public static class AgentJobRunner
 {
     /// <summary>
-    /// Executes a pipeline job via the provided executor, handling cancellation and errors uniformly.
+    /// Delegate matching the ExecuteAsync signature shared by both <see cref="IPipelineExecutor"/>
+    /// and <see cref="IWorkItemExecutor"/>.
+    /// </summary>
+    public delegate Task<JobCompletionPayload> PipelineExecuteDelegate(
+        JobAssignmentMessage assignment,
+        HubConnection connection,
+        OutputBatcher outputBatcher,
+        Action<PipelineStep?>? onStepChanged,
+        CancellationToken ct);
+
+    /// <summary>
+    /// Executes a pipeline job via the provided executor delegate, handling cancellation and errors uniformly.
     /// Always returns a <see cref="JobCompletionPayload"/> — never throws (except for <see cref="OperationCanceledException"/>
     /// when <paramref name="rethrowOnSigterm"/> is cancelled, allowing the caller's SIGTERM handler to run).
     /// </summary>
-    /// <param name="executor">The pipeline executor to invoke.</param>
-    /// <param name="assignment">The job assignment with full context.</param>
-    /// <param name="connection">Hub connection for progress reporting (may be null for testing).</param>
-    /// <param name="onStepChanged">Callback for step transition notifications.</param>
-    /// <param name="ct">Cancellation token. When cancelled, returns a Cancelled payload.</param>
-    /// <param name="rethrowOnSigterm">
-    /// Optional secondary cancellation token representing SIGTERM. If this token is cancelled
-    /// when an <see cref="OperationCanceledException"/> occurs, the exception is rethrown
-    /// to allow the caller's SIGTERM handler to manage shutdown.
-    /// </param>
-    /// <returns>A <see cref="JobCompletionPayload"/> with the final status.</returns>
     public static async Task<JobCompletionPayload> ExecuteAsync(
-        IPipelineExecutor executor,
+        PipelineExecuteDelegate execute,
         JobAssignmentMessage assignment,
         HubConnection connection,
+        OutputBatcher outputBatcher,
         Action<PipelineStep?> onStepChanged,
         CancellationToken ct,
-        CancellationToken rethrowOnSigterm = default)
+        CancellationToken rethrowOnSigterm = default,
+        string? cancelledLabel = null)
     {
-        await using var outputBatcher = new OutputBatcher();
-
         try
         {
-            return await executor.ExecuteAsync(assignment, connection, outputBatcher, onStepChanged, ct);
+            return await execute(assignment, connection, outputBatcher, onStepChanged, ct);
         }
         catch (OperationCanceledException) when (rethrowOnSigterm != default && rethrowOnSigterm.IsCancellationRequested)
         {
-            // SIGTERM path — rethrow to let the caller's SIGTERM handler manage shutdown
             throw;
         }
         catch (OperationCanceledException)
@@ -61,7 +60,8 @@ public static class AgentJobRunner
             {
                 FinalStep = PipelineStep.Cancelled,
                 CompletedAt = DateTimeOffset.UtcNow,
-                IsRework = assignment.LinkedPullRequest is not null
+                IsRework = assignment.LinkedPullRequest is not null,
+                FinalLabel = cancelledLabel
             };
         }
         catch (Exception ex)
@@ -74,5 +74,47 @@ public static class AgentJobRunner
                 IsRework = assignment.LinkedPullRequest is not null
             };
         }
+    }
+
+    /// <summary>Convenience overload accepting <see cref="IPipelineExecutor"/> directly.</summary>
+    public static Task<JobCompletionPayload> ExecuteAsync(
+        IPipelineExecutor executor,
+        JobAssignmentMessage assignment,
+        HubConnection connection,
+        OutputBatcher outputBatcher,
+        Action<PipelineStep?> onStepChanged,
+        CancellationToken ct,
+        CancellationToken rethrowOnSigterm = default,
+        string? cancelledLabel = null)
+        => ExecuteAsync(executor.ExecuteAsync, assignment, connection, outputBatcher, onStepChanged, ct, rethrowOnSigterm, cancelledLabel);
+
+    /// <summary>Convenience overload accepting <see cref="IWorkItemExecutor"/> directly.</summary>
+    public static Task<JobCompletionPayload> ExecuteAsync(
+        IWorkItemExecutor executor,
+        JobAssignmentMessage assignment,
+        HubConnection connection,
+        OutputBatcher outputBatcher,
+        Action<PipelineStep?> onStepChanged,
+        CancellationToken ct,
+        CancellationToken rethrowOnSigterm = default,
+        string? cancelledLabel = null)
+        => ExecuteAsync(executor.ExecuteAsync, assignment, connection, outputBatcher, onStepChanged, ct, rethrowOnSigterm, cancelledLabel);
+
+    // ── Backward-compatible overload (used by tests without OutputBatcher) ──
+
+    /// <summary>
+    /// Simplified overload that creates an internal <see cref="OutputBatcher"/> (without OnFlush wiring).
+    /// Useful for testing or when output streaming is not needed.
+    /// </summary>
+    public static async Task<JobCompletionPayload> ExecuteAsync(
+        IPipelineExecutor executor,
+        JobAssignmentMessage assignment,
+        HubConnection connection,
+        Action<PipelineStep?> onStepChanged,
+        CancellationToken ct,
+        CancellationToken rethrowOnSigterm = default)
+    {
+        await using var outputBatcher = new OutputBatcher();
+        return await ExecuteAsync(executor, assignment, connection, outputBatcher, onStepChanged, ct, rethrowOnSigterm);
     }
 }

@@ -201,40 +201,10 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
             }
         };
 
-        JobCompletionPayload? completion = null;
-        try
-        {
-            completion = await _workItemExecutor.ExecuteAsync(
-                assignment, _connectionManager.Connection, outputBatcher,
-                step => _connectionManager.UpdateCurrentStep(step),
-                pipelineCt);
-        }
-        catch (OperationCanceledException) when (pipelineCt.IsCancellationRequested && !ct.IsCancellationRequested)
-        {
-            // Pipeline cancelled externally (not SIGTERM)
-            completion = new JobCompletionPayload
-            {
-                FinalStep = PipelineStep.Cancelled,
-                CompletedAt = DateTimeOffset.UtcNow,
-                IsRework = assignment.LinkedPullRequest is not null
-            };
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            // SIGTERM — propagate up for SIGTERM handler
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Pipeline execution failed for work item {WorkItemId}", _workItemId);
-            completion = new JobCompletionPayload
-            {
-                FinalStep = PipelineStep.Failed,
-                FailureReason = ex.Message,
-                CompletedAt = DateTimeOffset.UtcNow,
-                IsRework = assignment.LinkedPullRequest is not null
-            };
-        }
+        var completion = await AgentJobRunner.ExecuteAsync(
+            _workItemExecutor, assignment, _connectionManager.Connection, outputBatcher,
+            step => _connectionManager.UpdateCurrentStep(step),
+            pipelineCt, rethrowOnSigterm: ct);
 
         // Step 5: Report completion via unified reporter
         try
