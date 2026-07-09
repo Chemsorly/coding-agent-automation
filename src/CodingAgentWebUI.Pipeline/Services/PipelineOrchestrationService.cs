@@ -200,18 +200,24 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         Steps.PipelineStepContext? ctx = null;
 
         var callbacks = new OrchestratorCallbacks(this, run, () => ctx);
-        ctx = new Steps.PipelineStepContext
-        {
-            Run = run, Config = _activeConfig!, RepoProvider = _providerManager.ActiveRepoProvider!,
-            AgentProvider = _providerManager.ActiveAgentProvider!, BrainProvider = _providerManager.ActiveBrainProvider,
-            PipelineProvider = _providerManager.ActivePipelineProvider, Cts = _lifecycle.CancellationTokenSource,
-            ConfigStore = _configStore, IssueProvider = issueProvider,
-            Callbacks = callbacks,
-            IssueOps = issueOps, AgentExecution = _executionFacade.AgentExecution,
-            QualityGates = _executionFacade.QualityGates, BrainSync = _executionFacade.BrainSync,
-            PrOrchestrator = _completionFacade.PrOrchestrator, Logger = _logger,
-            QualityGateValidator = _executionFacade.QualityGateValidator
-        };
+        ctx = Steps.PipelineStepContext.ForOrchestrator(
+            run: run,
+            config: _activeConfig!,
+            repoProvider: _providerManager.ActiveRepoProvider!,
+            agentProvider: _providerManager.ActiveAgentProvider!,
+            brainProvider: _providerManager.ActiveBrainProvider,
+            pipelineProvider: _providerManager.ActivePipelineProvider,
+            cts: _lifecycle.CancellationTokenSource,
+            configStore: _configStore,
+            callbacks: callbacks,
+            issueOps: issueOps,
+            agentExecution: _executionFacade.AgentExecution,
+            qualityGates: _executionFacade.QualityGates,
+            brainSync: _executionFacade.BrainSync,
+            prOrchestrator: _completionFacade.PrOrchestrator,
+            logger: _logger,
+            qualityGateValidator: _executionFacade.QualityGateValidator,
+            issueProvider: issueProvider);
 
         try
         {
