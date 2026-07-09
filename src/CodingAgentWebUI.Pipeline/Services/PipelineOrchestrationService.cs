@@ -521,6 +521,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             else
             {
                 // Implementation runs: use the active issue provider directly (existing behavior)
+                // TODO: Pass expectedCurrentLabel to enable state machine validation on this code path (#1046)
                 _logger.Debug(
                     "Pipeline {RunId} SwapAgentLabelAsync using direct provider path (bypassing LabelSwapper) for issue {IssueIdentifier} → {Label}",
                     run.RunId, issueId, newLabel);

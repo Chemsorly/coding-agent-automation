@@ -20,7 +20,8 @@ public interface IAgentIssueOperations
     /// Swaps the current agent label on the specified issue to <paramref name="newLabel"/>.
     /// Removes all existing agent labels before adding the new one.
     /// </summary>
-    Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct);
+    /// <param name="currentLabel">Optional: the expected current label for state machine validation.</param>
+    Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct, string? currentLabel = null);
 
     // --- Decomposition-specific operations ---
     // All calls are proxied through SignalR to the orchestrator, which resolves

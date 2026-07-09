@@ -55,9 +55,10 @@ public sealed class RunLifecycleManagerTests
             "issue-provider-1", "repo-provider-1", PipelineRunType.Review, CancellationToken.None);
 
         // Assert: label swap uses repoProviderConfigId + PullRequest target
+        // TODO: Verify the specific expectedCurrentLabel value passed (not It.IsAny<string?>) to validate state machine coverage (#1046)
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
             "repo-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.PullRequest,
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -75,7 +76,7 @@ public sealed class RunLifecycleManagerTests
         // Assert: label swap uses issueProviderConfigId + Issue target
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
             "issue-provider-1", "org/repo#10", AgentLabels.InProgress, LabelTargetKind.Issue,
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -93,7 +94,7 @@ public sealed class RunLifecycleManagerTests
         // Assert: label swap uses issueProviderConfigId + Issue target
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
             "issue-provider-1", "org/repo#5", AgentLabels.InProgress, LabelTargetKind.Issue,
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -153,7 +154,7 @@ public sealed class RunLifecycleManagerTests
         // Label swapped to error via issue provider (Implementation → Issue target)
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
             "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue,
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -170,7 +171,7 @@ public sealed class RunLifecycleManagerTests
             It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]
@@ -188,7 +189,7 @@ public sealed class RunLifecycleManagerTests
         // Assert: label swap routes via repo provider for Review runs
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
             "rp-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.PullRequest,
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     // ── CompleteRunAsync ────────────────────────────────────────────────
@@ -218,7 +219,7 @@ public sealed class RunLifecycleManagerTests
         // CompleteRunAsync does NOT clear agent state or swap labels (caller does that)
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
     }
 
     [Fact]

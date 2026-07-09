@@ -36,7 +36,8 @@ public sealed class LabelSwapper : ILabelSwapper
         string identifier,
         string newLabel,
         LabelTargetKind targetKind,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? expectedCurrentLabel = null)
     {
         ArgumentNullException.ThrowIfNull(providerConfigId);
         ArgumentNullException.ThrowIfNull(identifier);
@@ -51,11 +52,11 @@ public sealed class LabelSwapper : ILabelSwapper
             switch (targetKind)
             {
                 case LabelTargetKind.Issue:
-                    await SwapIssueLabelAsync(providerConfigId, identifier, newLabel, ct);
+                    await SwapIssueLabelAsync(providerConfigId, identifier, newLabel, ct, expectedCurrentLabel);
                     break;
 
                 case LabelTargetKind.PullRequest:
-                    await SwapPrLabelAsync(providerConfigId, identifier, newLabel, ct);
+                    await SwapPrLabelAsync(providerConfigId, identifier, newLabel, ct, expectedCurrentLabel);
                     break;
 
                 default:
@@ -136,7 +137,8 @@ public sealed class LabelSwapper : ILabelSwapper
         string issueProviderConfigId,
         string issueIdentifier,
         string newLabel,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? expectedCurrentLabel = null)
     {
         var issueConfig = await _configStore.GetProviderConfigByIdAsync(issueProviderConfigId, ProviderKind.Issue, ct);
         if (issueConfig is null)
@@ -153,7 +155,8 @@ public sealed class LabelSwapper : ILabelSwapper
             (label, c) => issueProvider.RemoveLabelAsync(issueIdentifier, label, c),
             (label, c) => issueProvider.AddLabelAsync(issueIdentifier, label, c),
             newLabel,
-            ct);
+            ct,
+            expectedCurrentLabel);
     }
 
     /// <summary>
@@ -163,7 +166,8 @@ public sealed class LabelSwapper : ILabelSwapper
         string repoProviderConfigId,
         string prIdentifier,
         string newLabel,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? expectedCurrentLabel = null)
     {
         var repoConfig = await _configStore.GetProviderConfigByIdAsync(repoProviderConfigId, ProviderKind.Repository, ct);
         if (repoConfig is null)
@@ -188,6 +192,7 @@ public sealed class LabelSwapper : ILabelSwapper
             (label, c) => repoProvider.RemovePrLabelAsync(prNumber, label, c),
             (label, c) => repoProvider.AddPrLabelAsync(prNumber, label, c),
             newLabel,
-            ct);
+            ct,
+            expectedCurrentLabel);
     }
 }

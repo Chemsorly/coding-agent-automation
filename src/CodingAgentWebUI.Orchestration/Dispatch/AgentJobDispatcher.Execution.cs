@@ -583,6 +583,7 @@ public sealed partial class AgentJobDispatcher
         agent.ActiveJobId = null;
         _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
+        // TODO: Pass expectedCurrentLabel: AgentLabels.InProgress for state machine validation (#1046)
         if (targetKind.HasValue)
             await _infra.LabelSwapper.SwapLabelAsync(providerConfigId, identifier, revertLabel, targetKind.Value, CancellationToken.None);
         else

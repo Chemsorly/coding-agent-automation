@@ -14,12 +14,17 @@ public static class AgentLabelOperations
     /// <summary>Adds <paramref name="newLabel"/> first, then removes all other agent labels.
     /// Add-first ordering ensures the target label is present even if the process is
     /// interrupted mid-swap (e.g., Docker SIGKILL during shutdown).</summary>
+    /// <param name="currentLabel">Optional: the expected current label for state machine validation.
+    /// When provided, logs a warning if the transition is invalid. Never blocks execution.</param>
     public static async Task SwapAsync(
         Func<string, CancellationToken, Task> removeLabel,
         Func<string, CancellationToken, Task> addLabel,
         string newLabel,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? currentLabel = null)
     {
+        LabelStateMachine.ValidateTransition(currentLabel, newLabel);
+
         // Add the target label first so the issue is never left without a status label
         // if the operation is interrupted partway through.
         if (!string.IsNullOrEmpty(newLabel))

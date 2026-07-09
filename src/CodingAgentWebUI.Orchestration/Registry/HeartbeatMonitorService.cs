@@ -446,6 +446,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
         try
         {
+            // TODO: Pass expectedCurrentLabel: AgentLabels.InProgress for state machine validation (#1046)
             await _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, AgentLabels.Error, targetKind, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

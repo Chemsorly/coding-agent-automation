@@ -51,8 +51,11 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
 
     /// <summary>
     /// Swaps the agent label on the issue via the orchestrator.
+    /// The currentLabel parameter is accepted for interface compliance but not transmitted
+    /// over SignalR — validation happens on the orchestrator side when the hub processes the request.
     /// </summary>
-    public Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct)
+    // TODO: Transmit currentLabel over SignalR so the orchestrator hub can run LabelStateMachine.ValidateTransition for agent-side swaps (#1046)
+    public Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct, string? currentLabel = null)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(newLabel);
@@ -64,6 +67,7 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// Swaps the agent label via the orchestrator with explicit target kind routing.
     /// Used by review runs to route label swaps to PRs instead of issues.
     /// </summary>
+    // TODO: Add currentLabel parameter to this overload to enable state machine validation for agent-side swaps (#1046)
     public Task SwapLabelAsync(string identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(identifier);

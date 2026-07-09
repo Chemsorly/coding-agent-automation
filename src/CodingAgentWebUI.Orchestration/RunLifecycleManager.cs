@@ -215,7 +215,18 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         var targetKind = runType == PipelineRunType.Review
             ? LabelTargetKind.PullRequest
             : LabelTargetKind.Issue;
-        await TrySwapLabelAsync(issueIdentifier, providerForLabel, targetKind, AgentLabels.InProgress, ct);
+
+        // Expected current label depends on context:
+        // - Implementation/Review runs: agent:next
+        // - Decomposition analysis: agent:epic
+        // - Decomposition phase 2: agent:epic-approved
+        string? expectedCurrentLabel = runType switch
+        {
+            PipelineRunType.DecompositionAnalysis => AgentLabels.Epic,
+            PipelineRunType.Decomposition => AgentLabels.EpicApproved,
+            _ => AgentLabels.Next
+        };
+        await TrySwapLabelAsync(issueIdentifier, providerForLabel, targetKind, AgentLabels.InProgress, ct, expectedCurrentLabel);
 
         _logger.Information(
             "RunLifecycleManager.AgentAcceptedRunAsync: agent {AgentId} accepted run {RunId} for issue {IssueIdentifier}",
@@ -295,7 +306,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
                 ? run.RepoProviderConfigId
                 : run.IssueProviderConfigId;
 
-            await _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, label, targetKind, ct);
+            // The run is always in agent:in-progress when FailRunAsync or CancelRunAsync is called
+            await _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, label, targetKind, ct,
+                expectedCurrentLabel: AgentLabels.InProgress);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -304,11 +317,11 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     private async Task TrySwapLabelAsync(string issueIdentifier, string providerConfigId,
-        LabelTargetKind targetKind, string label, CancellationToken ct)
+        LabelTargetKind targetKind, string label, CancellationToken ct, string? expectedCurrentLabel = null)
     {
         try
         {
-            await _labelSwapper.SwapLabelAsync(providerConfigId, issueIdentifier, label, targetKind, ct);
+            await _labelSwapper.SwapLabelAsync(providerConfigId, issueIdentifier, label, targetKind, ct, expectedCurrentLabel);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

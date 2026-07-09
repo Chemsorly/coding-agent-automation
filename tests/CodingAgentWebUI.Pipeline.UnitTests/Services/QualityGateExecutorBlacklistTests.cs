@@ -50,7 +50,7 @@ public class QualityGateExecutorBlacklistTests
             .Returns(Task.CompletedTask);
         _mockCallbacks.Setup(c => c.CreatePullRequest(It.IsAny<PipelineRun>(), It.IsAny<QualityGateReport>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         // Mock GetRunStatusAsync so CI polling exits immediately (CI "appeared")
@@ -90,7 +90,7 @@ public class QualityGateExecutorBlacklistTests
 
         // Assert: pipeline continues — blacklisted files recorded but no failure
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
-        _mockIssueOps.Verify(o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Never);
+        _mockIssueOps.Verify(o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
         run.BlacklistedFilesDetected.Should().Contain(".agent/settings.json");
         run.BlacklistedFilesDetected.Should().Contain(".github/workflows/ci.yml");
         run.FailureReason.Should().BeNull();
@@ -124,7 +124,7 @@ public class QualityGateExecutorBlacklistTests
         // Assert: pipeline continues — NotifyChange called, no failure transition
         _mockCallbacks.Verify(c => c.NotifyChange(), Times.AtLeastOnce);
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
-        _mockIssueOps.Verify(o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Never);
+        _mockIssueOps.Verify(o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
         run.BlacklistedFilesDetected.Should().Contain(".agent/config.json");
         run.FailureReason.Should().BeNull();
     }
@@ -155,7 +155,7 @@ public class QualityGateExecutorBlacklistTests
 
         // Assert: no blacklist actions taken
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
-        _mockIssueOps.Verify(o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Never);
+        _mockIssueOps.Verify(o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Never);
         _mockCallbacks.Verify(c => c.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
         run.BlacklistedFilesDetected.Should().BeEmpty();
         run.FailureReason.Should().BeNull();

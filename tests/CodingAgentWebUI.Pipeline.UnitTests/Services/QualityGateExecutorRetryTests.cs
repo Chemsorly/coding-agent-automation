@@ -89,7 +89,7 @@ public class QualityGateExecutorRetryTests
             .Returns(Task.CompletedTask);
 
         // Default issue ops
-        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         // Default history service

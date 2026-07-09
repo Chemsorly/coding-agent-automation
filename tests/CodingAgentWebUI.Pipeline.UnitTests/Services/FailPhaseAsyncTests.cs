@@ -60,7 +60,7 @@ public class FailPhaseAsyncTests
             });
 
         // Default: SwapLabelAsync completes successfully
-        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         // Default: UpdateFileChangeStats completes successfully
@@ -121,7 +121,7 @@ public class FailPhaseAsyncTests
 
         // Assert: FailPhaseAsync calls SwapLabelAsync with the error label
         _mockIssueOps.Verify(
-            o => o.SwapLabelAsync(_run.IssueIdentifier, AgentLabels.Error, It.IsAny<CancellationToken>()),
+            o => o.SwapLabelAsync(_run.IssueIdentifier, AgentLabels.Error, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Once);
     }
 
@@ -194,7 +194,7 @@ public class FailPhaseAsyncTests
         _run.FailureReason.Should().Contain("timed out");
         _run.CompletedAt.Should().NotBeNull();
         _mockIssueOps.Verify(
-            o => o.SwapLabelAsync(_run.IssueIdentifier, AgentLabels.Error, It.IsAny<CancellationToken>()),
+            o => o.SwapLabelAsync(_run.IssueIdentifier, AgentLabels.Error, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Once);
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
         _mockCallbacks.Verify(c => c.AddRunToHistory(_run), Times.Once);
@@ -218,7 +218,7 @@ public class FailPhaseAsyncTests
         _run.FailureReason.Should().Contain("no file changes");
         _run.CompletedAt.Should().NotBeNull();
         _mockIssueOps.Verify(
-            o => o.SwapLabelAsync(_run.IssueIdentifier, AgentLabels.Error, It.IsAny<CancellationToken>()),
+            o => o.SwapLabelAsync(_run.IssueIdentifier, AgentLabels.Error, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Once);
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
         _mockCallbacks.Verify(c => c.AddRunToHistory(_run), Times.Once);
@@ -244,7 +244,7 @@ public class FailPhaseAsyncTests
         result.Should().BeTrue();
         _run.FailureReason.Should().BeNull();
         _mockIssueOps.Verify(
-            o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>()),
+            o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Never);
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
     }

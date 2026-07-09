@@ -74,7 +74,7 @@ public static class TestOrchestrationFactory
     public sealed class NoOpLabelSwapper : ILabelSwapper
     {
         public static readonly NoOpLabelSwapper Instance = new();
-        public Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct) => Task.CompletedTask;
+        public Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct, string? expectedCurrentLabel = null) => Task.CompletedTask;
         public Task<bool> EnsureAgentLabelsAsync(string providerConfigId, LabelTargetKind targetKind, CancellationToken ct) => Task.FromResult(true);
     }
 

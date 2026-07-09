@@ -74,7 +74,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         var labelSwapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockLabelSwapper
-            .Setup(l => l.SwapLabelAsync("provider-1", "42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(l => l.SwapLabelAsync("provider-1", "42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask)
             .Callback(() => labelSwapCalled.TrySetResult());
 
@@ -140,12 +140,12 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Returns(false);
 
         _mockLabelSwapper
-            .Setup(l => l.SwapLabelAsync("provider-1", "1", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(l => l.SwapLabelAsync("provider-1", "1", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ThrowsAsync(new InvalidOperationException("GitHub API error"));
 
         var secondSwapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockLabelSwapper
-            .Setup(l => l.SwapLabelAsync("provider-1", "2", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(l => l.SwapLabelAsync("provider-1", "2", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask)
             .Callback(() => secondSwapCalled.TrySetResult());
 
@@ -195,7 +195,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         var swapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockLabelSwapper
-            .Setup(l => l.SwapLabelAsync("provider-2", "99", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(l => l.SwapLabelAsync("provider-2", "99", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask)
             .Callback(() => swapCalled.TrySetResult());
 
@@ -269,7 +269,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         var swapCount = 0;
         var allSwapsDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockLabelSwapper
-            .Setup(l => l.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(l => l.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask)
             .Callback(() =>
             {
@@ -286,10 +286,10 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         // Assert: both providers were scanned
         completed.Should().BeSameAs(allSwapsDone.Task, "Both providers should be scanned");
         _mockLabelSwapper.Verify(
-            l => l.SwapLabelAsync("provider-1", "10", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync("provider-1", "10", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Once);
         _mockLabelSwapper.Verify(
-            l => l.SwapLabelAsync("provider-2", "20", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync("provider-2", "20", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Once);
 
         _cts.Cancel();
@@ -381,7 +381,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         var swapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockLabelSwapper
-            .Setup(l => l.SwapLabelAsync("provider-1", "5", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(l => l.SwapLabelAsync("provider-1", "5", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask)
             .Callback(() => swapCalled.TrySetResult());
 

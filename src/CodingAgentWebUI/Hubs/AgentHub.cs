@@ -376,6 +376,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// Swaps the agent label on the entity (issue or PR) using the appropriate provider.
     /// Routes based on <paramref name="targetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
     /// </summary>
+    // TODO: Pass expectedCurrentLabel to enable state machine validation for hub-initiated label swaps (#1046)
     private Task SwapLabelAsync(PipelineRun run, string newLabel, LabelTargetKind targetKind)
     {
         var providerConfigId = targetKind == LabelTargetKind.PullRequest

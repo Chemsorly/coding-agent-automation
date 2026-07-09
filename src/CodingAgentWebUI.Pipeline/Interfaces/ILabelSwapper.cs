@@ -12,8 +12,9 @@ public interface ILabelSwapper
     /// Swaps the agent label on an entity: removes all existing agent labels, then adds <paramref name="newLabel"/>.
     /// Routes to the correct provider based on <paramref name="targetKind"/>.
     /// </summary>
+    /// <param name="expectedCurrentLabel">Optional: the expected current label for state machine validation.</param>
     Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel,
-        LabelTargetKind targetKind, CancellationToken ct);
+        LabelTargetKind targetKind, CancellationToken ct, string? expectedCurrentLabel = null);
 
     /// <summary>
     /// Ensures agent status labels exist for the given target kind.
@@ -28,5 +29,5 @@ public interface ILabelSwapper
     /// Backward-compatible overload for existing call sites (routes to Issue).
     /// </summary>
     Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel, CancellationToken ct)
-        => SwapLabelAsync(providerConfigId, identifier, newLabel, LabelTargetKind.Issue, ct);
+        => SwapLabelAsync(providerConfigId, identifier, newLabel, LabelTargetKind.Issue, ct, null);
 }

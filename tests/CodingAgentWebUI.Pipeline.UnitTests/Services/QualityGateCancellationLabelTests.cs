@@ -68,7 +68,7 @@ public class QualityGateCancellationLabelTests
             .Returns(Task.CompletedTask);
 
         // Default: issue ops complete successfully
-        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
     }
 

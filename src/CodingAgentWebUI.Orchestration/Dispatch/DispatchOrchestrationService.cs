@@ -546,6 +546,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         try
         {
             // Revert label from agent:in-progress back to agent:next
+            // TODO: Pass expectedCurrentLabel: AgentLabels.InProgress for state machine validation (#1046)
             _logger.Warning("Reverting failed distribution for issue {IssueIdentifier}: swapping label back to agent:next",
                 request.IssueIdentifier);
             await _infra.LabelSwapper.SwapLabelAsync(

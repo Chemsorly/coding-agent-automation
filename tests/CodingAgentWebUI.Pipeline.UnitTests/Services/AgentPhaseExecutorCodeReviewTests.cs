@@ -59,7 +59,7 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
         _mockAgent.SetupGet(a => a.SupportsParallelExecution).Returns(false);
-        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
     }
 

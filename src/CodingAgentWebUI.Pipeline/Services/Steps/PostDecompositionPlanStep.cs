@@ -76,7 +76,8 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
             return StepResult.Stop;
 
         // 4. Swap label to agent:epic-review
-        await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier, AgentLabels.EpicReview, ct);
+        await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier, AgentLabels.EpicReview, ct,
+            currentLabel: AgentLabels.InProgress);
         context.Run.FinalLabel = AgentLabels.EpicReview;
         context.Logger.Information(
             "Swapped label to {Label} on issue {IssueId}",

@@ -21,7 +21,7 @@ internal sealed class IssueProviderIssueOperations : IAgentIssueOperations
     public Task<string?> PostCommentAsync(string issueIdentifier, string body, CancellationToken ct)
         => _issueProvider.PostCommentAsync(issueIdentifier, body, ct);
 
-    public async Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct)
+    public async Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct, string? currentLabel = null)
     {
         try
         {
@@ -29,7 +29,8 @@ internal sealed class IssueProviderIssueOperations : IAgentIssueOperations
                 (label, c) => _issueProvider.RemoveLabelAsync(issueIdentifier, label, c),
                 (label, c) => _issueProvider.AddLabelAsync(issueIdentifier, label, c),
                 newLabel,
-                ct);
+                ct,
+                currentLabel);
         }
         catch (Exception ex)
         {

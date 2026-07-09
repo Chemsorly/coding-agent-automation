@@ -252,7 +252,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         await _monitor.SweepAsync(CancellationToken.None);
 
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
-            "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+            "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -281,7 +281,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         await _monitor.SweepAsync(CancellationToken.None);
 
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
-            "rp-1", "org/repo#42", AgentLabels.Error, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()), Times.Once);
+            "rp-1", "org/repo#42", AgentLabels.Error, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -358,7 +358,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
 
         // Label should be swapped to error
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
-            "ip-1", "org/repo#50", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+            "ip-1", "org/repo#50", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -418,7 +418,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
 
         // Label should be swapped to error via issue provider
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
-            "ip-1", "org/repo#99", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+            "ip-1", "org/repo#99", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -596,7 +596,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         await _monitor.SweepAsync(CancellationToken.None);
 
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
-            "ip-1", "org/repo#10", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+            "ip-1", "org/repo#10", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]

@@ -54,7 +54,8 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
         context.Run.FinalLabel = targetLabel;
         try
         {
-            await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier, targetLabel, ct);
+            await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier, targetLabel, ct,
+                currentLabel: AgentLabels.InProgress);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

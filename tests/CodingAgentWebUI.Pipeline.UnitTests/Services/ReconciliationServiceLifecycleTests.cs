@@ -433,7 +433,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         // Fallback: label swap to agent:error fires
         mockLabelSwapper.Verify(l => l.SwapLabelAsync(
             "provider-1", "owner/repo#lifecycle1", "agent:error",
-            LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+            LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
 
         // Fallback: dedup guard released
         mockDedupGuard.Verify(d => d.MarkIssueComplete("owner/repo#lifecycle1", "provider-1"), Times.Once);

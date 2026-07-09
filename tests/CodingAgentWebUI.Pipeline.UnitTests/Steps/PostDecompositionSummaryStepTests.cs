@@ -64,7 +64,7 @@ public class PostDecompositionSummaryStepTests
 
         _issueOps.Setup(x => x.PostCommentAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun(results);
@@ -74,7 +74,7 @@ public class PostDecompositionSummaryStepTests
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         result.Should().Be(StepResult.Continue);
-        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Done, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -88,7 +88,7 @@ public class PostDecompositionSummaryStepTests
 
         _issueOps.Setup(x => x.PostCommentAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun(results);
@@ -98,7 +98,7 @@ public class PostDecompositionSummaryStepTests
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         result.Should().Be(StepResult.Continue);
-        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Error, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -108,7 +108,7 @@ public class PostDecompositionSummaryStepTests
 
         _issueOps.Setup(x => x.PostCommentAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun(results);
@@ -118,7 +118,7 @@ public class PostDecompositionSummaryStepTests
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         result.Should().Be(StepResult.Continue);
-        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Error, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -133,7 +133,7 @@ public class PostDecompositionSummaryStepTests
 
         _issueOps.Setup(x => x.PostCommentAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun(results);
@@ -143,7 +143,7 @@ public class PostDecompositionSummaryStepTests
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         result.Should().Be(StepResult.Continue);
-        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Done, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -156,7 +156,7 @@ public class PostDecompositionSummaryStepTests
 
         _issueOps.Setup(x => x.PostCommentAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Network error"));
-        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun(results);
@@ -167,7 +167,7 @@ public class PostDecompositionSummaryStepTests
 
         // Should still succeed (non-fatal) and swap label
         result.Should().Be(StepResult.Continue);
-        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Done, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.SwapLabelAsync("50", AgentLabels.Done, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -182,7 +182,7 @@ public class PostDecompositionSummaryStepTests
         _issueOps.Setup(x => x.PostCommentAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback<string, string, CancellationToken>((_, body, _) => capturedBody = body)
             .ReturnsAsync((string?)null);
-        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun(results);

@@ -107,7 +107,7 @@ public class PostDecompositionPlanStepTests : IDisposable
             .ReturnsAsync(new List<IssueComment>());
         _issueOps.Setup(x => x.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun();
@@ -140,7 +140,7 @@ public class PostDecompositionPlanStepTests : IDisposable
             .ReturnsAsync(new List<IssueComment> { existingComment });
         _issueOps.Setup(x => x.UpdateCommentAsync("42", "comment-99", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun();
@@ -180,7 +180,7 @@ public class PostDecompositionPlanStepTests : IDisposable
             .ReturnsAsync(new List<IssueComment> { olderComment, newerComment });
         _issueOps.Setup(x => x.UpdateCommentAsync("42", "comment-5", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun();
@@ -221,7 +221,7 @@ public class PostDecompositionPlanStepTests : IDisposable
             .ReturnsAsync(new List<IssueComment>());
         _issueOps.Setup(x => x.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()))
+        _issueOps.Setup(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .Returns(Task.CompletedTask);
 
         var run = CreateRun();
@@ -231,7 +231,7 @@ public class PostDecompositionPlanStepTests : IDisposable
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         result.Should().Be(StepResult.Continue);
-        _issueOps.Verify(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>()), Times.Once);
+        _issueOps.Verify(x => x.SwapLabelAsync("42", AgentLabels.EpicReview, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]

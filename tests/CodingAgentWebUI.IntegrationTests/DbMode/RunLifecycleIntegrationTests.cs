@@ -276,7 +276,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         // Label swapped to cancelled
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
             "ip-3", "owner/repo#300", AgentLabels.Cancelled,
-            LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+            LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     #endregion
@@ -386,7 +386,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         // Label swapped to InProgress on issue provider (Implementation type)
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
             "ip-5", "owner/repo#500", AgentLabels.InProgress,
-            LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+            LabelTargetKind.Issue, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
     }
 
     [Fact]
@@ -422,7 +422,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         // Assert: For Review runs, label swap uses repoProviderConfigId + PullRequest target
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
             "rp-6", "42", AgentLabels.InProgress,
-            LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()), Times.Once);
+            LabelTargetKind.PullRequest, It.IsAny<CancellationToken>(), It.IsAny<string?>()), Times.Once);
 
         agent.ActiveJobId.Should().Be(runId);
         agent.Status.Should().Be(AgentStatus.Busy);

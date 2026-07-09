@@ -121,7 +121,8 @@ public partial class QualityGateExecutor
             _logger.Information(
                 "Pipeline {RunId} QualityGateExecutor swapping label to agent:error for issue {IssueIdentifier} (reason=quality gate validation error)",
                 run.RunId, run.IssueIdentifier);
-            await context.IssueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
+            await context.IssueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None,
+                currentLabel: AgentLabels.InProgress);
             callbacks.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
             callbacks.TransitionTo(PipelineStep.Failed);
             callbacks.AddRunToHistory(run);
