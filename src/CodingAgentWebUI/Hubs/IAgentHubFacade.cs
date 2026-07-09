@@ -159,4 +159,12 @@ public interface IAgentHubFacade
     /// Creates a repository provider from the given configuration.
     /// </summary>
     IRepositoryProvider CreateRepositoryProvider(ProviderConfig config);
+
+    /// <summary>
+    /// Updates WorkItemEntity.LastProgressAt in the DB with throttling.
+    /// Only writes if the current DB value is null or older than the throttle interval (5 minutes).
+    /// Called from ReportStepTransition and Heartbeat to persist progress evidence for
+    /// timeout enforcement across replicas.
+    /// </summary>
+    Task TouchLastProgressAsync(string jobId, DateTimeOffset timestamp, CancellationToken ct);
 }

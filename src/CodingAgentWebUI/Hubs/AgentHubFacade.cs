@@ -5,6 +5,7 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -298,4 +299,42 @@ public sealed class AgentHubFacade : IAgentHubFacade
     /// <inheritdoc />
     public IRepositoryProvider CreateRepositoryProvider(ProviderConfig config)
         => _providerFactory.CreateRepositoryProvider(config);
+
+    // ── Progress tracking ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Throttle interval for LastProgressAt DB writes. Only writes when the existing
+    /// DB value is null or older than this threshold.
+    /// </summary>
+    private static readonly TimeSpan ProgressWriteThrottle = TimeSpan.FromMinutes(5);
+
+    /// <inheritdoc />
+    public async Task TouchLastProgressAsync(string jobId, DateTimeOffset timestamp, CancellationToken ct)
+    {
+        if (_dbFactory is null || !Guid.TryParse(jobId, out var workItemId))
+            return;
+
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var item = await db.WorkItems.FindAsync([workItemId], ct);
+
+            if (item is null)
+                return;
+
+            // Throttle: skip write if DB value is recent enough (uses wall clock, not agent timestamp,
+            // to avoid clock-skew issues where a behind-clock agent could permanently suppress writes)
+            if (item.LastProgressAt.HasValue &&
+                (DateTimeOffset.UtcNow - item.LastProgressAt.Value) < ProgressWriteThrottle)
+                return;
+
+            item.LastProgressAt = timestamp;
+            await db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            WorkDistributionTelemetry.ProgressWriteFailures.Add(1);
+            _logger.LogWarning(ex, "Failed to update LastProgressAt for WorkItem {WorkItemId}", workItemId);
+        }
+    }
 }

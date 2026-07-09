@@ -278,6 +278,9 @@ public sealed partial class AgentHub
                 : DateTimeOffset.UtcNow;
             run.LastStepChangeAt = clampedTimestamp;
 
+            // Persist progress to DB for cross-replica timeout enforcement (throttled)
+            _ = _facade.TouchLastProgressAsync(jobId, clampedTimestamp, CancellationToken.None);
+
             // Update HighWaterMark — only advance, never go backward
             // Uses StepOrder.GetOrder (logical execution order) — NOT enum ordinals.
             // Terminal states (Failed, Cancelled) return -1 and are excluded.

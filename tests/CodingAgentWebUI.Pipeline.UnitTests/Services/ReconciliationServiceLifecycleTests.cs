@@ -118,6 +118,80 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         item.FailureReason.Should().Be(FailureReason.Timeout);
     }
 
+    // ── Progress-aware Timeout (parity with SignalR/Legacy HeartbeatMonitor) ──
+
+    [Fact]
+    public async Task EnforceTimeouts_RecentProgress_DoesNotTimeout()
+    {
+        // Arrange: item dispatched 2.5 hours ago with 2h timeout → would timeout without progress.
+        // But LastProgressAt = 10 minutes ago (recent progress in DB).
+        var workItemId = Guid.NewGuid();
+        var dispatchedAt = DateTimeOffset.UtcNow.AddHours(-2.5);
+        await InsertWorkItem(workItemId, "owner/repo#progress1", WorkItemStatus.Running,
+            createdAt: dispatchedAt.AddMinutes(-5), timeoutSeconds: 7200,
+            k8sJobName: "caa-progress1", dispatchedAt: dispatchedAt,
+            lastProgressAt: DateTimeOffset.UtcNow.AddMinutes(-10));
+
+        var service = CreateService();
+
+        // Act
+        await service.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Assert: should NOT be timed out because of recent progress
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Running,
+            "item should remain Running because it has recent progress (LastProgressAt 10 min ago, timeout 2h)");
+    }
+
+    [Fact]
+    public async Task EnforceTimeouts_StaleProgress_TimesOut()
+    {
+        // Arrange: item dispatched 3 hours ago with 2h timeout.
+        // LastProgressAt = 2.5 hours ago (stale — exceeds timeout).
+        var workItemId = Guid.NewGuid();
+        var dispatchedAt = DateTimeOffset.UtcNow.AddHours(-3);
+        await InsertWorkItem(workItemId, "owner/repo#progress2", WorkItemStatus.Running,
+            createdAt: dispatchedAt.AddMinutes(-5), timeoutSeconds: 7200,
+            k8sJobName: "caa-progress2", dispatchedAt: dispatchedAt,
+            lastProgressAt: DateTimeOffset.UtcNow.AddHours(-2.5));
+
+        var service = CreateService();
+
+        // Act
+        await service.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Assert: should be timed out because progress is stale
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.FailureReason.Should().Be(FailureReason.Timeout);
+    }
+
+    [Fact]
+    public async Task EnforceTimeouts_NullLastProgressAt_FallsBackToDispatchedAt()
+    {
+        // Arrange: item dispatched 2.5 hours ago with 2h timeout.
+        // No LastProgressAt set (e.g., agent never reported progress to DB).
+        var workItemId = Guid.NewGuid();
+        var dispatchedAt = DateTimeOffset.UtcNow.AddHours(-2.5);
+        await InsertWorkItem(workItemId, "owner/repo#progress3", WorkItemStatus.Running,
+            createdAt: dispatchedAt.AddMinutes(-5), timeoutSeconds: 7200,
+            k8sJobName: "caa-progress3", dispatchedAt: dispatchedAt,
+            lastProgressAt: null);
+
+        var service = CreateService();
+
+        // Act
+        await service.EnforceTimeoutsAsync(CancellationToken.None);
+
+        // Assert: falls back to DispatchedAt → 2.5h > 2h → times out
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.FailureReason.Should().Be(FailureReason.Timeout);
+    }
+
     // ── IsTimedOut static helper ────────────────────────────────────────
 
     [Fact]
@@ -343,7 +417,8 @@ public class ReconciliationServiceLifecycleTests : IDisposable
 
     private async Task InsertWorkItem(Guid id, string issueId, WorkItemStatus status,
         DateTimeOffset? createdAt = null, int timeoutSeconds = 1800,
-        string? k8sJobName = null, DateTimeOffset? completedAt = null)
+        string? k8sJobName = null, DateTimeOffset? completedAt = null,
+        DateTimeOffset? dispatchedAt = null, DateTimeOffset? lastProgressAt = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
         db.WorkItems.Add(new WorkItemEntity
@@ -354,9 +429,11 @@ public class ReconciliationServiceLifecycleTests : IDisposable
             Status = status,
             AgentSelector = "kiro,dotnet",
             CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
+            DispatchedAt = dispatchedAt ?? createdAt,
             TimeoutSeconds = timeoutSeconds,
             K8sJobName = k8sJobName,
             CompletedAt = completedAt,
+            LastProgressAt = lastProgressAt,
             Payload = "{}"
         });
         await db.SaveChangesAsync();

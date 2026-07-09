@@ -457,8 +457,10 @@ public sealed class ReconciliationService : BackgroundService
     // ── Timeout Enforcement ──────────────────────────────────────────────
 
     /// <summary>
-    /// DispatchedAt + TimeoutSeconds elapsed → Failed (Timeout) + delete Job.
-    /// Uses dispatch time (not creation time) so queue wait doesn't count toward timeout.
+    /// Timeout enforcement with progress awareness.
+    /// Uses DB-persisted LastProgressAt as the timeout anchor when available,
+    /// matching the HeartbeatMonitor behavior in SignalR/Legacy mode.
+    /// Falls back to DispatchedAt when LastProgressAt is null.
     /// </summary>
     internal async Task EnforceTimeoutsAsync(CancellationToken ct)
     {
@@ -468,17 +470,16 @@ public sealed class ReconciliationService : BackgroundService
         var candidates = await db.WorkItems
             .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
                         && w.TimeoutSeconds > 0)
-            .Select(w => new { w.Id, w.DispatchedAt, w.CreatedAt, w.TimeoutSeconds, w.K8sJobName })
+            .Select(w => new { w.Id, w.DispatchedAt, w.CreatedAt, w.TimeoutSeconds, w.K8sJobName, w.LastProgressAt })
             .ToListAsync(ct);
 
         foreach (var item in candidates)
         {
             if (ct.IsCancellationRequested) break;
 
-            // Use DispatchedAt as the timeout anchor — this is when execution actually started.
-            // Fall back to CreatedAt only for legacy items that lack DispatchedAt (should not happen
-            // for Dispatched/Running items, but defensive).
-            var anchor = item.DispatchedAt ?? item.CreatedAt;
+            // Progress-aware anchor: use LastProgressAt when available (updated by heartbeats/step transitions).
+            // Falls back to DispatchedAt → CreatedAt for items that haven't reported progress yet.
+            var anchor = item.LastProgressAt ?? item.DispatchedAt ?? item.CreatedAt;
             if (!IsTimedOut(anchor, item.TimeoutSeconds, now))
                 continue;
 
