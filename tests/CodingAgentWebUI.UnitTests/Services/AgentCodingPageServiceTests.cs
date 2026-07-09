@@ -194,6 +194,9 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task DispatchIssueAsync_ReturnsError_WhenNoAgents()
     {
+        // TODO: Add tests for failure path (DistributeAsync returning Success=false, triggering RevertFailedDistributionAsync)
+        // and queued path (Success=true, Queued=true, skipping ConfirmDistributionLabelAsync) to cover
+        // branching logic now consolidated in DispatchWithOrchestrationAsync helper.
         // In DB mode with IDispatchOrchestrationService injected, dispatch goes through
         // PrepareDistributionRequestAsync which builds a complete request with ProviderConfigs.
         var template = MakeTemplate();
@@ -435,6 +438,8 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task DispatchPrReviewAsync_DbMode_UsesOrchestration()
     {
+        // TODO: Verify that RevertFailedDistributionAsync is NOT called on success path, and assert
+        // the specific success message returned to detect swapped queuedMessage/dispatchedMessage parameters.
         // DispatchPrReviewAsync must route through IDispatchOrchestrationService in DB mode,
         // otherwise the agent receives no ProviderConfigs and no RunId → token refresh fails.
         var template = MakeTemplate();
@@ -482,6 +487,8 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task DispatchDecompositionAsync_DbMode_UsesOrchestration()
     {
+        // TODO: Assert the returned SuccessMessage content to detect incorrect message assignment
+        // in the refactored DispatchWithOrchestrationAsync helper.
         // DispatchDecompositionAsync must route through IDispatchOrchestrationService in DB mode.
         var template = MakeTemplate();
         _service.IssueProviders.Add(MakeProvider("ip-1"));
