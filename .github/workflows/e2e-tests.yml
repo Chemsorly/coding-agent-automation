@@ -15,11 +15,10 @@ permissions:
 
 jobs:
   e2e:
-    runs-on: arc-runner-set-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     container:
-      image: mcr.microsoft.com/playwright/dotnet:v1.60.0-noble
-      options: --platform linux/amd64
+      image: mcr.microsoft.com/playwright/dotnet:v1.61.0-noble
 
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0

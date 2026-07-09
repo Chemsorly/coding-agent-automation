@@ -122,6 +122,7 @@ public sealed class ProactiveTokenRefresh
         }
 
         // Should not reach here, but defensive
+        _logger.Error("Token refresh loop exited without result for {Kind} — this should be unreachable", kind);
         throw new TokenRefreshFailureException("Token refresh failed unexpectedly");
     }
 }

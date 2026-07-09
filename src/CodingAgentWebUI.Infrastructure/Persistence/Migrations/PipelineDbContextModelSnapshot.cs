@@ -358,6 +358,9 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                     b.Property<string>("K8sJobName")
                         .HasColumnType("text");
 
+                    b.Property<DateTimeOffset?>("LastProgressAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Payload")
                         .HasColumnType("jsonb");
 

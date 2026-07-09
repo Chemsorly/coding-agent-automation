@@ -18,6 +18,9 @@ graph TB
     end
     
     subgraph Agents["Agent Containers"]
+        AgentHost[Agent Host<br/>connection, lifecycle, health]
+        AgentKiro[Agent.KiroCli<br/>Kiro CLI process provider]
+        AgentOC[Agent.OpenCode<br/>OpenCode HTTP provider]
         A1[Kiro Agent .NET ×2]
         A2[Kiro Agent Python]
         A3[Kiro Agent Java]
@@ -33,7 +36,10 @@ graph TB
     Infra --> Pipeline
     Pipeline --> CodeReview
     Pipeline --> KiroLib
-    Orch -->|SignalR / K8s Jobs<br/>work distribution| Agents
+    Orch -->|SignalR / K8s Jobs<br/>work distribution| AgentHost
+    AgentHost --> AgentKiro
+    AgentHost --> AgentOC
+    AgentKiro --> KiroLib
 ```
 
 - **WebUI** (`CodingAgentWebUI`) — Blazor Server app. Hosts the web UI, SignalR hub, API endpoints, background services (OrphanedLabelRecovery, LoopStatePersistence).
@@ -42,7 +48,10 @@ graph TB
 - **Pipeline** (`CodingAgentWebUI.Pipeline`) — Core pipeline orchestration (`PipelineOrchestrationService`, facades, `PipelineLoopService`), step execution, models, interfaces, constants.
 - **Pipeline.CodeReview** (`CodingAgentWebUI.Pipeline.CodeReview`) — Review findings parsing, inline comment selection, severity filtering.
 - **KiroCliLib** — Shared library for Kiro CLI configuration parsing. Referenced by Pipeline, Agent.KiroCli, and Agent.OpenCode.
-- **Agent Containers** — Worker containers connecting via SignalR. Two backends: Kiro CLI (process) and OpenCode (HTTP API). Scale by adding containers.
+- **Agent Host** (`CodingAgentWebUI.Agent`) — Agent executable. Manages SignalR/HTTP connection to orchestrator, work item lifecycle, health endpoints, heartbeat, and reconnection logic.
+- **Agent.KiroCli** (`CodingAgentWebUI.Agent.KiroCli`) — Kiro CLI agent provider. Spawns kiro-cli processes and translates pipeline operations into CLI invocations.
+- **Agent.OpenCode** (`CodingAgentWebUI.Agent.OpenCode`) — OpenCode agent provider. Communicates with the OpenCode HTTP API for LLM-driven code generation.
+- **Agent Containers** — Worker containers connecting via SignalR or HTTP. Two backends: Kiro CLI (process) and OpenCode (HTTP API). Scale by adding containers.
 
 ## Docker Compose
 
@@ -178,9 +187,10 @@ The chart deploys:
 | `orchestrator.image.repository/tag` | Orchestrator container image |
 | `orchestrator.persistence.type` | Storage backend: `pvc` (default), `hostPath`, or `emptyDir` |
 | `orchestrator.persistence.mountMode` | Config volume mount mode: `readWrite` (default), `readOnly` (migration source when database enabled), `disabled` (after migration complete) |
-| `agents[]` | List of agent definitions (name, image, labels, providerType) |
+| `agents[]` | List of agent definitions for SignalR mode (name, image, labels, providerType). Creates Deployments. |
 | `agents[].providerType` | `kiro` or `opencode` — determines volume mount profile |
 | `agents[].labels` | Comma-separated routing labels (e.g., `kiro,dotnet,dotnet10`) |
+| `jobTemplates[]` | List of K8s Job templates for Kubernetes mode. Defines pod spec per label set. Falls back to `agents[]` if empty. |
 | `secrets.agentApiKey` | HMAC master key for agent auth |
 | `secrets.otelHeaders` | OTLP auth headers |
 | `secrets.opencodeConfigContent` | OpenCode config JSON (mounted as file for opencode agents) |
@@ -204,11 +214,11 @@ The chart deploys:
 | `signalr.redis.connectionString` | Redis connection string (deploy Redis independently) |
 | `monitoring.prometheusRules.enabled` | Create PrometheusRule resources for alerting (requires Prometheus Operator) |
 
-In Kubernetes mode, Job pod specs (image, resources, nodeSelector, tolerations, initContainers, podSecurityContext, maxConcurrent) are configured per-agent in the `agents[]` list and rendered into a ConfigMap consumed by `DispatchService`.
+In Kubernetes mode, Job pod specs (image, imagePullPolicy, resources, nodeSelector, tolerations, initContainers, podSecurityContext, maxConcurrent) are configured in the `jobTemplates[]` list and rendered into a ConfigMap consumed by `DispatchService`. If `jobTemplates` is empty, the chart falls back to deriving templates from the `agents[]` list for backward compatibility.
 
 ### Scaling Agents
 
-Add entries to the `agents[]` list. Each entry produces a separate Deployment with dedicated storage:
+**SignalR mode** — add entries to `agents[]`. Each entry produces a separate Deployment with dedicated storage:
 
 ```yaml
 agents:
@@ -226,6 +236,37 @@ agents:
       tag: coding-agent-kiro-dotnet10
     providerType: kiro
     labels: "kiro,dotnet,dotnet10"
+```
+
+**Kubernetes mode** — define `jobTemplates[]` with K8s Job-specific pod spec. `maxConcurrent` controls parallelism per label set:
+
+```yaml
+jobTemplates:
+  - labels: "kiro,dotnet,dotnet10"
+    image: "chemsorly/coding-agent:kiro-dotnet10"
+    providerType: kiro
+    maxConcurrent: 3
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "256Mi"
+      limits:
+        cpu: "4"
+        memory: "8Gi"
+    podSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+    nodeSelector:
+      kubernetes.io/hostname: k8s-worker-1
+    initContainers:
+      - name: fix-perms
+        image: busybox:latest
+        command: ["sh", "-c", "chown -R 1000:1000 /home/ubuntu/.local/share/kiro-cli"]
+    tolerations:
+      - key: agents
+        operator: Exists
+        effect: NoSchedule
 ```
 
 ### Graceful Shutdown

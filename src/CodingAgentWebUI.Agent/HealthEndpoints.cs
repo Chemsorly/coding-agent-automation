@@ -75,9 +75,9 @@ public static class HealthEndpoints
 
         // Readiness: Can this pod handle work? Check orchestrator connection.
         // If this fails, Kubernetes stops routing traffic but does NOT restart.
-        endpoints.MapGet("/readyz", (AgentWorkerService workerService) =>
+        endpoints.MapGet("/readyz", (IAgentService agentService) =>
         {
-            if (workerService.IsConnected)
+            if (agentService.IsConnected)
                 return Results.Ok(new { status = "ready", connected = true });
 
             return Results.Json(

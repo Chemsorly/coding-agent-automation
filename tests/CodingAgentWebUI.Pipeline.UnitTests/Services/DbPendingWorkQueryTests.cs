@@ -129,6 +129,35 @@ public sealed class DbPendingWorkQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task GetPendingJobsAsync_PopulatesWorkItemId()
+    {
+        // Arrange
+        var expectedId = Guid.NewGuid();
+        using (var db = new TestPipelineDbContext(_dbOptions))
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = expectedId,
+                IssueIdentifier = "owner/repo#77",
+                IssueProviderConfigId = "ip-1",
+                Status = WorkItemStatus.Pending,
+                CreatedAt = DateTimeOffset.UtcNow,
+                Payload = null,
+                AgentSelector = "",
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        var result = await _sut.GetPendingJobsAsync();
+
+        // Assert
+        result.Should().HaveCount(1);
+        result[0].WorkItemId.Should().Be(expectedId.ToString());
+    }
+
+    [Fact]
     public void ExtractFromPayload_ValidPayload_ReturnsCorrectValues()
     {
         var payload = new JobDistributionRequest

@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Moq;
+using Serilog;
 
 namespace CodingAgentWebUI.IntegrationTests.Smoke;
 
@@ -22,6 +23,15 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         // Without this, the app may detect a DB connection string from environment
         // variables or appsettings and enter database mode, causing pages to query PostgreSQL.
         builder.UseSetting("Database:Host", "");
+
+        // Reset Serilog's global logger to a fresh bootstrap state.
+        // This prevents "The logger is already frozen" when multiple WebApplicationFactory
+        // instances are created in the same process — each Build() call freezes the
+        // ReloadableLogger, so we need a new one for each factory invocation.
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .WriteTo.Console()
+            .CreateBootstrapLogger();
 
         builder.ConfigureServices(services =>
         {

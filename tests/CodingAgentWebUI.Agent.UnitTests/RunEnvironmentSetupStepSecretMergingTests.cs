@@ -19,6 +19,7 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// - Pipeline-wide masking: output from steps AFTER RunEnvironmentSetupStep is masked
 /// - Edge cases: null ProjectSecrets, null repo Secrets, empty dicts, special characters
 /// </summary>
+[Collection("EnvironmentVariables")]
 public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
 {
     private readonly string _tempDir;

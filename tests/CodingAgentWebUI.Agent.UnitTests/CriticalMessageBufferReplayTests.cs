@@ -351,11 +351,16 @@ public class CriticalMessageBufferReplayTests
     {
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
+        var hubManager = CreateTestHubManager();
+        var buffer = new CriticalMessageBuffer();
+        var signalRPipeline = CodingAgentWebUI.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger.Object);
+        var completionReporter = new SignalRCompletionReporter(hubManager, signalRPipeline, buffer, mockLogger.Object);
         return new AgentWorkerService(
-            CreateTestHubManager(),
+            hubManager,
             CreateTestHubManagerFactory(),
             CreateMockExecutor(),
             CreateMockConsolidationExecutor(),
+            completionReporter,
             mockOrchestrator.Object,
             Mock.Of<IHttpClientFactory>(),
             new AgentIdentity("test-agent"),
@@ -403,11 +408,15 @@ public class CriticalMessageBufferReplayTests
 
     private static CriticalMessageBuffer GetBuffer(AgentWorkerService service)
     {
-        var field = typeof(AgentWorkerService).GetField(
-            "_criticalMessageBuffer",
+        var reporterField = typeof(AgentWorkerService).GetField(
+            "_completionReporter",
             BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("Field '_criticalMessageBuffer' not found");
-        return (CriticalMessageBuffer)field.GetValue(service)!;
+            ?? throw new InvalidOperationException("Field '_completionReporter' not found");
+        var reporter = reporterField.GetValue(service)!;
+        if (reporter is SignalRCompletionReporter signalRReporter)
+            return signalRReporter.Buffer;
+        throw new InvalidOperationException(
+            $"Expected SignalRCompletionReporter but got {reporter.GetType().Name}");
     }
 
     private static JobCompletionPayload CreatePayload() => new()

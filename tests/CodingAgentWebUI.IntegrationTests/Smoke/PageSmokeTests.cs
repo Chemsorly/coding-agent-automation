@@ -2,6 +2,7 @@ using System.Net;
 
 namespace CodingAgentWebUI.IntegrationTests.Smoke;
 
+[Collection("SmokeTests")]
 public class PageSmokeTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly HttpClient _client;

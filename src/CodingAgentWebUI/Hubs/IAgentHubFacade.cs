@@ -118,6 +118,14 @@ public interface IAgentHubFacade
     /// </summary>
     Task RequeueWorkItemAsync(string jobId, CancellationToken ct);
 
+    /// <summary>
+    /// Resolves provider config IDs from a WorkItem's payload (K8s mode fallback).
+    /// Returns null if the work item doesn't exist or has no payload.
+    /// Used by token vending when no in-memory PipelineRun exists.
+    /// </summary>
+    Task<(string? RepoProviderConfigId, string? BrainProviderConfigId)?> GetWorkItemProviderConfigIdsAsync(
+        string workItemId, CancellationToken ct);
+
     // ── History ─────────────────────────────────────────────────────────
 
     /// <summary>
@@ -151,4 +159,12 @@ public interface IAgentHubFacade
     /// Creates a repository provider from the given configuration.
     /// </summary>
     IRepositoryProvider CreateRepositoryProvider(ProviderConfig config);
+
+    /// <summary>
+    /// Updates WorkItemEntity.LastProgressAt in the DB with throttling.
+    /// Only writes if the current DB value is null or older than the throttle interval (5 minutes).
+    /// Called from ReportStepTransition and Heartbeat to persist progress evidence for
+    /// timeout enforcement across replicas.
+    /// </summary>
+    Task TouchLastProgressAsync(string jobId, DateTimeOffset timestamp, CancellationToken ct);
 }

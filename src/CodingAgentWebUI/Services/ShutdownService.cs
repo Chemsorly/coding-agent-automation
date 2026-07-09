@@ -14,6 +14,7 @@ namespace CodingAgentWebUI.Services;
 public sealed class ShutdownService : IHostedLifecycleService
 {
     private readonly TimeSpan _shutdownTimeout;
+    private readonly TimeProvider _timeProvider;
 
     private readonly ILifecycleShutdownAction _lifecycle;
     private readonly IOrchestrationShutdownAction _orchestration;
@@ -25,13 +26,15 @@ public sealed class ShutdownService : IHostedLifecycleService
         IOrchestrationShutdownAction orchestration,
         IShutdownSignal shutdownSignal,
         Serilog.ILogger logger,
-        TimeSpan? shutdownTimeout = null)
+        TimeSpan? shutdownTimeout = null,
+        TimeProvider? timeProvider = null)
     {
         _lifecycle = lifecycle;
         _orchestration = orchestration;
         _shutdownSignal = shutdownSignal;
         _logger = logger;
         _shutdownTimeout = shutdownTimeout ?? TimeSpan.FromSeconds(15);
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -52,7 +55,7 @@ public sealed class ShutdownService : IHostedLifecycleService
         // Link a timeout-based CTS with the host cancellation token so that
         // ExecuteShutdownAsync is cancelled both on timeout AND host abort.
         // This prevents abandoned tasks from racing against DI container disposal.
-        using var timeoutCts = new CancellationTokenSource(_shutdownTimeout);
+        using var timeoutCts = new CancellationTokenSource(_shutdownTimeout, _timeProvider);
         using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
             timeoutCts.Token, cancellationToken);
 

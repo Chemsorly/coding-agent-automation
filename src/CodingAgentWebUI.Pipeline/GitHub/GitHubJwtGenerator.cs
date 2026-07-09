@@ -61,7 +61,10 @@ public static class GitHubJwtGenerator
         var privateKeyPem = Encoding.UTF8.GetString(pemBytes);
 
         if (!privateKeyPem.Contains("-----BEGIN") || !privateKeyPem.Contains("PRIVATE KEY-----"))
+        {
+            Serilog.Log.Error("Decoded content is not a PEM private key (ClientId={ClientId})", clientId);
             throw new InvalidOperationException("Decoded content is not a PEM private key");
+        }
 
         return GenerateFromPem(clientId, privateKeyPem);
     }

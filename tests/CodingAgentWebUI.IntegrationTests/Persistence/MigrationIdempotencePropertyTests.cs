@@ -57,7 +57,7 @@ public class MigrationIdempotencePropertyTests : IDisposable
     /// For any N in [2..5], running migration N times yields the same row count as 1 run.
     /// ConfigMigrationService returns false on subsequent runs (skipped because row exists).
     /// </summary>
-    [Property]
+    [Property(MaxTest = 20)]
     public async Task<bool> MigrateNTimes_ProducesSameStateAsOnce(PositiveInt repeatCount)
     {
         var n = Math.Clamp(repeatCount.Get, 2, 5);

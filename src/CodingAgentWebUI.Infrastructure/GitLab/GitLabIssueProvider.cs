@@ -51,6 +51,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
         }
         catch (GitLabException ex) when ((int)ex.StatusCode == 404)
         {
+            Log.Warning("Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
             throw new InvalidOperationException(
                 $"Issue with identifier '{identifier}' was not found in project {ProjectId}.", ex);
         }
@@ -145,6 +146,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
         }
         catch (GitLabException ex) when ((int)ex.StatusCode == 404)
         {
+            Log.Warning("Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
             throw new InvalidOperationException(
                 $"Issue with identifier '{identifier}' was not found in project {ProjectId}.", ex);
         }
@@ -159,8 +161,11 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
         var iid = ParseIdentifier(issueIdentifier);
 
         if (!long.TryParse(commentId, out var noteId))
+        {
+            Log.Warning("Invalid comment identifier '{CommentId}' — expected numeric note ID", commentId);
             throw new ArgumentException(
                 $"Invalid comment identifier: '{commentId}'. Expected a numeric note ID.", nameof(commentId));
+        }
 
         try
         {
@@ -178,6 +183,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
             var message = ex.Message?.Contains("note", StringComparison.OrdinalIgnoreCase) == true
                 ? $"Comment '{commentId}' was not found on issue '{issueIdentifier}' in project {ProjectId}."
                 : $"Issue with identifier '{issueIdentifier}' was not found in project {ProjectId}.";
+            Log.Error(ex, "Failed to update comment on issue '{Identifier}' in project {ProjectId}: {Message}", issueIdentifier, ProjectId, message);
             throw new InvalidOperationException(message, ex);
         }
     }
@@ -273,6 +279,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
         }
         catch (GitLabException ex) when ((int)ex.StatusCode == 404)
         {
+            Log.Warning("Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
             throw new InvalidOperationException(
                 $"Issue with identifier '{identifier}' was not found in project {ProjectId}.", ex);
         }

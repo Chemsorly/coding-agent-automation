@@ -423,11 +423,13 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         }
         catch (OperationCanceledException)
         {
+            _logger.Error("OpenCode server at {ServerUrl} did not respond within 10 seconds (timeout)", serverUrl);
             throw new InvalidOperationException(
                 $"OpenCode server at {serverUrl} did not respond within 10 seconds (timeout).");
         }
         catch (HttpRequestException ex)
         {
+            _logger.Error(ex, "OpenCode server at {ServerUrl} is unreachable: {Message}", serverUrl, ex.Message);
             throw new InvalidOperationException(
                 $"OpenCode server at {serverUrl} is unreachable: {ex.Message}", ex);
         }
@@ -437,6 +439,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         }
         catch (Exception ex)
         {
+            _logger.Error(ex, "OpenCode server at {ServerUrl} health check failed: {Message}", serverUrl, ex.Message);
             throw new InvalidOperationException(
                 $"OpenCode server at {serverUrl} health check failed: {ex.Message}", ex);
         }

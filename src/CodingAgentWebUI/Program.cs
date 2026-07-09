@@ -94,7 +94,14 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Register services
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
+builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(BuildInfo.Load());
+
+// Configure JSON serialization for minimal API endpoints (enum-as-string to match agent DTOs)
+builder.Services.ConfigureHttpJsonOptions(options =>
+{
+    options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
+});
 
 // Host shutdown timeout: drain delay (15s) + ShutdownService timeout (15s) + buffer (10s) = 40s
 builder.Services.Configure<HostOptions>(opts => opts.ShutdownTimeout = TimeSpan.FromSeconds(40));

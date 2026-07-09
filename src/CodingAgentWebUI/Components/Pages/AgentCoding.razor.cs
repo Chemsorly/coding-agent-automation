@@ -272,8 +272,15 @@ public partial class AgentCoding : IDisposable
     private async Task StartLoop()
     {
         _errorMessage = null;
-        var (success, error) = await PageService.StartLoopAsync();
-        if (!success) _errorMessage = error;
+        try
+        {
+            var (success, error) = await PageService.StartLoopAsync();
+            if (!success) _errorMessage = error;
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to start loop: {ex.Message}";
+        }
     }
 
     private async Task StopLoop() => await PageService.StopLoopAsync();

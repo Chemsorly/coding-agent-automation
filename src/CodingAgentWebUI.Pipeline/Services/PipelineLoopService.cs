@@ -159,10 +159,28 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     {
         // Load config outside the lock to avoid sync-over-async deadlocks
         // (Blazor Server's RendererSynchronizationContext would deadlock on .GetAwaiter().GetResult())
-        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).ConfigureAwait(false);
-        var issueProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None).ConfigureAwait(false);
-        var repoProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None).ConfigureAwait(false);
-        var templates = await _projectStore.LoadAllTemplatesAsync(CancellationToken.None).ConfigureAwait(false);
+        PipelineConfiguration config;
+        IReadOnlyList<ProviderConfig> issueProviders;
+        IReadOnlyList<ProviderConfig> repoProviders;
+        IReadOnlyList<PipelineJobTemplate> templates;
+
+        try
+        {
+            config = await _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).ConfigureAwait(false);
+            issueProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None).ConfigureAwait(false);
+            repoProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None).ConfigureAwait(false);
+            templates = await _projectStore.LoadAllTemplatesAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "StartLoopAsync failed to load configuration from stores");
+            lock (_lock)
+            {
+                _validationErrors = [$"Failed to load configuration: {ex.Message}"];
+            }
+            NotifyChange();
+            return false;
+        }
 
         lock (_lock)
         {

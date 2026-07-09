@@ -38,8 +38,13 @@ public class PipelineProviderManager : IAsyncDisposable
     /// </summary>
     public async Task<ProviderConfig> ResolveProviderConfigAsync(string providerId, ProviderKind kind, CancellationToken ct)
     {
-        return await _configStore.GetProviderConfigByIdAsync(providerId, kind, ct)
-            ?? throw new InvalidOperationException($"Provider config '{providerId}' of kind '{kind}' not found.");
+        var config = await _configStore.GetProviderConfigByIdAsync(providerId, kind, ct);
+        if (config is null)
+        {
+            _logger.Error("Provider config {ProviderId} of kind {Kind} not found", providerId, kind);
+            throw new InvalidOperationException($"Provider config '{providerId}' of kind '{kind}' not found.");
+        }
+        return config;
     }
 
     /// <summary>
@@ -118,15 +123,24 @@ public class PipelineProviderManager : IAsyncDisposable
     {
         try { await ActiveRepoProvider!.ValidateAsync(ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
-        { throw new InvalidOperationException($"Repository provider ({repoConfig.ProviderType}) validation failed: {ex.Message}", ex); }
+        {
+            _logger.Error(ex, "Repository provider ({ProviderType}) validation failed", repoConfig.ProviderType);
+            throw new InvalidOperationException($"Repository provider ({repoConfig.ProviderType}) validation failed: {ex.Message}", ex);
+        }
         try { await ActiveAgentProvider!.ValidateAsync(ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
-        { throw new InvalidOperationException($"Agent provider ({agentConfig.ProviderType}) validation failed: {ex.Message}", ex); }
+        {
+            _logger.Error(ex, "Agent provider ({ProviderType}) validation failed", agentConfig.ProviderType);
+            throw new InvalidOperationException($"Agent provider ({agentConfig.ProviderType}) validation failed: {ex.Message}", ex);
+        }
         if (ActivePipelineProvider != null)
         {
             try { await ActivePipelineProvider.ValidateAsync(ct); }
             catch (Exception ex) when (ex is not OperationCanceledException)
-            { throw new InvalidOperationException($"Pipeline provider validation failed: {ex.Message}", ex); }
+            {
+                _logger.Error(ex, "Pipeline provider validation failed");
+                throw new InvalidOperationException($"Pipeline provider validation failed: {ex.Message}", ex);
+            }
         }
     }
 

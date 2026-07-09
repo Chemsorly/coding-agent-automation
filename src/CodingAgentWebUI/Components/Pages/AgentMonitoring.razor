@@ -23,6 +23,7 @@
 @inject IPipelineRunHistoryService HistoryService
 @inject InfrastructureHealthService InfraHealth
 @inject IJSRuntime JS
+@inject TimeProvider Clock
 @using Microsoft.AspNetCore.SignalR
 
 <PageTitle>Agent Monitoring - Coding Agent</PageTitle>
@@ -31,7 +32,7 @@
     <header class="agent-header">
         <h1>Agent Monitoring</h1>
         @{
-            var isStale = _lastRefreshFailed || (DateTimeOffset.UtcNow - _lastSuccessfulRefresh).TotalSeconds > 30;
+            var isStale = _lastRefreshFailed || (Clock.GetUtcNow() - _lastSuccessfulRefresh).TotalSeconds > 30;
         }
         <span class="freshness-indicator @(isStale ? "freshness-warning" : "")">
             @if (isStale)
@@ -40,7 +41,7 @@
             }
             else
             {
-                <text>Last updated: @FormatTimeAgo(_lastSuccessfulRefresh) · Refreshing every 2s</text>
+                <text>Last updated: @FormatTimeAgo(_lastSuccessfulRefresh) · Refreshing every 5s</text>
             }
         </span>
     </header>
@@ -770,18 +771,19 @@
     private Timer? _refreshTimer;
     private int _maxRetries = 3;
     private bool _showDisconnectConfirm;
-    private DateTimeOffset _lastSuccessfulRefresh = DateTimeOffset.UtcNow;
+    private DateTimeOffset _lastSuccessfulRefresh;
     private bool _lastRefreshFailed;
     private bool? _dbStatus;
     private bool? _redisStatus;
 
     protected override async Task OnInitializedAsync()
     {
+        _lastSuccessfulRefresh = Clock.GetUtcNow();
         PipelineService.OnChange += HandleStateChanged;
         ConsolidationService.OnChange += HandleStateChanged;
 
-        // Refresh every 2 seconds for heartbeat/elapsed updates
-        _refreshTimer = new Timer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
+        // Refresh every 5 seconds for heartbeat/elapsed updates
+        _refreshTimer = new Timer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
 
         try
         {
@@ -895,7 +897,7 @@
             {
                 if (_disposed) return;
                 await RefreshDataAsync();
-                _lastSuccessfulRefresh = DateTimeOffset.UtcNow;
+                _lastSuccessfulRefresh = Clock.GetUtcNow();
                 _lastRefreshFailed = false;
                 StateHasChanged();
             });
@@ -918,7 +920,7 @@
             {
                 if (_disposed) return;
                 await RefreshDataAsync(includeConsolidation: true);
-                _lastSuccessfulRefresh = DateTimeOffset.UtcNow;
+                _lastSuccessfulRefresh = Clock.GetUtcNow();
                 _lastRefreshFailed = false;
                 StateHasChanged();
             });
@@ -1080,7 +1082,26 @@
 
     private async Task RemoveFromQueue(string issueIdentifier, string issueProviderId)
     {
-        Dispatcher.RemoveFromQueue(issueIdentifier, issueProviderId);
+        // In DB/K8s mode, pending jobs are WorkItem rows — cancel via WorkDistributor.
+        // Find the WorkItemId from the cached queue data.
+        var job = _queuedJobs.FirstOrDefault(j => j.IssueIdentifier == issueIdentifier && j.IssueProviderId == issueProviderId);
+        if (job?.WorkItemId is not null)
+        {
+            try
+            {
+                await WorkDistributor.CancelJobAsync(job.WorkItemId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to cancel pending WorkItem {WorkItemId} for issue {IssueIdentifier}", job.WorkItemId, issueIdentifier);
+            }
+        }
+        else
+        {
+            // Legacy in-memory mode fallback
+            Dispatcher.RemoveFromQueue(issueIdentifier, issueProviderId);
+        }
+
         await RefreshDataAsync();
         StateHasChanged();
     }
