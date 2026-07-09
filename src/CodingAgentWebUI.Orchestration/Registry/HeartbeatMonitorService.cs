@@ -301,6 +301,19 @@ public sealed class HeartbeatMonitorService : BackgroundService
                             continue;
                         }
 
+                        // Grace period: skip reset if agent became Busy very recently.
+                        // The drain service has a window between ResolveAgent (sets Busy) and
+                        // AssignJob/run registration — avoid resetting during this window (BUG-03).
+                        // TODO: BusySince is read without holding agent.SyncRoot. DateTimeOffset? is not
+                        // guaranteed atomic on all platforms. This is consistent with existing reads of
+                        // DisconnectedAt/OrphanRestoredAt in this loop, but consider reading under lock
+                        // for correctness on non-x86-64 targets.
+                        var busySince = agent.BusySince;
+                        if (busySince.HasValue && (now - busySince.Value) < TimeSpan.FromSeconds(10))
+                        {
+                            continue;
+                        }
+
                         _logger.Warning(
                             "Agent {AgentId} is Busy with ActiveJobId {JobId} but run not found — resetting to Idle",
                             agent.AgentId, agent.ActiveJobId);
