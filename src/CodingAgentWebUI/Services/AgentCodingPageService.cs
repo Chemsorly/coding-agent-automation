@@ -495,11 +495,11 @@ public class AgentCodingPageService : IDisposable
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
 
             // Build label filter: always include epic markers + any user-selected labels
-            var epicLabels = new List<string> { "agent:epic" };
+            var epicLabels = new List<string> { AgentLabels.Epic };
             if (EpicDrawerSelectedLabels.Count > 0)
                 epicLabels.AddRange(EpicDrawerSelectedLabels);
 
-            var approvedLabels = new List<string> { "agent:epic-approved" };
+            var approvedLabels = new List<string> { AgentLabels.EpicApproved };
             if (EpicDrawerSelectedLabels.Count > 0)
                 approvedLabels.AddRange(EpicDrawerSelectedLabels);
 
@@ -529,7 +529,7 @@ public class AgentCodingPageService : IDisposable
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
             var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
             // Exclude the epic markers themselves from the filter UI
-            EpicDrawerLabels = labels.Where(l => !l.StartsWith("agent:epic", StringComparison.OrdinalIgnoreCase)).ToList();
+            EpicDrawerLabels = labels.Where(l => !l.StartsWith(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)).ToList();
             return null;
         }
         catch { EpicDrawerLabels.Clear(); return null; }
@@ -553,7 +553,7 @@ public class AgentCodingPageService : IDisposable
         if (_workDistributor is LegacyWorkDistributor && _agentRegistry.GetAllAgents().Count == 0)
             return (false, "Could not dispatch — no agents are currently connected.", null);
 
-        var phaseType = issue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase)
+        var phaseType = issue.Labels.Contains(AgentLabels.EpicApproved, StringComparer.OrdinalIgnoreCase)
             ? PipelineRunType.Decomposition : PipelineRunType.DecompositionAnalysis;
         var phaseLabel = phaseType == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
 

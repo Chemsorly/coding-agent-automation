@@ -303,7 +303,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     },
                     ct);
 
-                var message = SignalRWorkDistributor.BuildJobAssignmentMessage(item.Id, request);
+                var message = DbWorkDistributorBase.BuildJobAssignmentMessage(item.Id, request);
 
                 // Inject project secrets at delivery time (not serialized in WorkItem payload for security)
                 if (_projectStore is not null && !string.IsNullOrEmpty(request.ProjectId))
