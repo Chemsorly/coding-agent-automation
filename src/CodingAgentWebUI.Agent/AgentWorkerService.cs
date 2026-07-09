@@ -342,20 +342,10 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             JobCompletionPayload? completion = null;
             try
             {
-                completion = await _executor.ExecuteAsync(
-                    message, _hubManager.Connection, outputBatcher,
+                completion = await AgentJobRunner.ExecuteAsync(
+                    _executor, message, _hubManager.Connection, outputBatcher,
                     step => _currentStep = step,
-                    jobCts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                completion = new JobCompletionPayload
-                {
-                    FinalStep = PipelineStep.Cancelled,
-                    CompletedAt = DateTimeOffset.UtcNow,
-                    IsRework = message.LinkedPullRequest is not null,
-                    FinalLabel = AgentLabels.Cancelled
-                };
+                    jobCts.Token, cancelledLabel: AgentLabels.Cancelled);
             }
             catch (Exception ex)
             {
@@ -960,26 +950,10 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             if (_activeJobId is null || _activeJobAssignment is null)
                 return null;
 
-            return new ActiveJobState
-            {
-                RunId = _activeJobId,
-                IssueIdentifier = _activeJobAssignment.IssueIdentifier,
-                IssueTitle = _activeJobAssignment.IssueDetail?.Title ?? _activeJobAssignment.IssueIdentifier,
-                IssueProviderConfigId = _activeJobAssignment.IssueProviderConfigId ?? _activeJobAssignment.RepoProviderConfigId,
-                RepoProviderConfigId = _activeJobAssignment.RepoProviderConfigId,
-                AgentProviderConfigId = _activeJobAssignment.AgentProviderConfigId,
-                BrainProviderConfigId = _activeJobAssignment.BrainProviderConfigId,
-                PipelineProviderConfigId = _activeJobAssignment.PipelineProviderConfigId,
-                InitiatedBy = _activeJobAssignment.InitiatedBy,
-                ResolvedProfileId = _activeJobAssignment.ResolvedProfileId,
-                ProjectId = _activeJobAssignment.ProjectId,
-                ProjectName = _activeJobAssignment.ProjectName,
-                CurrentStep = _currentStep ?? PipelineStep.GeneratingCode,
-                StartedAt = _activeJobStartedAt ?? DateTimeOffset.UtcNow,
-                RunType = _activeJobRunType,
-                RepositoryName = null, // Not available on agent side from assignment message
-                ModelName = null       // Not available on agent side from assignment message
-            };
+            return ActiveJobStateFactory.Create(
+                _activeJobId, _activeJobAssignment,
+                _currentStep ?? PipelineStep.GeneratingCode,
+                _activeJobStartedAt ?? DateTimeOffset.UtcNow);
         }
     }
 
