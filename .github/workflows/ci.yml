@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   build-and-test:
-    runs-on: arc-runner-set-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     container:
       image: mcr.microsoft.com/dotnet/sdk:10.0
@@ -63,7 +63,7 @@ jobs:
 
   # Secret scanning — detect leaked credentials in code
   gitleaks:
-    runs-on: arc-runner-set-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -77,7 +77,7 @@ jobs:
 
   # Helm chart validation — runs on ALL branches/PRs to catch chart errors early
   helm-lint:
-    runs-on: arc-runner-set-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -95,7 +95,7 @@ jobs:
 
   docker:
     needs: [build-and-test]
-    runs-on: arc-runner-set-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 120
     container:
       image: quay.io/buildah/stable
@@ -199,7 +199,7 @@ jobs:
   publish-chart:
     needs: [build-and-test, helm-lint, docker]
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: arc-runner-set-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
