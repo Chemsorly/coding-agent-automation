@@ -1,7 +1,21 @@
+using System.Text.Json.Serialization;
 using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using MessagePack;
 
 namespace CodingAgentWebUI.Pipeline.Models;
+
+/// <summary>
+/// Controls whether review agents share the codegen session or run in isolation.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ReviewIsolation
+{
+    /// <summary>Review agents share the codegen session (legacy behavior).</summary>
+    Shared,
+
+    /// <summary>Review agents run in fresh sessions with no shared context.</summary>
+    Isolated
+}
 
 [MessagePackObject]
 public sealed record CodeReviewConfiguration
@@ -26,7 +40,47 @@ public sealed record CodeReviewConfiguration
     [Key(2)]
     public int MaxIterations { get; init; } = 2;
 
-    // Key(3) retired: was ReviewIsolation enum (Shared/Isolated).
-    // All review agents now unconditionally run in isolated sessions.
-    // Slot kept reserved for MessagePack backward compatibility with old payloads.
+    /// <summary>
+    /// Controls whether review agents share the codegen session or run in fresh isolated sessions.
+    /// Default is Isolated to eliminate self-attribution bias.
+    /// </summary>
+    // TODO: Key(3) was previously retired. Old MessagePack payloads with Key(3)=0 (Shared) will
+    // now deserialize into ReviewIsolation.Shared, potentially downgrading isolation. Verify that
+    // backward-compat tests (CodeReviewIsolationRetiredKeyTests) are updated accordingly.
+    [Key(3)]
+    public ReviewIsolation ReviewIsolation { get; init; } = ReviewIsolation.Isolated;
+
+    /// <summary>
+    /// Deep-merges the given overrides into this configuration. Only non-null properties
+    /// in the overrides record replace the corresponding values; null properties are left unchanged.
+    /// </summary>
+    public CodeReviewConfiguration ApplyOverrides(CodeReviewOverrides overrides)
+    {
+        var result = this;
+        // TODO: Nullable sentinel pattern means a project cannot override FixPrompt to null
+        // (which disables fix prompts). null here means "don't override," so there is no way
+        // to express "clear this value." Consider a sentinel pattern if this becomes a requirement.
+        if (overrides.FixPrompt is not null)
+            result = result with { FixPrompt = overrides.FixPrompt };
+        if (overrides.MaxIterations.HasValue)
+            result = result with { MaxIterations = overrides.MaxIterations.Value };
+        if (overrides.ReviewIsolation.HasValue)
+            result = result with { ReviewIsolation = overrides.ReviewIsolation.Value };
+        if (overrides.InlineComments is not null)
+            result = result with { InlineComments = result.InlineComments.ApplyOverrides(overrides.InlineComments) };
+        return result;
+    }
+}
+
+/// <summary>
+/// Nullable override record for <see cref="CodeReviewConfiguration"/>.
+/// Used on <see cref="PipelineProject"/> to express partial overrides:
+/// null properties mean "inherit from global config" rather than "set to default."
+/// </summary>
+public sealed record CodeReviewOverrides
+{
+    public string? FixPrompt { get; init; }
+    public InlineCommentOverrides? InlineComments { get; init; }
+    public int? MaxIterations { get; init; }
+    public ReviewIsolation? ReviewIsolation { get; init; }
 }

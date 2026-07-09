@@ -55,4 +55,37 @@ public sealed record InlineCommentSettings
     /// </summary>
     [Key(4)]
     public FindingSeverity SeverityThreshold { get; init; } = FindingSeverity.Warning;
+
+    /// <summary>
+    /// Deep-merges the given overrides into this settings instance. Only non-null properties
+    /// in the overrides record replace the corresponding values; null properties are left unchanged.
+    /// </summary>
+    public InlineCommentSettings ApplyOverrides(InlineCommentOverrides overrides)
+    {
+        var result = this;
+        if (overrides.Enabled.HasValue)
+            result = result with { Enabled = overrides.Enabled.Value };
+        if (overrides.MaxInlineComments.HasValue)
+            result = result with { MaxInlineComments = overrides.MaxInlineComments.Value };
+        if (overrides.MaxRetries.HasValue)
+            result = result with { MaxRetries = overrides.MaxRetries.Value };
+        if (overrides.OrderBySeverity.HasValue)
+            result = result with { OrderBySeverity = overrides.OrderBySeverity.Value };
+        if (overrides.SeverityThreshold.HasValue)
+            result = result with { SeverityThreshold = overrides.SeverityThreshold.Value };
+        return result;
+    }
+}
+
+/// <summary>
+/// Nullable override record for <see cref="InlineCommentSettings"/>.
+/// null properties mean "inherit from global config."
+/// </summary>
+public sealed record InlineCommentOverrides
+{
+    public bool? Enabled { get; init; }
+    public int? MaxInlineComments { get; init; }
+    public int? MaxRetries { get; init; }
+    public bool? OrderBySeverity { get; init; }
+    public FindingSeverity? SeverityThreshold { get; init; }
 }

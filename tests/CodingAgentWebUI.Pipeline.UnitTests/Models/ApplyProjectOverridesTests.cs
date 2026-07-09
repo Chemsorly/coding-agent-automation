@@ -2,6 +2,7 @@
 // Task 11.2: Unit tests for ApplyProjectOverrides
 // Validates: Requirements 3.2, 3.3, 3.7, 4.4
 using AwesomeAssertions;
+using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.TestUtilities;
 
@@ -318,48 +319,151 @@ public class ApplyProjectOverridesTests
         result.BrainReadOnly.Should().BeTrue();
     }
 
-    // ── CodeReview REPLACE semantics ───────────────────────────────────────────
+    // ── CodeReview deep-merge semantics ──────────────────────────────────────────
 
     [Fact]
-    public void CodeReview_NonNull_ReplacesEntireObject()
+    public void CodeReview_FullOverride_AppliesAllValues()
     {
         // Global config has MaxIterations=2, FixPrompt=null
         var config = TestPipelineConfig.Default();
-        var projectCodeReview = new CodeReviewConfiguration
+        var projectCodeReview = new CodeReviewOverrides
         {
             MaxIterations = 5,
             FixPrompt = "Custom fix prompt",
+            ReviewIsolation = ReviewIsolation.Shared,
+            InlineComments = new InlineCommentOverrides
+            {
+                Enabled = false,
+                MaxInlineComments = 10,
+                MaxRetries = 3,
+                OrderBySeverity = false,
+                SeverityThreshold = FindingSeverity.Critical,
+            },
         };
         var project = TestPipelineConfig.WithProject() with { CodeReview = projectCodeReview };
 
         var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
 
-        // Entire object replaced — not deep merged
-        result.CodeReview.Should().BeSameAs(projectCodeReview);
+        // All specified override values are applied
         result.CodeReview.MaxIterations.Should().Be(5);
         result.CodeReview.FixPrompt.Should().Be("Custom fix prompt");
+        result.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Shared);
+        result.CodeReview.InlineComments.Enabled.Should().BeFalse();
+        result.CodeReview.InlineComments.MaxInlineComments.Should().Be(10);
+        result.CodeReview.InlineComments.MaxRetries.Should().Be(3);
+        result.CodeReview.InlineComments.OrderBySeverity.Should().BeFalse();
+        result.CodeReview.InlineComments.SeverityThreshold.Should().Be(FindingSeverity.Critical);
     }
 
     [Fact]
-    public void CodeReview_NonNull_DoesNotDeepMergeWithGlobal()
+    public void CodeReview_PartialOverride_PreservesUnspecifiedGlobalValues()
     {
-        // Global has MaxIterations=2, FixPrompt=null
-        var config = TestPipelineConfig.Default();
-        // Project sets only MaxIterations=1, FixPrompt stays null
-        var projectCodeReview = new CodeReviewConfiguration
+        // Global has MaxIterations=2, FixPrompt=null, ReviewIsolation=Isolated, InlineComments defaults
+        var config = TestPipelineConfig.Default() with
+        {
+            CodeReview = new CodeReviewConfiguration
+            {
+                MaxIterations = 2,
+                FixPrompt = "Global fix prompt",
+                ReviewIsolation = ReviewIsolation.Isolated,
+                InlineComments = new InlineCommentSettings
+                {
+                    Enabled = true,
+                    MaxInlineComments = 20,
+                    MaxRetries = 2,
+                    OrderBySeverity = true,
+                    SeverityThreshold = FindingSeverity.Suggestion,
+                },
+            }
+        };
+        // Project sets only MaxIterations=1, everything else stays null (don't override)
+        var projectCodeReview = new CodeReviewOverrides
         {
             MaxIterations = 1,
-            FixPrompt = null,
         };
         var project = TestPipelineConfig.WithProject() with { CodeReview = projectCodeReview };
 
         var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
 
-        // REPLACE semantics: the project's CodeReview object replaces the global one entirely.
-        // FixPrompt is null because the project object has it as null — it does NOT inherit
-        // from the global CodeReview.FixPrompt (which also happened to be null here).
-        result.CodeReview.Should().BeSameAs(projectCodeReview);
+        // Deep-merge: only MaxIterations is overridden, everything else preserved from global
         result.CodeReview.MaxIterations.Should().Be(1);
+        result.CodeReview.FixPrompt.Should().Be("Global fix prompt");
+        result.CodeReview.ReviewIsolation.Should().Be(ReviewIsolation.Isolated);
+        result.CodeReview.InlineComments.Enabled.Should().BeTrue();
+        result.CodeReview.InlineComments.MaxInlineComments.Should().Be(20);
+        result.CodeReview.InlineComments.MaxRetries.Should().Be(2);
+        result.CodeReview.InlineComments.OrderBySeverity.Should().BeTrue();
+        result.CodeReview.InlineComments.SeverityThreshold.Should().Be(FindingSeverity.Suggestion);
+    }
+
+    [Fact]
+    public void CodeReview_InlineCommentsPartialOverride_PreservesUnspecifiedProperties()
+    {
+        var config = TestPipelineConfig.Default() with
+        {
+            CodeReview = new CodeReviewConfiguration
+            {
+                MaxIterations = 3,
+                InlineComments = new InlineCommentSettings
+                {
+                    Enabled = true,
+                    MaxInlineComments = 25,
+                    MaxRetries = 4,
+                    OrderBySeverity = false,
+                    SeverityThreshold = FindingSeverity.Critical,
+                },
+            }
+        };
+        // Override only MaxInlineComments within InlineComments
+        var projectCodeReview = new CodeReviewOverrides
+        {
+            InlineComments = new InlineCommentOverrides
+            {
+                MaxInlineComments = 5,
+            },
+        };
+        var project = TestPipelineConfig.WithProject() with { CodeReview = projectCodeReview };
+
+        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+
+        // MaxInlineComments overridden, everything else preserved
+        result.CodeReview.MaxIterations.Should().Be(3);
+        result.CodeReview.InlineComments.MaxInlineComments.Should().Be(5);
+        result.CodeReview.InlineComments.Enabled.Should().BeTrue();
+        result.CodeReview.InlineComments.MaxRetries.Should().Be(4);
+        result.CodeReview.InlineComments.OrderBySeverity.Should().BeFalse();
+        result.CodeReview.InlineComments.SeverityThreshold.Should().Be(FindingSeverity.Critical);
+    }
+
+    [Fact]
+    public void CodeReview_NullInlineCommentsOverride_PreservesGlobalInlineComments()
+    {
+        var globalInlineComments = new InlineCommentSettings
+        {
+            Enabled = false,
+            MaxInlineComments = 30,
+            MaxRetries = 5,
+        };
+        var config = TestPipelineConfig.Default() with
+        {
+            CodeReview = new CodeReviewConfiguration
+            {
+                MaxIterations = 2,
+                InlineComments = globalInlineComments,
+            }
+        };
+        // Override MaxIterations but leave InlineComments null (don't override)
+        var projectCodeReview = new CodeReviewOverrides
+        {
+            MaxIterations = 4,
+            InlineComments = null,
+        };
+        var project = TestPipelineConfig.WithProject() with { CodeReview = projectCodeReview };
+
+        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+
+        result.CodeReview.MaxIterations.Should().Be(4);
+        result.CodeReview.InlineComments.Should().Be(globalInlineComments);
     }
 
     [Fact]
