@@ -174,6 +174,9 @@ public class SettingsResolutionDeterminismPropertyTests
             result.AnalysisRefinementPrompt.Should().Be(project.AnalysisRefinementPrompt);
         if (project.CodeReview is not null)
         {
+            // TODO: Assertion block does not verify InlineComments sub-properties after
+            // override. When GenCodeReviewOverrides is updated to produce InlineComments,
+            // add assertions for InlineComments deep-merge results here.
             if (project.CodeReview.MaxIterations.HasValue)
                 result.CodeReview.MaxIterations.Should().Be(project.CodeReview.MaxIterations.Value);
             if (project.CodeReview.FixPrompt is not null)
@@ -257,6 +260,9 @@ public class SettingsResolutionArbitraries
         Gen.Choose(1, 120).Select(minutes => TimeSpan.FromMinutes(minutes));
 
     private static Gen<CodeReviewOverrides> GenCodeReviewOverrides() =>
+        // TODO: Generator never produces InlineComments overrides (always null), so the
+        // property-based test never exercises the InlineComments deep-merge path.
+        // Add occasional non-null InlineCommentOverrides to improve coverage.
         from maxIterations in Gen.Elements<int?>(null, 1, 2, 3, 5)
         from fixPrompt in Gen.Elements<string?>(null, "Fix the issues", "Apply corrections")
         from isolation in Gen.Elements<ReviewIsolation?>(null, ReviewIsolation.Shared, ReviewIsolation.Isolated)

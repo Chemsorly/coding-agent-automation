@@ -44,6 +44,9 @@ public sealed record CodeReviewConfiguration
     /// Controls whether review agents share the codegen session or run in fresh isolated sessions.
     /// Default is Isolated to eliminate self-attribution bias.
     /// </summary>
+    // TODO: Key(3) was previously retired. Old MessagePack payloads with Key(3)=0 (Shared) will
+    // now deserialize into ReviewIsolation.Shared, potentially downgrading isolation. Verify that
+    // backward-compat tests (CodeReviewIsolationRetiredKeyTests) are updated accordingly.
     [Key(3)]
     public ReviewIsolation ReviewIsolation { get; init; } = ReviewIsolation.Isolated;
 
@@ -54,6 +57,9 @@ public sealed record CodeReviewConfiguration
     public CodeReviewConfiguration ApplyOverrides(CodeReviewOverrides overrides)
     {
         var result = this;
+        // TODO: Nullable sentinel pattern means a project cannot override FixPrompt to null
+        // (which disables fix prompts). null here means "don't override," so there is no way
+        // to express "clear this value." Consider a sentinel pattern if this becomes a requirement.
         if (overrides.FixPrompt is not null)
             result = result with { FixPrompt = overrides.FixPrompt };
         if (overrides.MaxIterations.HasValue)
