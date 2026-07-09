@@ -63,13 +63,22 @@ public sealed partial class TokenVendingService : ITokenVendingService
             var settings = repoConfig.Settings;
 
             if (!settings.TryGetValue(ProviderSettingKeys.PrivateKeyBase64, out var privateKeyBase64) || string.IsNullOrWhiteSpace(privateKeyBase64))
+            {
+                _logger.Error("Repository config {ConfigId} is missing 'privateKeyBase64' setting", repoConfig.Id);
                 throw new InvalidOperationException("Repository config is missing 'privateKeyBase64' setting");
+            }
 
             if (!settings.TryGetValue(ProviderSettingKeys.ClientId, out var clientId) || string.IsNullOrWhiteSpace(clientId))
+            {
+                _logger.Error("Repository config {ConfigId} is missing 'clientId' setting", repoConfig.Id);
                 throw new InvalidOperationException("Repository config is missing 'clientId' setting");
+            }
 
             if (!settings.TryGetValue(ProviderSettingKeys.InstallationId, out var installationIdStr) || !long.TryParse(installationIdStr, out var installationId))
+            {
+                _logger.Error("Repository config {ConfigId} is missing or has invalid 'installationId' setting", repoConfig.Id);
                 throw new InvalidOperationException("Repository config is missing or invalid 'installationId' setting");
+            }
 
             var apiUrl = settings.TryGetValue(ProviderSettingKeys.ApiUrl, out var url) ? url.TrimEnd('/') : "https://api.github.com";
 
@@ -109,14 +118,20 @@ public sealed partial class TokenVendingService : ITokenVendingService
             if (!response.IsSuccessStatusCode)
             {
                 var errorBody = await response.Content.ReadAsStringAsync(ct);
+                _logger.Error("GitHub token exchange failed for installation {InstallationId} with HTTP {StatusCode}: {ErrorBody}",
+                    installationId, (int)response.StatusCode, errorBody);
                 throw new HttpRequestException(
                     $"GitHub token exchange failed (HTTP {(int)response.StatusCode}): {errorBody}");
             }
 
             var responseJson = await response.Content.ReadAsStringAsync(ct);
 
-            var tokenResponse = JsonSerializer.Deserialize(responseJson, TokenResponseJsonContext.Default.TokenResponseBody)
-                ?? throw new InvalidOperationException("Failed to deserialize token response");
+            var tokenResponse = JsonSerializer.Deserialize(responseJson, TokenResponseJsonContext.Default.TokenResponseBody);
+            if (tokenResponse is null)
+            {
+                _logger.Error("Failed to deserialize GitHub token response for installation {InstallationId}", installationId);
+                throw new InvalidOperationException("Failed to deserialize token response");
+            }
 
             var expiresAt = DateTimeOffset.Parse(tokenResponse.ExpiresAt);
 

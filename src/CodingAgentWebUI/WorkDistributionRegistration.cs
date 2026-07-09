@@ -86,6 +86,7 @@ public static class WorkDistributionRegistration
         if (!string.Equals(mode, "SignalR", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(mode, "Kubernetes", StringComparison.OrdinalIgnoreCase))
         {
+            Log.Error("Unrecognized WorkDistribution:Mode '{Mode}'. Valid values: 'SignalR', 'Kubernetes'", mode);
             throw new InvalidOperationException(
                 $"Unrecognized WorkDistribution:Mode '{mode}'. Valid values: 'SignalR', 'Kubernetes'.");
         }
@@ -95,6 +96,7 @@ public static class WorkDistributionRegistration
         // ── K8s mode: fail if not in cluster ────────────────────────────────
         if (isKubernetesMode && !IsRunningInKubernetesCluster())
         {
+            Log.Error("WorkDistribution:Mode is 'Kubernetes' but the application is not running inside a Kubernetes cluster");
             throw new InvalidOperationException(
                 "WorkDistribution:Mode is 'Kubernetes' but the application is not running inside a Kubernetes cluster. " +
                 "The service account token path '/var/run/secrets/kubernetes.io/serviceaccount/token' was not found.");

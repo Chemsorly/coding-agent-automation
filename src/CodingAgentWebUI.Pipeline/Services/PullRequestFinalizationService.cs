@@ -96,6 +96,7 @@ public sealed class PullRequestFinalizationService
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            _logger.Error(ex, "Pipeline {RunId} PR creation failed", run.RunId);
             throw;
         }
     }

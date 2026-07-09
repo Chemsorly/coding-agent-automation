@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.Services;
 /// </summary>
 public sealed class OrphanedLabelRecoveryService : BackgroundService
 {
-    private static readonly TimeSpan GracePeriod = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan DefaultGracePeriod = TimeSpan.FromSeconds(60);
     private const int MinimumSweepIntervalMinutes = 5;
 
     private readonly IOrchestratorRunService _runService;
@@ -25,6 +25,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     private readonly ILabelSwapper _labelSwapper;
     private readonly IPipelineConfigStore _configStore;
     private readonly ILogger _logger;
+    private readonly TimeSpan _gracePeriod;
 
     public OrphanedLabelRecoveryService(
         IOrchestratorRunService runService,
@@ -34,6 +35,22 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         ILabelSwapper labelSwapper,
         IPipelineConfigStore configStore,
         ILogger logger)
+        : this(runService, projectStore, providerConfigStore, providerFactory, labelSwapper, configStore, logger, DefaultGracePeriod)
+    {
+    }
+
+    /// <summary>
+    /// Internal constructor for testing — allows overriding the grace period to avoid 60s real-time waits.
+    /// </summary>
+    internal OrphanedLabelRecoveryService(
+        IOrchestratorRunService runService,
+        IProjectStore projectStore,
+        IProviderConfigStore providerConfigStore,
+        IProviderFactory providerFactory,
+        ILabelSwapper labelSwapper,
+        IPipelineConfigStore configStore,
+        ILogger logger,
+        TimeSpan gracePeriod)
     {
         _runService = runService;
         _projectStore = projectStore;
@@ -42,14 +59,15 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         _labelSwapper = labelSwapper;
         _configStore = configStore;
         _logger = logger.ForContext<OrphanedLabelRecoveryService>();
+        _gracePeriod = gracePeriod;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         try
         {
-            _logger.Information("Orphaned label recovery: waiting {GracePeriod} for agents to reconnect", GracePeriod);
-            await Task.Delay(GracePeriod, stoppingToken);
+            _logger.Information("Orphaned label recovery: waiting {GracePeriod} for agents to reconnect", _gracePeriod);
+            await Task.Delay(_gracePeriod, stoppingToken);
 
             // First sweep immediately after grace period — wrapped in try-catch so transient
             // failures (DB timeout, provider unavailable) don't kill the service permanently.

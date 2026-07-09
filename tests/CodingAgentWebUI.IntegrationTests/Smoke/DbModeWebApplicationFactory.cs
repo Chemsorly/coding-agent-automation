@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Moq;
+using Serilog;
 
 namespace CodingAgentWebUI.IntegrationTests.Smoke;
 
@@ -74,6 +75,15 @@ public sealed class DbModeWebApplicationFactory : WebApplicationFactory<Program>
         Environment.SetEnvironmentVariable("Database__SkipStartupInit", "true");
         Environment.SetEnvironmentVariable("WorkDistribution__Mode", "SignalR");
         Environment.SetEnvironmentVariable("AGENT_API_KEY", "test-api-key");
+
+        // Reset Serilog's global logger to a fresh bootstrap state.
+        // This prevents "The logger is already frozen" when multiple WebApplicationFactory
+        // instances are created in the same process — each Build() call freezes the
+        // ReloadableLogger, so we need a new one for each factory invocation.
+        Serilog.Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Warning()
+            .WriteTo.Console()
+            .CreateBootstrapLogger();
 
         builder.UseEnvironment("Development");
 

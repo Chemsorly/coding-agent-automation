@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Serilog;
 using YamlDotNet.Serialization;
 using YamlDotNet.Serialization.NamingConventions;
 
@@ -38,8 +39,12 @@ public sealed class JobTemplateProvider
     /// <exception cref="YamlDotNet.Core.YamlException">Thrown if YAML is malformed.</exception>
     public static JobTemplateProvider LoadFromYaml(string yaml)
     {
-        var dtos = YamlDeserializer.Deserialize<List<JobTemplateYamlDto>>(yaml)
-            ?? throw new InvalidOperationException("Deserialized job templates list is null");
+        var dtos = YamlDeserializer.Deserialize<List<JobTemplateYamlDto>>(yaml);
+        if (dtos is null)
+        {
+            Log.Error("Deserialized job templates list is null from YAML input");
+            throw new InvalidOperationException("Deserialized job templates list is null");
+        }
 
         var templates = dtos.Select(dto => dto.ToJobTemplate()).ToList();
         return BuildLookup(templates);
@@ -52,8 +57,12 @@ public sealed class JobTemplateProvider
     /// <exception cref="JsonException">Thrown if JSON is malformed.</exception>
     public static JobTemplateProvider LoadFromJson(string json)
     {
-        var list = JsonSerializer.Deserialize<List<JobTemplate>>(json, JsonOptions)
-            ?? throw new JsonException("Deserialized job templates list is null");
+        var list = JsonSerializer.Deserialize<List<JobTemplate>>(json, JsonOptions);
+        if (list is null)
+        {
+            Log.Error("Deserialized job templates list is null from JSON input");
+            throw new JsonException("Deserialized job templates list is null");
+        }
 
         return BuildLookup(list);
     }
@@ -68,7 +77,10 @@ public sealed class JobTemplateProvider
     public static JobTemplateProvider LoadFromFile(string filePath)
     {
         if (!File.Exists(filePath))
+        {
+            Log.Error("Job templates file not found: {FilePath}", filePath);
             throw new FileNotFoundException($"Job templates file not found: {filePath}", filePath);
+        }
 
         var content = File.ReadAllText(filePath);
         var ext = Path.GetExtension(filePath).ToLowerInvariant();
@@ -127,8 +139,11 @@ public sealed class JobTemplateProvider
         foreach (var template in templates)
         {
             if (string.IsNullOrWhiteSpace(template.Image))
+            {
+                Log.Error("Job template '{Labels}' has empty Image — each template must specify a container image", template.Labels);
                 throw new InvalidOperationException(
                     $"Job template '{template.Labels}' has empty Image — each template must specify a container image");
+            }
 
             var key = NormalizeLabels(template.Labels);
             dict[key] = template;

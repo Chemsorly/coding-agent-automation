@@ -129,9 +129,15 @@ public sealed class PipelineStepContext
     internal AgentPhaseContext BuildAgentPhaseContext()
     {
         if (Issue is null)
+        {
+            Logger.Error("Cannot build AgentPhaseContext: Issue has not been set by a prior step (RunId={RunId})", Run.RunId);
             throw new InvalidOperationException("Cannot build AgentPhaseContext: Issue has not been set by a prior step.");
+        }
         if (ParsedIssue is null)
+        {
+            Logger.Error("Cannot build AgentPhaseContext: ParsedIssue has not been set by a prior step (RunId={RunId})", Run.RunId);
             throw new InvalidOperationException("Cannot build AgentPhaseContext: ParsedIssue has not been set by a prior step.");
+        }
 
         return new AgentPhaseContext
         {

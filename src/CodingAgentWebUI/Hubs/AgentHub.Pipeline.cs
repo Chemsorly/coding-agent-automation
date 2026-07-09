@@ -567,13 +567,19 @@ public sealed partial class AgentHub
             // K8s mode fallback: resolve from WorkItem payload in DB
             var configIds = await _facade.GetWorkItemProviderConfigIdsAsync(jobId, CancellationToken.None);
             if (configIds is null)
+            {
+                _logger.Warning("No active run or work item found for job {JobId}", jobId);
                 throw new HubException($"No active run or work item found for job {jobId}");
+            }
 
             repoProviderConfigId = configIds.Value.RepoProviderConfigId;
             brainProviderConfigId = configIds.Value.BrainProviderConfigId;
 
             if (string.IsNullOrEmpty(repoProviderConfigId))
+            {
+                _logger.Warning("WorkItem {JobId} has no repoProviderConfigId in payload", jobId);
                 throw new HubException($"WorkItem {jobId} has no repoProviderConfigId in payload");
+            }
         }
 
         // Resolve the correct provider config based on the requested kind.
@@ -592,7 +598,10 @@ public sealed partial class AgentHub
         }
 
         if (targetConfig is null)
+        {
+            _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);
             throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
+        }
 
         // GitHub App auth: generate a short-lived scoped token via JWT exchange
         if (targetConfig.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64))
@@ -626,6 +635,7 @@ public sealed partial class AgentHub
             return new TokenRefreshResponse { Token = existingToken, ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) };
         }
 
+        _logger.Warning("Provider config for job {JobId} (kind: {ProviderKind}) has no supported authentication method", jobId, providerKind);
         throw new HubException($"Provider config for job {jobId} (kind: {providerKind}) has no supported authentication method. " +
             "Expected 'privateKeyBase64' (GitHub App), 'accessToken' (GitLab PAT), or 'token'.");
     }

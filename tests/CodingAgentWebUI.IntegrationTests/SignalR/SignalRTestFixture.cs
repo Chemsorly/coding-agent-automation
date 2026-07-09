@@ -36,6 +36,10 @@ public sealed class SignalRTestFactory : WebApplicationFactory<Program>
         builder.UseEnvironment("Development");
         builder.UseSetting("Database:Host", "");
 
+        // Reset Serilog to prevent "logger is already frozen" across multiple factory instances.
+        // Use SilentLogger so Program.cs's CreateBootstrapLogger() creates a fresh ReloadableLogger.
+        Serilog.Log.Logger = new Serilog.LoggerConfiguration().CreateLogger();
+
         builder.ConfigureServices(services =>
         {
             // Override the API key via options rather than env var — Program.cs reads

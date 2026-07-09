@@ -90,9 +90,12 @@ internal static class RepositoryGitOperations
 
         var remoteBranch = repo.Branches[$"origin/{branchName}"];
         if (remoteBranch == null)
+        {
+            Log.Error("Remote branch 'origin/{BranchName}' not found — branch may have been deleted", branchName);
             throw new InvalidOperationException(
                 $"Remote branch 'origin/{branchName}' not found. " +
                 $"The branch may have been deleted.");
+        }
 
         var localBranch = repo.CreateBranch(branchName, remoteBranch.Tip);
         repo.Branches.Update(localBranch,
@@ -198,7 +201,10 @@ internal static class RepositoryGitOperations
         }
 
         if (stagedChanges.Count == 0 && !allowEmpty)
+        {
+            Log.Warning("No changes to commit in workspace {WorkspacePath} — agent did not modify any files", workspacePath);
             throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
+        }
 
         var signature = new Signature(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
         var commitOptions = allowEmpty ? new CommitOptions { AllowEmptyCommit = true } : new CommitOptions();
@@ -240,6 +246,7 @@ internal static class RepositoryGitOperations
             {
                 var category = PushErrorClassifier.Classify(pushError);
                 var message = PushErrorClassifier.GetActionableMessage(category, branchName);
+                Log.Error("Push failed for branch {BranchName}: {PushError} (category={Category})", branchName, pushError, category);
                 // Network and Unknown errors are potentially transient — throw LibGit2SharpException
                 // so the Polly resilience pipeline can retry them.
                 throw category is PushErrorClassifier.PushFailureCategory.Network
@@ -370,8 +377,11 @@ internal static class RepositoryGitOperations
 
         var baseBranch = repo.Branches[$"origin/{baseBranchName}"];
         if (baseBranch == null)
+        {
+            Log.Error("Base branch 'origin/{BaseBranchName}' not found after fetch", baseBranchName);
             throw new InvalidOperationException(
                 $"Base branch 'origin/{baseBranchName}' not found after fetch.");
+        }
 
         var baseSha = baseBranch.Tip.Sha[..8];
         Log.Debug(

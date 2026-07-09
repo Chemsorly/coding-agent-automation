@@ -20,8 +20,12 @@ public sealed class FetchIssueStep : IPipelineStep
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
     {
-        var issueProvider = context.IssueProvider
-            ?? throw new InvalidOperationException("FetchIssueStep requires an IssueProvider on the context.");
+        var issueProvider = context.IssueProvider;
+        if (issueProvider is null)
+        {
+            context.Logger.Error("FetchIssueStep requires an IssueProvider on the context (RunId={RunId})", context.Run.RunId);
+            throw new InvalidOperationException("FetchIssueStep requires an IssueProvider on the context.");
+        }
 
         IssueDetail issue;
         try { issue = await issueProvider.GetIssueAsync(context.Run.IssueIdentifier, ct); }
