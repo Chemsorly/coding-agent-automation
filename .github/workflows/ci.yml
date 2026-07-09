@@ -97,8 +97,6 @@ jobs:
     needs: [build-and-test]
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    container:
-      image: quay.io/buildah/stable
 
     permissions:
       contents: read
@@ -125,8 +123,10 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      - name: Set up QEMU for multi-arch builds
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
       - name: Build and push ${{ matrix.tag }}
-        shell: sh
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -134,12 +134,8 @@ jobs:
           # Configure registry auth
           AUTH=$(echo -n "${DOCKERHUB_USERNAME}:${DOCKERHUB_TOKEN}" | base64)
           echo "::add-mask::${AUTH}"
-          mkdir -p /run/containers/0
-          echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > /run/containers/0/auth.json
-
-          # Use vfs storage driver (no mount syscall needed, works in any container)
-          export BUILDAH_ISOLATION=chroot
-          sed -i 's/^driver =.*/driver = "vfs"/' /etc/containers/storage.conf 2>/dev/null || true
+          mkdir -p "${XDG_RUNTIME_DIR}/containers"
+          echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"auth\":\"${AUTH}\"}}}" > "${XDG_RUNTIME_DIR}/containers/auth.json"
 
           # Build args for build-info (only relevant for webui, ignored by other Dockerfiles)
           BUILD_ARGS=""
@@ -151,11 +147,9 @@ jobs:
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_IMAGE_TAG=chemsorly/coding-agent:${{ matrix.tag }}-latest"
           BUILD_ARGS="${BUILD_ARGS} --build-arg BUILD_REPOSITORY_URL=${{ github.server_url }}/${{ github.repository }}"
 
-          # Build multi-arch image (SDK runs natively on ARM via $BUILDPLATFORM, cross-compiles via $TARGETARCH)
+          # Build multi-arch image
           # Builds for both amd64 and arm64, producing a manifest list
           buildah build \
-            --isolation chroot \
-            --storage-driver vfs \
             --platform linux/amd64,linux/arm64 \
             -f ${{ matrix.dockerfile }} \
             --manifest docker.io/chemsorly/dev:${{ matrix.tag }} \
@@ -168,16 +162,14 @@ jobs:
 
             # Push SHA-tagged image (pinnable version)
             buildah manifest push \
-              --storage-driver vfs \
-              --authfile /run/containers/0/auth.json \
+              --authfile "${XDG_RUNTIME_DIR}/containers/auth.json" \
               --all \
               docker.io/chemsorly/dev:${{ matrix.tag }} \
               docker://docker.io/chemsorly/coding-agent:${{ matrix.tag }}-${SHORT_SHA}
 
             # Push latest-tagged image (mutable tag for dev/testing)
             buildah manifest push \
-              --storage-driver vfs \
-              --authfile /run/containers/0/auth.json \
+              --authfile "${XDG_RUNTIME_DIR}/containers/auth.json" \
               --all \
               docker.io/chemsorly/dev:${{ matrix.tag }} \
               docker://docker.io/chemsorly/coding-agent:${{ matrix.tag }}-latest
@@ -187,8 +179,7 @@ jobs:
               VERSION="${{ github.ref_name }}"
               VERSION="${VERSION#v}"
               buildah manifest push \
-                --storage-driver vfs \
-                --authfile /run/containers/0/auth.json \
+                --authfile "${XDG_RUNTIME_DIR}/containers/auth.json" \
                 --all \
                 docker.io/chemsorly/dev:${{ matrix.tag }} \
                 docker://docker.io/chemsorly/coding-agent:${{ matrix.tag }}-${VERSION}
