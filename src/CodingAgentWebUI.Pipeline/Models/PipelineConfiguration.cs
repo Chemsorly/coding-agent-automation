@@ -281,7 +281,7 @@ public sealed record PipelineConfiguration
     /// Applies non-null project overrides to a PipelineConfiguration instance.
     /// Called BEFORE ApplyTemplateOverrides in the dispatch pipeline.
     /// Each non-null property on the project replaces the corresponding global value.
-    /// Nested objects (e.g., CodeReview) use REPLACE semantics — no deep merge.
+    /// Nested objects (e.g., CodeReview) use deep-merge semantics via ApplyOverrides.
     /// </summary>
     public static PipelineConfiguration ApplyProjectOverrides(
         PipelineConfiguration config, PipelineProject? project)
@@ -309,7 +309,7 @@ public sealed record PipelineConfiguration
             if (project.AcceptanceCriteriaEnabled.HasValue)
                 config = config with { AcceptanceCriteriaEnabled = project.AcceptanceCriteriaEnabled.Value };
             if (project.CodeReview is not null)
-                config = config with { CodeReview = project.CodeReview }; // REPLACE semantics — entire object replaced
+                config = config with { CodeReview = config.CodeReview.ApplyOverrides(project.CodeReview) };
             if (project.BaselineHealthCheckEnabled.HasValue)
                 config = config with { BaselineHealthCheckEnabled = project.BaselineHealthCheckEnabled.Value };
             if (project.ExternalCiTimeout.HasValue)
