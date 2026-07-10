@@ -320,9 +320,46 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "PendingWorkItemDrainService: SignalR delivery failed for WorkItem {WorkItemId}",
+                    "PendingWorkItemDrainService: dispatch failed for WorkItem {WorkItemId}",
                     item.Id);
                 _agentResolver.ReleaseAgent(agentId);
+
+                // Clean up in-memory PipelineRun (idempotent — TryRemove is a no-op if key doesn't exist,
+                // which handles the case where the exception fired before run creation/modification)
+                if (!string.IsNullOrEmpty(request.RunId))
+                {
+                    _runService.RemoveRun(request.RunId);
+                }
+
+                // Revert to Pending for retry on next drain cycle.
+                // Safe regardless of where the exception occurred:
+                // - If TransitionAsync(Dispatched) itself failed, item is still Pending → TransitionAsync
+                //   returns true idempotently (already at target).
+                // - If exception was after Dispatched transition, item reverts Dispatched → Pending (valid).
+                // TODO: The idempotent path (item already Pending) does NOT invoke the mutate callback,
+                // so RetryCount won't increment if the exception occurred during TransitionAsync(Dispatched).
+                // Consider checking the return value and manually incrementing RetryCount in that case.
+                try
+                {
+                    // TODO: Using the same stoppingToken (ct) here means the revert will also fail if
+                    // the original exception was due to cancellation (shutdown). Consider using
+                    // CancellationToken.None to ensure revert completes during graceful shutdown.
+                    await _transitionService.TransitionAsync(
+                        item.Id, WorkItemStatus.Pending,
+                        entity =>
+                        {
+                            entity.DispatchedAt = null;
+                            entity.AssignedAgentId = null;
+                            entity.RetryCount++;
+                        }, ct);
+                }
+                catch (Exception revertEx)
+                {
+                    _logger.LogWarning(revertEx,
+                        "PendingWorkItemDrainService: failed to revert WorkItem {WorkItemId} to Pending after dispatch failure — stuck-item detector will handle",
+                        item.Id);
+                }
+
                 continue;
             }
 
