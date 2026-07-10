@@ -49,6 +49,7 @@ public sealed partial class AgentHub
     /// pipeline loop can re-discover and re-dispatch the issue.
     /// This should be rare after the atomic agent reservation fix in SelectAgent.
     /// </summary>
+    [RequiresActiveJob]
     public async Task JobRejected(string jobId, string reason)
     {
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
