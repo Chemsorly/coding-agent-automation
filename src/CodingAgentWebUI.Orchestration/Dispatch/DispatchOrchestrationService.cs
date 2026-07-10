@@ -22,22 +22,26 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private readonly DispatchInfrastructure _infra;
     private readonly IDispatchRunCreator _orchestration;
     private readonly IOrchestratorRunService _runService;
+    private readonly IWorkDistributor _workDistributor;
     private readonly ILogger _logger;
 
     public DispatchOrchestrationService(
         DispatchInfrastructure infra,
         IDispatchRunCreator orchestration,
         IOrchestratorRunService runService,
+        IWorkDistributor workDistributor,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(orchestration);
         ArgumentNullException.ThrowIfNull(runService);
+        ArgumentNullException.ThrowIfNull(workDistributor);
         ArgumentNullException.ThrowIfNull(logger);
 
         _infra = infra;
         _orchestration = orchestration;
         _runService = runService;
+        _workDistributor = workDistributor;
         _logger = logger;
     }
 
@@ -512,6 +516,24 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             TraceContext = result.TraceContext,
             RunId = result.CreatedRun.RunId
         };
+    }
+
+    /// <inheritdoc />
+    public async Task<DispatchOutcome> DistributeAndFinalizeAsync(JobDistributionRequest request, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        var result = await _workDistributor.DistributeAsync(request, ct);
+        if (!result.Success)
+        {
+            await RevertFailedDistributionAsync(request, ct);
+            return new DispatchOutcome(false, false, result.ErrorMessage);
+        }
+
+        if (!result.Queued)
+            await ConfirmDistributionLabelAsync(request, ct);
+
+        return new DispatchOutcome(true, result.Queued, null);
     }
 
     /// <inheritdoc />

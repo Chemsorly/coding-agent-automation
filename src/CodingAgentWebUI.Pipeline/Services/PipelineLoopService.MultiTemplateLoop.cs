@@ -1147,16 +1147,9 @@ public sealed partial class PipelineLoopService
         if (_dispatchOrchestration is not null)
         {
             var request = await prepareDbRequest(ct);
-            if (request is not null)
-            {
-                var result = await _workDistributor!.DistributeAsync(request, ct);
-                if (!result.Success)
-                    await _dispatchOrchestration.RevertFailedDistributionAsync(request, ct);
-                else if (!result.Queued)
-                    await _dispatchOrchestration.ConfirmDistributionLabelAsync(request, ct);
-                return result.Success;
-            }
-            return false;
+            if (request is null) return false;
+            var outcome = await _dispatchOrchestration.DistributeAndFinalizeAsync(request, ct);
+            return outcome.Success;
         }
         else
         {

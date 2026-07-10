@@ -796,17 +796,11 @@ public class AgentCodingPageService : IDisposable
         if (request is null)
             return (false, "Could not dispatch — orchestration preparation failed (check logs for details).", null);
 
-        var result = await _workDistributor.DistributeAsync(request, CancellationToken.None);
-        if (!result.Success)
-        {
-            await _dispatchOrchestration!.RevertFailedDistributionAsync(request, CancellationToken.None);
+        var outcome = await _dispatchOrchestration!.DistributeAndFinalizeAsync(request, CancellationToken.None);
+        if (!outcome.Success)
             return (false, distributionFailedError, null);
-        }
 
-        if (!result.Queued)
-            await _dispatchOrchestration!.ConfirmDistributionLabelAsync(request, CancellationToken.None);
-
-        return (true, null, result.Queued ? queuedMessage : dispatchedMessage);
+        return (true, null, outcome.Queued ? queuedMessage : dispatchedMessage);
     }
 
     /// <summary>

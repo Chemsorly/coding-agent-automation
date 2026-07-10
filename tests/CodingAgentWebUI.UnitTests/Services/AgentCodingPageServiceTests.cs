@@ -194,9 +194,11 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task DispatchIssueAsync_ReturnsError_WhenNoAgents()
     {
-        // TODO: Add tests for failure path (DistributeAsync returning Success=false, triggering RevertFailedDistributionAsync)
-        // and queued path (Success=true, Queued=true, skipping ConfirmDistributionLabelAsync) to cover
-        // branching logic now consolidated in DispatchWithOrchestrationAsync helper.
+        // TODO: Add tests for failure path (DistributeAndFinalizeAsync returning Success=false, triggering
+        // the distributionFailedError tuple) and queued path (Success=true, Queued=true, which should return
+        // queuedMessage instead of dispatchedMessage) to cover branching logic in DispatchWithOrchestrationAsync.
+        // Currently all tests hardcode DispatchOutcome(true, false, null) — a bug swapping the two message
+        // constants or mishandling the failure branch would not be caught.
         // In DB mode with IDispatchOrchestrationService injected, dispatch goes through
         // PrepareDistributionRequestAsync which builds a complete request with ProviderConfigs.
         var template = MakeTemplate();
@@ -230,15 +232,15 @@ public class AgentCodingPageServiceTests
             It.IsAny<WorkItemTaskType>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(fullRequest);
 
-        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(true, "work-item-1", null));
+        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, false, null));
 
         var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
 
         Assert.True(success);
 
-        // Verify that distribute was called with the ORCHESTRATED request (has ProviderConfigs)
-        _mockWorkDistributor.Verify(w => w.DistributeAsync(
+        // Verify that DistributeAndFinalizeAsync was called with the ORCHESTRATED request (has ProviderConfigs)
+        _mockDispatchOrchestration.Verify(d => d.DistributeAndFinalizeAsync(
             It.Is<JobDistributionRequest>(r => r.ProviderConfigs != null && r.ProviderConfigs.Count == 2),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -267,7 +269,7 @@ public class AgentCodingPageServiceTests
 
         Assert.False(success);
         Assert.Contains("orchestration preparation failed", error);
-        _mockWorkDistributor.Verify(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockDispatchOrchestration.Verify(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -466,8 +468,8 @@ public class AgentCodingPageServiceTests
             It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(fullRequest);
 
-        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(true, "work-1", null));
+        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, false, null));
 
         var pr = new PullRequestSummary { Identifier = "5", Title = "PR", BranchName = "feat/x", TargetBranch = "main", Url = "http://x", Number = 5, Description = "", Labels = [], IsDraft = false };
         var (success, _, _) = await _service.DispatchPrReviewAsync(pr, template);
@@ -478,8 +480,8 @@ public class AgentCodingPageServiceTests
         _mockDispatchOrchestration.Verify(d => d.PrepareReviewDistributionRequestAsync(
             It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Once);
 
-        // Verify distributor received the orchestrated request with ProviderConfigs
-        _mockWorkDistributor.Verify(w => w.DistributeAsync(
+        // Verify DistributeAndFinalizeAsync received the orchestrated request with ProviderConfigs
+        _mockDispatchOrchestration.Verify(d => d.DistributeAndFinalizeAsync(
             It.Is<JobDistributionRequest>(r => r.ProviderConfigs != null && r.ProviderConfigs.Count > 0),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -516,8 +518,8 @@ public class AgentCodingPageServiceTests
             It.IsAny<PipelineProject>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(fullRequest);
 
-        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(true, "work-1", null));
+        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, false, null));
 
         var issue = new IssueSummary { Identifier = "epic-1", Title = "Epic", Labels = new[] { "agent:epic" } };
         var (success, _, _) = await _service.DispatchDecompositionAsync(issue, template);
@@ -530,8 +532,8 @@ public class AgentCodingPageServiceTests
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(),
             It.IsAny<PipelineProject>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
 
-        // Verify distributor received the orchestrated request with ProviderConfigs
-        _mockWorkDistributor.Verify(w => w.DistributeAsync(
+        // Verify DistributeAndFinalizeAsync received the orchestrated request with ProviderConfigs
+        _mockDispatchOrchestration.Verify(d => d.DistributeAndFinalizeAsync(
             It.Is<JobDistributionRequest>(r => r.ProviderConfigs != null && r.ProviderConfigs.Count > 0),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -760,8 +762,8 @@ public class AgentCodingPageServiceTests
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
             It.IsAny<PipelineProject>(), It.IsAny<WorkItemTaskType>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateMinimalDistributionRequest());
-        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(true, "w-1", null));
+        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, false, null));
 
         var (success, error, msg) = await _service.DispatchFromIssueDrawerAsync(MakeIssue());
 
@@ -805,8 +807,8 @@ public class AgentCodingPageServiceTests
         _mockDispatchOrchestration.Setup(d => d.PrepareReviewDistributionRequestAsync(
             It.IsAny<ReviewDispatchRequest>(), It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateMinimalDistributionRequest());
-        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(true, "w-1", null));
+        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, false, null));
 
         var pr = new PullRequestSummary { Identifier = "99", Number = 99, Title = "Fix", BranchName = "fix/a", TargetBranch = "main", Url = "http://x", Description = "", Labels = Array.Empty<string>(), IsDraft = false };
         var (success, error, msg) = await _service.DispatchFromPrDrawerAsync(pr);
@@ -833,8 +835,8 @@ public class AgentCodingPageServiceTests
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(),
             It.IsAny<PipelineProject>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateMinimalDistributionRequest());
-        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DistributionResult(true, "w-1", null));
+        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, false, null));
 
         var (success, error, msg) = await _service.DispatchFromEpicDrawerAsync(MakeIssue());
 
