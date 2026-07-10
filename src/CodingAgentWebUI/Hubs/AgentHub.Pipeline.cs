@@ -169,7 +169,17 @@ public sealed partial class AgentHub
             // persist history, and mark issue complete in dedup tracker.
             try
             {
-                await _lifecycleManager.CompleteRunAsync(jobId, workItemStatus, CancellationToken.None);
+                var completedRun = await _lifecycleManager.CompleteRunAsync(jobId, workItemStatus, CancellationToken.None);
+                if (completedRun is null)
+                {
+                    // Race: run was removed by RevertFailedDistributionAsync between GetRun and CompleteRunAsync.
+                    // The DB WorkItem transition inside CompleteRunAsync was skipped (it returns early on null RemoveRun).
+                    // Attempt direct DB transition — will use infrastructure-failure recovery fallback if needed.
+                    _logger.Warning(
+                        "CompleteRunAsync returned null for job {JobId} (race with RevertFailedDistributionAsync), attempting direct DB transition",
+                        jobId);
+                    await _facade.TransitionWorkItemAsync(jobId, workItemStatus, CancellationToken.None);
+                }
             }
             catch (Exception ex)
             {
@@ -200,9 +210,45 @@ public sealed partial class AgentHub
         }
         else
         {
-            _logger.Debug(
-                "ReportJobCompleted for job {JobId} — run not found (already processed or replayed). No-op.",
-                jobId);
+            // Run not in memory — this happens when RevertFailedDistributionAsync already cleaned up
+            // after a delivery timeout, but the agent actually received and completed the job.
+            // Attempt direct DB recovery: if the WorkItem is in Failed with InfrastructureFailure reason,
+            // transition it to the appropriate terminal status.
+            var workItemStatus = payload.FinalStep switch
+            {
+                PipelineStep.Completed => WorkItemStatus.Succeeded,
+                PipelineStep.Cancelled => WorkItemStatus.Cancelled,
+                _ => WorkItemStatus.Failed
+            };
+
+            _logger.Warning(
+                "ReportJobCompleted for job {JobId} — run not found, attempting DB recovery (finalStep={FinalStep})",
+                jobId, payload.FinalStep);
+
+            await _facade.TransitionWorkItemAsync(jobId, workItemStatus, CancellationToken.None);
+
+            // TODO: Call _facade.MarkIssueComplete() after successful recovery to update the in-memory dedup tracker.
+            // Without it, the closed-loop poll could re-dispatch this issue if the label swap below fails.
+
+            // Best-effort label correction after recovery (label is currently agent:next from RevertFailedDistributionAsync)
+            if (workItemStatus == WorkItemStatus.Succeeded)
+            {
+                try
+                {
+                    var metadata = await _facade.GetWorkItemIssueMetadataAsync(jobId, CancellationToken.None);
+                    if (metadata.HasValue)
+                    {
+                        await _labelSwapper.SwapLabelAsync(
+                            metadata.Value.IssueProviderConfigId,
+                            metadata.Value.IssueIdentifier,
+                            AgentLabels.Done, LabelTargetKind.Issue, CancellationToken.None);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to swap label after recovery for job {JobId} (cosmetic)", jobId);
+                }
+            }
         }
 
         // Transition agent to Idle BEFORE slow I/O operations (label swap, comment posting).

@@ -167,4 +167,12 @@ public interface IAgentHubFacade
     /// timeout enforcement across replicas.
     /// </summary>
     Task TouchLastProgressAsync(string jobId, DateTimeOffset timestamp, CancellationToken ct);
+
+    /// <summary>
+    /// Reads IssueIdentifier and IssueProviderConfigId from a WorkItem in the database.
+    /// Used for best-effort label recovery when no in-memory PipelineRun is available.
+    /// Returns null if the work item doesn't exist or DB is not configured.
+    /// </summary>
+    Task<(string IssueIdentifier, string IssueProviderConfigId)?> GetWorkItemIssueMetadataAsync(
+        string workItemId, CancellationToken ct);
 }

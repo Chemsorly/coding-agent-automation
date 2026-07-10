@@ -159,7 +159,24 @@ public sealed class AgentHubFacade : IAgentHubFacade
                 }
 
                 // If we get here, transition was rejected for a non-recoverable reason
-                // (e.g., already terminal). Log and exit — not an error.
+                // (e.g., already terminal). Attempt infrastructure-failure recovery as last resort.
+                if (_workItemTransition is not null)
+                {
+                    var recovered = await _workItemTransition.TryRecoverFromInfrastructureFailureAsync(
+                        workItemId, status, item =>
+                        {
+                            if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+                                item.CompletedAt = DateTimeOffset.UtcNow;
+                        }, ct);
+                    if (recovered)
+                    {
+                        _logger.LogWarning(
+                            "WorkItem {WorkItemId} recovered from infrastructure-failure Failed to {Status}",
+                            workItemId, status);
+                        return;
+                    }
+                }
+
                 _logger.LogWarning(
                     "WorkItem {WorkItemId} transition to {Status} rejected (may already be terminal)",
                     workItemId, status);
@@ -335,6 +352,34 @@ public sealed class AgentHubFacade : IAgentHubFacade
         {
             WorkDistributionTelemetry.ProgressWriteFailures.Add(1);
             _logger.LogWarning(ex, "Failed to update LastProgressAt for WorkItem {WorkItemId}", workItemId);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<(string IssueIdentifier, string IssueProviderConfigId)?> GetWorkItemIssueMetadataAsync(
+        string workItemId, CancellationToken ct)
+    {
+        if (_dbFactory is null || !Guid.TryParse(workItemId, out var id))
+            return null;
+
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var result = await db.WorkItems
+                .AsNoTracking()
+                .Where(w => w.Id == id)
+                .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
+                .FirstOrDefaultAsync(ct);
+
+            if (result is null || string.IsNullOrEmpty(result.IssueIdentifier))
+                return null;
+
+            return (result.IssueIdentifier, result.IssueProviderConfigId);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read issue metadata from WorkItem {WorkItemId}", workItemId);
+            return null;
         }
     }
 }
