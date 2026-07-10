@@ -543,6 +543,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         var entry = RegisterAgent("agent-1", "conn-1");
         entry.ActiveJobId = "job-missing";
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Backdate past grace period
 
         // No run added for this job — simulates race condition where run was removed concurrently
         await _monitor.SweepAsync(CancellationToken.None);
@@ -560,6 +561,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         entry.ActiveJobId = "job-vanished";
         entry.OrphanRestoredAt = null;
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Backdate past grace period
 
         // No run exists for this job ID — simulates ReportJobCompleted removing the run
         // but failing to transition agent to Idle (e.g., SignalR exception)
@@ -569,6 +571,59 @@ public class HeartbeatMonitorServiceTests : IDisposable
         agent.Status.Should().Be(AgentStatus.Idle);
         agent.ActiveJobId.Should().BeNull();
         agent.OrphanRestoredAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_RecentlyBusy_NoRun_SkipsReset()
+    {
+        // TODO: Add test for the exact bug scenario (Busy with null ActiveJobId + recent BusySince)
+        // to guard against regression if Phase 1.6 condition is broadened to include null ActiveJobId.
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-new";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        // BusySince is set to ~now by TransitionStatus — within the 10s grace period
+
+        // No run exists for this job — but agent just became Busy
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent should NOT be reset — grace period protects recently-assigned agents
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Busy);
+        agent.ActiveJobId.Should().Be("job-new");
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_BusySinceExpired_NoRun_ResetsToIdle()
+    {
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-stale";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Well past grace period
+
+        // No run exists for this job — and agent has been Busy for 30s
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent should be reset — grace period expired, legitimately stuck
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Idle);
+        agent.ActiveJobId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_NullBusySince_NoRun_ResetsToIdle()
+    {
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-legacy";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince = null; // Simulate pre-existing agent without BusySince (backward compat)
+
+        // No run exists for this job — and BusySince is null (no grace period)
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent should be reset — null BusySince means no grace period protection
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Idle);
+        agent.ActiveJobId.Should().BeNull();
     }
 
     [Fact]
@@ -1138,6 +1193,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         var entry = RegisterAgent("agent-partition", "conn-partition");
         entry.ActiveJobId = "completed-during-partition";
         _registry.TransitionStatus("agent-partition", AgentStatus.Busy);
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Backdate past grace period
 
         // The run has already been removed by the replayed ReportJobCompleted
         // (simulating: agent reconnected → buffer drained → ReportJobCompleted processed
