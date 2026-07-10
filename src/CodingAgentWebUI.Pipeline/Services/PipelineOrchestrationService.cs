@@ -187,14 +187,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
     {
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
-        using var activity = PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline");
-        activity?.SetTag("pipeline.run_id", run.RunId);
-        activity?.SetTag("pipeline.issue", run.IssueIdentifier);
-        PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
-
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var tags = PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName);
-        PipelineTelemetry.JobsDispatched.Add(1, tags);
+        using var instrumentation = PipelineRunInstrumentation.Start(
+            run.RunId, run.IssueIdentifier, run.RunType, run.ProjectId, run.ProjectName);
 
         IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
         Steps.PipelineStepContext? ctx = null;
@@ -223,22 +217,14 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             await Steps.PipelineStepRunner.ExecuteAsync(BuildStepPipeline(), ctx, ct);
 
-            sw.Stop();
-            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
             if (run.CurrentStep == PipelineStep.Completed)
-                PipelineTelemetry.JobsCompleted.Add(1, tags);
-            else
-                PipelineTelemetry.JobsFailed.Add(1, tags);
-
-            activity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
+                instrumentation.MarkCompleted();
+            instrumentation.SetFinalStep(run.CurrentStep.ToString());
         }
         catch (OperationCanceledException)
         {
-            sw.Stop();
-            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
-            PipelineTelemetry.JobsFailed.Add(1, tags);
-            activity?.SetTag("pipeline.cancelled", true);
-            activity?.SetTag("pipeline.final_step", "Cancelled");
+            instrumentation.MarkCancelled();
+            instrumentation.SetFinalStep("Cancelled");
 
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
             {
@@ -252,11 +238,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         }
         catch (Exception ex)
         {
-            sw.Stop();
-            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
-            PipelineTelemetry.JobsFailed.Add(1, tags);
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.AddException(ex);
+            // TODO: RecordError has special-case logic for OperationCanceledException when
+            // ct.IsCancellationRequested, which subtly differs from the old unconditional
+            // SetStatus+AddException pattern. Verify wrapped OCEs (e.g., AggregateException)
+            // and TaskCanceledException from non-Task code are handled correctly here.
+            instrumentation.Activity?.RecordError(ex, ct);
             throw;
         }
     }
