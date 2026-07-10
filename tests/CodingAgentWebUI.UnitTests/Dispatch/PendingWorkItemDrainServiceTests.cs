@@ -161,6 +161,14 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         _mockLabelSwapper.Verify(
             l => l.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
+
+        // Assert: WorkItem was reverted to Pending (not stuck in Dispatched)
+        await using var checkDb = await _dbFactory.CreateDbContextAsync();
+        var item = await checkDb.WorkItems.FindAsync(workItemId);
+        item.Should().NotBeNull();
+        item!.Status.Should().Be(WorkItemStatus.Pending);
+        item.DispatchedAt.Should().BeNull();
+        item.AssignedAgentId.Should().BeNull();
     }
 
     [Fact]
@@ -284,6 +292,131 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         _mockLabelSwapper.Verify(
             l => l.SwapLabelAsync("issue-provider-1", It.IsAny<string>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task DrainPendingItems_SignalRDeliveryFails_RevertsWorkItemToPending()
+    {
+        // Arrange: insert a Pending WorkItem
+        var workItemId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "org/repo#50",
+            IssueProviderConfigId = "issue-provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            RunId = workItemId.ToString(),
+            TimeoutSeconds = 3600
+        };
+        var payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#50",
+                IssueProviderConfigId = "issue-provider-1",
+                Status = WorkItemStatus.Pending,
+                Payload = payload,
+                AgentSelector = "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Setup: agent available but SignalR delivery fails
+        _mockResolver.Setup(r => r.ResolveAgent(""))
+            .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockAgentComm.Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection lost"));
+
+        var service = CreateService();
+
+        // Act: trigger a single drain cycle
+        await InvokeDrainAsync(service);
+
+        // Assert: WorkItem reverted to Pending with cleared dispatch fields
+        await using var checkDb = await _dbFactory.CreateDbContextAsync();
+        var item = await checkDb.WorkItems.FindAsync(workItemId);
+        item.Should().NotBeNull();
+        item!.Status.Should().Be(WorkItemStatus.Pending,
+            "WorkItem must revert to Pending on SignalR delivery failure so it's eligible for re-drain");
+        item.DispatchedAt.Should().BeNull("DispatchedAt must be cleared on revert");
+        item.AssignedAgentId.Should().BeNull("AssignedAgentId must be cleared on revert");
+        item.RetryCount.Should().Be(1, "RetryCount must be incremented on each failed delivery attempt");
+    }
+
+    [Fact]
+    public async Task DrainPendingItems_RepeatedSignalRFailures_IncrementsRetryCount()
+    {
+        // Arrange: insert a Pending WorkItem with RetryCount = 0
+        var workItemId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "org/repo#60",
+            IssueProviderConfigId = "issue-provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            RunId = workItemId.ToString(),
+            TimeoutSeconds = 3600
+        };
+        var payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#60",
+                IssueProviderConfigId = "issue-provider-1",
+                Status = WorkItemStatus.Pending,
+                Payload = payload,
+                AgentSelector = "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600,
+                RetryCount = 0
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Setup: agent always available, SignalR delivery always fails
+        _mockResolver.Setup(r => r.ResolveAgent(""))
+            .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockAgentComm.Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection lost"));
+
+        // Act: first drain cycle
+        var service1 = CreateService();
+        await InvokeDrainAsync(service1);
+
+        // Assert: RetryCount is 1 after first failure
+        await using (var db1 = await _dbFactory.CreateDbContextAsync())
+        {
+            var item1 = await db1.WorkItems.FindAsync(workItemId);
+            item1!.RetryCount.Should().Be(1);
+            item1.Status.Should().Be(WorkItemStatus.Pending);
+        }
+
+        // Act: second drain cycle (new service instance — same DB and mocks)
+        var service2 = CreateService();
+        await InvokeDrainAsync(service2);
+
+        // Assert: RetryCount is 2 after second failure
+        await using var db2 = await _dbFactory.CreateDbContextAsync();
+        var item2 = await db2.WorkItems.FindAsync(workItemId);
+        item2.Should().NotBeNull();
+        item2!.RetryCount.Should().Be(2,
+            "RetryCount must increment on each failed delivery attempt");
+        item2.Status.Should().Be(WorkItemStatus.Pending,
+            "WorkItem must remain Pending after repeated failures (not Failed)");
     }
 
     private PendingWorkItemDrainService CreateService()
