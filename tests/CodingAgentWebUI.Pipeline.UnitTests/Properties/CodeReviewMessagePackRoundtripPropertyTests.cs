@@ -163,11 +163,13 @@ public class CodeReviewMessagePackRoundtripPropertyTests
                 "Rewrite the affected code section")
             from maxIterations in Gen.Choose(1, 5)
             from inlineComments in inlineSettingsGen
+            from reviewIsolation in Gen.Elements(ReviewIsolation.Shared, ReviewIsolation.Isolated)
             select new CodeReviewConfiguration
             {
                 FixPrompt = hasFixPrompt ? fixPrompt : null,
                 InlineComments = inlineComments,
-                MaxIterations = maxIterations
+                MaxIterations = maxIterations,
+                ReviewIsolation = reviewIsolation
             };
 
         return Prop.ForAll(gen.ToArbitrary(), original =>
@@ -176,6 +178,7 @@ public class CodeReviewMessagePackRoundtripPropertyTests
 
             deserialized.FixPrompt.Should().Be(original.FixPrompt);
             deserialized.MaxIterations.Should().Be(original.MaxIterations);
+            deserialized.ReviewIsolation.Should().Be(original.ReviewIsolation);
 
             // Nested InlineCommentSettings
             deserialized.InlineComments.Enabled.Should().Be(original.InlineComments.Enabled);
