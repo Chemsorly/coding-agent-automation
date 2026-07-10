@@ -135,6 +135,65 @@ public sealed class WorkItemTransitionService
         };
 
     /// <summary>
+    /// Attempts to recover a WorkItem from an infrastructure-failure-induced Failed state.
+    /// This is an explicit, auditable bypass of the terminal state machine rule that only
+    /// activates when the FailureReason is InfrastructureFailure (e.g., SignalR delivery timeout).
+    /// Does NOT modify IsValidTransition — the standard state machine remains strict.
+    /// </summary>
+    /// <param name="workItemId">The work item to recover.</param>
+    /// <param name="desiredStatus">The target status (Running, Succeeded, Failed, or Cancelled).</param>
+    /// <param name="mutate">Optional action to set additional fields during recovery.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>True if recovery succeeded, false if not applicable (wrong state, wrong reason, or item not found).</returns>
+    // TODO: Add concurrency retry loop for DbUpdateConcurrencyException (like TransitionCoreAsync's 3-retry pattern).
+    // Without it, a concurrent write (e.g., ReconciliationService) causes silent recovery loss.
+    // TODO: Wrap DB operation in _resiliencePipeline (Polly) for transient failure retry, matching TransitionAsync behavior.
+    public async Task<bool> TryRecoverFromInfrastructureFailureAsync(
+        Guid workItemId, WorkItemStatus desiredStatus,
+        Action<WorkItemEntity>? mutate = null,
+        CancellationToken ct = default)
+    {
+        // Only allow recovery to specific target states
+        if (desiredStatus is not (WorkItemStatus.Running or WorkItemStatus.Succeeded
+            or WorkItemStatus.Failed or WorkItemStatus.Cancelled))
+        {
+            return false;
+        }
+
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var item = await db.WorkItems.FindAsync([workItemId], ct);
+        if (item is null)
+        {
+            _logger.LogWarning("TryRecoverFromInfrastructureFailure: WorkItem {WorkItemId} not found", workItemId);
+            return false;
+        }
+
+        // Already at target — idempotent success
+        if (item.Status == desiredStatus)
+            return true;
+
+        // Only recover from Failed state
+        if (item.Status != WorkItemStatus.Failed)
+            return false;
+
+        // Only recover infrastructure failures (delivery timeouts), not legitimate agent errors
+        if (item.FailureReason != FailureReason.InfrastructureFailure)
+            return false;
+
+        // Perform the recovery transition
+        item.Status = desiredStatus;
+        mutate?.Invoke(item);
+
+        await db.SaveChangesAsync(ct);
+
+        _logger.LogWarning(
+            "Recovered WorkItem {WorkItemId} from infrastructure-failure-induced Failed to {DesiredStatus}",
+            workItemId, desiredStatus);
+
+        return true;
+    }
+
+    /// <summary>
     /// Gets the current RetryCount for a work item.
     /// </summary>
     public async Task<int> GetRetryCountAsync(Guid workItemId, CancellationToken ct)

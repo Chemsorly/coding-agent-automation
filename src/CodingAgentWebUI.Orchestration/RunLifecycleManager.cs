@@ -271,6 +271,14 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
                             item.CompletedAt = DateTimeOffset.UtcNow;
                         }, ct);
                     }
+                    else
+                    {
+                        // Third fallback: recover from infrastructure-failure-induced Failed state
+                        var recovered = await _workItemTransition.TryRecoverFromInfrastructureFailureAsync(
+                            workItemId, status, item => { item.CompletedAt = DateTimeOffset.UtcNow; }, ct);
+                        if (recovered)
+                            _logger.Warning("Recovered WorkItem {RunId} from delivery-timeout Failed to {Status} via lifecycle manager", runId, status);
+                    }
                 }
             }
         }
