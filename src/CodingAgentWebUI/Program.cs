@@ -355,9 +355,10 @@ app.MapGet("/", () => Results.Redirect("agent-coding"))
     .AllowAnonymous();
 
 // Export run history as JSON download
-app.MapGet("/api/export/runs.json", (IPipelineRunHistoryService history, bool? feedbackOnly) =>
+// TODO: Accept CancellationToken parameter and pass to GetRunHistoryAsync(ct) so the DB query cancels on client disconnect
+app.MapGet("/api/export/runs.json", async (IPipelineRunHistoryService history, bool? feedbackOnly) =>
 {
-    var runs = (IEnumerable<PipelineRunSummary>)history.GetRunHistory();
+    var runs = (IEnumerable<PipelineRunSummary>)await history.GetRunHistoryAsync();
     if (feedbackOnly == true)
         runs = runs.Where(r => r.Feedback is not null);
 

@@ -146,8 +146,8 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
             if (existingRun is null)
             {
                 // Check history — don't re-register a completed run
-                var inHistory = _facade.GetRunHistory()
-                    .Any(r => r.RunId == message.ActiveJob.RunId);
+                var history = await _facade.GetRunHistoryAsync(CancellationToken.None);
+                var inHistory = history.Any(r => r.RunId == message.ActiveJob.RunId);
 
                 if (!inHistory)
                 {

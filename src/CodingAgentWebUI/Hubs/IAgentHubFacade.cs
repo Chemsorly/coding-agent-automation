@@ -138,6 +138,11 @@ public interface IAgentHubFacade
     /// </summary>
     IReadOnlyList<PipelineRunSummary> GetRunHistory();
 
+    /// <summary>
+    /// Returns all completed pipeline run summaries from history (async).
+    /// </summary>
+    Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default);
+
     // ── Issue provider operations ───────────────────────────────────────
 
     /// <summary>
