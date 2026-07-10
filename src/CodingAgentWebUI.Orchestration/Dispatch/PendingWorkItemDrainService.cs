@@ -331,8 +331,15 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             //       Consider a retry or reconciliation mechanism to avoid stale labels in the opposite direction.
             try
             {
+                var providerForLabel = request.RunType == PipelineRunType.Review
+                    ? request.RepoProviderConfigId
+                    : request.IssueProviderConfigId;
+                var targetKind = request.RunType == PipelineRunType.Review
+                    ? LabelTargetKind.PullRequest
+                    : LabelTargetKind.Issue;
+
                 await _labelSwapper.SwapLabelAsync(
-                    request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, ct);
+                    providerForLabel, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
