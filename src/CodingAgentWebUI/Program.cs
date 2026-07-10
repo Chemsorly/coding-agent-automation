@@ -262,6 +262,60 @@ var app = builder.Build();
 // Database startup: connection retry + migration/verification (blocks until ready)
 await app.InitializeDatabaseAsync();
 
+// Rehydrate active pipeline runs from WorkItems (DB mode only).
+// Must run BEFORE app.Run() which starts IHostedService instances (HeartbeatMonitor, DrainService).
+// This ensures GetActiveRuns() returns active runs immediately on restart — no observability gap.
+if (!string.IsNullOrEmpty(dbConnectionString))
+{
+    var rehydrationDbFactory = app.Services.GetRequiredService<IDbContextFactory<PipelineDbContext>>();
+    await using var rehydrationDb = await rehydrationDbFactory.CreateDbContextAsync();
+
+    var activeWorkItems = await rehydrationDb.WorkItems
+        .AsNoTracking()
+        .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+                 && w.TaskType != WorkItemTaskType.Consolidation)
+        .ToListAsync();
+
+    if (activeWorkItems.Count > 0)
+    {
+        var runService = app.Services.GetRequiredService<OrchestratorRunService>();
+        var rehydratedCount = 0;
+
+        foreach (var item in activeWorkItems)
+        {
+            if (string.IsNullOrEmpty(item.Payload)) continue;
+
+            try
+            {
+                var request = System.Text.Json.JsonSerializer.Deserialize<JobDistributionRequest>(
+                    item.Payload, PipelineJsonOptions.Default);
+                if (request is null || string.IsNullOrEmpty(request.RunId)) continue;
+
+                // AgentId intentionally null: HeartbeatMonitor Phase 3 skips runs without AgentId,
+                // preventing false-positive orphan detection before agents reconnect.
+                // Agents set AgentId on reconnect via AgentHub.RegisterAgent.
+                // TODO: CurrentStep is approximated — Running items may have been in reviewing/building/retrying
+                // phase. The agent will update CurrentStep on reconnect, but until then the UI may show an
+                // inaccurate step for rehydrated runs.
+                var initialStep = item.Status == WorkItemStatus.Running
+                    ? PipelineStep.GeneratingCode
+                    : PipelineStep.Created;
+
+                var run = PipelineRunFactory.FromDistributionRequest(request, agentId: null, initialStep);
+                runService.AddRun(run);
+                rehydratedCount++;
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                Log.Warning(ex, "Failed to deserialize WorkItem {WorkItemId} payload during rehydration — skipping", item.Id);
+            }
+        }
+
+        if (rehydratedCount > 0)
+            Log.Information("Rehydrated {Count} active pipeline runs from WorkItems table", rehydratedCount);
+    }
+}
+
 // ── DI wiring assertion ─────────────────────────────────────────────────────
 // Fail fast if DB mode resolved the wrong IPipelineRunHistoryService implementation.
 // Guards against accidental re-introduction of competing registrations.

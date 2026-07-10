@@ -50,6 +50,10 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
             lock (entry.SyncRoot)
             {
                 entry.ActiveJobId = null;
+                // TODO: Add test coverage for BusySince being cleared on assignment failure.
+                // Without this, agents retain stale BusySince values that could grant undeserved
+                // grace periods and mask legitimately stuck agents on subsequent transitions.
+                entry.BusySince = null;
             }
         }
 

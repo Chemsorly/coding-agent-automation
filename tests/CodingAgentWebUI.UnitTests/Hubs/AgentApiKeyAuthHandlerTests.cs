@@ -186,6 +186,9 @@ public class AgentApiKeyAuthHandlerTests
     [Fact]
     public async Task HandleAuthenticate_InvalidToken_ReturnsFail()
     {
+        // TODO: Add parameterized test cases with dramatically different token lengths
+        // (e.g., 1 char vs 64 chars) to directly validate that the SHA256 pre-hash
+        // eliminates the length oracle while still rejecting mismatched tokens.
         var handler = await CreateHandlerAsync("correct-key", queryToken: "wrong-key", authHeader: null);
 
         var result = await handler.AuthenticateAsync();

@@ -350,6 +350,44 @@ public class AgentRegistryServiceExtendedTests
         _registry.GetBusyAgentCount().Should().Be(0);
     }
 
+    [Fact]
+    public void TransitionStatus_ToBusy_SetsBusySince()
+    {
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.BusySince.Should().BeNull();
+
+        var before = DateTimeOffset.UtcNow;
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        var after = DateTimeOffset.UtcNow;
+
+        entry.BusySince.Should().NotBeNull();
+        entry.BusySince!.Value.Should().BeOnOrAfter(before).And.BeOnOrBefore(after);
+    }
+
+    [Fact]
+    public void TransitionStatus_ToIdle_ClearsBusySince()
+    {
+        var entry = RegisterAgent("agent-1", "conn-1");
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince.Should().NotBeNull();
+
+        _registry.TransitionStatus("agent-1", AgentStatus.Idle);
+
+        entry.BusySince.Should().BeNull();
+    }
+
+    [Fact]
+    public void TransitionStatus_ToDisconnected_ClearsBusySince()
+    {
+        var entry = RegisterAgent("agent-1", "conn-1");
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince.Should().NotBeNull();
+
+        _registry.TransitionStatus("agent-1", AgentStatus.Disconnected);
+
+        entry.BusySince.Should().BeNull();
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private AgentEntry RegisterAgent(string agentId, string connectionId)
