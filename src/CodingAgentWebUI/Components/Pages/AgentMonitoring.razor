@@ -21,6 +21,7 @@
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
 @inject ILabelSwapper LabelSwapper
 @inject IPipelineRunHistoryService HistoryService
+@inject IRunLifecycleManager LifecycleManager
 @inject InfrastructureHealthService InfraHealth
 @inject IJSRuntime JS
 @inject TimeProvider Clock
@@ -1077,7 +1078,19 @@
         {
             await HubContext.Clients.Client(agent.ConnectionId).CancelJob(run.RunId);
         }
-        catch (Exception ex) { Log.Warning(ex, "Failed to cancel run {RunId} on agent {AgentId}", run.RunId, run.AgentId); }
+        catch (Exception ex) { Log.Warning(ex, "Failed to send CancelJob to agent {AgentId}", run.AgentId); }
+
+        // Set FailureReason BEFORE CancelRunAsync — it calls RemoveRun which returns this same
+        // object reference, then persists it. The reason must be on the object before persist.
+        run.FailureReason = "Cancelled by user";
+
+        // Immediately persist cancelled state — don't wait for agent confirmation
+        // TODO: Log when CancelRunAsync returns null (race with concurrent ReportJobCompleted) so operators
+        // can see that cancellation was handled by the agent's completion path rather than the explicit cancel.
+        await LifecycleManager.CancelRunAsync(run.RunId, CancellationToken.None);
+
+        await RefreshDataAsync();
+        StateHasChanged();
     }
 
     private async Task RemoveFromQueue(string issueIdentifier, string issueProviderId)
