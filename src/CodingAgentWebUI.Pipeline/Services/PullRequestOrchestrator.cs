@@ -425,6 +425,10 @@ public class PullRequestOrchestrator
                 run.CodeReviewAgentFindings
                     .Select(kv => new AgentFindings(kv.Key, kv.Value))
                     .ToArray())
+            {
+                ChangeSummary = run.CodeReviewChangeSummary,
+                VerdictSummary = run.CodeReviewVerdictSummary
+            }
             : null;
     }
 }

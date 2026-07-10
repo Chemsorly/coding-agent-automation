@@ -14,4 +14,11 @@ public sealed record CodeReviewSummary(
     int CriticalCount,
     int WarningCount,
     int SuggestionCount,
-    IReadOnlyList<AgentFindings> AgentFindings);
+    IReadOnlyList<AgentFindings> AgentFindings)
+{
+    /// <summary>AI-generated summary of what the PR changed (2-3 sentences).</summary>
+    public string? ChangeSummary { get; init; }
+
+    /// <summary>AI-generated synthesized review verdict (1-2 sentences).</summary>
+    public string? VerdictSummary { get; init; }
+}

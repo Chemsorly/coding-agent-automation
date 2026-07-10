@@ -325,6 +325,9 @@ public partial class AgentPhaseExecutor
             run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
                 run.WorkspacePath!, _logger, ct);
         }
+
+        // Generate review summary (non-fatal) — must be after AC handling, before method returns
+        await GenerateReviewSummaryAsync(context, ct);
     }
 
     /// <summary>
@@ -562,6 +565,101 @@ public partial class AgentPhaseExecutor
         {
             _logger.Warning(ex, "Pipeline {RunId} acceptance criteria check failed, skipping", context.Run.RunId);
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Generates a review summary (change summary + verdict) from the review findings.
+    /// Non-fatal: failures are logged and result in null summaries, pipeline continues.
+    /// </summary>
+    private async Task GenerateReviewSummaryAsync(AgentPhaseContext context, CancellationToken ct)
+    {
+        try
+        {
+            var run = context.Run;
+            var config = context.Config;
+
+            _logger.Information("Pipeline {RunId} generating review summary", run.RunId);
+            context.Callbacks.EmitOutputLine("📝 Generating review summary...");
+
+            // Read diff-stat (proceed with empty if unavailable)
+            var diffStat = string.Empty;
+            var diffStatPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.DiffStatFilePath);
+            if (File.Exists(diffStatPath))
+            {
+                diffStat = await File.ReadAllTextAsync(diffStatPath, ct);
+            }
+
+            // Concatenate per-agent findings (cap at 8000 chars)
+            // TODO: [REV-04] Double truncation — this caps at 8000 chars and BuildReviewSummaryPrompt also caps at 8000.
+            //   When the first truncation fires, setting Length=8000 then appending "\n[truncated]" makes the string ~8012 chars,
+            //   which triggers the second truncation in BuildReviewSummaryPrompt and silently loses the "[truncated]" marker.
+            //   Consider removing one truncation point or adjusting the cap here to account for the marker length.
+            // TODO: [REV-04] Setting StringBuilder.Length directly may cut a multi-byte UTF-16 surrogate pair in half
+            //   if agent names or findings contain supplementary Unicode characters (e.g., emoji). Low probability but
+            //   could cause garbled text in the prompt. Consider finding a safe boundary before truncating.
+            var findingsBuilder = new System.Text.StringBuilder();
+            foreach (var (agent, findings) in run.CodeReviewAgentFindings)
+            {
+                if (string.IsNullOrEmpty(findings)) continue;
+                findingsBuilder.AppendLine($"### {agent}");
+                findingsBuilder.AppendLine(findings);
+                findingsBuilder.AppendLine();
+
+                if (findingsBuilder.Length > 8000)
+                {
+                    findingsBuilder.Length = 8000;
+                    findingsBuilder.AppendLine("\n[truncated]");
+                    break;
+                }
+            }
+
+            var issueTitle = context.Issue.Title ?? string.Empty;
+            var prompt = PromptBuilder.BuildReviewSummaryPrompt(diffStat, issueTitle, findingsBuilder.ToString());
+
+            var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                context.AgentProvider,
+                new AgentRequest
+                {
+                    Prompt = prompt,
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = config.AgentTimeout,
+                    UseResume = false
+                },
+                run, config, "Review summary generation",
+                context.Callbacks.NotifyChange, _logger, ct,
+                line => context.Callbacks.EmitOutputLine($"[ReviewSummary] {line}"));
+
+            run.AccumulateTokenUsage(agentResult, phase: "review_summary");
+
+            // Parse the output from agent output lines
+            var output = agentResult.OutputLines.Count > 0
+                ? string.Join(Environment.NewLine, agentResult.OutputLines)
+                : string.Empty;
+
+            var (changeSummary, verdictSummary) = ReviewSummaryParser.Parse(output);
+            run.CodeReviewChangeSummary = changeSummary;
+            run.CodeReviewVerdictSummary = verdictSummary;
+
+            if (changeSummary is null && verdictSummary is null)
+            {
+                _logger.Warning("Pipeline {RunId} review summary agent produced output but no valid sections found", run.RunId);
+            }
+            else
+            {
+                _logger.Information("Pipeline {RunId} review summary generated (changeSummary={HasChange}, verdict={HasVerdict})",
+                    run.RunId, changeSummary is not null, verdictSummary is not null);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // Propagate cancellation
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} review summary generation failed, skipping", context.Run.RunId);
+            context.Run.CodeReviewChangeSummary = null;
+            context.Run.CodeReviewVerdictSummary = null;
         }
     }
 

@@ -161,8 +161,8 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
         await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
 
-        // Review agent + fix agent = 2 calls
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
+        // Review agent + fix agent + summary agent = 3 calls
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(3));
     }
 
     [Fact]
@@ -173,8 +173,8 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
         await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
 
-        // Review agent + fix prompt for warnings (no re-review since no criticals → early exit)
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
+        // Review agent + fix prompt for warnings + summary agent = 3 calls
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(3));
     }
 
     [Fact]
@@ -187,8 +187,8 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
         await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
 
-        // Exception breaks the loop — only 1 attempt (the first iteration fails)
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+        // Exception breaks the loop — 1 attempt for review + 1 for summary (also throws, caught non-fatal)
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
         _run.CodeReviewIterationsCompleted.Should().Be(0);
     }
 
@@ -239,6 +239,78 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         _run.CodeReviewCriticalCount.Should().Be(0);
         _run.CodeReviewWarningCount.Should().Be(0);
         _run.CodeReviewIterationsCompleted.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task CodeReview_SummaryAgentException_NonFatal_SummariesRemainNull()
+    {
+        // TODO: [REV-04] Test relies on call ordering (first call = review, second = summary) via
+        //   Interlocked.Increment. This is brittle — if the implementation adds an agent call between
+        //   review and summary (e.g., acceptance criteria), the test breaks without the implementation being
+        //   wrong. Consider matching on AgentRequest.Prompt content to distinguish review vs summary calls.
+        // Review agent succeeds, summary agent throws — should not propagate
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                var count = Interlocked.Increment(ref callCount);
+                if (count == 1)
+                {
+                    // First call: review agent writes findings
+                    WriteFindingsFile("correctness", "[SUGGESTION] Minor style");
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
+                // Second call: summary agent throws
+                throw new InvalidOperationException("Summary agent crashed");
+            });
+
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null } };
+
+        // Should complete without exception
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Summaries should remain null (non-fatal failure)
+        _run.CodeReviewChangeSummary.Should().BeNull();
+        _run.CodeReviewVerdictSummary.Should().BeNull();
+        // Review findings still recorded
+        _run.CodeReviewSuggestionCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task CodeReview_SummaryAgentReturnsValidOutput_SummariesPopulated()
+    {
+        // TODO: [REV-04] Test only verifies end-to-end happy path — would not fail if parsing logic returned
+        //   hard-coded values. Consider adding a test with partial output (only one section) at the integration
+        //   level to verify partial parsing actually works through the full pipeline (parser unit tests cover this,
+        //   but the integration point is untested for partial output).
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Returns<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                var count = Interlocked.Increment(ref callCount);
+                if (count == 1)
+                {
+                    // Review agent — no findings file written
+                    return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+                }
+                // Summary agent — returns valid output via OutputLines
+                var outputLines = new[]
+                {
+                    "## Change Summary",
+                    "Added logging to startup path.",
+                    "",
+                    "## Review Verdict",
+                    "Clean implementation, no issues."
+                };
+                return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = outputLines });
+            });
+
+        var config = _config with { CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = null } };
+
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
+
+        _run.CodeReviewChangeSummary.Should().Be("Added logging to startup path.");
+        _run.CodeReviewVerdictSummary.Should().Be("Clean implementation, no issues.");
     }
 
     private AgentPhaseContext BuildContext(PipelineConfiguration? config = null)

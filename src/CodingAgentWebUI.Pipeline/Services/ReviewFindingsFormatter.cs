@@ -17,6 +17,18 @@ internal static class ReviewFindingsFormatter
         sb.AppendLine("## 🤖 Automated Code Review");
         sb.AppendLine();
 
+        if (!string.IsNullOrEmpty(run.CodeReviewChangeSummary))
+        {
+            sb.AppendLine($"**Changes**: {TextTruncation.TruncateAtSentenceBoundary(run.CodeReviewChangeSummary, 500)}");
+            sb.AppendLine();
+        }
+
+        if (!string.IsNullOrEmpty(run.CodeReviewVerdictSummary))
+        {
+            sb.AppendLine($"**Review verdict**: {TextTruncation.TruncateAtSentenceBoundary(run.CodeReviewVerdictSummary, 500)}");
+            sb.AppendLine();
+        }
+
         if (run.CodeReviewAgentsRun.Count > 0)
             sb.AppendLine($"**Review Agents**: {string.Join(", ", run.CodeReviewAgentsRun)}");
         sb.AppendLine();

@@ -158,6 +158,12 @@ public static partial class PipelineFormatting
         sb.AppendLine("## AI Code Review Findings");
         sb.AppendLine();
 
+        if (!string.IsNullOrEmpty(summary.VerdictSummary))
+        {
+            sb.AppendLine($"**Review verdict**: {TextTruncation.TruncateAtSentenceBoundary(summary.VerdictSummary, 500)}");
+            sb.AppendLine();
+        }
+
         if (summary.CriticalCount == 0 && summary.WarningCount == 0 && summary.SuggestionCount == 0
             && summary.AgentFindings.Count == 0)
         {
