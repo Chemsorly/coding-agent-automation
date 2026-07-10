@@ -432,7 +432,7 @@ public sealed class ConsolidationService : IConsolidationService
         {
             var sinceUtc = await GetLastSuccessfulHarnessRunTimestampAsync(ct);
 
-            var allRuns = _runHistoryService.GetRunHistory();
+            var allRuns = await _runHistoryService.GetRunHistoryAsync(ct);
             var feedbackEntries = allRuns
                 .Where(r => r.Feedback is not null && r.StartedAtOffset > sinceUtc)
                 .Select(r => r.Feedback!)
