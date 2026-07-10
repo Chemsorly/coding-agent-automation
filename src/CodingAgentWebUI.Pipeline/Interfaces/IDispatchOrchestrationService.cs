@@ -60,6 +60,20 @@ public interface IDispatchOrchestrationService
         CancellationToken ct = default);
 
     /// <summary>
+    /// Distributes a pre-prepared request via <see cref="IWorkDistributor.DistributeAsync"/> and
+    /// handles the confirm/revert lifecycle:
+    /// <list type="bullet">
+    ///   <item>On failure → reverts the label and removes the dangling run.</item>
+    ///   <item>On success (not queued) → confirms the label swap to <c>agent:in-progress</c>.</item>
+    ///   <item>On success (queued) → no label swap (drain service handles it later).</item>
+    /// </list>
+    /// </summary>
+    /// <param name="request">A fully prepared <see cref="JobDistributionRequest"/>.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>The outcome of the distribution attempt.</returns>
+    Task<DispatchOutcome> DistributeAndFinalizeAsync(JobDistributionRequest request, CancellationToken ct);
+
+    /// <summary>
     /// Reverts the side effects of a failed distribution attempt: swaps the issue label
     /// back to <c>agent:next</c> and removes the dangling <see cref="Models.PipelineRun"/>
     /// created during preparation. Call this when <see cref="IWorkDistributor.DistributeAsync"/>

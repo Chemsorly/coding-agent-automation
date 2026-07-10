@@ -21,6 +21,7 @@ public class DispatchOrchestrationServiceTests
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
     private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
+    private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly OrchestratorRunService _runService;
     private readonly DispatchResolutionService _resolution;
@@ -85,6 +86,7 @@ public class DispatchOrchestrationServiceTests
                 _resolution),
             orchestration,
             _runService,
+            _mockWorkDistributor.Object,
             _mockLogger.Object);
     }
 
@@ -821,7 +823,9 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
                 mockTokenVending.Object, mockProviderFactory.Object,
                 _mockLabelSwapper.Object, resolution),
             orchestration,
-            _runService, _mockLogger.Object);
+            _runService,
+            new Mock<IWorkDistributor>().Object,
+            _mockLogger.Object);
     }
 
     [Fact]
@@ -918,6 +922,130 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
 
         _mockLabelSwapper.Verify(
             s => s.SwapLabelAsync("ipc-nonexistent", "owner/repo#999", AgentLabels.Next, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+}
+
+/// <summary>
+/// Tests for <see cref="DispatchOrchestrationService.DistributeAndFinalizeAsync"/>.
+/// Validates the unified distribute → confirm/revert lifecycle.
+/// </summary>
+public class DispatchOrchestrationService_DistributeAndFinalizeTests
+{
+    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
+    private readonly Mock<ILogger> _mockLogger = new();
+    private readonly OrchestratorRunService _runService;
+    private readonly DispatchOrchestrationService _service;
+
+    private static readonly JobDistributionRequest TestRequest = new()
+    {
+        IssueIdentifier = "owner/repo#42",
+        IssueProviderConfigId = "ipc-1",
+        RepoProviderConfigId = "rpc-1",
+        InitiatedBy = "loop",
+        TaskType = WorkItemTaskType.Implementation,
+        AgentSelector = "dotnet",
+        TimeoutSeconds = 3600
+    };
+
+    public DispatchOrchestrationService_DistributeAndFinalizeTests()
+    {
+        _runService = new OrchestratorRunService(_mockLogger.Object);
+
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        var mockProviderFactory = new Mock<IProviderFactory>();
+        var mockTokenVending = new Mock<ITokenVendingService>();
+        var resolution = new DispatchResolutionService(
+            new ProfileResolver(),
+            new QualityGateResolver(),
+            new ReviewerResolver(),
+            mockConfigStore.Object,
+            _mockLogger.Object);
+        var orchestration = TestUtilities.TestOrchestrationFactory.CreateMinimal(
+            configStore: mockConfigStore.Object,
+            providerFactory: mockProviderFactory.Object,
+            logger: _mockLogger.Object,
+            runService: _runService);
+
+        _service = new DispatchOrchestrationService(
+            new DispatchInfrastructure(
+                mockTokenVending.Object, mockProviderFactory.Object,
+                _mockLabelSwapper.Object, resolution),
+            orchestration,
+            _runService,
+            _mockWorkDistributor.Object,
+            _mockLogger.Object);
+    }
+
+    [Fact]
+    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceeds_ConfirmsLabel()
+    {
+        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(true, "work-1", null, Queued: false));
+
+        var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
+
+        outcome.Success.Should().BeTrue();
+        outcome.Queued.Should().BeFalse();
+        outcome.ErrorMessage.Should().BeNull();
+
+        // Confirm label was swapped to agent:in-progress
+        _mockLabelSwapper.Verify(
+            s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // TODO: Add a test that pre-registers a PipelineRun in OrchestratorRunService and asserts it is
+    // removed after DistributeAndFinalizeAsync failure. Currently this test only verifies the label
+    // swap to agent:next but does not exercise the dangling run-removal branch of RevertFailedDistributionAsync.
+    [Fact]
+    public async Task DistributeAndFinalizeAsync_WhenDistributeFails_RevertsDistribution()
+    {
+        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(false, null, "No agent available"));
+
+        var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
+
+        outcome.Success.Should().BeFalse();
+        outcome.Queued.Should().BeFalse();
+        outcome.ErrorMessage.Should().Be("No agent available");
+
+        // Label should be reverted to agent:next
+        _mockLabelSwapper.Verify(
+            s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.Next, It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DistributeAndFinalizeAsync_WhenDistributeSucceedsAndQueued_DoesNotConfirmLabel()
+    {
+        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(true, "work-1", null, Queued: true));
+
+        var outcome = await _service.DistributeAndFinalizeAsync(TestRequest, CancellationToken.None);
+
+        outcome.Success.Should().BeTrue();
+        outcome.Queued.Should().BeTrue();
+        outcome.ErrorMessage.Should().BeNull();
+
+        // No label swap should have occurred (drain service handles it later)
+        _mockLabelSwapper.Verify(
+            s => s.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task DistributeAndFinalizeAsync_PassesCancellationTokenToDistributor()
+    {
+        using var cts = new CancellationTokenSource();
+        _mockWorkDistributor.Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), cts.Token))
+            .ReturnsAsync(new DistributionResult(true, "work-1", null));
+
+        await _service.DistributeAndFinalizeAsync(TestRequest, cts.Token);
+
+        _mockWorkDistributor.Verify(
+            w => w.DistributeAsync(TestRequest, cts.Token),
             Times.Once);
     }
 }
