@@ -161,7 +161,9 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
                 _mockLabelSwapper.Object,
                 new DispatchResolutionService(new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(), _mockConfigStore.Object, _mockLogger.Object)),
             orchestration,
-            _runService, _mockLogger.Object);
+            _runService,
+            new Mock<IWorkDistributor>().Object,
+            _mockLogger.Object);
     }
 
     private SignalRWorkDistributor CreateDistributor()
