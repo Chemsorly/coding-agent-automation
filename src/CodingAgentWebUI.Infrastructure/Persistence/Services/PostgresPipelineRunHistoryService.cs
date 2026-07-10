@@ -33,6 +33,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
+    [Obsolete("Use async overload GetRunHistoryAsync. Will be removed in a future version.")]
     public IReadOnlyList<PipelineRunSummary> GetRunHistory()
     {
         // Synchronous wrapper over async DB call — acceptable here because callers
@@ -49,6 +50,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
+    [Obsolete("Use async overload AddRunToHistoryAsync. Will be removed in a future version.")]
     public void AddRunToHistory(PipelineRun run)
     {
         ArgumentNullException.ThrowIfNull(run);
@@ -65,6 +67,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
+    // TODO: CancellationToken ct is accepted but never passed to AddRunToHistoryInternalAsync — callers cannot cancel the DB operation. Propagate ct to internal method (CreateDbContextAsync, FindAsync, SaveChangesAsync).
     public async Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(run);
@@ -81,6 +84,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
+    // TODO: CancellationToken ct is accepted but never passed to GetRunHistoryInternalAsync — callers cannot cancel the DB query. Propagate ct to internal method (CreateDbContextAsync, ToListAsync).
     public async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
     {
         return await GetRunHistoryInternalAsync().ConfigureAwait(false);
