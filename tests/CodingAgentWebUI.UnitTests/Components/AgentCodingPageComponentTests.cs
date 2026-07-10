@@ -3,7 +3,6 @@ using Moq;
 using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -424,48 +423,6 @@ public class AgentCodingPageComponentTests : BunitContext
     }
 
     [Fact]
-    public async Task AgentCoding_WhenNewRunStarts_ClearsOutputLines()
-    {
-        var component = Render<AgentCoding>();
-
-        // Simulate first run: set ActiveRun and fire events
-        var run1 = new PipelineRun
-        {
-            RunId = "run-1",
-            IssueIdentifier = "1",
-            IssueTitle = "First",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            CurrentStep = PipelineStep.GeneratingCode,
-            StartedAt = DateTime.UtcNow
-        };
-        SetActiveRun(run1);
-        RaiseEvent(_pipelineService, "OnChange");
-        RaiseEvent(_pipelineService, "OnOutputLine", "output from run 1");
-
-        component.WaitForAssertion(() => Assert.Contains("output from run 1", component.Markup),
-            timeout: TimeSpan.FromSeconds(5));
-
-        // Simulate second run starting
-        var run2 = new PipelineRun
-        {
-            RunId = "run-2",
-            IssueIdentifier = "2",
-            IssueTitle = "Second",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1",
-            CurrentStep = PipelineStep.CloningRepository,
-            StartedAt = DateTime.UtcNow
-        };
-        SetActiveRun(run2);
-        RaiseEvent(_pipelineService, "OnChange");
-
-        // Output from run 1 should be cleared
-        component.WaitForAssertion(() => Assert.DoesNotContain("output from run 1", component.Markup),
-            timeout: TimeSpan.FromSeconds(5));
-    }
-
-    [Fact]
     public void AgentCoding_WhenBrowseIssuesDisabled_ShowsTooltip()
     {
         var component = Render<AgentCoding>();
@@ -519,30 +476,6 @@ public class AgentCodingPageComponentTests : BunitContext
         Assert.False(browsePrsBtn.HasAttribute("title"));
     }
 
-    private void SetActiveRun(PipelineRun run)
-    {
-        // ActiveRun delegates to lifecycle service — set via lifecycle's public setter
-        var lifecycleField = typeof(PipelineOrchestrationService)
-            .GetField("_lifecycle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        var lifecycle = lifecycleField?.GetValue(_pipelineService) as PipelineRunLifecycleService;
-        if (lifecycle != null)
-            lifecycle.ActiveRun = run;
-    }
-
-    private void RaiseEvent(object target, string eventName, params object[] args)
-    {
-        // Events now live on the lifecycle service (accessed via _lifecycle field on orchestration)
-        var lifecycleField = typeof(PipelineOrchestrationService)
-            .GetField("_lifecycle", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        var lifecycle = lifecycleField?.GetValue(target);
-        if (lifecycle == null) return;
-
-        var field = lifecycle.GetType()
-            .GetField(eventName, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        var del = field?.GetValue(lifecycle) as Delegate;
-        del?.DynamicInvoke(args.Length > 0 ? args : []);
-    }
-
     // TODO: Add a negative test verifying that error messages do NOT auto-dismiss after a timeout
     //       (acceptance criteria: "Error messages do NOT auto-dismiss"). Use a fake timer or Task.Delay
     //       simulation to confirm the error remains displayed after 3+ seconds.
@@ -581,4 +514,15 @@ public class AgentCodingPageComponentTests : BunitContext
         Assert.Empty(component.FindAll(".settings-status.status-error"));
         Assert.DoesNotContain("Connection failed", component.Markup);
     }
+
+    // TODO: Add negative regression test — when PipelineOrchestrationService.ActiveRun is set,
+    // verify AgentCoding still renders template table, loop controls, and manual dispatch
+    // (and does NOT contain "Pipeline in Progress" or "output-panel"). This guards against
+    // accidental reintroduction of the progress view. (Review finding: WARNING)
+
+    // TODO: Add test coverage for the simplified HandleStateChanged method — verify that
+    // LoopService.OnChange triggers a UI re-render and that the loop toast auto-dismiss logic
+    // (AutoDismissLoopToast with Task.Delay) works correctly. The previous test
+    // AgentCoding_WhenNewRunStarts_ClearsOutputLines was removed along with the deleted
+    // functionality, leaving this async code path uncovered. (Review finding: WARNING)
 }
