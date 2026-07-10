@@ -445,11 +445,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     /// </summary>
     private async Task TrySwapLabelToErrorAsync(PipelineRun run, CancellationToken ct)
     {
-        var targetKind = run.RunType == PipelineRunType.Review
-            ? LabelTargetKind.PullRequest
-            : LabelTargetKind.Issue;
-
-        var providerConfigId = targetKind == LabelTargetKind.PullRequest
+        var providerConfigId = run.LabelTargetKind == LabelTargetKind.PullRequest
             ? run.RepoProviderConfigId
             : run.IssueProviderConfigId;
 
@@ -459,7 +455,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
         try
         {
-            await _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, AgentLabels.Error, targetKind, ct);
+            await _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, AgentLabels.Error, run.LabelTargetKind, ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

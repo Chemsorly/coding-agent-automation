@@ -310,15 +310,11 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     {
         try
         {
-            var targetKind = run.RunType == PipelineRunType.Review
-                ? LabelTargetKind.PullRequest
-                : LabelTargetKind.Issue;
-
-            var providerConfigId = targetKind == LabelTargetKind.PullRequest
+            var providerConfigId = run.LabelTargetKind == LabelTargetKind.PullRequest
                 ? run.RepoProviderConfigId
                 : run.IssueProviderConfigId;
 
-            await _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, label, targetKind, ct);
+            await _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, label, run.LabelTargetKind, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

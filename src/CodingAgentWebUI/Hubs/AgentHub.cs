@@ -440,7 +440,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// Determines the correct <see cref="LabelTargetKind"/> based on the run's <see cref="PipelineRun.RunType"/>.
     /// </summary>
     private static LabelTargetKind GetLabelTargetKind(PipelineRun run)
-        => run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue;
+        => run.LabelTargetKind;
 
     /// <summary>
     /// Posts issue-level feedback as a comment on the GitHub issue if present.
