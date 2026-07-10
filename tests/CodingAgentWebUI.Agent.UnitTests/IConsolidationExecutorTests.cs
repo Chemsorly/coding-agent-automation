@@ -185,7 +185,7 @@ public class IConsolidationExecutorTests
         services.AddSingleton<KiroCliLib.Core.IKiroCliOrchestrator>(sp =>
             new KiroCliLib.Core.KiroCliOrchestrator(
                 sp.GetRequiredService<KiroCliLib.Configuration.Configuration>(),
-                callbackHandler: null, Serilog.Log.Logger));
+                Serilog.Log.Logger));
         services.AddHttpClient();
         services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
             sp.GetRequiredService<KiroCliLib.Core.IKiroCliOrchestrator>(),

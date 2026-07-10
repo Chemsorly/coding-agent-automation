@@ -160,7 +160,7 @@ public partial class KiroCliAgentProvider : IAgentProvider
             UseWsl = OperatingSystem.IsWindows()
         };
         _logger.Debug("Creating ephemeral orchestrator (path={KiroCliPath}, wsl={UseWsl})", _executablePath, config.UseWsl);
-        return new KiroCliOrchestrator(config, callbackHandler: null, _logger);
+        return new KiroCliOrchestrator(config, _logger);
     }
 
     /// <inheritdoc />
