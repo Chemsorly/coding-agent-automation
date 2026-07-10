@@ -584,7 +584,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(agentEntry);
         _mockFacade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(agentEntry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
-        _mockFacade.Setup(f => f.GetRunHistory()).Returns(Array.Empty<PipelineRunSummary>());
+        // TODO: This mock is not exercised in this test (covers "already tracked" path where GetRun returns non-null).
+        // Add a test for the "run is in history" path (GetRun returns null, GetRunHistoryAsync contains the run ID).
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
         // Setup context to pass validation (query param + user claim)
         var hub = CreateHubWithRegistrationContext(agentId, "conn-1");
