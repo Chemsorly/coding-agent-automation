@@ -4,6 +4,8 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using Serilog;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Services;
 
@@ -15,6 +17,8 @@ namespace CodingAgentWebUI.Services;
 /// </summary>
 public class AgentCodingPageService : IDisposable
 {
+    private static readonly ILogger Logger = Log.ForContext<AgentCodingPageService>();
+
     private readonly IPipelineLoopService _loopService;
     private readonly IWorkDistributor _workDistributor;
     private readonly IAgentRegistryService _agentRegistry;
@@ -425,7 +429,7 @@ public class AgentCodingPageService : IDisposable
             PrDrawerLabels = labels.ToList();
             return null;
         }
-        catch { PrDrawerLabels.Clear(); return null; }
+        catch (Exception ex) { Logger.Warning(ex, "Failed to load PR drawer labels"); PrDrawerLabels.Clear(); return null; }
     }
 
     public void TogglePrDrawerLabel(string label)
@@ -532,7 +536,7 @@ public class AgentCodingPageService : IDisposable
             EpicDrawerLabels = labels.Where(l => !l.StartsWith(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)).ToList();
             return null;
         }
-        catch { EpicDrawerLabels.Clear(); return null; }
+        catch (Exception ex) { Logger.Warning(ex, "Failed to load epic drawer labels"); EpicDrawerLabels.Clear(); return null; }
     }
 
     public void ToggleEpicDrawerLabel(string label)
