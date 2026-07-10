@@ -14,12 +14,6 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     private readonly IAgentRegistryService _registry;
     private readonly JobDispatcherService _dispatcher;
 
-    /// <summary>Tracks the last resolved agent ID for revert on failure (legacy, not thread-safe).</summary>
-    private string? _lastResolvedAgentId;
-
-    /// <inheritdoc />
-    public string? LastResolvedAgentId => _lastResolvedAgentId;
-
     public SignalRWorkDistributorAgentResolver(
         IAgentRegistryService registry,
         JobDispatcherService dispatcher)
@@ -29,14 +23,6 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
 
         _registry = registry;
         _dispatcher = dispatcher;
-    }
-
-    /// <inheritdoc />
-    public string? ResolveConnectionId(string agentSelector)
-    {
-        var result = ResolveAgent(agentSelector);
-        _lastResolvedAgentId = result?.AgentId;
-        return result?.ConnectionId;
     }
 
     /// <inheritdoc />
@@ -54,16 +40,6 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     }
 
     /// <inheritdoc />
-    public void ReleaseLastResolvedAgent()
-    {
-        var agentId = _lastResolvedAgentId;
-        if (agentId is null) return;
-
-        _lastResolvedAgentId = null;
-        _registry.TransitionStatus(agentId, AgentStatus.Idle);
-    }
-
-    /// <inheritdoc />
     public void ReleaseAgent(string agentId)
     {
         ArgumentNullException.ThrowIfNull(agentId);
@@ -74,6 +50,10 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
             lock (entry.SyncRoot)
             {
                 entry.ActiveJobId = null;
+                // TODO: Add test coverage for BusySince being cleared on assignment failure.
+                // Without this, agents retain stale BusySince values that could grant undeserved
+                // grace periods and mask legitimately stuck agents on subsequent transitions.
+                entry.BusySince = null;
             }
         }
 

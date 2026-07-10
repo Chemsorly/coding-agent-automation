@@ -91,6 +91,7 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
 
                     // Atomically reserve the agent so no other dispatch path can select it
                     candidate.Status = AgentStatus.Busy;
+                    candidate.BusySince = DateTimeOffset.UtcNow;
                 }
 
                 _logger.Debug("SelectAgent: reserved agent {AgentId} for requiredLabels=[{Labels}] ({CompatibleCount} compatible, {IdleCount} idle)",
