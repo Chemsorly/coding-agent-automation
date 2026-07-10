@@ -94,6 +94,7 @@ public class WorkItemStateMachineReachabilityPropertyTests
     /// in a non-terminal state that has valid outgoing transitions.
     /// No valid transition sequence can "strand" a work item in a state with no exit.
     /// </summary>
+    // TODO: Consider increasing MaxTest for random-walk state exploration — 20 seeds provides limited coverage of transition paths (previously 200).
     [Property(MaxTest = 20)]
     public bool RandomWalk_FromPending_NeverStrands(int seed)
     {

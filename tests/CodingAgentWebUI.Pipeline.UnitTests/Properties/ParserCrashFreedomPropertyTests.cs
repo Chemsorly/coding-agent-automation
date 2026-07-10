@@ -21,6 +21,7 @@ public class ParserCrashFreedomPropertyTests
     /// For any arbitrary string input, ParseTestCounts never throws and always
     /// returns non-negative counts.
     /// </summary>
+    // TODO: Consider increasing MaxTest for crash-freedom tests — 20 iterations provides limited fuzzing coverage for random string inputs (previously 200).
     [Property(MaxTest = 20)]
     public Property ParseTestCounts_NeverThrows_ForAnyString()
     {
@@ -121,6 +122,7 @@ public class ParserCrashFreedomPropertyTests
     /// <summary>
     /// For any arbitrary string input, ParseIssueReferences never throws.
     /// </summary>
+    // TODO: Consider increasing MaxTest for crash-freedom tests — 20 iterations provides limited fuzzing coverage for random string inputs (previously 200).
     [Property(MaxTest = 20)]
     public Property ParseIssueReferences_NeverThrows_ForAnyString()
     {
@@ -161,6 +163,7 @@ public class ParserCrashFreedomPropertyTests
     /// <summary>
     /// For any arbitrary string input, ParseClosingKeywords never throws.
     /// </summary>
+    // TODO: Consider increasing MaxTest for crash-freedom tests — 20 iterations provides limited fuzzing coverage for random string inputs (previously 200).
     [Property(MaxTest = 20)]
     public Property ParseClosingKeywords_NeverThrows_ForAnyString()
     {

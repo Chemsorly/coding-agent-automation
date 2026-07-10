@@ -17,6 +17,7 @@ public class DependencyParserPropertyTests
     /// Crash-freedom: Parse never throws an exception for any arbitrary string input.
     /// This covers malicious regex inputs, unicode, control characters, null bytes, etc.
     /// </summary>
+    // TODO: Consider increasing MaxTest for crash-freedom tests — 20 iterations provides limited fuzzing coverage for regex-based parsing of untrusted input (previously 200).
     [Property(MaxTest = 20)]
     public bool Parse_NeverThrows_ForAnyInput(string? body)
     {
