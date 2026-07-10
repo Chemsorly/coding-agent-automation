@@ -451,25 +451,46 @@
 
     private IEnumerable<PipelineJobTemplate> GetAvailableTemplates()
     {
-        // Exclude templates already assigned to ANY project (a template belongs to at most one project)
-        var assignedIds = _allProjects
-            .SelectMany(p => p.TemplateIds)
-            .ToHashSet();
-        return _allTemplates.Where(t => !assignedIds.Contains(t.Id));
+        var currentProjectIds = _project.TemplateIds.ToHashSet();
+        return _allTemplates.Where(t => !currentProjectIds.Contains(t.Id));
     }
 
     private async Task AddTemplate()
     {
         if (string.IsNullOrEmpty(_selectedTemplateToAdd)) return;
 
-        var newIds = _project.TemplateIds.ToList();
-        newIds.Add(_selectedTemplateToAdd);
-        _project = _project with { TemplateIds = newIds };
-        _selectedTemplateToAdd = null;
+        // Find source project that currently owns this template
+        var sourceProject = _allProjects.FirstOrDefault(p => p.TemplateIds.Contains(_selectedTemplateToAdd));
+        if (sourceProject is null)
+        {
+            await OnShowStatus.InvokeAsync(("Template not found in any project.", true));
+            return;
+        }
 
-        await SaveProjectAsync();
+        try
+        {
+            // TODO: Consider using a component-scoped CancellationToken (from a CancellationTokenSource
+            // tied to component disposal) instead of CancellationToken.None to prevent orphaned async
+            // operations if the user navigates away mid-operation.
+            await ConfigStore.MoveTemplateAsync(sourceProject.Id, _project.Id, _selectedTemplateToAdd, CancellationToken.None);
+            _selectedTemplateToAdd = null;
+            await LoadDataAsync();
+            await OnProjectSaved.InvokeAsync();
+            ProjectNotifier.NotifyChanged();
+            await OnShowStatus.InvokeAsync(("Template added to project.", false));
+        }
+        // TODO: Generic catch(Exception) swallows all exceptions including OperationCanceledException.
+        // Consider catching a more specific exception or re-throwing OperationCanceledException.
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to add template: {ex.Message}", true));
+        }
     }
 
+    // TODO: RemoveTemplate does not call LoadDataAsync() so _allProjects becomes stale. If the user
+    // then tries to re-add the removed template via the dropdown, the source project lookup uses stale data
+    // and may call MoveTemplateAsync with sourceProject == current project (effectively a no-op). Consider
+    // calling LoadDataAsync() after SaveProjectAsync() to refresh _allProjects, consistent with AddTemplate.
     private async Task RemoveTemplate(int index)
     {
         var newIds = _project.TemplateIds.ToList();
