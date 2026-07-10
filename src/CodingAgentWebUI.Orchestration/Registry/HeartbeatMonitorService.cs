@@ -163,7 +163,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                                     run.MarkCompleted();
                                     run.CurrentStep = PipelineStep.Failed;
 
-                                    _historyService.AddRunToHistory(run);
+                                    await _historyService.AddRunToHistoryAsync(run, ct);
                                     _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
                                     await TrySwapLabelToErrorAsync(run, ct);
@@ -248,7 +248,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                                         claimedRun.MarkCompleted();
                                         claimedRun.CurrentStep = PipelineStep.Failed;
 
-                                        _historyService.AddRunToHistory(claimedRun);
+                                        await _historyService.AddRunToHistoryAsync(claimedRun, ct);
                                         _dispatcher.MarkIssueComplete(claimedRun.IssueIdentifier, claimedRun.IssueProviderConfigId);
 
                                         await TrySwapLabelToErrorAsync(claimedRun, ct);
@@ -298,6 +298,19 @@ public sealed class HeartbeatMonitorService : BackgroundService
                                 }
                             }
 
+                            continue;
+                        }
+
+                        // Grace period: skip reset if agent became Busy very recently.
+                        // The drain service has a window between ResolveAgent (sets Busy) and
+                        // AssignJob/run registration — avoid resetting during this window (BUG-03).
+                        // TODO: BusySince is read without holding agent.SyncRoot. DateTimeOffset? is not
+                        // guaranteed atomic on all platforms. This is consistent with existing reads of
+                        // DisconnectedAt/OrphanRestoredAt in this loop, but consider reading under lock
+                        // for correctness on non-x86-64 targets.
+                        var busySince = agent.BusySince;
+                        if (busySince.HasValue && (now - busySince.Value) < TimeSpan.FromSeconds(10))
+                        {
                             continue;
                         }
 
@@ -361,7 +374,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                         run.CurrentStep = PipelineStep.Failed;
 
                         // Persist to history
-                        _historyService.AddRunToHistory(run);
+                        await _historyService.AddRunToHistoryAsync(run, ct);
 
                         // Mark issue as no longer processing in the dispatcher
                         _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
@@ -412,7 +425,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 run.MarkCompleted();
                 run.CurrentStep = PipelineStep.Failed;
 
-                _historyService.AddRunToHistory(run);
+                await _historyService.AddRunToHistoryAsync(run, ct);
                 _runService.RemoveRun(run.RunId);
                 _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 

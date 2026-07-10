@@ -192,6 +192,78 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         item.CompletedAt!.Value.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
     }
 
+    // ── Infrastructure-failure recovery ─────────────────────────────────
+
+    [Fact]
+    public async Task TransitionWorkItemAsync_FailedWithInfrastructureFailure_RecoveryToSucceeded()
+    {
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+
+        // Move to Failed with InfrastructureFailure reason (simulates delivery timeout)
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(id);
+            item!.Status = WorkItemStatus.Failed;
+            item.FailureReason = FailureReason.InfrastructureFailure;
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        // Attempt to transition to Succeeded — should succeed via recovery fallback
+        await _facade.TransitionWorkItemAsync(id.ToString(), WorkItemStatus.Succeeded, CancellationToken.None);
+
+        await using var verifyDb = _dbFactory.CreateDbContext();
+        var result = await verifyDb.WorkItems.FindAsync(id);
+        result!.Status.Should().Be(WorkItemStatus.Succeeded);
+        result.CompletedAt.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task TransitionWorkItemAsync_FailedWithInfrastructureFailure_RecoveryToRunning()
+    {
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+
+        // Move to Failed with InfrastructureFailure reason
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(id);
+            item!.Status = WorkItemStatus.Failed;
+            item.FailureReason = FailureReason.InfrastructureFailure;
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        // Attempt to transition to Running — should succeed via recovery fallback (for JobAccepted)
+        await _facade.TransitionWorkItemAsync(id.ToString(), WorkItemStatus.Running, CancellationToken.None);
+
+        await using var verifyDb = _dbFactory.CreateDbContext();
+        var result = await verifyDb.WorkItems.FindAsync(id);
+        result!.Status.Should().Be(WorkItemStatus.Running);
+    }
+
+    [Fact]
+    public async Task TransitionWorkItemAsync_FailedWithAgentError_NoRecovery()
+    {
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+
+        // Move to Failed with AgentError reason (legitimate failure — should NOT be recovered)
+        await using (var db = _dbFactory.CreateDbContext())
+        {
+            var item = await db.WorkItems.FindAsync(id);
+            item!.Status = WorkItemStatus.Failed;
+            item.FailureReason = FailureReason.AgentError;
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        // Attempt to transition to Succeeded — should NOT succeed (AgentError is a legitimate failure)
+        await _facade.TransitionWorkItemAsync(id.ToString(), WorkItemStatus.Succeeded, CancellationToken.None);
+
+        await using var verifyDb = _dbFactory.CreateDbContext();
+        var result = await verifyDb.WorkItems.FindAsync(id);
+        result!.Status.Should().Be(WorkItemStatus.Failed); // unchanged
+    }
+
     // ── Helper ───────────────────────────────────────────────────────────
 
     private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>

@@ -651,6 +651,220 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
 
     #endregion
 
+    #region Test: ReportJobCompleted_AfterDeliveryTimeout_TransitionsWorkItemToSucceeded
+
+    /// <summary>
+    /// End-to-end scenario: SignalR delivery timeout causes WorkItem to be marked Failed
+    /// with InfrastructureFailure, then agent completes → WorkItem ends as Succeeded.
+    /// Simulates the primary fix path (else branch in ReportJobCompleted).
+    /// </summary>
+    [Fact]
+    public async Task ReportJobCompleted_AfterDeliveryTimeout_RecoveryTransitionsToSucceeded()
+    {
+        // Arrange: Insert WorkItem as Dispatched (step 2 of the bug timeline)
+        var workItemId = Guid.NewGuid();
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#200",
+                IssueProviderConfigId = "ip-recovery",
+                Status = WorkItemStatus.Dispatched,
+                CreatedAt = DateTimeOffset.UtcNow,
+                DispatchedAt = DateTimeOffset.UtcNow,
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Simulate step 4: SignalR delivery timeout catch block transitions to Failed
+        var transitionResult = await _transitionService.TransitionAsync(
+            workItemId, WorkItemStatus.Failed, item =>
+            {
+                item.ErrorMessage = "SignalR delivery failure: timeout";
+                item.FailureReason = FailureReason.InfrastructureFailure;
+                item.CompletedAt = DateTimeOffset.UtcNow;
+            });
+        transitionResult.Should().BeTrue("dispatch catch block should transition Dispatched → Failed");
+
+        // Verify item is in Failed state
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Failed);
+            item.FailureReason.Should().Be(FailureReason.InfrastructureFailure);
+        }
+
+        // Simulate step 7: Agent calls JobAccepted → attempts Failed → Running recovery
+        var jobAcceptedResult = await _transitionService.TryRecoverFromInfrastructureFailureAsync(
+            workItemId, WorkItemStatus.Running);
+        jobAcceptedResult.Should().BeTrue("recovery should allow Failed → Running for infrastructure failures");
+
+        // Simulate step 9: Agent completes, lifecycle manager transitions Running → Succeeded
+        // (This path is exercised when CompleteRunAsync runs normally)
+        var completionResult = await _transitionService.TransitionAsync(
+            workItemId, WorkItemStatus.Succeeded, item =>
+            {
+                item.CompletedAt = DateTimeOffset.UtcNow;
+            });
+        completionResult.Should().BeTrue("Running → Succeeded is a valid transition");
+
+        // Final verification: WorkItem is Succeeded
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Succeeded);
+            item.CompletedAt.Should().NotBeNull();
+        }
+    }
+
+    /// <summary>
+    /// End-to-end scenario: Direct recovery from Failed to Succeeded without intermediate Running.
+    /// This covers the primary fix path where GetRun returns null and we call
+    /// TransitionWorkItemAsync with Succeeded directly (recovery fallback kicks in).
+    /// </summary>
+    [Fact]
+    public async Task DirectRecovery_FailedInfrastructure_ToSucceeded()
+    {
+        // Arrange: WorkItem already in Failed with InfrastructureFailure
+        var workItemId = Guid.NewGuid();
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#201",
+                IssueProviderConfigId = "ip-direct",
+                Status = WorkItemStatus.Failed,
+                FailureReason = FailureReason.InfrastructureFailure,
+                ErrorMessage = "SignalR delivery failure: timeout",
+                CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-1),
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act: Direct recovery to Succeeded (simulates the else-branch fallback path)
+        var recovered = await _transitionService.TryRecoverFromInfrastructureFailureAsync(
+            workItemId, WorkItemStatus.Succeeded, item =>
+            {
+                item.CompletedAt = DateTimeOffset.UtcNow;
+            });
+
+        // Assert
+        recovered.Should().BeTrue();
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Succeeded);
+        }
+    }
+
+    /// <summary>
+    /// Recovery MUST NOT override legitimate agent errors (only InfrastructureFailure).
+    /// </summary>
+    [Fact]
+    public async Task DirectRecovery_FailedAgentError_Rejected()
+    {
+        var workItemId = Guid.NewGuid();
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#202",
+                IssueProviderConfigId = "ip-agent-err",
+                Status = WorkItemStatus.Failed,
+                FailureReason = FailureReason.AgentError,
+                ErrorMessage = "Agent crashed",
+                CompletedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act: Attempt recovery — should be rejected
+        var recovered = await _transitionService.TryRecoverFromInfrastructureFailureAsync(
+            workItemId, WorkItemStatus.Succeeded);
+
+        // Assert: Item stays Failed
+        recovered.Should().BeFalse();
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Failed);
+        }
+    }
+
+    /// <summary>
+    /// Recovery is idempotent — if the item is already at target, returns true without error.
+    /// </summary>
+    [Fact]
+    public async Task DirectRecovery_AlreadyAtTarget_ReturnsTrue()
+    {
+        var workItemId = Guid.NewGuid();
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#203",
+                IssueProviderConfigId = "ip-idempotent",
+                Status = WorkItemStatus.Succeeded,
+                CompletedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act: Item is already Succeeded, asking for Succeeded — idempotent
+        var recovered = await _transitionService.TryRecoverFromInfrastructureFailureAsync(
+            workItemId, WorkItemStatus.Succeeded);
+
+        // Assert: Returns true (idempotent)
+        recovered.Should().BeTrue();
+    }
+
+    /// <summary>
+    /// Recovery does not apply to non-Failed items (e.g., Running or Dispatched).
+    /// </summary>
+    [Fact]
+    public async Task DirectRecovery_NotInFailedState_ReturnsFalse()
+    {
+        var workItemId = Guid.NewGuid();
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "owner/repo#204",
+                IssueProviderConfigId = "ip-running",
+                Status = WorkItemStatus.Running,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+                TaskType = WorkItemTaskType.Implementation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act: Item is Running, not Failed — recovery not applicable
+        var recovered = await _transitionService.TryRecoverFromInfrastructureFailureAsync(
+            workItemId, WorkItemStatus.Succeeded);
+
+        // Assert
+        recovered.Should().BeFalse();
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Running); // unchanged
+        }
+    }
+
+    #endregion
+
     // ── Test Infrastructure ─────────────────────────────────────────────
 
     private sealed class InMemoryPipelineDbContext : PipelineDbContext

@@ -18,6 +18,9 @@ public class ApiKeyAuthPropertyTests
     /// For any API key that doesn't match configured AGENT_API_KEY, constant-time comparison fails.
     /// **Validates: Requirements 1.8, 18.3**
     /// </summary>
+    // TODO: This test calls FixedTimeEquals directly on raw UTF8 bytes, which no longer reflects
+    // the production code path (production now hashes with SHA256 first). Update to use SHA256
+    // pre-hashing to match the actual AgentApiKeyAuthHandler implementation.
     [Property(MaxTest = 20)]
     public void InvalidApiKey_IsRejected(NonEmptyString configuredKey, NonEmptyString providedKey)
     {
@@ -48,6 +51,9 @@ public class ApiKeyAuthPropertyTests
     /// Property 3 (continued): Valid API key passes constant-time comparison.
     /// **Validates: Requirements 1.8, 18.3**
     /// </summary>
+    // TODO: This test uses direct FixedTimeEquals on raw bytes without SHA256 hashing,
+    // which no longer reflects the production code path. Update to use SHA256 pre-hashing
+    // to match the actual AgentApiKeyAuthHandler implementation.
     [Property(MaxTest = 20)]
     public void ValidApiKey_IsAccepted(NonEmptyString apiKey)
     {
@@ -63,6 +69,8 @@ public class ApiKeyAuthPropertyTests
     /// Property 3 (continued): Constant-time comparison is symmetric.
     /// **Validates: Requirements 1.8, 18.3**
     /// </summary>
+    // TODO: This test verifies raw FixedTimeEquals symmetry without SHA256 pre-hashing.
+    // Update to use SHA256-hashed inputs to match the production code path.
     [Property(MaxTest = 20)]
     public void ConstantTimeComparison_IsSymmetric(NonEmptyString key1, NonEmptyString key2)
     {
