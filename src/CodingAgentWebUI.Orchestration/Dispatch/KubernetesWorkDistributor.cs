@@ -14,7 +14,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </summary>
 /// <remarks>
 /// Inherits shared DB operations (RunId resolution, cancel, status, dedup) from <see cref="DbWorkDistributorBase"/>.
-/// Only overrides <see cref="DistributeAsync"/> to enforce K8s-specific rules (no consolidation, always Pending).
+/// Only overrides <see cref="DistributeAsync"/> to insert as Pending (all task types, including consolidation).
 /// </remarks>
 public sealed class KubernetesWorkDistributor : DbWorkDistributorBase
 {
@@ -28,14 +28,6 @@ public sealed class KubernetesWorkDistributor : DbWorkDistributorBase
     public override async Task<DistributionResult> DistributeAsync(JobDistributionRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
-
-        // Consolidation requires persistent SignalR connections (AssignConsolidationJobAsync).
-        // Kubernetes mode spawns ephemeral pods without SignalR — consolidation is not supported.
-        if (request.TaskType == WorkItemTaskType.Consolidation)
-        {
-            Logger.LogWarning("Consolidation dispatch not supported in Kubernetes mode");
-            return new DistributionResult(false, null, "Consolidation not supported in Kubernetes mode");
-        }
 
         return await InsertWorkItemAsync(request, WorkItemStatus.Pending, ct,
             queued: true, successMessage: null);
