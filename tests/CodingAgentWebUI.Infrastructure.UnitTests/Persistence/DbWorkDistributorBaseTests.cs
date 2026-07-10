@@ -282,6 +282,40 @@ public class DbWorkDistributorBaseTests : IDisposable
         message.AgentProviderConfigId.Should().Be("repo-provider-1");
     }
 
+    [Fact]
+    public void BuildJobAssignmentMessage_MapsConsolidationFields()
+    {
+        var workItemId = Guid.NewGuid();
+        var request = CreateRequest("run-123", "consolidation") with
+        {
+            TaskType = WorkItemTaskType.Consolidation,
+            ConsolidationRunType = ConsolidationRunType.RefactoringDetection,
+            ConsolidationTemplateId = "template-42",
+            ConsolidationWorkspacePath = "/tmp/consolidation/run-123"
+        };
+
+        var message = DbWorkDistributorBase.BuildJobAssignmentMessage(workItemId, request);
+
+        message.TaskType.Should().Be(WorkItemTaskType.Consolidation);
+        message.ConsolidationRunType.Should().Be(ConsolidationRunType.RefactoringDetection);
+        message.ConsolidationTemplateId.Should().Be("template-42");
+        message.ConsolidationWorkspacePath.Should().Be("/tmp/consolidation/run-123");
+    }
+
+    [Fact]
+    public void BuildJobAssignmentMessage_NonConsolidation_ConsolidationFieldsAreDefault()
+    {
+        var workItemId = Guid.NewGuid();
+        var request = CreateRequest("owner/repo#14", "provider-14");
+
+        var message = DbWorkDistributorBase.BuildJobAssignmentMessage(workItemId, request);
+
+        message.TaskType.Should().Be(WorkItemTaskType.Implementation);
+        message.ConsolidationRunType.Should().BeNull();
+        message.ConsolidationTemplateId.Should().BeNull();
+        message.ConsolidationWorkspacePath.Should().BeNull();
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static JobDistributionRequest CreateRequest(string issueId, string providerId) => new()

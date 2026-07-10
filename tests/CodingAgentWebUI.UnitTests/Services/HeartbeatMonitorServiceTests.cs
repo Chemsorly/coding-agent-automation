@@ -32,6 +32,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
+        // TODO: No explicit Setup for AddRunToHistoryAsync — relies on Moq's default (Task.CompletedTask). Add explicit .Setup(...).Returns(Task.CompletedTask) so that future exception-throwing changes require deliberate test updates.
         _mockProviderFactory = new Mock<IProviderFactory>();
         _mockConfigStore = new Mock<IConfigurationStore>();
         _mockLabelSwapper = new Mock<ILabelSwapper>();
@@ -161,10 +162,10 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _runService.GetRun("job-1").Should().BeNull();
 
         // History should have been called
-        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(It.Is<PipelineRun>(r =>
             r.RunId == "job-1" &&
             r.FailureReason == "Agent disconnected" &&
-            r.CurrentStep == PipelineStep.Failed)), Times.Once);
+            r.CurrentStep == PipelineStep.Failed), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -346,10 +347,10 @@ public class HeartbeatMonitorServiceTests : IDisposable
 
         // Run should be removed from active runs and marked failed
         _runService.GetRun("job-1").Should().BeNull();
-        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(It.Is<PipelineRun>(r =>
             r.RunId == "job-1" &&
             r.FailureReason == "Agent did not resume orphaned job within grace period" &&
-            r.CurrentStep == PipelineStep.Failed)), Times.Once);
+            r.CurrentStep == PipelineStep.Failed), It.IsAny<CancellationToken>()), Times.Once);
 
         // Agent should be returned to Idle
         entry.Status.Should().Be(AgentStatus.Idle);
@@ -411,10 +412,10 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _runService.GetRun("orphan-1").Should().BeNull();
 
         // History should have been called with correct failure reason
-        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(It.Is<PipelineRun>(r =>
             r.RunId == "orphan-1" &&
             r.FailureReason == "Agent deregistered (orphaned run)" &&
-            r.CurrentStep == PipelineStep.Failed)), Times.Once);
+            r.CurrentStep == PipelineStep.Failed), It.IsAny<CancellationToken>()), Times.Once);
 
         // Label should be swapped to error via issue provider
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
@@ -440,7 +441,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
 
         // Run should still be active
         _runService.GetRun("local-1").Should().NotBeNull();
-        _mockHistoryService.Verify(h => h.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -525,10 +526,10 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _runService.GetRun("job-1").Should().BeNull();
 
         // History should have been called with progress timeout failure reason
-        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(It.Is<PipelineRun>(r =>
             r.RunId == "job-1" &&
             r.FailureReason!.Contains("progress timeout") &&
-            r.CurrentStep == PipelineStep.Failed)), Times.Once);
+            r.CurrentStep == PipelineStep.Failed), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     // TODO: This test and SweepAsync_BusyAgent_RunRemovedByConcurrentPath_ResetsToIdle are functionally
@@ -542,6 +543,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         var entry = RegisterAgent("agent-1", "conn-1");
         entry.ActiveJobId = "job-missing";
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Backdate past grace period
 
         // No run added for this job — simulates race condition where run was removed concurrently
         await _monitor.SweepAsync(CancellationToken.None);
@@ -559,6 +561,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         entry.ActiveJobId = "job-vanished";
         entry.OrphanRestoredAt = null;
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Backdate past grace period
 
         // No run exists for this job ID — simulates ReportJobCompleted removing the run
         // but failing to transition agent to Idle (e.g., SignalR exception)
@@ -568,6 +571,59 @@ public class HeartbeatMonitorServiceTests : IDisposable
         agent.Status.Should().Be(AgentStatus.Idle);
         agent.ActiveJobId.Should().BeNull();
         agent.OrphanRestoredAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_RecentlyBusy_NoRun_SkipsReset()
+    {
+        // TODO: Add test for the exact bug scenario (Busy with null ActiveJobId + recent BusySince)
+        // to guard against regression if Phase 1.6 condition is broadened to include null ActiveJobId.
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-new";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        // BusySince is set to ~now by TransitionStatus — within the 10s grace period
+
+        // No run exists for this job — but agent just became Busy
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent should NOT be reset — grace period protects recently-assigned agents
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Busy);
+        agent.ActiveJobId.Should().Be("job-new");
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_BusySinceExpired_NoRun_ResetsToIdle()
+    {
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-stale";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Well past grace period
+
+        // No run exists for this job — and agent has been Busy for 30s
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent should be reset — grace period expired, legitimately stuck
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Idle);
+        agent.ActiveJobId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_NullBusySince_NoRun_ResetsToIdle()
+    {
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-legacy";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince = null; // Simulate pre-existing agent without BusySince (backward compat)
+
+        // No run exists for this job — and BusySince is null (no grace period)
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent should be reset — null BusySince means no grace period protection
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Idle);
+        agent.ActiveJobId.Should().BeNull();
     }
 
     [Fact]
@@ -663,10 +719,10 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _runService.GetRun("job-1").Should().BeNull();
 
         // History should have been called with progress timeout failure reason
-        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(It.Is<PipelineRun>(r =>
             r.RunId == "job-1" &&
             r.FailureReason!.Contains("progress timeout") &&
-            r.CurrentStep == PipelineStep.Failed)), Times.Once);
+            r.CurrentStep == PipelineStep.Failed), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -772,9 +828,9 @@ public class HeartbeatMonitorServiceTests : IDisposable
         // Agent should be killed — stuck detection still works
         _registry.GetByAgentId("agent-1")!.Status.Should().Be(AgentStatus.Idle);
         _runService.GetRun("job-1").Should().BeNull();
-        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(It.Is<PipelineRun>(r =>
             r.RunId == "job-1" &&
-            r.FailureReason!.Contains("progress timeout"))), Times.Once);
+            r.FailureReason!.Contains("progress timeout")), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -833,7 +889,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         mockLifecycle.Verify(l => l.FailRunAsync("job-lm", "Agent disconnected", It.IsAny<CancellationToken>()), Times.Once);
 
         // The old manual path should NOT have been taken (history not called directly)
-        _mockHistoryService.Verify(h => h.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
 
         // Assert: agent should be deregistered after FailRunAsync
         registry.GetByAgentId("agent-lm").Should().BeNull();
@@ -1137,6 +1193,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         var entry = RegisterAgent("agent-partition", "conn-partition");
         entry.ActiveJobId = "completed-during-partition";
         _registry.TransitionStatus("agent-partition", AgentStatus.Busy);
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Backdate past grace period
 
         // The run has already been removed by the replayed ReportJobCompleted
         // (simulating: agent reconnected → buffer drained → ReportJobCompleted processed
@@ -1146,11 +1203,11 @@ public class HeartbeatMonitorServiceTests : IDisposable
 
         await _monitor.SweepAsync(CancellationToken.None);
 
-        // Assert: HeartbeatMonitor should NOT have called AddRunToHistory with a Failed status
+        // Assert: HeartbeatMonitor should NOT have called AddRunToHistoryAsync with a Failed status
         // (no false "stuck" failure)
-        _mockHistoryService.Verify(h => h.AddRunToHistory(It.Is<PipelineRun>(r =>
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(It.Is<PipelineRun>(r =>
             r.RunId == "completed-during-partition" &&
-            r.CurrentStep == PipelineStep.Failed)), Times.Never);
+            r.CurrentStep == PipelineStep.Failed), It.IsAny<CancellationToken>()), Times.Never);
 
         // Assert: agent should be transitioned to Idle (run not found → reset)
         var agent = _registry.GetByAgentId("agent-partition");

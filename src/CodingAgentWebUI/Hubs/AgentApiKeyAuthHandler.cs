@@ -97,11 +97,14 @@ public sealed class AgentApiKeyAuthHandler : AuthenticationHandler<AgentApiKeyAu
             expectedKey = masterKey;
         }
 
-        // Constant-time comparison to prevent timing attacks
-        var tokenBytes = Encoding.UTF8.GetBytes(token);
-        var expectedBytes = Encoding.UTF8.GetBytes(expectedKey);
+        // Constant-time comparison to prevent timing attacks.
+        // Hash both values to a fixed-size digest before comparing. This prevents
+        // CryptographicOperations.FixedTimeEquals from leaking length information
+        // via its early return when spans differ in length.
+        var tokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(token));
+        var expectedHash = SHA256.HashData(Encoding.UTF8.GetBytes(expectedKey));
 
-        if (!CryptographicOperations.FixedTimeEquals(tokenBytes, expectedBytes))
+        if (!CryptographicOperations.FixedTimeEquals(tokenHash, expectedHash))
         {
             _serilogLogger.Warning("Agent API key authentication failed — invalid key from {RemoteIp}", Request.HttpContext.Connection.RemoteIpAddress);
             return Task.FromResult(AuthenticateResult.Fail("Invalid API key"));

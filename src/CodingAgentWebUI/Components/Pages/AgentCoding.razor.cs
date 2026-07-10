@@ -3,42 +3,28 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.Components.Layout;
 using CodingAgentWebUI.Components.Shared;
 using Microsoft.AspNetCore.Components;
-using Microsoft.JSInterop;
-using Serilog;
 
 namespace CodingAgentWebUI.Components.Pages;
 
 public partial class AgentCoding : IDisposable
 {
-    private const string JsScrollToBottom = "scrollToBottom";
-    private const string JsScrollActiveStep = "scrollActiveStepIntoView";
-
-    [Inject] private PipelineOrchestrationService PipelineService { get; set; } = default!;
     [Inject] private IPipelineLoopService LoopService { get; set; } = default!;
     [Inject] private OrchestratorRunService RunService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
     [Inject] private JobDispatcherService Dispatcher { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
-    [Inject] private IJSRuntime JS { get; set; } = default!;
     [CascadingParameter] private MainLayout? Layout { get; set; }
-
-    private readonly object _outputLock = new();
-    private List<string> _outputLines = [];
 
     private string? _errorMessage;
     private string? _successMessage;
     private bool _showAgentSummary = true;
     private bool _hideLoopToast;
     private string? _lastLoopStatus;
-    private bool _showCompletionOnly;
-    private string? _lastRunId;
     private bool _disposed;
-    private Timer? _elapsedTimer;
 
     // Template Table UI State
     private bool _showAddForm;
@@ -79,7 +65,6 @@ public partial class AgentCoding : IDisposable
     private IReadOnlyList<ReviewerConfiguration> _reviewerConfigs => PageService.ReviewerConfigs;
     private IReadOnlyList<AgentProfile> _agentProfiles => PageService.AgentProfiles;
     private PipelineConfiguration _pipelineConfig => PageService.PipelineConfig;
-    private int _maxRetries => PageService.MaxRetries;
     private List<IssueSummary> _drawerIssues => PageService.DrawerIssues;
     private bool _drawerLoading => PageService.DrawerLoading;
     private int _drawerPage => PageService.DrawerPage;
@@ -105,10 +90,7 @@ public partial class AgentCoding : IDisposable
 
     protected override async Task OnInitializedAsync()
     {
-        PipelineService.OnChange += HandleStateChanged;
-        PipelineService.OnOutputLine += HandleOutputLine;
         LoopService.OnChange += HandleStateChanged;
-        _elapsedTimer = new Timer(ElapsedTimerTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
         if (Layout is not null)
             Layout.OnEscapePressed += HandleGlobalEscape;
 
@@ -540,76 +522,32 @@ public partial class AgentCoding : IDisposable
 
     // ── Event Handlers ──
 
-    private async void ElapsedTimerTick(object? state)
-    {
-        if (_disposed) return;
-        var run = PipelineService.ActiveRun;
-        if (run is null || run.CurrentStep is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled) return;
-        try { await InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); }
-        catch (ObjectDisposedException) { }
-    }
-
     private async void HandleStateChanged()
     {
         if (_disposed) return;
         try
         {
-            await InvokeAsync(async () =>
+            await InvokeAsync(() =>
             {
                 if (_disposed) return;
-                var run = PipelineService.ActiveRun;
-                if (run != null && run.RunId != _lastRunId) { lock (_outputLock) { _outputLines.Clear(); } _showCompletionOnly = false; _lastRunId = run.RunId; }
-                if (run is { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled }) _showCompletionOnly = true;
                 var currentStatus = LoopService.StatusMessage;
                 if (currentStatus != _lastLoopStatus)
                 {
                     _lastLoopStatus = currentStatus;
-                    if (currentStatus.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase)) _ = AutoDismissLoopToast();
-                    else _hideLoopToast = false;
+                    if (currentStatus.Contains("Cycle complete", StringComparison.OrdinalIgnoreCase))
+                        _ = AutoDismissLoopToast();
+                    else
+                        _hideLoopToast = false;
                 }
                 StateHasChanged();
-                try
-                {
-                    await JS.InvokeVoidAsync(JsScrollToBottom, "outputPanel");
-                    await JS.InvokeVoidAsync(JsScrollActiveStep, "sidebarSteps");
-                }
-                catch (Exception ex) { Log.Debug(ex, "JS interop scroll failed during state change"); }
             });
         }
         catch (ObjectDisposedException) { }
     }
-
-    private async void HandleOutputLine(string line)
-    {
-        if (_disposed) return;
-        lock (_outputLock) { _outputLines.Add(line); }
-        try
-        {
-            await InvokeAsync(async () =>
-            {
-                if (_disposed) return;
-                StateHasChanged();
-                try { await JS.InvokeVoidAsync(JsScrollToBottom, "outputPanel"); }
-                catch (Exception ex) { Log.Debug(ex, "JS interop scroll failed during output"); }
-            });
-        }
-        catch (ObjectDisposedException) { }
-    }
-
-    private async Task CancelPipeline()
-    {
-        try { await PipelineService.CancelPipelineAsync(); }
-        catch (Exception ex) { _errorMessage = $"Cancel error: {ex.Message}"; }
-    }
-
-    private void BackToIssues() { _showCompletionOnly = false; _errorMessage = null; }
 
     public void Dispose()
     {
         _disposed = true;
-        _elapsedTimer?.Dispose();
-        PipelineService.OnChange -= HandleStateChanged;
-        PipelineService.OnOutputLine -= HandleOutputLine;
         LoopService.OnChange -= HandleStateChanged;
         if (Layout is not null)
             Layout.OnEscapePressed -= HandleGlobalEscape;

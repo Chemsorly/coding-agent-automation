@@ -104,6 +104,20 @@ public class JobDispatcherServiceExtendedTests
         result.Should().BeNull();
     }
 
+    [Fact]
+    public void SelectAgent_SetsBusySinceOnReservation()
+    {
+        RegisterAgent("agent-1", "conn-1", new[] { "dotnet" });
+
+        var before = DateTimeOffset.UtcNow;
+        var result = _dispatcher.SelectAgent(new[] { "dotnet" });
+        var after = DateTimeOffset.UtcNow;
+
+        result.Should().NotBeNull();
+        result!.BusySince.Should().NotBeNull();
+        result.BusySince!.Value.Should().BeOnOrAfter(before).And.BeOnOrBefore(after);
+    }
+
     // ── EnqueueJob ──────────────────────────────────────────────────────
 
     [Fact]

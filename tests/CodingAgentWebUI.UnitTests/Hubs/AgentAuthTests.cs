@@ -173,12 +173,17 @@ public class AgentAuthTests
         method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().BeNull();
     }
 
+    // TODO: This test only verifies attribute presence via reflection. Add an integration-level test
+    // that exercises the AgentAuthorizationFilter with a mismatched jobId to prove runtime enforcement
+    // (i.e., calling JobRejected with a jobId not assigned to the agent throws HubException).
+    // Also add a test verifying legitimate JobRejected calls (agent rejecting its own job) succeed
+    // through the authorization filter end-to-end.
     [Fact]
-    public void RequiresActiveJobAttribute_NotOnJobRejected()
+    public void RequiresActiveJobAttribute_OnJobRejected()
     {
         var method = typeof(AgentHub).GetMethod("JobRejected");
         method.Should().NotBeNull();
-        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().BeNull();
+        method!.GetCustomAttribute<RequiresActiveJobAttribute>().Should().NotBeNull();
     }
 
     [Fact]

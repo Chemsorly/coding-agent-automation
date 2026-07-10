@@ -15,14 +15,6 @@ public sealed record AgentResolveResult(string ConnectionId, string AgentId);
 public interface ISignalRWorkDistributorAgentResolver
 {
     /// <summary>
-    /// Returns the SignalR connection ID of a suitable agent for the given selector.
-    /// Returns <c>null</c> if no compatible idle agent is available.
-    /// The selected agent is atomically reserved (set to Busy).
-    /// </summary>
-    /// <param name="agentSelector">Sorted comma-joined agent labels (e.g., "dotnet,kiro").</param>
-    string? ResolveConnectionId(string agentSelector);
-
-    /// <summary>
     /// Resolves a suitable agent and returns both connection ID and agent ID atomically.
     /// Returns <c>null</c> if no compatible idle agent is available.
     /// The selected agent is atomically reserved (set to Busy).
@@ -30,21 +22,6 @@ public interface ISignalRWorkDistributorAgentResolver
     /// </summary>
     /// <param name="agentSelector">Sorted comma-joined agent labels (e.g., "dotnet,kiro").</param>
     AgentResolveResult? ResolveAgent(string agentSelector);
-
-    /// <summary>
-    /// Returns the agent ID from the last <see cref="ResolveConnectionId"/> call.
-    /// Used to set AssignedAgentId on WorkItems after successful dispatch.
-    /// </summary>
-    [Obsolete("Use ResolveAgent() which returns AgentResolveResult. This property is not thread-safe.")]
-    string? LastResolvedAgentId { get; }
-
-    /// <summary>
-    /// Reverts the last resolved agent back to Idle status.
-    /// Call this when SignalR push fails after reservation to prevent the agent
-    /// from being permanently stuck in Busy state.
-    /// </summary>
-    [Obsolete("Use ReleaseAgent(string agentId) for thread-safe release.")]
-    void ReleaseLastResolvedAgent();
 
     /// <summary>
     /// Reverts a specific agent back to Idle status.

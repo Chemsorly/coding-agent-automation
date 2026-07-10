@@ -75,4 +75,11 @@ public sealed record AgentEntry
     /// within the disconnect grace period. Cleared when the agent reports job progress.
     /// </summary>
     public DateTimeOffset? OrphanRestoredAt { get; set; }
+
+    /// <summary>
+    /// Timestamp when the agent last transitioned to Busy status.
+    /// Used by HeartbeatMonitor to avoid resetting agents that were just assigned work
+    /// (grace period for the ResolveAgent → AssignJob race window).
+    /// </summary>
+    public DateTimeOffset? BusySince { get; set; }
 }
