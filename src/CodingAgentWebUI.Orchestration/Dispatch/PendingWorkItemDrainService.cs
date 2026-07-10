@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
+using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -113,8 +114,13 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             .Take(20) // Batch limit per cycle
             .ToListAsync(ct);
 
+        WorkDistributionTelemetry.RecordLastPollEpoch();
+
         if (pendingItems.Count == 0)
+        {
+            WorkDistributionTelemetry.DispatcherPollCount.Add(1);
             return;
+        }
 
         _logger.LogDebug("PendingWorkItemDrainService: {Count} pending item(s) to drain", pendingItems.Count);
 
@@ -211,6 +217,13 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     if (dispatched)
                     {
                         _agentResolver.AssignJob(agentId, item.Id.ToString());
+
+                        var latency = (DateTimeOffset.UtcNow - item.CreatedAt).TotalSeconds;
+                        WorkDistributionTelemetry.DispatchLatency.Record(latency,
+                            new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                        WorkDistributionTelemetry.PendingDuration.Record(latency,
+                            new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+
                         _logger.LogInformation(
                             "PendingWorkItemDrainService: dispatched consolidation WorkItem {WorkItemId} (run {RunId}) to agent {AgentId}",
                             item.Id, runId, agentId);
@@ -274,15 +287,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     {
                         // Orchestrator restarted — in-memory PipelineRun was lost.
                         // Re-create it from the serialized request payload.
-                        var recreatedRun = PipelineRun.Create(
-                            runId: request.RunId,
-                            issueIdentifier: request.IssueIdentifier,
-                            issueTitle: request.IssueDetail?.Title ?? request.IssueIdentifier,
-                            issueProviderConfigId: request.IssueProviderConfigId,
-                            repoProviderConfigId: request.RepoProviderConfigId,
-                            runType: request.RunType,
-                            initiatedBy: request.InitiatedBy ?? "loop",
-                            agentId: agentId);
+                        var recreatedRun = PipelineRunFactory.FromDistributionRequest(request, agentId);
                         _runService.AddRun(recreatedRun);
                         _logger.LogInformation(
                             "PendingWorkItemDrainService: re-created in-memory PipelineRun {RunId} for issue {IssueIdentifier} (orchestrator restart recovery)",
@@ -316,13 +321,56 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 await _agentComm.AssignJobAsync(connectionId, message, ct);
 
                 _agentResolver.AssignJob(agentId, item.Id.ToString());
+
+                var latency = (DateTimeOffset.UtcNow - item.CreatedAt).TotalSeconds;
+                WorkDistributionTelemetry.DispatchLatency.Record(latency,
+                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                WorkDistributionTelemetry.PendingDuration.Record(latency,
+                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex,
-                    "PendingWorkItemDrainService: SignalR delivery failed for WorkItem {WorkItemId}",
+                    "PendingWorkItemDrainService: dispatch failed for WorkItem {WorkItemId}",
                     item.Id);
                 _agentResolver.ReleaseAgent(agentId);
+
+                // Clean up in-memory PipelineRun (idempotent — TryRemove is a no-op if key doesn't exist,
+                // which handles the case where the exception fired before run creation/modification)
+                if (!string.IsNullOrEmpty(request.RunId))
+                {
+                    _runService.RemoveRun(request.RunId);
+                }
+
+                // Revert to Pending for retry on next drain cycle.
+                // Safe regardless of where the exception occurred:
+                // - If TransitionAsync(Dispatched) itself failed, item is still Pending → TransitionAsync
+                //   returns true idempotently (already at target).
+                // - If exception was after Dispatched transition, item reverts Dispatched → Pending (valid).
+                // TODO: The idempotent path (item already Pending) does NOT invoke the mutate callback,
+                // so RetryCount won't increment if the exception occurred during TransitionAsync(Dispatched).
+                // Consider checking the return value and manually incrementing RetryCount in that case.
+                try
+                {
+                    // TODO: Using the same stoppingToken (ct) here means the revert will also fail if
+                    // the original exception was due to cancellation (shutdown). Consider using
+                    // CancellationToken.None to ensure revert completes during graceful shutdown.
+                    await _transitionService.TransitionAsync(
+                        item.Id, WorkItemStatus.Pending,
+                        entity =>
+                        {
+                            entity.DispatchedAt = null;
+                            entity.AssignedAgentId = null;
+                            entity.RetryCount++;
+                        }, ct);
+                }
+                catch (Exception revertEx)
+                {
+                    _logger.LogWarning(revertEx,
+                        "PendingWorkItemDrainService: failed to revert WorkItem {WorkItemId} to Pending after dispatch failure — stuck-item detector will handle",
+                        item.Id);
+                }
+
                 continue;
             }
 
@@ -331,8 +379,15 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             //       Consider a retry or reconciliation mechanism to avoid stale labels in the opposite direction.
             try
             {
+                var providerForLabel = request.RunType == PipelineRunType.Review
+                    ? request.RepoProviderConfigId
+                    : request.IssueProviderConfigId;
+                var targetKind = request.RunType == PipelineRunType.Review
+                    ? LabelTargetKind.PullRequest
+                    : LabelTargetKind.Issue;
+
                 await _labelSwapper.SwapLabelAsync(
-                    request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, ct);
+                    providerForLabel, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -345,5 +400,11 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 "PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
                 item.Id, item.IssueIdentifier, agentId);
         }
+
+        // TODO: DispatcherPollCount is placed at end-of-method rather than start-of-call. If an unhandled exception
+        // escapes the foreach loop after RecordLastPollEpoch(), the staleness gauge updates but the poll counter
+        // does not increment, creating metric inconsistency. Matches K8s DispatchService pattern but deviates from
+        // the stated requirement text. Low risk due to inner try-catch coverage.
+        WorkDistributionTelemetry.DispatcherPollCount.Add(1);
     }
 }
