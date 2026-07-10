@@ -1,7 +1,6 @@
 @page "/agent-coding"
 @implements IDisposable
 @using CodingAgentWebUI.Pipeline.Models
-@using CodingAgentWebUI.Pipeline.Services
 @using CodingAgentWebUI.Orchestration
 @using CodingAgentWebUI.Orchestration.Dispatch
 @using CodingAgentWebUI.Orchestration.Registry
@@ -81,124 +80,82 @@
         }
     </div>
 
-    @{
-        var activeRun = PipelineService.ActiveRun;
-        var hasActiveRun = activeRun is not null
-            && activeRun.CurrentStep is not (PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled);
-        var hasFinishedRun = activeRun is { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled };
-    }
-
-    <div class="agent-content-layout @(hasActiveRun || hasFinishedRun ? "with-sidebar" : "")">
+    <div class="agent-content-layout">
         <div class="agent-main">
-            @if (!PipelineService.IsRunning && activeRun is null or { CurrentStep: PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled })
-            {
-                @if (hasFinishedRun && _showCompletionOnly)
-                {
-                    <PipelineSummary Run="activeRun!" MaxRetries="@_maxRetries" OnBackToIssues="BackToIssues" />
-                }
+            <OnboardingChecklist
+                HasIssueProvider="@(_issueProviders.Count > 0)"
+                HasRepoProvider="@(_repoProviders.Count > 0)"
+                HasProject="@(_projects.Count > 0)"
+                HasTemplate="@(_templates.Count > 0)"
+                HasAgent="@(Registry.GetAllAgents().Count > 0)"
+                IsLoopActive="LoopService.IsLoopActive"
+                OnAddTemplate="ShowAddForm" />
 
-                @if (activeRun is null || hasFinishedRun)
-                {
-                    @if (!_showCompletionOnly)
+            <TemplateTableSection Templates="_templates" Projects="_projects"
+                IssueProviders="_issueProviders" RepoProviders="_repoProviders"
+                BrainProviders="_brainProviders" PipelineProviders="_pipelineProviders"
+                IsLoopActive="LoopService.IsLoopActive" RecentlyToggled="_recentlyToggled"
+                TemplateStatuses="LoopService.TemplateStatuses"
+                QualityGateConfigs="_qualityGateConfigs" ReviewerConfigs="_reviewerConfigs"
+                AgentProfiles="_agentProfiles" PipelineConfig="_pipelineConfig"
+                ShowAddForm="_showAddForm" AddForm="_addForm" FormError="@_formError"
+                ShowDeleteConfirm="_showDeleteConfirm" DeletingTemplate="_deletingTemplate"
+                OnToggleEnabled="ToggleTemplateEnabled" OnToggleImplementation="ToggleImplementationEnabled"
+                OnToggleReview="ToggleReviewEnabled" OnToggleDecomposition="ToggleDecompositionEnabled"
+                OnConfirmRemove="ConfirmRemoveTemplate" OnMoveTemplate="MoveTemplateToProject"
+                OnShowAddForm="ShowAddForm" OnAddTemplate="AddTemplate"
+                OnCancelAdd="CancelAddForm" OnRemoveTemplate="RemoveTemplate" OnCancelDelete="CancelDelete" />
+
+            <!-- ═══ Loop Controls ═══ -->
+            <section class="settings-section" style="margin: 0 20px 16px;">
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    @if (!LoopService.IsLoopActive)
                     {
-                        <OnboardingChecklist
-                            HasIssueProvider="@(_issueProviders.Count > 0)"
-                            HasRepoProvider="@(_repoProviders.Count > 0)"
-                            HasProject="@(_projects.Count > 0)"
-                            HasTemplate="@(_templates.Count > 0)"
-                            HasAgent="@(Registry.GetAllAgents().Count > 0)"
-                            IsLoopActive="LoopService.IsLoopActive"
-                            OnAddTemplate="ShowAddForm" />
-
-                        <TemplateTableSection Templates="_templates" Projects="_projects"
-                            IssueProviders="_issueProviders" RepoProviders="_repoProviders"
-                            BrainProviders="_brainProviders" PipelineProviders="_pipelineProviders"
-                            IsLoopActive="LoopService.IsLoopActive" RecentlyToggled="_recentlyToggled"
-                            TemplateStatuses="LoopService.TemplateStatuses"
-                            QualityGateConfigs="_qualityGateConfigs" ReviewerConfigs="_reviewerConfigs"
-                            AgentProfiles="_agentProfiles" PipelineConfig="_pipelineConfig"
-                            ShowAddForm="_showAddForm" AddForm="_addForm" FormError="@_formError"
-                            ShowDeleteConfirm="_showDeleteConfirm" DeletingTemplate="_deletingTemplate"
-                            OnToggleEnabled="ToggleTemplateEnabled" OnToggleImplementation="ToggleImplementationEnabled"
-                            OnToggleReview="ToggleReviewEnabled" OnToggleDecomposition="ToggleDecompositionEnabled"
-                            OnConfirmRemove="ConfirmRemoveTemplate" OnMoveTemplate="MoveTemplateToProject"
-                            OnShowAddForm="ShowAddForm" OnAddTemplate="AddTemplate"
-                            OnCancelAdd="CancelAddForm" OnRemoveTemplate="RemoveTemplate" OnCancelDelete="CancelDelete" />
-
-                        <!-- ═══ Loop Controls ═══ -->
-                        <section class="settings-section" style="margin: 0 20px 16px;">
-                            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                                @if (!LoopService.IsLoopActive)
-                                {
-                                    <button class="btn-save" @onclick="StartLoop" disabled="@(!CanStartLoop)" title="@(!CanStartLoop ? StartLoopDisabledReason : null)"><Icon Name="play" Size="16" /> Start Loop</button>
-                                }
-                                else
-                                {
-                                    <button class="btn-cancel" @onclick="StopLoop">⏹ Stop Loop</button>
-                                }
-                                @if (LoopService.IsLoopActive)
-                                {
-                                    <span class="monitoring-muted" style="font-size: 0.82rem;">
-                                        Polling template @(LoopService.CurrentCycleTemplateIndex + 1) of @LoopService.CurrentCycleTemplateCount
-                                        · Processed: @LoopService.ProcessedCount · Failed: @LoopService.FailedCount
-                                    </span>
-                                }
-                            </div>
-                            @if (LoopService.ValidationErrors.Count > 0)
-                            {
-                                <div class="settings-status status-error" style="margin-top: 8px;">
-                                    <strong>Validation errors:</strong>
-                                    <ul style="margin: 4px 0 0 16px; padding: 0;">
-                                        @foreach (var err in LoopService.ValidationErrors)
-                                        {
-                                            <li>@err</li>
-                                        }
-                                    </ul>
-                                </div>
-                            }
-                        </section>
-
-                        <!-- ═══ Manual Dispatch ═══ -->
-                        <section class="settings-section" style="margin: 0 20px 16px;">
-                            <h2>Manual Dispatch</h2>
-                            <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                                <select value="@_manualDispatchTemplateId" @onchange="OnTemplateChanged" class="dispatch-template-select" data-testid="template-select">
-                                    <option value="">-- Select Template --</option>
-                                    @foreach (var t in _templates.Where(t => t.Enabled))
-                                    {
-                                        <option value="@t.Id">@t.Name</option>
-                                    }
-                                </select>
-                                <button class="btn-save" @onclick="OpenEpicDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse epics" : null)" data-testid="browse-epics-btn" style="background: #7057ff;">Browse Epics</button>
-                                <button class="btn-save" @onclick="OpenDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse issues" : null)" data-testid="browse-issues-btn">Browse Issues</button>
-                                <button class="btn-save" @onclick="OpenPrDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse pull requests" : null)" data-testid="browse-prs-btn" style="background: var(--accent-secondary, #6366f1);">Browse Pull Requests</button>
-                            </div>
-                        </section>
+                        <button class="btn-save" @onclick="StartLoop" disabled="@(!CanStartLoop)" title="@(!CanStartLoop ? StartLoopDisabledReason : null)"><Icon Name="play" Size="16" /> Start Loop</button>
                     }
-                }
-            }
-            else if (activeRun is not null)
-            {
-                @if (activeRun.CurrentStep is PipelineStep.CloningRepository or PipelineStep.CreatingBranch
-                    or PipelineStep.SyncingBrainRepoPreRun or PipelineStep.AnalyzingCode or PipelineStep.ReviewingAnalysis
-                    or PipelineStep.GeneratingCode or PipelineStep.ReviewingCode or PipelineStep.RunningQualityGates
-                    or PipelineStep.PreparingForPullRequest or PipelineStep.ReflectingOnRun
-                    or PipelineStep.CreatingPullRequest or PipelineStep.Created
-                    or PipelineStep.PostingAnalysis or PipelineStep.SyncingBrainRepoPostRun)
+                    else
+                    {
+                        <button class="btn-cancel" @onclick="StopLoop">⏹ Stop Loop</button>
+                    }
+                    @if (LoopService.IsLoopActive)
+                    {
+                        <span class="monitoring-muted" style="font-size: 0.82rem;">
+                            Polling template @(LoopService.CurrentCycleTemplateIndex + 1) of @LoopService.CurrentCycleTemplateCount
+                            · Processed: @LoopService.ProcessedCount · Failed: @LoopService.FailedCount
+                        </span>
+                    }
+                </div>
+                @if (LoopService.ValidationErrors.Count > 0)
                 {
-                    <div class="progress-view">
-                        <h2>Pipeline in Progress</h2>
-                        @{ List<string> outputSnapshot; lock (_outputLock) { outputSnapshot = _outputLines.TakeLast(200).ToList(); } }
-                        <OutputTerminal Lines="outputSnapshot" />
+                    <div class="settings-status status-error" style="margin-top: 8px;">
+                        <strong>Validation errors:</strong>
+                        <ul style="margin: 4px 0 0 16px; padding: 0;">
+                            @foreach (var err in LoopService.ValidationErrors)
+                            {
+                                <li>@err</li>
+                            }
+                        </ul>
                     </div>
                 }
-            }
-        </div>
+            </section>
 
-        @if (activeRun is not null && (hasActiveRun || hasFinishedRun))
-        {
-            <PipelineSidebar Run="activeRun" IsRunning="PipelineService.IsRunning" OnCancel="CancelPipeline" MaxRetries="@_maxRetries" />
-        }
+            <!-- ═══ Manual Dispatch ═══ -->
+            <section class="settings-section" style="margin: 0 20px 16px;">
+                <h2>Manual Dispatch</h2>
+                <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                    <select value="@_manualDispatchTemplateId" @onchange="OnTemplateChanged" class="dispatch-template-select" data-testid="template-select">
+                        <option value="">-- Select Template --</option>
+                        @foreach (var t in _templates.Where(t => t.Enabled))
+                        {
+                            <option value="@t.Id">@t.Name</option>
+                        }
+                    </select>
+                    <button class="btn-save" @onclick="OpenEpicDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse epics" : null)" data-testid="browse-epics-btn" style="background: #7057ff;">Browse Epics</button>
+                    <button class="btn-save" @onclick="OpenDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse issues" : null)" data-testid="browse-issues-btn">Browse Issues</button>
+                    <button class="btn-save" @onclick="OpenPrDrawer" disabled="@(string.IsNullOrEmpty(_manualDispatchTemplateId))" title="@(string.IsNullOrEmpty(_manualDispatchTemplateId) ? "Select a pipeline template to browse pull requests" : null)" data-testid="browse-prs-btn" style="background: var(--accent-secondary, #6366f1);">Browse Pull Requests</button>
+                </div>
+            </section>
+        </div>
     </div>
     <UndoSnackbar @ref="_undoSnackbar" />
 </div>
