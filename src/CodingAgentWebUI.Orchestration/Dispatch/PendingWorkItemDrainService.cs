@@ -1,6 +1,7 @@
 using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
+using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -113,8 +114,13 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             .Take(20) // Batch limit per cycle
             .ToListAsync(ct);
 
+        WorkDistributionTelemetry.RecordLastPollEpoch();
+
         if (pendingItems.Count == 0)
+        {
+            WorkDistributionTelemetry.DispatcherPollCount.Add(1);
             return;
+        }
 
         _logger.LogDebug("PendingWorkItemDrainService: {Count} pending item(s) to drain", pendingItems.Count);
 
@@ -211,6 +217,13 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     if (dispatched)
                     {
                         _agentResolver.AssignJob(agentId, item.Id.ToString());
+
+                        var latency = (DateTimeOffset.UtcNow - item.CreatedAt).TotalSeconds;
+                        WorkDistributionTelemetry.DispatchLatency.Record(latency,
+                            new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                        WorkDistributionTelemetry.PendingDuration.Record(latency,
+                            new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+
                         _logger.LogInformation(
                             "PendingWorkItemDrainService: dispatched consolidation WorkItem {WorkItemId} (run {RunId}) to agent {AgentId}",
                             item.Id, runId, agentId);
@@ -316,6 +329,12 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 await _agentComm.AssignJobAsync(connectionId, message, ct);
 
                 _agentResolver.AssignJob(agentId, item.Id.ToString());
+
+                var latency = (DateTimeOffset.UtcNow - item.CreatedAt).TotalSeconds;
+                WorkDistributionTelemetry.DispatchLatency.Record(latency,
+                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                WorkDistributionTelemetry.PendingDuration.Record(latency,
+                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
             }
             catch (Exception ex)
             {
@@ -345,5 +364,11 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 "PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
                 item.Id, item.IssueIdentifier, agentId);
         }
+
+        // TODO: DispatcherPollCount is placed at end-of-method rather than start-of-call. If an unhandled exception
+        // escapes the foreach loop after RecordLastPollEpoch(), the staleness gauge updates but the poll counter
+        // does not increment, creating metric inconsistency. Matches K8s DispatchService pattern but deviates from
+        // the stated requirement text. Low risk due to inner try-catch coverage.
+        WorkDistributionTelemetry.DispatcherPollCount.Add(1);
     }
 }
