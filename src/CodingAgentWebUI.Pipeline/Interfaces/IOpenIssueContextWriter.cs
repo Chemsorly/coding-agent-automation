@@ -22,4 +22,23 @@ public interface IOpenIssueContextWriter
         string workspacePath,
         int maxIssues,
         CancellationToken ct);
+
+    /// <summary>
+    /// Fetches open issues and optionally closed sibling issues (for epic decomposition runs).
+    /// Closed issues are included when <paramref name="includeClosedSiblings"/> is true,
+    /// sharing the total <paramref name="maxIssues"/> budget with open issues.
+    /// </summary>
+    /// <param name="issueOps">The issue operations proxy (SignalR to orchestrator).</param>
+    /// <param name="workspacePath">Absolute workspace path.</param>
+    /// <param name="maxIssues">Maximum total issues to download (open + closed combined).</param>
+    /// <param name="includeClosedSiblings">Whether to include recently-closed issues (epic runs).</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Number of issues successfully written.</returns>
+    Task<int> WriteOpenIssueContextAsync(
+        IAgentIssueOperations issueOps,
+        string workspacePath,
+        int maxIssues,
+        bool includeClosedSiblings,
+        CancellationToken ct)
+        => WriteOpenIssueContextAsync(issueOps, workspacePath, maxIssues, ct);
 }

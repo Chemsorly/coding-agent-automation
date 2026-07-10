@@ -157,6 +157,17 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     }
 
     /// <summary>
+    /// Lists closed issues with optional label filtering and date cutoff via the orchestrator.
+    /// Used during decomposition runs to include recently-closed sibling issues in agent context.
+    /// </summary>
+    public async Task<PagedResult<IssueSummary>> ListClosedIssuesAsync(int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since, CancellationToken ct)
+    {
+        return await _signalRPipeline.ExecuteAsync(async token =>
+            await _connection.InvokeAsync<PagedResult<IssueSummary>>(
+                HubMethodNames.RequestListClosedIssues, _jobId, page, pageSize, labels, since, token), ct);
+    }
+
+    /// <summary>
     /// Gets full issue details by identifier via the orchestrator.
     /// </summary>
     public async Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct)
