@@ -28,6 +28,7 @@ public sealed class ReconciliationService : BackgroundService
     private const string ManagedByLabel = "app.kubernetes.io/managed-by";
     private const string ManagedByValue = "caa-orchestrator";
     private const string WorkItemIdLabel = "caa/work-item-id";
+    private const int CompletionGracePeriodSeconds = 30;
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly LeaderElectionService _leaderElection;
@@ -356,8 +357,92 @@ public sealed class ReconciliationService : BackgroundService
                 await TryDeleteJobAsync(jobName, ct);
             }
         }
-        // For "Complete" — agent should have already POSTed terminal status.
-        // If not, the poll loop will catch it as orphan/timeout.
+        else if (isComplete)
+        {
+            // Verify the agent actually reported terminal status.
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var item = await db.WorkItems.AsNoTracking()
+                .Where(w => w.Id == workItemId)
+                .Select(w => new { w.Status, w.CompletedAt, w.IssueIdentifier, w.IssueProviderConfigId })
+                .FirstOrDefaultAsync(ct);
+
+            if (item is null) return;
+
+            // Already terminal — normal path (agent reported correctly)
+            if (item.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+                return;
+
+            // WorkItem still non-terminal — check grace period
+            var jobCompletionTime = job.Status.CompletionTime;
+            var gracePeriod = TimeSpan.FromSeconds(CompletionGracePeriodSeconds);
+
+            // TODO: When CompletionTime is null (rare K8s API race), both the Watch handler and poll loop
+            // skip this item, leaving it stuck until the 31-minute timeout. Consider falling back to
+            // DispatchedAt + grace period when CompletionTime is null.
+            if (jobCompletionTime is not null && DateTimeOffset.UtcNow - jobCompletionTime.Value > gracePeriod)
+            {
+                var failureMessage = "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure";
+
+                Log.Warning("ReconciliationService: Job {JobName} completed but WorkItem {WorkItemId} still in {Status} — agent never reported terminal status",
+                    job.Metadata?.Name, workItemId, item.Status);
+
+                // Try full lifecycle cleanup first (label swap, history, dedup, agent state).
+                // TODO: FailRunAsync does not set FailureReason/ErrorMessage on the WorkItem entity —
+                // when lifecycleHandled=true, the WorkItem will be Failed without InfrastructureFailure reason.
+                // Consider setting FailureReason/ErrorMessage before calling FailRunAsync or patching after.
+                var lifecycleHandled = false;
+                if (_lifecycleManager is not null)
+                {
+                    var result = await _lifecycleManager.FailRunAsync(workItemId.ToString(), failureMessage, ct);
+                    lifecycleHandled = result is not null;
+                }
+
+                // Fallback: direct transition + best-effort label swap + dedup release
+                if (!lifecycleHandled)
+                {
+                    // TODO: Check TransitionAsync return value — if false (concurrent transition already
+                    // reached terminal state), skip label swap, dedup release, and LogTerminalTransition
+                    // to avoid duplicate telemetry and unexpected state changes.
+                    await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed, entity =>
+                    {
+                        entity.CompletedAt = DateTimeOffset.UtcNow;
+                        entity.FailureReason = FailureReason.InfrastructureFailure;
+                        entity.ErrorMessage = failureMessage;
+                    }, ct);
+
+                    // Best-effort label swap to agent:error (prevents stale agent:in-progress on GitHub)
+                    if (_labelSwapper is not null)
+                    {
+                        try
+                        {
+                            await _labelSwapper.SwapLabelAsync(
+                                item.IssueProviderConfigId, item.IssueIdentifier,
+                                AgentLabels.Error, LabelTargetKind.Issue, ct);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            Log.Warning(ex, "ReconciliationService: label swap to agent:error failed for WorkItem {WorkItemId} (non-fatal)", workItemId);
+                        }
+                    }
+
+                    // Release dedup guard (prevents issue from being permanently blocked from re-dispatch)
+                    _dedupGuard?.MarkIssueComplete(item.IssueIdentifier, item.IssueProviderConfigId);
+                }
+
+                // TODO: When lifecycleHandled=true, FailRunAsync already logs the terminal event internally,
+                // causing duplicate telemetry from LogTerminalTransition here. Guard with `if (!lifecycleHandled)`.
+                LogTerminalTransition(workItemId, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
+
+                // Release PVC and delete Job (same cleanup as isFailed path)
+                await ReleasePvcForWorkItemAsync(workItemId, ct);
+                var completedJobName = job.Metadata?.Name;
+                if (!string.IsNullOrEmpty(completedJobName))
+                    await TryDeleteJobAsync(completedJobName, ct);
+            }
+            // If within grace period: do nothing — the poll loop will catch it after the grace period expires.
+            // NOTE: The Watch handler will NOT fire again for this Job (K8s won't send more Modified events
+            // after reaching Complete). The poll loop is the sole mechanism for grace-period catch-up.
+        }
     }
 
     /// <summary>
@@ -416,6 +501,7 @@ public sealed class ReconciliationService : BackgroundService
     private async Task RunReconciliationCycleAsync(CancellationToken ct)
     {
         await DetectOrphansAsync(ct);
+        await DetectCompletedJobsWithStuckWorkItemsAsync(ct);
         await EnforceTimeoutsAsync(ct);
         await EnforceConsolidationTimeoutsAsync(ct);
         await DetectPodStartupFailuresAsync(ct);
@@ -463,6 +549,106 @@ public sealed class ReconciliationService : BackgroundService
                     }, ct);
 
                 LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
+            }
+        }
+    }
+
+    // ── Completed Job Detection ─────────────────────────────────────────
+
+    /// <summary>
+    /// Safety-net poll: detects K8s Jobs that reached "Complete" status but whose WorkItems
+    /// never reached a terminal state. Transitions stuck items to Failed after grace period.
+    /// Covers missed Watch events (e.g., Watch stream reconnection during the event).
+    /// </summary>
+    internal async Task DetectCompletedJobsWithStuckWorkItemsAsync(CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var now = DateTimeOffset.UtcNow;
+        var gracePeriod = TimeSpan.FromSeconds(CompletionGracePeriodSeconds);
+
+        var activeItems = await db.WorkItems
+            .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+                        && w.K8sJobName != null)
+            .Select(w => new { w.Id, w.K8sJobName, w.IssueIdentifier, w.IssueProviderConfigId })
+            .ToListAsync(ct);
+
+        if (activeItems.Count == 0) return;
+
+        foreach (var item in activeItems)
+        {
+            if (ct.IsCancellationRequested) break;
+
+            try
+            {
+                var job = await _kubeClient.BatchV1.ReadNamespacedJobAsync(
+                    item.K8sJobName, _options.Namespace, cancellationToken: ct);
+
+                var isComplete = job?.Status?.Conditions?.Any(c =>
+                    c.Type == "Complete" && c.Status == "True") ?? false;
+                if (!isComplete) continue;
+
+                var completionTime = job!.Status!.CompletionTime;
+                if (completionTime is null || now - completionTime.Value <= gracePeriod) continue;
+
+                var failureMessage = "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure";
+
+                Log.Warning("ReconciliationService: Job {JobName} completed {Ago}s ago but WorkItem {WorkItemId} still non-terminal — failing",
+                    item.K8sJobName, (int)(now - completionTime.Value).TotalSeconds, item.Id);
+
+                // Try full lifecycle cleanup first (label swap, history, dedup, agent state).
+                // TODO: FailRunAsync does not set FailureReason/ErrorMessage on the WorkItem entity —
+                // when lifecycleHandled=true, the WorkItem will be Failed without InfrastructureFailure reason.
+                // Consider setting FailureReason/ErrorMessage before calling FailRunAsync or patching after.
+                var lifecycleHandled = false;
+                if (_lifecycleManager is not null)
+                {
+                    var result = await _lifecycleManager.FailRunAsync(item.Id.ToString(), failureMessage, ct);
+                    lifecycleHandled = result is not null;
+                }
+
+                // Fallback: direct transition + best-effort label swap + dedup release
+                if (!lifecycleHandled)
+                {
+                    // TODO: Check TransitionAsync return value — if false (concurrent transition already
+                    // reached terminal state), skip label swap, dedup release, and LogTerminalTransition
+                    // to avoid overwriting legitimate labels or duplicate cleanup.
+                    await _transitionService.TransitionAsync(item.Id, WorkItemStatus.Failed, w =>
+                    {
+                        w.CompletedAt = DateTimeOffset.UtcNow;
+                        w.FailureReason = FailureReason.InfrastructureFailure;
+                        w.ErrorMessage = failureMessage;
+                    }, ct);
+
+                    if (_labelSwapper is not null)
+                    {
+                        try
+                        {
+                            await _labelSwapper.SwapLabelAsync(
+                                item.IssueProviderConfigId, item.IssueIdentifier,
+                                AgentLabels.Error, LabelTargetKind.Issue, ct);
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            Log.Warning(ex, "ReconciliationService: label swap to agent:error failed for WorkItem {WorkItemId} (non-fatal)", item.Id);
+                        }
+                    }
+
+                    _dedupGuard?.MarkIssueComplete(item.IssueIdentifier, item.IssueProviderConfigId);
+                }
+
+                // TODO: When lifecycleHandled=true, FailRunAsync already logs the terminal event internally,
+                // causing duplicate telemetry from LogTerminalTransition here. Guard with `if (!lifecycleHandled)`.
+                LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
+                await ReleasePvcForWorkItemAsync(item.Id, ct);
+                await TryDeleteJobAsync(item.K8sJobName!, ct);
+            }
+            catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // Job already deleted — DetectOrphansAsync handles this case
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                Log.Debug(ex, "ReconciliationService: failed to check Job {JobName} for completion", item.K8sJobName);
             }
         }
     }

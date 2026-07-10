@@ -368,6 +368,263 @@ public class K8sLifecycleIntegrationTests : IDisposable
             providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    // ── Group 4: Complete Job + Stuck WorkItem (#1138) ─────────────────
+
+    [Fact]
+    public async Task K8s_CompleteJob_DispatchedWorkItem_PastGracePeriod_TransitionsToFailed()
+    {
+        // Arrange: WorkItem in Dispatched with a K8s Job that completed 60s ago
+        var workItemId = Guid.NewGuid();
+        var k8sJobName = $"caa-{workItemId.ToString("N")[..8]}";
+        await InsertWorkItem(workItemId, "owner/repo#stuck", "kiro,dotnet", WorkItemStatus.Dispatched,
+            k8sJobName: k8sJobName);
+
+        var completedJob = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = k8sJobName,
+                Labels = new Dictionary<string, string>
+                {
+                    ["caa/work-item-id"] = workItemId.ToString()
+                },
+                ResourceVersion = "456"
+            },
+            Status = new V1JobStatus
+            {
+                Succeeded = 1,
+                CompletionTime = DateTime.UtcNow.AddSeconds(-60),
+                Conditions =
+                [
+                    new V1JobCondition
+                    {
+                        Type = "Complete",
+                        Status = "True"
+                    }
+                ]
+            }
+        };
+
+        // TODO: This test only exercises the fallback path (lifecycleManager is null).
+        // Add a separate test with a non-null lifecycleManager to cover the lifecycleHandled=true path,
+        // verifying FailureReason/ErrorMessage are set correctly when FailRunAsync succeeds.
+        var reconciliationService = CreateReconciliationService();
+
+        // Act: Watch handler detects Complete Job with non-terminal WorkItem past grace period
+        await InvokeHandleJobEventAsync(reconciliationService, WatchEventType.Modified, completedJob);
+
+        // Assert: WorkItem transitioned to Failed with InfrastructureFailure
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.CompletedAt.Should().NotBeNull();
+        item.FailureReason.Should().Be(FailureReason.InfrastructureFailure);
+        item.ErrorMessage.Should().Contain("agent never reported terminal status");
+        // TODO: Assert that ReleasePvcForWorkItemAsync and TryDeleteJobAsync were called
+        // (verify PVC released and Job deleted — acceptance criteria require same cleanup as isFailed path)
+    }
+
+    // TODO: Add test for WorkItem in Running status with Complete Job past grace period.
+    // The production code queries both Dispatched and Running, but only Dispatched is tested here.
+    // Test: K8s_CompleteJob_RunningWorkItem_PastGracePeriod_TransitionsToFailed
+
+    [Fact]
+    public async Task K8s_CompleteJob_SucceededWorkItem_NoOp()
+    {
+        // Arrange: WorkItem already Succeeded (normal path — agent reported correctly)
+        var workItemId = Guid.NewGuid();
+        var k8sJobName = $"caa-{workItemId.ToString("N")[..8]}";
+        var completedAt = DateTimeOffset.UtcNow.AddSeconds(-5);
+        await InsertWorkItem(workItemId, "owner/repo#done", "kiro,dotnet", WorkItemStatus.Succeeded,
+            k8sJobName: k8sJobName, completedAt: completedAt);
+
+        var completedJob = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = k8sJobName,
+                Labels = new Dictionary<string, string>
+                {
+                    ["caa/work-item-id"] = workItemId.ToString()
+                },
+                ResourceVersion = "789"
+            },
+            Status = new V1JobStatus
+            {
+                Succeeded = 1,
+                CompletionTime = DateTime.UtcNow.AddSeconds(-60),
+                Conditions =
+                [
+                    new V1JobCondition
+                    {
+                        Type = "Complete",
+                        Status = "True"
+                    }
+                ]
+            }
+        };
+
+        var reconciliationService = CreateReconciliationService();
+
+        // Act: Watch handler sees Complete Job with already-terminal WorkItem
+        await InvokeHandleJobEventAsync(reconciliationService, WatchEventType.Modified, completedJob);
+
+        // Assert: WorkItem remains Succeeded (no-op)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Succeeded);
+        item.CompletedAt.Should().Be(completedAt);
+    }
+
+    [Fact]
+    public async Task K8s_CompleteJob_DispatchedWorkItem_WithinGracePeriod_NoTransition()
+    {
+        // Arrange: WorkItem in Dispatched with a K8s Job that completed only 10s ago (within grace period)
+        var workItemId = Guid.NewGuid();
+        var k8sJobName = $"caa-{workItemId.ToString("N")[..8]}";
+        await InsertWorkItem(workItemId, "owner/repo#recent", "kiro,dotnet", WorkItemStatus.Dispatched,
+            k8sJobName: k8sJobName);
+
+        var completedJob = new V1Job
+        {
+            Metadata = new V1ObjectMeta
+            {
+                Name = k8sJobName,
+                Labels = new Dictionary<string, string>
+                {
+                    ["caa/work-item-id"] = workItemId.ToString()
+                },
+                ResourceVersion = "101"
+            },
+            Status = new V1JobStatus
+            {
+                Succeeded = 1,
+                CompletionTime = DateTime.UtcNow.AddSeconds(-10),
+                Conditions =
+                [
+                    new V1JobCondition
+                    {
+                        Type = "Complete",
+                        Status = "True"
+                    }
+                ]
+            }
+        };
+
+        var reconciliationService = CreateReconciliationService();
+
+        // Act: Watch handler sees Complete Job within grace period
+        await InvokeHandleJobEventAsync(reconciliationService, WatchEventType.Modified, completedJob);
+
+        // Assert: WorkItem remains Dispatched (grace period not elapsed)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Dispatched);
+        item.CompletedAt.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task K8s_PollLoop_DetectsCompletedJobWithStuckWorkItem()
+    {
+        // Arrange: WorkItem in Dispatched with K8sJobName set
+        var workItemId = Guid.NewGuid();
+        var k8sJobName = $"caa-{workItemId.ToString("N")[..8]}";
+        await InsertWorkItem(workItemId, "owner/repo#poll-stuck", "kiro,dotnet", WorkItemStatus.Dispatched,
+            k8sJobName: k8sJobName);
+
+        // Mock ReadNamespacedJobAsync to return a Complete Job with CompletionTime > 30s ago
+        _mockBatchV1
+            .Setup(b => b.ReadNamespacedJobWithHttpMessagesAsync(
+                k8sJobName,
+                "default",
+                It.IsAny<bool?>(),
+                It.IsAny<IReadOnlyDictionary<string, IReadOnlyList<string>>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpOperationResponse<V1Job>
+            {
+                Body = new V1Job
+                {
+                    Metadata = new V1ObjectMeta { Name = k8sJobName },
+                    Status = new V1JobStatus
+                    {
+                        Succeeded = 1,
+                        CompletionTime = DateTime.UtcNow.AddSeconds(-60),
+                        Conditions =
+                        [
+                            new V1JobCondition
+                            {
+                                Type = "Complete",
+                                Status = "True"
+                            }
+                        ]
+                    }
+                }
+            });
+
+        var reconciliationService = CreateReconciliationService();
+
+        // Act: poll loop detects stuck item
+        await reconciliationService.DetectCompletedJobsWithStuckWorkItemsAsync(CancellationToken.None);
+
+        // Assert: WorkItem transitioned to Failed
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.CompletedAt.Should().NotBeNull();
+        item.FailureReason.Should().Be(FailureReason.InfrastructureFailure);
+        item.ErrorMessage.Should().Contain("agent never reported terminal status");
+    }
+
+    [Fact]
+    public async Task K8s_PollLoop_WithinGracePeriod_DoesNotTransition()
+    {
+        // Arrange: WorkItem in Dispatched with K8sJobName set
+        var workItemId = Guid.NewGuid();
+        var k8sJobName = $"caa-{workItemId.ToString("N")[..8]}";
+        await InsertWorkItem(workItemId, "owner/repo#poll-recent", "kiro,dotnet", WorkItemStatus.Dispatched,
+            k8sJobName: k8sJobName);
+
+        // Mock ReadNamespacedJobAsync to return a Complete Job with CompletionTime only 10s ago
+        _mockBatchV1
+            .Setup(b => b.ReadNamespacedJobWithHttpMessagesAsync(
+                k8sJobName,
+                "default",
+                It.IsAny<bool?>(),
+                It.IsAny<IReadOnlyDictionary<string, IReadOnlyList<string>>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpOperationResponse<V1Job>
+            {
+                Body = new V1Job
+                {
+                    Metadata = new V1ObjectMeta { Name = k8sJobName },
+                    Status = new V1JobStatus
+                    {
+                        Succeeded = 1,
+                        CompletionTime = DateTime.UtcNow.AddSeconds(-10),
+                        Conditions =
+                        [
+                            new V1JobCondition
+                            {
+                                Type = "Complete",
+                                Status = "True"
+                            }
+                        ]
+                    }
+                }
+            });
+
+        var reconciliationService = CreateReconciliationService();
+
+        // Act: poll loop checks but item is within grace period
+        await reconciliationService.DetectCompletedJobsWithStuckWorkItemsAsync(CancellationToken.None);
+
+        // Assert: WorkItem remains Dispatched
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Dispatched);
+        item.CompletedAt.Should().BeNull();
+    }
+
     // ── Service Factories ───────────────────────────────────────────────
 
     private DispatchService CreateDispatchService(Dictionary<string, string>? imageMapping = null, int pvcCount = 2)

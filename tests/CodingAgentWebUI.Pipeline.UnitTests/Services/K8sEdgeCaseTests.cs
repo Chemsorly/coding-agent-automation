@@ -5,6 +5,8 @@ using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Pipeline.Models;
+using k8s;
+using k8s.Autorest;
 using k8s.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -300,20 +302,74 @@ public class K8sEdgeCaseTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // Characterization: Complete Job + non-terminal WorkItem (#1138 gap)
+    // Characterization: Complete Job + non-terminal WorkItem (#1138 fix)
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
-    public void CompleteJob_WithNonTerminalWorkItem_FallsBackToTimeout()
+    public async Task CompleteJob_WithNonTerminalWorkItem_GracePeriodAndTimeoutBackstop()
     {
-        // CHARACTERIZATION TEST: documents the #1138 gap
-        // HandleJobCompletionAsync does nothing for Complete Jobs — relies on timeout.
-        // After #1138 fix, this test should assert the new 30s grace period behavior.
+        // After #1138 fix: ReconciliationService detects Complete Jobs with stuck WorkItems
+        // within ~60s (30s grace + 30s poll interval). Timeout still serves as a backstop.
 
-        // Safety net: timeout still catches it
+        // Arrange: WorkItem in Dispatched with a K8s Job that completed 60s ago (past grace period)
+        var workItemId = Guid.NewGuid();
+        var k8sJobName = $"caa-{workItemId.ToString("N")[..8]}";
+        await InsertWorkItem(workItemId, "owner/repo#edge-stuck", "kiro,dotnet", WorkItemStatus.Dispatched,
+            k8sJobName: k8sJobName);
+
+        // Mock K8s API to return a Complete Job with CompletionTime > 30s ago
+        var mockKube = new Mock<IKubernetes> { DefaultValue = DefaultValue.Mock };
+        var mockBatchV1 = new Mock<IBatchV1Operations> { DefaultValue = DefaultValue.Mock };
+        mockKube.Setup(k => k.BatchV1).Returns(mockBatchV1.Object);
+        mockBatchV1
+            .Setup(b => b.ReadNamespacedJobWithHttpMessagesAsync(
+                k8sJobName, "default",
+                It.IsAny<bool?>(),
+                It.IsAny<IReadOnlyDictionary<string, IReadOnlyList<string>>>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HttpOperationResponse<V1Job>
+            {
+                Body = new V1Job
+                {
+                    Metadata = new V1ObjectMeta { Name = k8sJobName },
+                    Status = new V1JobStatus
+                    {
+                        Succeeded = 1,
+                        CompletionTime = DateTime.UtcNow.AddSeconds(-60),
+                        Conditions =
+                        [
+                            new V1JobCondition { Type = "Complete", Status = "True" }
+                        ]
+                    }
+                }
+            });
+
+        var configData = new Dictionary<string, string?>
+        {
+            ["WorkDistribution:Reconciliation:PollIntervalSeconds"] = "30",
+            ["WorkDistribution:Reconciliation:RetentionDays"] = "7",
+            ["WorkDistribution:Namespace"] = "default"
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
+        var reconciliationService = new ReconciliationService(
+            _dbFactory, CreateAlwaysLeaderElection(), mockKube.Object, _transitionService, config);
+
+        // Act: poll loop detects Complete Job with stuck WorkItem past grace period
+        await reconciliationService.DetectCompletedJobsWithStuckWorkItemsAsync(CancellationToken.None);
+
+        // Assert: WorkItem transitioned to Failed with InfrastructureFailure
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Failed,
+            "After 30s grace period, DetectCompletedJobsWithStuckWorkItemsAsync should transition stuck items to Failed");
+        item.FailureReason.Should().Be(FailureReason.InfrastructureFailure);
+        item.ErrorMessage.Should().Contain("agent never reported terminal status");
+        item.CompletedAt.Should().NotBeNull();
+
+        // Backstop: timeout still catches items that somehow slip through both detection paths
         var created = DateTimeOffset.UtcNow.AddMinutes(-31);
         ReconciliationService.IsTimedOut(created, 1800, DateTimeOffset.UtcNow)
-            .Should().BeTrue("After 31 minutes, timeout enforcement catches the stuck item");
+            .Should().BeTrue("After 31 minutes, timeout enforcement catches the stuck item as a backstop");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
