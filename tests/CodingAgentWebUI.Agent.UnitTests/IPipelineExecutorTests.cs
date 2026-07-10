@@ -272,7 +272,7 @@ public class IPipelineExecutorTests
         services.AddSingleton<KiroCliLib.Core.IKiroCliOrchestrator>(sp =>
             new KiroCliLib.Core.KiroCliOrchestrator(
                 sp.GetRequiredService<KiroCliLib.Configuration.Configuration>(),
-                callbackHandler: null, Serilog.Log.Logger));
+                Serilog.Log.Logger));
         services.AddHttpClient();
         services.AddSingleton(new PipelineConfiguration());
         services.AddSingleton(new AgentIdentity("test-agent"));
