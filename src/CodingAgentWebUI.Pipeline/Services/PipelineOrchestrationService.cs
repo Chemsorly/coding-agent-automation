@@ -505,6 +505,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         catch (Exception ex) when (ex is not OperationCanceledException)
         { _logger.Warning(ex, "Pipeline {RunId} failed to persist last-used provider IDs", ActiveRun?.RunId); }
     }
+    // TODO: Add unit test that exercises SwapAgentLabelAsync for Implementation runs during normal pipeline execution
+    // (existing tests use TestPipelineRunner which bypasses ILabelSwapper and doesn't validate this code path).
     private async Task SwapAgentLabelAsync(PipelineRun run, string issueId, string newLabel, CancellationToken ct)
     {
         _logger.Information(
@@ -512,44 +514,32 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             run.RunId, issueId, newLabel, run.RunType, run.CurrentStep);
         try
         {
-            if (run.RunType == PipelineRunType.Review)
-            {
-                // Review runs: route label swap to the PR via ILabelSwapper
-                await _labelSwapper.SwapLabelAsync(
-                    run.RepoProviderConfigId, issueId, newLabel, LabelTargetKind.PullRequest, ct);
-            }
-            else
-            {
-                // Implementation runs: use the active issue provider directly (existing behavior)
-                _logger.Debug(
-                    "Pipeline {RunId} SwapAgentLabelAsync using direct provider path (bypassing LabelSwapper) for issue {IssueIdentifier} → {Label}",
-                    run.RunId, issueId, newLabel);
-                await AgentLabelOperations.SwapAsync(
-                    (label, c) => _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, c),
-                    (label, c) => _providerManager.ActiveIssueProvider!.AddLabelAsync(issueId, label, c),
-                    newLabel,
-                    ct);
-            }
+            var targetKind = run.RunType == PipelineRunType.Review
+                ? LabelTargetKind.PullRequest
+                : LabelTargetKind.Issue;
+            var providerConfigId = targetKind == LabelTargetKind.PullRequest
+                ? run.RepoProviderConfigId
+                : run.IssueProviderConfigId;
+
+            await _labelSwapper.SwapLabelAsync(providerConfigId, issueId, newLabel, targetKind, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on {Identifier}", newLabel, issueId); }
     }
 
+    // TODO: Add unit test that validates RemoveAllAgentLabelsAsync routes through ILabelSwapper with string.Empty,
+    // selecting the correct providerConfigId and targetKind for Implementation runs.
     internal async Task RemoveAllAgentLabelsAsync(PipelineRun run, string issueId, CancellationToken ct)
     {
         try
         {
-            if (run.RunType == PipelineRunType.Review)
-            {
-                // Review runs: route to PR via ILabelSwapper (empty label = remove only)
-                await _labelSwapper.SwapLabelAsync(
-                    run.RepoProviderConfigId, issueId, string.Empty, LabelTargetKind.PullRequest, ct);
-            }
-            else
-            {
-                await AgentLabelOperations.RemoveAllAsync(
-                    (label, c) => _providerManager.ActiveIssueProvider!.RemoveLabelAsync(issueId, label, c),
-                    ct);
-            }
+            var targetKind = run.RunType == PipelineRunType.Review
+                ? LabelTargetKind.PullRequest
+                : LabelTargetKind.Issue;
+            var providerConfigId = targetKind == LabelTargetKind.PullRequest
+                ? run.RepoProviderConfigId
+                : run.IssueProviderConfigId;
+
+            await _labelSwapper.SwapLabelAsync(providerConfigId, issueId, string.Empty, targetKind, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from {Identifier}", issueId); }
     }
