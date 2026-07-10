@@ -63,6 +63,7 @@ public class Configuration
 }
 ```
 
+<!-- TODO: Update usage example — CallbackHandler and CallbackContext have been removed. The constructor no longer accepts a callbackHandler parameter. -->
 ## Usage Example
 
 ```csharp
@@ -130,13 +131,13 @@ KiroCliLib/
 │   ├── OutputParser.cs         — Parses CLI output for state/test detection
 │   ├── IFileSystemMonitor.cs   — File system monitor interface (for testing)
 │   ├── FileSystemMonitor.cs    — Before/after workspace snapshot comparison
-│   ├── CallbackHandler.cs      — Event registration and invocation with error isolation
+│   ├── CallbackHandler.cs      — Event registration and invocation with error isolation  ← TODO: Remove — file deleted
 │   ├── AnsiStripper.cs         — Strips ANSI escape codes from output
 │   ├── GracefulShutdownHelper.cs — Async shutdown with timeout + logging
 │   └── ExitCodes.cs            — Well-known exit code constants (shared with pipeline)
 └── Models/
     ├── KiroState.cs            — Execution state enum (9 states)
-    ├── CallbackContext.cs      — Context passed to callbacks
+    ├── CallbackContext.cs      — Context passed to callbacks  ← TODO: Remove — file deleted
     ├── FileChange.cs           — File change record (path + type)
     └── TestResult.cs           — Parsed test results (passed/failed counts)
 ```
@@ -149,7 +150,7 @@ KiroCliLib/
 | **ProcessWrapper** | Starts and manages the Kiro CLI OS process. Handles WSL integration on Windows (auto-detects platform, converts paths). Supports cancellation and forceful termination. |
 | **OutputParser** | Processes stdout/stderr lines using regex patterns to detect execution phases (Research → Plan → Implement → Test → Completed) and test results. Emits `StateChanged` events and exposes detected test results via the `TestResults` property. |
 | **FileSystemMonitor** | Takes recursive filesystem snapshots before and after execution, then compares them to produce a list of Created/Modified/Deleted file changes. |
-| **CallbackHandler** | Allows consumers to register callbacks per `KiroState`. Invokes callbacks with error isolation (one failing callback does not prevent others from running). |
+| **CallbackHandler** | Allows consumers to register callbacks per `KiroState`. Invokes callbacks with error isolation (one failing callback does not prevent others from running). |  ← TODO: Remove row — CallbackHandler deleted
 
 ### Execution Flow
 
@@ -160,11 +161,11 @@ ExecutePromptAsync(prompt, workspace, useResume, ct)
   ├─ ProcessWrapper.StartAsync(prompt, workspace, useResume, ct)
   │     ├─ Write prompt to .agent/prompt-input.md
   │     ├─ Start process: kiro-cli chat [--resume] @.agent/prompt-input.md
-  │     ├─ OutputReceived → OutputParser.ProcessLine → StateChanged → CallbackHandler.Invoke
+  │     ├─ OutputReceived → OutputParser.ProcessLine → StateChanged → CallbackHandler.Invoke  ← TODO: Remove CallbackHandler.Invoke reference — callbacks removed
   │     └─ WaitForExitAsync
   ├─ FileSystemMonitor.ScanWorkspace(after)
   ├─ FileSystemMonitor.CompareSnapshots(before, after)
-  └─ CallbackHandler.Invoke(Completed, context)
+  └─ CallbackHandler.Invoke(Completed, context)  ← TODO: Remove — callback invocations deleted
 ```
 
 ## Exit Codes
