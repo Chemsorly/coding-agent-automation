@@ -72,6 +72,9 @@ public sealed class AgentRegistryService : IAgentRegistryService
                         {
                             // Agent reconnected with active job — restore to Busy (REQ-3.6)
                             existing.Status = AgentStatus.Busy;
+                            // TODO: Add test coverage for BusySince being set during re-registration with active job.
+                            // Without this, a reconnecting agent could be spuriously reset by HeartbeatMonitor.
+                            existing.BusySince = DateTimeOffset.UtcNow;
                             _logger.Information(
                                 "Agent {AgentId} re-registered after disconnect with active job {JobId}, status restored to Busy",
                                 message.AgentId, existing.ActiveJobId);
@@ -182,6 +185,15 @@ public sealed class AgentRegistryService : IAgentRegistryService
                 }
 
                 entry.Status = newStatus;
+
+                if (newStatus == AgentStatus.Busy)
+                {
+                    entry.BusySince = DateTimeOffset.UtcNow;
+                }
+                else
+                {
+                    entry.BusySince = null;
+                }
 
                 if (newStatus == AgentStatus.Disconnected)
                 {
