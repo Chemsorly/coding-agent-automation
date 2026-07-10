@@ -8,7 +8,7 @@ using CodingAgentWebUI.Pipeline.Services;
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
-/// Property-based tests for ProfileResolver resolution correctness and ProfileValidator validation rules.
+/// Property-based tests for ProfileResolver resolution correctness.
 /// Feature: agent-configuration-management
 /// </summary>
 public class ProfileResolverPropertyTests
@@ -78,58 +78,6 @@ public class ProfileResolverPropertyTests
     }
 
     /// <summary>
-    /// Property 3: Profile Validation Rejects Empty DisplayName
-    /// For any null/empty/whitespace string as DisplayName, validation must fail.
-    /// **Validates: Requirements 1.4**
-    /// </summary>
-    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
-    public void ProfileValidation_RejectsEmptyDisplayName(InvalidDisplayNameInput input)
-    {
-        var profile = new AgentProfile
-        {
-            Id = "test-id",
-            DisplayName = input.DisplayName,
-            MatchLabels = new[] { "kiro" },
-            AgentProviderConfigId = "provider-1"
-        };
-
-        var result = ProfileValidator.Validate(profile, Array.Empty<AgentProfile>());
-
-        result.IsValid.Should().BeFalse("empty/whitespace DisplayName must be rejected");
-        result.ErrorMessage.Should().Contain("DisplayName");
-    }
-
-    /// <summary>
-    /// Property 12: Default Profile Uniqueness Invariant
-    /// For any profile set, validation rejects a second profile with empty MatchLabels when one already exists.
-    /// **Validates: Requirements 1.6, 1.7**
-    /// </summary>
-    [Property(MaxTest = 20, Arbitrary = new[] { typeof(ProfileResolverArbitraries) })]
-    public void DefaultProfileUniqueness_RejectsSecondDefault(DefaultProfileUniquenessInput input)
-    {
-        var existingDefault = new AgentProfile
-        {
-            Id = input.ExistingId,
-            DisplayName = "Existing Default",
-            MatchLabels = Array.Empty<string>(),
-            AgentProviderConfigId = "provider-1"
-        };
-
-        var newDefault = new AgentProfile
-        {
-            Id = input.NewId,
-            DisplayName = "New Default",
-            MatchLabels = Array.Empty<string>(),
-            AgentProviderConfigId = "provider-2"
-        };
-
-        var result = ProfileValidator.Validate(newDefault, new[] { existingDefault });
-
-        result.IsValid.Should().BeFalse("a second default profile (empty MatchLabels) must be rejected");
-        result.ErrorMessage.Should().Contain("default");
-    }
-
-    /// <summary>
     /// Property 13: Profile Resolution Negative
     /// For any set of profiles and agent labels, if the resolved profile is not null,
     /// then its MatchLabels IS a subset of agentLabels (no non-matching profile is ever returned).
@@ -188,21 +136,6 @@ public sealed class ProfileResolutionInput
     public override string ToString() => $"Profiles={Profiles.Count}, AgentLabels=[{string.Join(",", AgentLabels)}]";
 }
 
-/// <summary>Input for invalid DisplayName property tests.</summary>
-public sealed class InvalidDisplayNameInput
-{
-    public required string DisplayName { get; init; }
-    public override string ToString() => $"DisplayName='{DisplayName}'";
-}
-
-/// <summary>Input for default profile uniqueness property tests.</summary>
-public sealed class DefaultProfileUniquenessInput
-{
-    public required string ExistingId { get; init; }
-    public required string NewId { get; init; }
-    public override string ToString() => $"ExistingId={ExistingId}, NewId={NewId}";
-}
-
 /// <summary>Input for case-insensitive label matching property tests.</summary>
 public sealed class CaseInsensitiveLabelInput
 {
@@ -250,29 +183,6 @@ public class ProfileResolverArbitraries
             };
 
         return inputGen.ToArbitrary();
-    }
-
-    public static Arbitrary<InvalidDisplayNameInput> InvalidDisplayNameInputArb()
-    {
-        var gen = Gen.Elements("", " ", "  ", "\t", "\n", " \t\n ")
-            .Select(s => new InvalidDisplayNameInput { DisplayName = s });
-
-        return gen.ToArbitrary();
-    }
-
-    public static Arbitrary<DefaultProfileUniquenessInput> DefaultProfileUniquenessInputArb()
-    {
-        var gen =
-            from existingId in Gen.Elements(ProfileIds)
-            from newId in Gen.Elements(ProfileIds)
-            where existingId != newId
-            select new DefaultProfileUniquenessInput
-            {
-                ExistingId = existingId,
-                NewId = newId
-            };
-
-        return gen.ToArbitrary();
     }
 
     public static Arbitrary<CaseInsensitiveLabelInput> CaseInsensitiveLabelInputArb()

@@ -206,26 +206,24 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         PipelineStepContext? ctx = null;
 
         var callbacks = new TestCallbacks(_lifecycle, run, providerManager, _prOrchestrator, _brainSync, _historyService, () => ctx);
-        ctx = new PipelineStepContext
-        {
-            Run = run,
-            Config = config,
-            RepoProvider = providerManager.ActiveRepoProvider!,
-            AgentProvider = providerManager.ActiveAgentProvider!,
-            BrainProvider = providerManager.ActiveBrainProvider,
-            PipelineProvider = providerManager.ActivePipelineProvider,
-            Cts = _lifecycle.CancellationTokenSource,
-            ConfigStore = _configStore,
-            IssueProvider = issueProvider,
-            Callbacks = callbacks,
-            IssueOps = issueOps,
-            AgentExecution = _agentExecution,
-            QualityGates = _qualityGates,
-            BrainSync = _brainSync,
-            PrOrchestrator = _prOrchestrator,
-            Logger = _logger,
-            QualityGateValidator = _qualityGateValidator
-        };
+        ctx = PipelineStepContext.ForOrchestrator(
+            run: run,
+            config: config,
+            repoProvider: providerManager.ActiveRepoProvider!,
+            agentProvider: providerManager.ActiveAgentProvider!,
+            brainProvider: providerManager.ActiveBrainProvider,
+            pipelineProvider: providerManager.ActivePipelineProvider,
+            cts: _lifecycle.CancellationTokenSource,
+            configStore: _configStore,
+            callbacks: callbacks,
+            issueOps: issueOps,
+            agentExecution: _agentExecution,
+            qualityGates: _qualityGates,
+            brainSync: _brainSync,
+            prOrchestrator: _prOrchestrator,
+            logger: _logger,
+            qualityGateValidator: _qualityGateValidator,
+            issueProvider: issueProvider);
 
         var steps = BuildStepPipeline();
 
