@@ -259,7 +259,11 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
             ProjectSteeringContent = request.ProjectSteeringContent,
             RepoSteeringContent = request.RepoSteeringContent,
             TraceContext = request.TraceContext,
-            IssueProviderConfigId = request.IssueProviderConfigId
+            IssueProviderConfigId = request.IssueProviderConfigId,
+            TaskType = request.TaskType,
+            ConsolidationRunType = request.ConsolidationRunType,
+            ConsolidationTemplateId = request.ConsolidationTemplateId,
+            ConsolidationWorkspacePath = request.ConsolidationWorkspacePath
             // NOTE: ProjectSecrets are NOT serialized to WorkItem payload (security).
             // Injected at delivery time from IProjectStore.
         };
