@@ -15,6 +15,11 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
 {
     private readonly ILogger _logger;
 
+    /// <summary>
+    /// Number of days to look back when fetching closed sibling issues.
+    /// </summary>
+    internal const int ClosedIssueLookbackDays = 30;
+
     public OpenIssueContextWriter(ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(logger);
@@ -22,10 +27,21 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
     }
 
     /// <inheritdoc />
+    public Task<int> WriteOpenIssueContextAsync(
+        IAgentIssueOperations issueOps,
+        string workspacePath,
+        int maxIssues,
+        CancellationToken ct)
+    {
+        return WriteOpenIssueContextAsync(issueOps, workspacePath, maxIssues, includeClosedSiblings: false, ct);
+    }
+
+    /// <inheritdoc />
     public async Task<int> WriteOpenIssueContextAsync(
         IAgentIssueOperations issueOps,
         string workspacePath,
         int maxIssues,
+        bool includeClosedSiblings,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(issueOps);
@@ -40,19 +56,49 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
         var outputDir = Path.Combine(workspacePath, AgentWorkspacePaths.OpenIssuesDirectory);
         Directory.CreateDirectory(outputDir);
 
-        // Paginate through open issues to collect identifiers up to the cap
-        var identifiers = await CollectIssueIdentifiersAsync(issueOps, maxIssues, ct);
+        // Budget allocation: when including closed siblings, reserve a portion for closed issues
+        int openBudget;
+        int closedBudget;
 
-        if (identifiers.Count == 0)
+        if (includeClosedSiblings)
         {
-            _logger.Information("No open issues found to write as context");
+            // TODO: Budget edge case — when maxIssues is very small (1–3), Math.Max(1, maxIssues/4)
+            // can make closedBudget disproportionately large, leaving openBudget=0 for maxIssues=1.
+            // Consider ensuring openBudget >= 1 when maxIssues >= 1.
+            closedBudget = Math.Max(1, maxIssues / 4); // 25% for closed issues
+            openBudget = maxIssues - closedBudget;
+        }
+        else
+        {
+            openBudget = maxIssues;
+            closedBudget = 0;
+        }
+
+        // Paginate through open issues to collect identifiers up to the budget
+        var openIdentifiers = await CollectIssueIdentifiersAsync(issueOps, openBudget, ct);
+
+        // Collect closed issue identifiers if requested
+        var closedIdentifiers = new List<string>();
+        if (includeClosedSiblings && closedBudget > 0)
+        {
+            closedIdentifiers = await CollectClosedIssueIdentifiersAsync(issueOps, closedBudget, ct);
+            // Remove any closed identifiers that overlap with open (shouldn't happen but be safe)
+            var openSet = new HashSet<string>(openIdentifiers);
+            closedIdentifiers.RemoveAll(id => openSet.Contains(id));
+            // TODO: After deduplication, freed slots are not reclaimed for additional issues.
+            // Consider fetching more open issues to fill the remaining budget when duplicates are removed.
+        }
+
+        if (openIdentifiers.Count == 0 && closedIdentifiers.Count == 0)
+        {
+            _logger.Information("No issues found to write as context");
             return 0;
         }
 
         // Fetch each issue's detail and write to workspace
         var writtenCount = 0;
 
-        foreach (var identifier in identifiers)
+        foreach (var identifier in openIdentifiers)
         {
             ct.ThrowIfCancellationRequested();
 
@@ -60,7 +106,7 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
             {
                 var detail = await issueOps.GetIssueAsync(identifier, ct);
                 var filePath = Path.Combine(outputDir, $"{identifier}.md");
-                var content = FormatIssueMarkdown(detail);
+                var content = FormatIssueMarkdown(detail, isClosed: false);
 
                 await File.WriteAllTextAsync(filePath, content, Encoding.UTF8, ct);
                 writtenCount++;
@@ -77,8 +123,33 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
             }
         }
 
-        _logger.Information("Wrote {WrittenCount}/{TotalCount} open issue context files",
-            writtenCount, identifiers.Count);
+        foreach (var identifier in closedIdentifiers)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            try
+            {
+                var detail = await issueOps.GetIssueAsync(identifier, ct);
+                var filePath = Path.Combine(outputDir, $"{identifier}.md");
+                var content = FormatIssueMarkdown(detail, isClosed: true);
+
+                await File.WriteAllTextAsync(filePath, content, Encoding.UTF8, ct);
+                writtenCount++;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(
+                    "Failed to fetch or write closed issue {Identifier}: {Error}",
+                    identifier, ex.Message);
+            }
+        }
+
+        _logger.Information("Wrote {WrittenCount} issue context files (open={OpenCount}, closed={ClosedCount})",
+            writtenCount, openIdentifiers.Count, closedIdentifiers.Count);
 
         return writtenCount;
     }
@@ -126,10 +197,56 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
         return identifiers;
     }
 
+    private async Task<List<string>> CollectClosedIssueIdentifiersAsync(
+        IAgentIssueOperations issueOps, int maxIssues, CancellationToken ct)
+    {
+        var identifiers = new List<string>();
+        var page = 1;
+        const int pageSize = 30;
+        var since = DateTime.UtcNow.AddDays(-ClosedIssueLookbackDays);
+
+        try
+        {
+            while (identifiers.Count < maxIssues)
+            {
+                ct.ThrowIfCancellationRequested();
+
+                var result = await issueOps.ListClosedIssuesAsync(page, pageSize, labels: null, since, ct);
+
+                foreach (var issue in result.Items)
+                {
+                    if (identifiers.Count >= maxIssues)
+                        break;
+
+                    identifiers.Add(issue.Identifier);
+                }
+
+                if (!result.HasMore || result.Items.Count == 0)
+                    break;
+
+                page++;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(
+                "Failed to list closed issues at page {Page}: {Error}. Proceeding with {Count} identifiers collected so far.",
+                page, ex.Message, identifiers.Count);
+        }
+
+        return identifiers;
+    }
+
     /// <summary>
     /// Formats an issue detail as a markdown file with YAML front-matter.
+    /// When <paramref name="isClosed"/> is true, includes a <c>status: closed</c> field
+    /// to distinguish closed issues from open ones.
     /// </summary>
-    internal static string FormatIssueMarkdown(IssueDetail detail)
+    internal static string FormatIssueMarkdown(IssueDetail detail, bool isClosed = false)
     {
         var sb = new StringBuilder();
 
@@ -137,6 +254,10 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
         sb.AppendLine("---");
         sb.Append("identifier: \"").Append(EscapeYamlString(detail.Identifier)).AppendLine("\"");
         sb.Append("title: \"").Append(EscapeYamlString(detail.Title)).AppendLine("\"");
+        if (isClosed)
+        {
+            sb.AppendLine("status: closed");
+        }
         sb.Append("labels: [");
         for (var i = 0; i < detail.Labels.Count; i++)
         {

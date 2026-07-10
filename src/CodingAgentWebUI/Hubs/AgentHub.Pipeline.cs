@@ -778,6 +778,32 @@ public sealed partial class AgentHub
     }
 
     /// <summary>
+    /// Lists closed issues with optional label filtering and date cutoff via the run's configured <see cref="IIssueProvider"/>.
+    /// Called by the agent's <c>OrchestratorProxy.ListClosedIssuesAsync</c> during decomposition runs
+    /// to include recently-closed sibling issues in agent context.
+    /// </summary>
+    [RequiresActiveJob]
+    public async Task<PagedResult<IssueSummary>> RequestListClosedIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since)
+    {
+        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
+        await using (issueProvider)
+        {
+            try
+            {
+                // TODO: CancellationToken.None is used here instead of propagating a cancellation token
+                // from the hub context. Consistent with RequestListOpenIssues but means the call cannot
+                // be cancelled if the SignalR connection drops mid-request.
+                return await issueProvider.ListClosedIssuesAsync(page, pageSize, labels, since, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "RequestListClosedIssues failed for job {JobId}", jobId);
+                throw new HubException($"Failed to list closed issues for job {jobId}: {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
     /// Gets full issue details by identifier via the run's configured <see cref="IIssueProvider"/>.
     /// Called by the agent's <c>OrchestratorProxy.GetIssueAsync</c>.
     /// </summary>
