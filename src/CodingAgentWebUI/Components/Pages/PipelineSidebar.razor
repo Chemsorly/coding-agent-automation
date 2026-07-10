@@ -319,7 +319,7 @@
     private static string GetPhaseCounter(PhaseState state, int completed, int total) => state switch
     {
         PhaseState.Completed => $"{total}/{total} ✓",
-        PhaseState.Active => $"{completed}/{total} in progress",
+        PhaseState.Active => "in progress",
         PhaseState.Failed => $"{completed}/{total} failed",
         PhaseState.Retry => "(retry)",
         PhaseState.Cancelled => $"{completed}/{total} cancelled",
