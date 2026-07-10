@@ -64,7 +64,7 @@
                     @foreach (var issue in FilteredItems)
                     {
                         var isProcessing = IsBeingProcessed(issue.Identifier);
-                        var isApproved = issue.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase);
+                        var isApproved = issue.Labels.Contains(AgentLabels.EpicApproved, StringComparer.OrdinalIgnoreCase);
                         var currentIdx = idx;
                         <div class="drawer-issue-item @(isProcessing ? "drawer-issue-dispatched" : "") @(SelectedItem?.Identifier == issue.Identifier ? "drawer-issue-selected" : "") @GetHighlightClass(currentIdx)"
                              @onclick="() => SelectItem(issue)"
@@ -109,7 +109,7 @@
 
             @if (SelectedItem != null)
             {
-                var selectedIsApproved = SelectedItem.Labels.Contains("agent:epic-approved", StringComparer.OrdinalIgnoreCase);
+                var selectedIsApproved = SelectedItem.Labels.Contains(AgentLabels.EpicApproved, StringComparer.OrdinalIgnoreCase);
                 <div class="agent-detail-section" style="margin-top: 12px; border-top: 1px solid var(--border); padding-top: 12px;">
                     <h4>#@SelectedItem.Identifier — @SelectedItem.Title</h4>
                     <div class="drawer-issue-labels" style="margin-bottom: 8px;">
