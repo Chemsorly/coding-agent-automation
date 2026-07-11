@@ -14,6 +14,7 @@ using CodingAgentWebUI.Services;
 using k8s;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Resilience;
 using Polly;
 using Polly.CircuitBreaker;
@@ -239,6 +240,7 @@ public static class WorkDistributionRegistration
         // Leader election
         services.Configure<LeaderElectionOptions>(configuration.GetSection(LeaderElectionOptions.SectionName));
         services.AddSingleton<LeaderElectionService>();
+        services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<LeaderElectionService>());
         services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
 
         // Work distributor (singleton — uses IDbContextFactory for context-per-operation)
@@ -251,7 +253,7 @@ public static class WorkDistributionRegistration
         services.AddSingleton<IKubernetesJobClient>(sp => new KubernetesJobClient(sp.GetRequiredService<IKubernetes>()));
         services.AddHostedService(sp => new DispatchService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<LeaderElectionService>(),
+            sp.GetRequiredService<ILeaderElectionService>(),
             sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IConfiguration>(),
@@ -264,7 +266,7 @@ public static class WorkDistributionRegistration
             sp.GetService<IPipelineConfigStore>()));
         services.AddHostedService(sp => new ReconciliationService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<LeaderElectionService>(),
+            sp.GetRequiredService<ILeaderElectionService>(),
             sp.GetRequiredService<IKubernetes>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IConfiguration>(),
@@ -286,6 +288,17 @@ public static class WorkDistributionRegistration
 
     private static void RegisterSignalRMode(IServiceCollection services, IConfiguration configuration)
     {
+        // Leader election (Postgres advisory lock for multi-replica without K8s)
+        var connectionString = Services.DatabaseConnectionResolver.Resolve(configuration)!;
+        services.Configure<PostgresLeaderElectionOptions>(
+            configuration.GetSection(PostgresLeaderElectionOptions.SectionName));
+        services.AddSingleton<PostgresLeaderElectionService>(sp =>
+            new PostgresLeaderElectionService(
+                connectionString,
+                sp.GetRequiredService<IOptions<PostgresLeaderElectionOptions>>()));
+        services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<PostgresLeaderElectionService>());
+        services.AddHostedService(sp => sp.GetRequiredService<PostgresLeaderElectionService>());
+
         // Agent resolver (singleton — selects idle label-compatible agent for SignalR push)
         services.AddSingleton<ISignalRWorkDistributorAgentResolver>(sp => new SignalRWorkDistributorAgentResolver(
             sp.GetRequiredService<AgentRegistryService>(),

@@ -175,6 +175,35 @@ public class WorkDistributionModeResolutionTests
         descriptor.Should().BeNull("LeaderElection is Kubernetes-only");
     }
 
+    [Fact]
+    public void SignalRMode_Registers_PostgresLeaderElectionService()
+    {
+        var config = BuildConfig("localhost", "SignalR");
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        services.AddWorkDistribution(config);
+
+        var descriptor = services.FirstOrDefault(d =>
+            d.ImplementationType == typeof(CodingAgentWebUI.Orchestration.LeaderElection.PostgresLeaderElectionService) ||
+            d.ServiceType == typeof(CodingAgentWebUI.Orchestration.LeaderElection.PostgresLeaderElectionService));
+        descriptor.Should().NotBeNull("SignalR mode should register PostgresLeaderElectionService for multi-replica leader election");
+    }
+
+    [Fact]
+    public void SignalRMode_Registers_ILeaderElectionService()
+    {
+        var config = BuildConfig("localhost", "SignalR");
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        services.AddWorkDistribution(config);
+
+        var descriptor = services.FirstOrDefault(d =>
+            d.ServiceType == typeof(CodingAgentWebUI.Orchestration.LeaderElection.ILeaderElectionService));
+        descriptor.Should().NotBeNull("SignalR mode should register ILeaderElectionService backed by PostgresLeaderElectionService");
+    }
+
     // ── Mode differentiation ────────────────────────────────────────────
 
     [Fact]
