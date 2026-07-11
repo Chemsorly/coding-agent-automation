@@ -24,6 +24,9 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
     /// </summary>
     internal IJobDispatcher JobDispatcher => _jobDispatcher;
 
+    /// <inheritdoc />
+    public bool RequiresConnectedAgents => true;
+
     internal LegacyWorkDistributor(
         IJobDispatcher jobDispatcher,
         JobDispatcherService dispatcherService,
