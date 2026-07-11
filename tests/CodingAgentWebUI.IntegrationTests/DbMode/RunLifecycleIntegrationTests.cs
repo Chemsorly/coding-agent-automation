@@ -343,9 +343,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             _dispatcher,
             _mockLogger.Object,
             _transitionService,
-            _dbFactory,
-            mockJobClient.Object,
-            k8sNamespace);
+            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
 
         // Act
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -411,9 +409,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             _dispatcher,
             _mockLogger.Object,
             _transitionService,
-            _dbFactory,
-            mockJobClient.Object,
-            k8sNamespace);
+            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
 
         // Act
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -483,9 +479,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             _dispatcher,
             _mockLogger.Object,
             _transitionService,
-            _dbFactory,
-            mockJobClient.Object,
-            k8sNamespace);
+            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
 
         // Act — should not throw despite 404
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -494,6 +488,8 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         result.Should().NotBeNull();
 
         // No Warning-level log for 404 (only Debug)
+        // TODO: This Verify assertion may be tautological — Serilog dispatches Warning(Exception, string, T)
+        // to a generic overload that Moq cannot intercept via the (Exception, string, object[]) signature.
         _mockLogger.Verify(l => l.Warning(
             It.IsAny<Exception>(),
             It.IsAny<string>(),

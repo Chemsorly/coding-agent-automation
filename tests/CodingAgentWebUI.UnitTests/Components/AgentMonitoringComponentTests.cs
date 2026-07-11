@@ -65,6 +65,7 @@ public class AgentMonitoringComponentTests : BunitContext
             s.GetRunHistoryAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ConsolidationRun>>(Array.Empty<ConsolidationRun>())));
         Services.AddSingleton<IActiveRunQueryService>(_mockActiveRunQuery.Object);
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
+        Services.AddSingleton(Mock.Of<IRunLifecycleManager>());
         Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
             Services.BuildServiceProvider().GetRequiredService<JobDispatcherService>()));
 
@@ -347,6 +348,104 @@ public class AgentMonitoringComponentTests : BunitContext
     {
         _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { summary });
+    }
+
+    [Fact]
+    public async Task CancelButton_ConnectedAgent_CallsCancelRunAsyncAndSendsCancelJob()
+    {
+        // Arrange: set up mock IRunLifecycleManager and IHubContext to verify cancel behavior
+        var mockLifecycleManager = new Mock<IRunLifecycleManager>();
+        var mockHubContext = new Mock<IHubContext<AgentHub, IAgentHubClient>>();
+        var mockClients = new Mock<IHubClients<IAgentHubClient>>();
+        var mockClient = new Mock<IAgentHubClient>();
+
+        mockHubContext.Setup(h => h.Clients).Returns(mockClients.Object);
+        mockClients.Setup(c => c.Client("conn-agent-1")).Returns(mockClient.Object);
+        mockClient.Setup(c => c.CancelJob("run-connected-1")).Returns(Task.CompletedTask);
+
+        mockLifecycleManager
+            .Setup(l => l.CancelRunAsync("run-connected-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync((PipelineRun?)null); // Return value not checked by component
+
+        // Override DI registrations (last-wins in bUnit)
+        Services.AddSingleton<IHubContext<AgentHub, IAgentHubClient>>(mockHubContext.Object);
+        Services.AddSingleton<IRunLifecycleManager>(mockLifecycleManager.Object);
+
+        // Create an OrchestratorRunService and use it both in DI and inside PipelineOrchestrationService
+        var runService = new OrchestratorRunService(Mock.Of<ILogger>());
+        Services.AddSingleton(runService);
+
+        // Rebuild PipelineOrchestrationService with the same runService so GetAllActiveRuns() can find it
+        var mockStore = new Mock<IConfigurationStore>();
+        mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+        mockStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+
+        var pipelineService = TestOrchestrationFactory.CreateMinimal(
+            configStore: mockStore.Object,
+            providerFactory: new Mock<IProviderFactory>().Object,
+            runService: runService);
+        Services.AddSingleton(pipelineService);
+
+        // Add an in-memory active run with an assigned agent
+        var run = new PipelineRun
+        {
+            RunId = "run-connected-1",
+            AgentId = "agent-1",
+            IssueIdentifier = "org/repo#100",
+            IssueTitle = "Test Issue",
+            CurrentStep = PipelineStep.GeneratingCode,
+            StartedAt = DateTime.UtcNow.AddMinutes(-2),
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1"
+        };
+        runService.AddRun(run);
+
+        // Register the agent in the registry (with matching connection ID)
+        var registry = Services.GetRequiredService<AgentRegistryService>();
+        registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-1",
+            Hostname = "test-host",
+            Labels = new[] { "kiro" }
+        }, "conn-agent-1");
+
+        // Ensure the active run appears in the UI table
+        _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[]
+            {
+                new ActiveRunSummary
+                {
+                    RunId = "run-connected-1",
+                    IssueIdentifier = "org/repo#100",
+                    IssueTitle = "Test Issue",
+                    RunType = PipelineRunType.Implementation,
+                    AgentId = "agent-1",
+                    StartedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+                    ProjectName = null,
+                    CurrentStep = PipelineStep.GeneratingCode
+                }
+            });
+
+        var cut = Render<AgentMonitoring>();
+
+        // Act: click the Cancel button in the active runs table
+        var cancelBtn = cut.FindAll("button.btn-cancel-small")
+            .First(b => b.TextContent.Trim() == "Cancel");
+        await cut.InvokeAsync(() => cancelBtn.Click());
+
+        // Assert: CancelJob signal was sent to the agent
+        mockClient.Verify(c => c.CancelJob("run-connected-1"), Times.Once,
+            "CancelJob signal must be sent to the connected agent");
+
+        // Assert: CancelRunAsync was called to immediately persist the cancelled state
+        mockLifecycleManager.Verify(
+            l => l.CancelRunAsync("run-connected-1", It.IsAny<CancellationToken>()),
+            Times.Once,
+            "CancelRunAsync must be called to immediately persist PipelineStep.Cancelled");
     }
 
     [Fact]

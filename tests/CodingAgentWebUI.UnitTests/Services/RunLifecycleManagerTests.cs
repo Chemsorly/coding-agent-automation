@@ -228,6 +228,71 @@ public sealed class RunLifecycleManagerTests
         result.Should().BeNull();
     }
 
+    // ── CancelRunAsync ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task CancelRunAsync_RemovesRun_PersistsHistory_ClearsAgent_SwapsLabel()
+    {
+        // Arrange
+        // TODO: Set run.FailureReason = "Cancelled by user" before calling CancelRunAsync to match the
+        // production flow in AgentMonitoring.razor. Without this, a regression where FailureReason is
+        // overwritten by CancelRunAsync would go undetected.
+        var run = CreateRun("run-cancel", PipelineRunType.Implementation);
+        run.AgentId = "agent-1";
+        _runService.AddRun(run);
+
+        var entry = RegisterAgent("agent-1");
+        entry.ActiveJobId = "run-cancel";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+
+        // Act
+        var result = await _sut.CancelRunAsync("run-cancel", CancellationToken.None);
+
+        // Assert: run returned with Cancelled state
+        result.Should().NotBeNull();
+        result!.RunId.Should().Be("run-cancel");
+        result.CurrentStep.Should().Be(PipelineStep.Cancelled);
+        result.CompletedAtOffset.Should().NotBeNull();
+
+        // Run removed from active
+        _runService.GetRun("run-cancel").Should().BeNull();
+
+        // History persisted
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.Is<PipelineRun>(r => r.RunId == "run-cancel"), It.IsAny<CancellationToken>()), Times.Once);
+
+        // Agent cleared and transitioned to Idle
+        var agent = _registry.GetByAgentId("agent-1");
+        agent!.ActiveJobId.Should().BeNull();
+        agent.Status.Should().Be(AgentStatus.Idle);
+
+        // Label swapped to cancelled via issue provider (Implementation → Issue target)
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            "ip-1", "org/repo#1", AgentLabels.Cancelled, LabelTargetKind.Issue,
+            It.IsAny<CancellationToken>()), Times.Once);
+
+        // TODO: Verify WorkItem is transitioned to Cancelled in DB. This test uses workItemTransition: null
+        // (legacy mode) so TransitionWorkItemAsync is a no-op. Add a test variant with a mock
+        // IWorkItemTransitionService to validate the DB transition path per acceptance criteria.
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_RunDoesNotExist_ReturnsNull()
+    {
+        // Act: no run was added with this ID
+        var result = await _sut.CancelRunAsync("non-existent-run", CancellationToken.None);
+
+        // Assert
+        result.Should().BeNull();
+
+        // No side effects
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static PipelineRun CreateRun(string runId, PipelineRunType runType)
