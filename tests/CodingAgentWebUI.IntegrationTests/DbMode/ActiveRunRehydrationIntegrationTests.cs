@@ -192,7 +192,9 @@ public sealed class ActiveRunRehydrationIntegrationTests : IDisposable
                     ? PipelineStep.GeneratingCode
                     : PipelineStep.Created;
 
-                var run = PipelineRunFactory.FromDistributionRequest(request, agentId: null, initialStep);
+                var run = PipelineRunFactory.FromDistributionRequest(
+                    request, agentId: null, initialStep,
+                    startedAt: item.DispatchedAt ?? item.CreatedAt);
                 _runService.AddRun(run);
             }
             catch (JsonException)
@@ -204,6 +206,9 @@ public sealed class ActiveRunRehydrationIntegrationTests : IDisposable
 
     private async Task InsertActiveWorkItem(string runId, string issueId, WorkItemStatus status, string agentId)
     {
+        // TODO: Set DispatchedAt to a past timestamp (e.g., DateTimeOffset.UtcNow.AddHours(-2)) and assert
+        // StartedAtOffset on rehydrated runs. Currently DispatchedAt is not set, so only the
+        // `?? item.CreatedAt` fallback is exercised, and no test asserts the timestamp propagation (BUG-08).
         var request = new JobDistributionRequest
         {
             IssueIdentifier = issueId,
