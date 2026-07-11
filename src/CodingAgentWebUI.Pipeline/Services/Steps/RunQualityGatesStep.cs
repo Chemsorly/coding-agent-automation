@@ -30,7 +30,7 @@ public sealed class RunQualityGatesStep : IPipelineStep
         else
         {
             // Orchestrator path: load all QGCs from the config store.
-            allQgcs = await context.ConfigStore.LoadQualityGateConfigsAsync(ct);
+            allQgcs = await context.QualityGateConfigStore.LoadQualityGateConfigsAsync(ct);
             qgcsConfiguredAtDispatch = allQgcs.Count > 0;
         }
 

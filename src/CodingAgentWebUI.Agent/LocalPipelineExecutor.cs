@@ -613,6 +613,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
             });
 
+        var nullStore = new NullConfigurationStore();
         return PipelineStepContext.ForAgent(
             run: inputs.Run,
             config: inputs.Config,
@@ -621,7 +622,9 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             brainProvider: inputs.BrainProvider,
             pipelineProvider: inputs.PipelineProvider,
             cts: inputs.LocalCts,
-            configStore: new NullConfigurationStore(),
+            providerConfigStore: nullStore,
+            qualityGateConfigStore: nullStore,
+            reviewerConfigStore: nullStore,
             callbacks: callbacks,
             issueOps: inputs.IssueOps,
             agentExecution: inputs.AgentExecution,

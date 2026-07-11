@@ -72,7 +72,9 @@ public class PipelineStepContextFactoryTests
             brainProvider: _brainProvider.Object,
             pipelineProvider: _pipelineProvider.Object,
             cts: _cts,
-            configStore: _configStore.Object,
+            providerConfigStore: _configStore.Object,
+            qualityGateConfigStore: _configStore.Object,
+            reviewerConfigStore: _configStore.Object,
             callbacks: _callbacks.Object,
             issueOps: _issueOps.Object,
             agentExecution: _agentExecution.Object,
@@ -90,7 +92,10 @@ public class PipelineStepContextFactoryTests
         ctx.BrainProvider.Should().BeSameAs(_brainProvider.Object);
         ctx.PipelineProvider.Should().BeSameAs(_pipelineProvider.Object);
         ctx.Cts.Should().BeSameAs(_cts);
-        ctx.ConfigStore.Should().BeSameAs(_configStore.Object);
+        // TODO: All 3 config store assertions verify against the same mock object. Use distinct mocks per sub-interface to make these assertions meaningful.
+        ctx.ProviderConfigStore.Should().BeSameAs(_configStore.Object);
+        ctx.QualityGateConfigStore.Should().BeSameAs(_configStore.Object);
+        ctx.ReviewerConfigStore.Should().BeSameAs(_configStore.Object);
         ctx.Callbacks.Should().BeSameAs(_callbacks.Object);
         ctx.IssueOps.Should().BeSameAs(_issueOps.Object);
         ctx.AgentExecution.Should().BeSameAs(_agentExecution.Object);
@@ -138,7 +143,9 @@ public class PipelineStepContextFactoryTests
         ctx.BrainProvider.Should().BeSameAs(_brainProvider.Object);
         ctx.PipelineProvider.Should().BeSameAs(_pipelineProvider.Object);
         ctx.Cts.Should().BeSameAs(_cts);
-        ctx.ConfigStore.Should().BeSameAs(_configStore.Object);
+        ctx.ProviderConfigStore.Should().BeSameAs(_configStore.Object);
+        ctx.QualityGateConfigStore.Should().BeSameAs(_configStore.Object);
+        ctx.ReviewerConfigStore.Should().BeSameAs(_configStore.Object);
         ctx.Callbacks.Should().BeSameAs(_callbacks.Object);
         ctx.IssueOps.Should().BeSameAs(_issueOps.Object);
         ctx.AgentExecution.Should().BeSameAs(_agentExecution.Object);
@@ -233,7 +240,9 @@ public class PipelineStepContextFactoryTests
             brainProvider: _brainProvider.Object,
             pipelineProvider: _pipelineProvider.Object,
             cts: _cts,
-            configStore: _configStore.Object,
+            providerConfigStore: _configStore.Object,
+            qualityGateConfigStore: _configStore.Object,
+            reviewerConfigStore: _configStore.Object,
             callbacks: _callbacks.Object,
             issueOps: _issueOps.Object,
             agentExecution: _agentExecution.Object,
@@ -259,7 +268,9 @@ public class PipelineStepContextFactoryTests
             brainProvider: _brainProvider.Object,
             pipelineProvider: _pipelineProvider.Object,
             cts: _cts,
-            configStore: _configStore.Object,
+            providerConfigStore: _configStore.Object,
+            qualityGateConfigStore: _configStore.Object,
+            reviewerConfigStore: _configStore.Object,
             callbacks: _callbacks.Object,
             issueOps: _issueOps.Object,
             agentExecution: _agentExecution.Object,

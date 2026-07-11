@@ -35,7 +35,9 @@ public sealed class PipelineStepContext
         IRepositoryProvider? brainProvider,
         IPipelineProvider? pipelineProvider,
         CancellationTokenSource? cts,
-        IConfigurationStore configStore,
+        IProviderConfigStore providerConfigStore,
+        IQualityGateConfigStore qualityGateConfigStore,
+        IReviewerConfigStore reviewerConfigStore,
         IPipelineCallbacks callbacks,
         IAgentIssueOperations issueOps,
         IAgentPhaseExecutor agentExecution,
@@ -47,7 +49,8 @@ public sealed class PipelineStepContext
         IIssueProvider issueProvider)
     {
         return CreateBase(run, config, repoProvider, agentProvider, brainProvider,
-            pipelineProvider, cts, configStore, callbacks, issueOps, agentExecution,
+            pipelineProvider, cts, providerConfigStore, qualityGateConfigStore, reviewerConfigStore,
+            callbacks, issueOps, agentExecution,
             qualityGates, brainSync, prOrchestrator, logger, qualityGateValidator,
             issueProvider: issueProvider, projectContext: null);
     }
@@ -64,7 +67,9 @@ public sealed class PipelineStepContext
         IRepositoryProvider? brainProvider,
         IPipelineProvider? pipelineProvider,
         CancellationTokenSource? cts,
-        IConfigurationStore configStore,
+        IProviderConfigStore providerConfigStore,
+        IQualityGateConfigStore qualityGateConfigStore,
+        IReviewerConfigStore reviewerConfigStore,
         IPipelineCallbacks callbacks,
         IAgentIssueOperations issueOps,
         IAgentPhaseExecutor agentExecution,
@@ -81,7 +86,8 @@ public sealed class PipelineStepContext
         DecompositionProjectContext? projectContext)
     {
         var ctx = CreateBase(run, config, repoProvider, agentProvider, brainProvider,
-            pipelineProvider, cts, configStore, callbacks, issueOps, agentExecution,
+            pipelineProvider, cts, providerConfigStore, qualityGateConfigStore, reviewerConfigStore,
+            callbacks, issueOps, agentExecution,
             qualityGates, brainSync, prOrchestrator, logger, qualityGateValidator,
             issueProvider: null, projectContext: projectContext);
         // These are get/set properties — safe to assign after construction
@@ -101,7 +107,9 @@ public sealed class PipelineStepContext
         IRepositoryProvider? brainProvider,
         IPipelineProvider? pipelineProvider,
         CancellationTokenSource? cts,
-        IConfigurationStore configStore,
+        IProviderConfigStore providerConfigStore,
+        IQualityGateConfigStore qualityGateConfigStore,
+        IReviewerConfigStore reviewerConfigStore,
         IPipelineCallbacks callbacks,
         IAgentIssueOperations issueOps,
         IAgentPhaseExecutor agentExecution,
@@ -122,7 +130,9 @@ public sealed class PipelineStepContext
             BrainProvider = brainProvider,
             PipelineProvider = pipelineProvider,
             Cts = cts,
-            ConfigStore = configStore,
+            ProviderConfigStore = providerConfigStore,
+            QualityGateConfigStore = qualityGateConfigStore,
+            ReviewerConfigStore = reviewerConfigStore,
             Callbacks = callbacks,
             IssueOps = issueOps,
             AgentExecution = agentExecution,
@@ -147,7 +157,9 @@ public sealed class PipelineStepContext
     public required IRepositoryProvider? BrainProvider { get; init; }
     public required IPipelineProvider? PipelineProvider { get; init; }
     public required CancellationTokenSource? Cts { get; init; }
-    public required IConfigurationStore ConfigStore { get; init; }
+    public required IProviderConfigStore ProviderConfigStore { get; init; }
+    public required IQualityGateConfigStore QualityGateConfigStore { get; init; }
+    public required IReviewerConfigStore ReviewerConfigStore { get; init; }
 
     /// <summary>
     /// The issue provider for fetching issue data. Null on the agent side

@@ -194,6 +194,7 @@ public class WriteMcpConfigStepTests : IDisposable
         var mockAgentProvider = new Mock<IAgentProvider>();
         mockAgentProvider.Setup(p => p.McpConfigPath).Returns(customPath);
 
+        var configStore = new Mock<IConfigurationStore>().Object;
         var context = new PipelineStepContext
         {
             Run = run,
@@ -203,7 +204,9 @@ public class WriteMcpConfigStepTests : IDisposable
             BrainProvider = null,
             PipelineProvider = null,
             Cts = null,
-            ConfigStore = new Mock<IConfigurationStore>().Object,
+            ProviderConfigStore = configStore,
+            QualityGateConfigStore = configStore,
+            ReviewerConfigStore = configStore,
             Callbacks = _mockCallbacks.Object,
             IssueOps = new Mock<IAgentIssueOperations>().Object,
             AgentExecution = new Mock<IAgentPhaseExecutor>().Object,
@@ -242,6 +245,7 @@ public class WriteMcpConfigStepTests : IDisposable
         var mockAgentProvider = new Mock<IAgentProvider>();
         mockAgentProvider.Setup(p => p.McpConfigPath).Returns(Path.Combine(_tempDir, ".kiro", "settings", "mcp.json"));
 
+        var configStore = new Mock<IConfigurationStore>().Object;
         return new PipelineStepContext
         {
             Run = run,
@@ -251,7 +255,9 @@ public class WriteMcpConfigStepTests : IDisposable
             BrainProvider = null,
             PipelineProvider = null,
             Cts = null,
-            ConfigStore = new Mock<IConfigurationStore>().Object,
+            ProviderConfigStore = configStore,
+            QualityGateConfigStore = configStore,
+            ReviewerConfigStore = configStore,
             Callbacks = _mockCallbacks.Object,
             IssueOps = new Mock<IAgentIssueOperations>().Object,
             AgentExecution = new Mock<IAgentPhaseExecutor>().Object,

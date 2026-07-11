@@ -304,6 +304,7 @@ public class RunEnvironmentSetupStepIntegrationTests : IDisposable
             StartedAt = DateTime.UtcNow
         };
 
+        var configStore = new Mock<IConfigurationStore>().Object;
         return new PipelineStepContext
         {
             Run = run,
@@ -313,7 +314,9 @@ public class RunEnvironmentSetupStepIntegrationTests : IDisposable
             BrainProvider = null,
             PipelineProvider = null,
             Cts = null,
-            ConfigStore = new Mock<IConfigurationStore>().Object,
+            ProviderConfigStore = configStore,
+            QualityGateConfigStore = configStore,
+            ReviewerConfigStore = configStore,
             Callbacks = _callbacks.Object,
             IssueOps = new Mock<IAgentIssueOperations>().Object,
             AgentExecution = new Mock<IAgentPhaseExecutor>().Object,

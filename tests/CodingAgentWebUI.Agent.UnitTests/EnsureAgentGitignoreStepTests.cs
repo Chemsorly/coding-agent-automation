@@ -110,6 +110,7 @@ public class EnsureAgentGitignoreStepTests : IDisposable
             WorkspacePath = _workspacePath
         };
 
+        var configStore = Mock.Of<IConfigurationStore>();
         return new PipelineStepContext
         {
             Run = run,
@@ -119,7 +120,9 @@ public class EnsureAgentGitignoreStepTests : IDisposable
             BrainProvider = null,
             PipelineProvider = null,
             Cts = null,
-            ConfigStore = Mock.Of<IConfigurationStore>(),
+            ProviderConfigStore = configStore,
+            QualityGateConfigStore = configStore,
+            ReviewerConfigStore = configStore,
             Callbacks = _callbacks.Object,
             IssueOps = Mock.Of<IAgentIssueOperations>(),
             AgentExecution = Mock.Of<IAgentPhaseExecutor>(),

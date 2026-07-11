@@ -268,6 +268,7 @@ public class WriteSteeringStepTests : IDisposable
         mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(
             providerType == AgentProviderType.KiroCli ? [".kiro"] : ["AGENTS.md"]);
 
+        var configStore = new Mock<IConfigurationStore>().Object;
         return new PipelineStepContext
         {
             Run = run,
@@ -277,7 +278,9 @@ public class WriteSteeringStepTests : IDisposable
             BrainProvider = null,
             PipelineProvider = null,
             Cts = null,
-            ConfigStore = new Mock<IConfigurationStore>().Object,
+            ProviderConfigStore = configStore,
+            QualityGateConfigStore = configStore,
+            ReviewerConfigStore = configStore,
             Callbacks = _mockCallbacks.Object,
             IssueOps = new Mock<IAgentIssueOperations>().Object,
             AgentExecution = new Mock<IAgentPhaseExecutor>().Object,

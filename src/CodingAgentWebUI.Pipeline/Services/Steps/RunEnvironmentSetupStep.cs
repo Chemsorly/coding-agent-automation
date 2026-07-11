@@ -29,7 +29,7 @@ public sealed class RunEnvironmentSetupStep : IPipelineStep
             return StepResult.Continue;
         }
 
-        var repoConfig = await context.ConfigStore.GetProviderConfigByIdAsync(
+        var repoConfig = await context.ProviderConfigStore.GetProviderConfigByIdAsync(
             context.Run.RepoProviderConfigId, ProviderKind.Repository, ct);
 
         var hasSecrets = repoConfig?.Secrets is { Count: > 0 };

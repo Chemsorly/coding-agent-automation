@@ -29,9 +29,9 @@ public sealed class ReviewCodeStep : IPipelineStep
         }
         else
         {
-            var allReviewerConfigs = await context.ConfigStore.LoadReviewerConfigsAsync(ct);
+            var allReviewerConfigs = await context.ReviewerConfigStore.LoadReviewerConfigsAsync(ct);
             var reviewerResolver = new ReviewerResolver();
-            var repoConfigForLabels = await context.ConfigStore.GetProviderConfigByIdAsync(context.Run.RepoProviderConfigId, ProviderKind.Repository, ct);
+            var repoConfigForLabels = await context.ProviderConfigStore.GetProviderConfigByIdAsync(context.Run.RepoProviderConfigId, ProviderKind.Repository, ct);
             var requiredLabelsForReview = LabelResolver.ResolveRequiredLabels(repoConfigForLabels, context.Config);
             resolvedReviewers = reviewerResolver.Resolve(allReviewerConfigs, requiredLabelsForReview);
         }

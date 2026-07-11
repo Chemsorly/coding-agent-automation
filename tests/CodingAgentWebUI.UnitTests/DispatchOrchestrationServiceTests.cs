@@ -71,6 +71,12 @@ public class DispatchOrchestrationServiceTests
             new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
+            // TODO: All 6 sub-interface parameters receive the same mock instance. Use distinct mocks per sub-interface to detect cross-wiring bugs.
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockConfigStore.Object,
             _mockLogger.Object);
     }
@@ -811,6 +817,11 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             new QualityGateResolver(),
             new ReviewerResolver(),
             mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
             _mockLogger.Object);
         var orchestration = TestUtilities.TestOrchestrationFactory.CreateMinimal(
             configStore: mockConfigStore.Object,
@@ -960,6 +971,11 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
             new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
             mockConfigStore.Object,
             _mockLogger.Object);
         var orchestration = TestUtilities.TestOrchestrationFactory.CreateMinimal(

@@ -111,7 +111,10 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<Pipeline.Interfaces.IAgentCancellationSender>()));
 
         services.AddSingleton(sp => new PipelineOrchestrationService(
-            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IPipelineConfigStore>(),
+            sp.GetRequiredService<IProviderConfigStore>(),
+            sp.GetRequiredService<IQualityGateConfigStore>(),
+            sp.GetRequiredService<IReviewerConfigStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<IssueDescriptionParser>(),
             sp.GetRequiredService<Pipeline.Interfaces.IPipelineExecutionFacade>(),
@@ -252,7 +255,12 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ProfileResolver>(),
             sp.GetRequiredService<QualityGateResolver>(),
             sp.GetRequiredService<ReviewerResolver>(),
-            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IAgentProfileStore>(),
+            sp.GetRequiredService<IQualityGateConfigStore>(),
+            sp.GetRequiredService<IReviewerConfigStore>(),
+            sp.GetRequiredService<IProviderConfigStore>(),
+            sp.GetRequiredService<IPipelineConfigStore>(),
+            sp.GetRequiredService<IProjectStore>(),
             Log.Logger));
 
         services.AddSingleton(sp => new DispatchInfrastructure(

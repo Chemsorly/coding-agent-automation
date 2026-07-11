@@ -566,6 +566,7 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
             StartedAt = DateTime.UtcNow
         };
 
+        var configStore = new Mock<IConfigurationStore>().Object;
         return new PipelineStepContext
         {
             Run = run,
@@ -575,7 +576,9 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
             BrainProvider = null,
             PipelineProvider = null,
             Cts = null,
-            ConfigStore = new Mock<IConfigurationStore>().Object,
+            ProviderConfigStore = configStore,
+            QualityGateConfigStore = configStore,
+            ReviewerConfigStore = configStore,
             Callbacks = _mockCallbacks.Object,
             IssueOps = new Mock<IAgentIssueOperations>().Object,
             AgentExecution = new Mock<IAgentPhaseExecutor>().Object,

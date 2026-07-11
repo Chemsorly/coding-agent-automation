@@ -333,7 +333,7 @@ public sealed partial class AgentJobDispatcher
             }
 
             // Load config early — needed for WorkspaceBaseDirectory before settings override
-            var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+            var config = await _infra.Resolution.PipelineConfigStore.LoadPipelineConfigAsync(ct);
             var runId = run.RunId;
             var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, "decomposition", runId);
 
@@ -379,9 +379,9 @@ public sealed partial class AgentJobDispatcher
             DecompositionProjectContext? projectContext = null;
             if (!string.IsNullOrEmpty(project.EpicIssueProviderId))
             {
-                var repoProviderConfigs = await _infra.Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+                var repoProviderConfigs = await _infra.Resolution.ProviderConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
                 var repoConfigLookup = repoProviderConfigs.ToDictionary(c => c.Id);
-                var templateLookup = (await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
+                var templateLookup = (await _infra.Resolution.ProjectStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
 
                 var repositories = new List<RepositoryTarget>();
                 foreach (var templateId in project.TemplateIds)
@@ -426,7 +426,7 @@ public sealed partial class AgentJobDispatcher
 
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
             config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-            var templates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+            var templates = await _infra.Resolution.ProjectStore.LoadAllTemplatesAsync(ct);
             config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
 
             var message = new JobAssignmentMessage
@@ -536,9 +536,9 @@ public sealed partial class AgentJobDispatcher
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
-        var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+        var config = await _infra.Resolution.PipelineConfigStore.LoadPipelineConfigAsync(ct);
         config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-        var templates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+        var templates = await _infra.Resolution.ProjectStore.LoadAllTemplatesAsync(ct);
         return ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
     }
 
@@ -606,7 +606,7 @@ public sealed partial class AgentJobDispatcher
         try
         {
             // Resolve repository provider to extract linked issues
-            var repoConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+            var repoConfig = await _infra.Resolution.ProviderConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
             if (repoConfig == null)
             {
                 _logger.Warning("Repo provider config '{ConfigId}' not found for linked issue extraction", repoProviderId);
@@ -632,7 +632,7 @@ public sealed partial class AgentJobDispatcher
             }
 
             // Resolve issue provider to fetch issue details
-            var issueConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
+            var issueConfig = await _infra.Resolution.ProviderConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
             if (issueConfig == null)
             {
                 _logger.Warning("Issue provider config '{ConfigId}' not found for linked issue pre-fetch", issueProviderId);
@@ -679,7 +679,7 @@ public sealed partial class AgentJobDispatcher
         string issueProviderId,
         CancellationToken ct)
     {
-        var issueConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
+        var issueConfig = await _infra.Resolution.ProviderConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
         if (issueConfig == null)
             return null;
 
@@ -745,7 +745,7 @@ public sealed partial class AgentJobDispatcher
         IEnumerable<string>? additionalRepoProviderIds = null)
     {
         var configs = new List<ProviderConfig>();
-        var store = _infra.Resolution.ConfigStore;
+        var store = _infra.Resolution.ProviderConfigStore;
 
         var repoConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = await ProviderConfigResolver.ResolveAsync(

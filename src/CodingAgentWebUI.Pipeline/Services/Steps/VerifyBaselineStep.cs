@@ -99,7 +99,7 @@ public sealed class VerifyBaselineStep : IPipelineStep
         }
         else
         {
-            qgcs = await context.ConfigStore.LoadQualityGateConfigsAsync(ct);
+            qgcs = await context.QualityGateConfigStore.LoadQualityGateConfigsAsync(ct);
         }
 
         if (qgcs.Count == 0)

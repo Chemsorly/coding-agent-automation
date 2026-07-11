@@ -28,6 +28,11 @@ public class DispatchInfrastructureTests
             new QualityGateResolver(),
             new ReviewerResolver(),
             _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             new Mock<ILogger>().Object);
 
         return new DispatchInfrastructure(
@@ -44,7 +49,9 @@ public class DispatchInfrastructureTests
     {
         var resolution = new DispatchResolutionService(
             new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
-            _mockConfigStore.Object, new Mock<ILogger>().Object);
+            _mockConfigStore.Object, _mockConfigStore.Object, _mockConfigStore.Object,
+            _mockConfigStore.Object, _mockConfigStore.Object, _mockConfigStore.Object,
+            new Mock<ILogger>().Object);
 
         var act = () => new DispatchInfrastructure(
             null!, _mockProviderFactory.Object, _mockLabelSwapper.Object, resolution);
@@ -57,7 +64,9 @@ public class DispatchInfrastructureTests
     {
         var resolution = new DispatchResolutionService(
             new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
-            _mockConfigStore.Object, new Mock<ILogger>().Object);
+            _mockConfigStore.Object, _mockConfigStore.Object, _mockConfigStore.Object,
+            _mockConfigStore.Object, _mockConfigStore.Object, _mockConfigStore.Object,
+            new Mock<ILogger>().Object);
 
         var act = () => new DispatchInfrastructure(
             _mockTokenVending.Object, null!, _mockLabelSwapper.Object, resolution);
@@ -70,7 +79,9 @@ public class DispatchInfrastructureTests
     {
         var resolution = new DispatchResolutionService(
             new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
-            _mockConfigStore.Object, new Mock<ILogger>().Object);
+            _mockConfigStore.Object, _mockConfigStore.Object, _mockConfigStore.Object,
+            _mockConfigStore.Object, _mockConfigStore.Object, _mockConfigStore.Object,
+            new Mock<ILogger>().Object);
 
         var act = () => new DispatchInfrastructure(
             _mockTokenVending.Object, _mockProviderFactory.Object, null!, resolution);
@@ -103,11 +114,12 @@ public class DispatchInfrastructureTests
     // ── ConfigStore convenience accessor ──
 
     [Fact]
-    public void ConfigStore_DelegatesToResolution()
+    public void ProviderConfigStore_DelegatesToResolution()
     {
+        // TODO: Only 1 of 6 store properties is asserted. Add assertions for AgentProfileStore, QualityGateConfigStore, ReviewerConfigStore, PipelineConfigStore, and ProjectStore.
         var infra = CreateInfrastructure();
 
-        // DispatchResolutionService.ConfigStore is the same store passed in
-        infra.Resolution.ConfigStore.Should().BeSameAs(_mockConfigStore.Object);
+        // DispatchResolutionService.ProviderConfigStore is the same store passed in
+        infra.Resolution.ProviderConfigStore.Should().BeSameAs(_mockConfigStore.Object);
     }
 }

@@ -30,11 +30,16 @@ public static class TestOrchestrationFactory
         logger ??= Serilog.Log.Logger;
         historyService ??= new NullHistoryService();
 
+        var store = configStore ?? throw new ArgumentNullException(nameof(configStore), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object");
+
         // TODO: When `lifecycle` is provided externally but `historyService` is not, the completion facade
         // receives a default NullHistoryService while the lifecycle holds a different history service instance.
         // This could cause confusing test failures if a test passes a custom lifecycle and then calls GetRunHistory().
         return new PipelineOrchestrationService(
-            configStore ?? throw new ArgumentNullException(nameof(configStore), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object"),
+            store,
+            store,
+            store,
+            store,
             providerFactory ?? throw new ArgumentNullException(nameof(providerFactory), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
             issueParser ?? new IssueDescriptionParser(),
             executionFacade ?? CreateDefaultExecutionFacade(logger),

@@ -187,7 +187,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private async Task<AgentProfile?> ResolveProfileByLabelsAsync(
         IReadOnlyList<string> requiredLabels, CancellationToken ct)
     {
-        var profiles = await _infra.Resolution.ConfigStore.LoadAgentProfilesAsync(ct);
+        var profiles = await _infra.Resolution.AgentProfileStore.LoadAgentProfilesAsync(ct);
 
         // Find the best profile whose match labels COVER all required labels.
         // Profile.MatchLabels = "agent must have these labels for this profile to apply."
@@ -220,7 +220,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private async Task<IssueContext?> PrepareIssueContextAsync(
         string issueIdentifier, string issueProviderId, CancellationToken ct)
     {
-        var issueConfig = await _infra.Resolution.ConfigStore
+        var issueConfig = await _infra.Resolution.ProviderConfigStore
             .GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
         if (issueConfig is null)
             return null;
@@ -293,7 +293,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         CancellationToken ct)
     {
         var configs = new List<ProviderConfig>();
-        var store = _infra.Resolution.ConfigStore;
+        var store = _infra.Resolution.ProviderConfigStore;
 
         var repoConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = await ProviderConfigResolver.ResolveAsync(
@@ -335,9 +335,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
-        var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+        var config = await _infra.Resolution.PipelineConfigStore.LoadPipelineConfigAsync(ct);
         config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-        var templates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+        var templates = await _infra.Resolution.ProjectStore.LoadAllTemplatesAsync(ct);
         return ApplyTemplateOverrides(
             config, repoProviderId, brainProviderId, providerConfigs, templates);
     }
@@ -470,9 +470,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private async Task<IReadOnlyList<string>> ResolveRequiredLabelsInternalAsync(
         string repoProviderId, CancellationToken ct)
     {
-        var repoConfig = await _infra.Resolution.ConfigStore
+        var repoConfig = await _infra.Resolution.ProviderConfigStore
             .GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
-        var pipelineConfig = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+        var pipelineConfig = await _infra.Resolution.PipelineConfigStore.LoadPipelineConfigAsync(ct);
         return LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
 

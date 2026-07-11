@@ -17,7 +17,7 @@ internal static class ProviderConfigResolver
     /// When the DB fallback succeeds, invalidates the stale list cache so subsequent lookups
     /// within the same request don't re-trigger fallback.
     /// </summary>
-    /// <param name="store">Configuration store (singleton).</param>
+    /// <param name="store">Provider configuration store.</param>
     /// <param name="id">Provider config ID to resolve.</param>
     /// <param name="kind">Provider kind for the lookup.</param>
     /// <param name="cachedList">Pre-loaded list from <see cref="IProviderConfigStore.LoadProviderConfigsAsync"/>.</param>
@@ -26,7 +26,7 @@ internal static class ProviderConfigResolver
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The resolved config, or null if not found and not required.</returns>
     public static async Task<ProviderConfig?> ResolveAsync(
-        IConfigurationStore store,
+        IProviderConfigStore store,
         string id,
         ProviderKind kind,
         IReadOnlyList<ProviderConfig> cachedList,
@@ -49,7 +49,9 @@ internal static class ProviderConfigResolver
         {
             // Positive backfill: invalidate the stale list cache so subsequent lookups
             // in the same dispatch cycle will re-populate from DB with fresh data.
-            store.InvalidateCaches();
+            // TODO: Cache invalidation is conditional on a runtime type check. If a non-composite IProviderConfigStore is passed, InvalidateCaches() is silently skipped. Consider logging when the cast fails or exposing InvalidateCaches on IProviderConfigStore directly.
+            if (store is IConfigurationStore compositeStore)
+                compositeStore.InvalidateCaches();
             return config;
         }
 

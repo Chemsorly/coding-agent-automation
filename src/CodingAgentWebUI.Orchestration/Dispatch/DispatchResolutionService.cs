@@ -17,25 +17,46 @@ public sealed class DispatchResolutionService
     private readonly ReviewerResolver _reviewerResolver;
     private readonly ILogger _logger;
 
-    internal IConfigurationStore ConfigStore { get; }
+    internal IAgentProfileStore AgentProfileStore { get; }
+    internal IQualityGateConfigStore QualityGateConfigStore { get; }
+    internal IReviewerConfigStore ReviewerConfigStore { get; }
+    internal IProviderConfigStore ProviderConfigStore { get; }
+    internal IPipelineConfigStore PipelineConfigStore { get; }
+    internal IProjectStore ProjectStore { get; }
 
     public DispatchResolutionService(
         ProfileResolver profileResolver,
         QualityGateResolver qualityGateResolver,
         ReviewerResolver reviewerResolver,
-        IConfigurationStore configStore,
+        IAgentProfileStore agentProfileStore,
+        IQualityGateConfigStore qualityGateConfigStore,
+        IReviewerConfigStore reviewerConfigStore,
+        IProviderConfigStore providerConfigStore,
+        IPipelineConfigStore pipelineConfigStore,
+        IProjectStore projectStore,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(profileResolver);
         ArgumentNullException.ThrowIfNull(qualityGateResolver);
-        ArgumentNullException.ThrowIfNull(reviewerResolver);
-        ArgumentNullException.ThrowIfNull(configStore);
+        // TODO: Fix missing null check — reviewerResolver is never validated (duplicate reviewerConfigStore check below). Replace this line with ArgumentNullException.ThrowIfNull(reviewerResolver).
+        ArgumentNullException.ThrowIfNull(reviewerConfigStore);
+        ArgumentNullException.ThrowIfNull(agentProfileStore);
+        ArgumentNullException.ThrowIfNull(qualityGateConfigStore);
+        ArgumentNullException.ThrowIfNull(reviewerConfigStore);
+        ArgumentNullException.ThrowIfNull(providerConfigStore);
+        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
+        ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(logger);
 
         _profileResolver = profileResolver;
         _qualityGateResolver = qualityGateResolver;
         _reviewerResolver = reviewerResolver;
-        ConfigStore = configStore;
+        AgentProfileStore = agentProfileStore;
+        QualityGateConfigStore = qualityGateConfigStore;
+        ReviewerConfigStore = reviewerConfigStore;
+        ProviderConfigStore = providerConfigStore;
+        PipelineConfigStore = pipelineConfigStore;
+        ProjectStore = projectStore;
         _logger = logger;
     }
 
@@ -45,7 +66,7 @@ public sealed class DispatchResolutionService
     /// </summary>
     public async Task<AgentProfile?> ResolveProfileAsync(AgentEntry agent, CancellationToken ct)
     {
-        var profiles = await ConfigStore.LoadAgentProfilesAsync(ct);
+        var profiles = await AgentProfileStore.LoadAgentProfilesAsync(ct);
         var profile = _profileResolver.Resolve(profiles, agent.Labels);
         if (profile is null)
         {
@@ -62,7 +83,7 @@ public sealed class DispatchResolutionService
     public async Task<IReadOnlyList<QualityGateConfiguration>> ResolveQualityGatesAsync(
         IReadOnlyList<string> requiredLabels, CancellationToken ct)
     {
-        var allQgcs = await ConfigStore.LoadQualityGateConfigsAsync(ct);
+        var allQgcs = await QualityGateConfigStore.LoadQualityGateConfigsAsync(ct);
         return _qualityGateResolver.Resolve(allQgcs, requiredLabels);
     }
 
@@ -72,7 +93,7 @@ public sealed class DispatchResolutionService
     public async Task<IReadOnlyList<ReviewerConfiguration>> ResolveReviewersAsync(
         IReadOnlyList<string> requiredLabels, CancellationToken ct)
     {
-        var allReviewerConfigs = await ConfigStore.LoadReviewerConfigsAsync(ct);
+        var allReviewerConfigs = await ReviewerConfigStore.LoadReviewerConfigsAsync(ct);
         return _reviewerResolver.Resolve(allReviewerConfigs, requiredLabels);
     }
 }

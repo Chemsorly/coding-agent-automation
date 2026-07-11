@@ -15,7 +15,7 @@ public class ConstructorParameterTests
         typeof(PipelineOrchestrationService).Assembly;
 
     [Fact]
-    public void PipelineOrchestrationService_ShouldHave_AtMost8NonLoggerParameters()
+    public void PipelineOrchestrationService_ShouldHave_AtMost11NonLoggerParameters()
     {
         var ctors = typeof(PipelineOrchestrationService).GetConstructors();
         Assert.Single(ctors);
@@ -24,9 +24,12 @@ public class ConstructorParameterTests
         // Count non-logger parameters (ILogger is a cross-cutting concern, not counted per convention)
         var nonLoggerParams = parameters.Where(p => p.ParameterType != typeof(Serilog.ILogger)).ToArray();
 
+        // Raised from 8 to 11 after ARCH-14: IConfigurationStore split into 4 specific sub-interfaces
+        // (IPipelineConfigStore, IProviderConfigStore, IQualityGateConfigStore, IReviewerConfigStore).
+        // ISP compliance intentionally trades fewer fat interfaces for more specific dependencies.
         Assert.True(
-            nonLoggerParams.Length <= 8,
-            $"PipelineOrchestrationService has {nonLoggerParams.Length} non-logger constructor parameters (max 8). " +
+            nonLoggerParams.Length <= 11,
+            $"PipelineOrchestrationService has {nonLoggerParams.Length} non-logger constructor parameters (max 11). " +
             $"Parameters: {string.Join(", ", nonLoggerParams.Select(p => $"{p.ParameterType.Name} {p.Name}"))}");
     }
 

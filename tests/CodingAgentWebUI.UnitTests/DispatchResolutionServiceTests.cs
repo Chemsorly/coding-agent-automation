@@ -20,10 +20,16 @@ public class DispatchResolutionServiceTests
 
     public DispatchResolutionServiceTests()
     {
+        // TODO: All 6 sub-interface parameters receive the same mock instance. Use distinct mocks per sub-interface to detect cross-wiring bugs.
         _service = new DispatchResolutionService(
             new ProfileResolver(),
             new QualityGateResolver(),
             new ReviewerResolver(),
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockConfigStore.Object,
             _mockLogger.Object);
     }

@@ -3490,6 +3490,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
             TestOrchestrationFactory.CreateDefaultExecutionFacade(_mockLogger.Object),
@@ -3540,6 +3543,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
             TestOrchestrationFactory.CreateDefaultExecutionFacade(_mockLogger.Object),
@@ -3582,6 +3588,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
             mockHistoryService.Object, mockRunService.Object, _mockLogger.Object);
 
         var service = new PipelineOrchestrationService(
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
