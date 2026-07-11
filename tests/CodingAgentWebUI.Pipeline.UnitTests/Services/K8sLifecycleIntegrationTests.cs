@@ -368,6 +368,136 @@ public class K8sLifecycleIntegrationTests : IDisposable
             providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    [Fact]
+    public async Task ReconcileStartupLabelsAsync_InfrastructureFailure_DoesNotSwapToAgentNext()
+    {
+        // Arrange: Insert a recently-terminal WorkItem with FailureReason.InfrastructureFailure
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#infra-fail";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Failed,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        // Set FailureReason to InfrastructureFailure
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.FailureReason = FailureReason.InfrastructureFailure;
+            await db.SaveChangesAsync();
+        }
+
+        _mockLabelSwapper
+            .Setup(l => l.SwapLabelAsync(providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var reconciliationService = CreateReconciliationService(withLabelSwapper: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: label swap should NOT have been called for infrastructure failure
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReconcileStartupLabelsAsync_Timeout_DoesNotSwapToAgentNext()
+    {
+        // Arrange: Insert a recently-terminal WorkItem with FailureReason.Timeout
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#timeout-fail";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Failed,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        // Set FailureReason to Timeout
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.FailureReason = FailureReason.Timeout;
+            await db.SaveChangesAsync();
+        }
+
+        _mockLabelSwapper
+            .Setup(l => l.SwapLabelAsync(providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var reconciliationService = CreateReconciliationService(withLabelSwapper: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: label swap should NOT have been called for timeout failure
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ReconcileStartupLabelsAsync_AgentError_SwapsToAgentNext()
+    {
+        // Arrange: Insert a recently-terminal WorkItem with FailureReason.AgentError
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#agent-error";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Failed,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        // Set FailureReason to AgentError
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.FailureReason = FailureReason.AgentError;
+            await db.SaveChangesAsync();
+        }
+
+        _mockLabelSwapper
+            .Setup(l => l.SwapLabelAsync(providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var reconciliationService = CreateReconciliationService(withLabelSwapper: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: label swap SHOULD be called for agent errors (business failure)
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task ReconcileStartupLabelsAsync_NullFailureReason_SwapsToAgentNext()
+    {
+        // Arrange: Insert a recently-terminal WorkItem with null FailureReason (legacy)
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#null-reason";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Failed,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        // FailureReason is already null by default
+
+        _mockLabelSwapper
+            .Setup(l => l.SwapLabelAsync(providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var reconciliationService = CreateReconciliationService(withLabelSwapper: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: label swap SHOULD be called for null (backward compatibility)
+        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+            providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     // ── Service Factories ───────────────────────────────────────────────
 
     private DispatchService CreateDispatchService(Dictionary<string, string>? imageMapping = null, int pvcCount = 2)

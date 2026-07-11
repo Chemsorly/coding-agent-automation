@@ -203,12 +203,18 @@ public sealed class ReconciliationService : BackgroundService
             .Select(x => (x.IssueIdentifier, x.IssueProviderConfigId))
             .ToHashSet();
 
-        // Get recently terminal items that might still have in-progress labels
+        // Get recently terminal items that might still have in-progress labels.
+        // Exclude items that failed due to infrastructure/orchestrator reasons (InfrastructureFailure, Timeout)
+        // — these should stay as agent:error and not be re-exposed for dispatch on restart.
+        // Only swap back to agent:next for business failures (AgentError, TokenRefreshFailure, null/legacy).
         var recentTerminal = await db.WorkItems
             .Where(w => (w.Status == WorkItemStatus.Succeeded ||
                          w.Status == WorkItemStatus.Failed ||
                          w.Status == WorkItemStatus.Cancelled) &&
-                        w.CompletedAt > DateTimeOffset.UtcNow.AddMinutes(-5))
+                        // TODO: Use _options.RecentTerminalCooldownMinutes instead of hardcoded -5 to stay in sync with the distributor's dedup cooldown window.
+                        w.CompletedAt > DateTimeOffset.UtcNow.AddMinutes(-5) &&
+                        w.FailureReason != FailureReason.InfrastructureFailure &&
+                        w.FailureReason != FailureReason.Timeout)
             .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
             .ToListAsync(ct);
 

@@ -242,10 +242,17 @@ public static class WorkDistributionRegistration
         services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
 
         // Work distributor (singleton — uses IDbContextFactory for context-per-operation)
-        services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<KubernetesWorkDistributor>>()));
+        services.AddSingleton<IWorkDistributor>(sp =>
+        {
+            var reconciliationOptions = new ReconciliationServiceOptions();
+            configuration.GetSection("WorkDistribution:Reconciliation").Bind(reconciliationOptions);
+            var cooldown = TimeSpan.FromMinutes(reconciliationOptions.RecentTerminalCooldownMinutes);
+            return new KubernetesWorkDistributor(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<KubernetesWorkDistributor>>(),
+                cooldown);
+        });
 
         // Dispatch + Reconciliation (under leader election)
         services.AddSingleton<IKubernetesJobClient>(sp => new KubernetesJobClient(sp.GetRequiredService<IKubernetes>()));
@@ -292,17 +299,24 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<JobDispatcherService>()));
 
         // Work distributor (singleton — uses IDbContextFactory for context-per-operation)
-        services.AddSingleton<IWorkDistributor>(sp => new SignalRWorkDistributor(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<IAgentCommunication>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>(),
-            sp.GetService<Pipeline.Interfaces.IRunLifecycleManager>(),
-            sp.GetService<Pipeline.Interfaces.IAgentCancellationSender>()));
+        services.AddSingleton<IWorkDistributor>(sp =>
+        {
+            var reconciliationOptions = new ReconciliationServiceOptions();
+            configuration.GetSection("WorkDistribution:Reconciliation").Bind(reconciliationOptions);
+            var cooldown = TimeSpan.FromMinutes(reconciliationOptions.RecentTerminalCooldownMinutes);
+            return new SignalRWorkDistributor(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<IAgentCommunication>(),
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
+                sp.GetRequiredService<IOrchestratorRunService>(),
+                sp.GetRequiredService<IProjectStore>(),
+                sp.GetRequiredService<ILabelSwapper>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>(),
+                sp.GetService<Pipeline.Interfaces.IRunLifecycleManager>(),
+                sp.GetService<Pipeline.Interfaces.IAgentCancellationSender>(),
+                cooldown);
+        });
 
         // HeartbeatMonitorService remains registered (handled by AddOrchestrationServices)
         // Queue visibility: queries WorkItems table for Pending status

@@ -41,8 +41,9 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         ILabelSwapper labelSwapper,
         ILogger<SignalRWorkDistributor> logger,
         IRunLifecycleManager? lifecycleManager = null,
-        IAgentCancellationSender? cancellationSender = null)
-        : base(dbFactory, transitionService, logger)
+        IAgentCancellationSender? cancellationSender = null,
+        TimeSpan? recentTerminalCooldown = null)
+        : base(dbFactory, transitionService, logger, recentTerminalCooldown)
     {
         _agentComm = agentComm;
         _agentResolver = agentResolver;

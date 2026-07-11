@@ -28,6 +28,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly WorkItemTransitionService _transitionService;
     private readonly ILogger _logger;
+    private readonly TimeSpan _recentTerminalCooldown;
 
     /// <summary>Non-terminal statuses used for dedup queries.</summary>
     protected static readonly WorkItemStatus[] ActiveStatuses =
@@ -40,11 +41,13 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     protected DbWorkDistributorBase(
         IDbContextFactory<PipelineDbContext> dbFactory,
         WorkItemTransitionService transitionService,
-        ILogger logger)
+        ILogger logger,
+        TimeSpan? recentTerminalCooldown = null)
     {
         _dbFactory = dbFactory;
         _transitionService = transitionService;
         _logger = logger;
+        _recentTerminalCooldown = recentTerminalCooldown ?? TimeSpan.FromMinutes(5);
     }
 
     /// <summary>Exposed for subclass DB operations.</summary>
@@ -89,6 +92,22 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
 
         var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
 
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        // Carry forward the original enqueue timestamp from any prior WorkItem for the same issue.
+        // This preserves the true "first queued" time across re-dispatch cycles (e.g., after restart).
+        // TODO: This carries forward from the earliest-ever WorkItem with no time cutoff. If an issue is
+        // legitimately re-queued months later (user re-applies agent:next), the UI will show a stale
+        // "Enqueued At" from the first-ever attempt. Consider adding a time-based cutoff (e.g., only
+        // carry forward if the prior item completed within the recent terminal cooldown window).
+        var priorEnqueuedAt = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => w.IssueIdentifier == request.IssueIdentifier &&
+                        w.IssueProviderConfigId == request.IssueProviderConfigId)
+            .OrderBy(w => w.CreatedAt)
+            .Select(w => (DateTimeOffset?)(w.OriginalEnqueuedAt ?? w.CreatedAt))
+            .FirstOrDefaultAsync(ct);
+
         var entity = new WorkItemEntity
         {
             Id = workItemId,
@@ -99,12 +118,12 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
             Payload = payloadJson,
             AgentSelector = request.AgentSelector,
             CreatedAt = now,
+            OriginalEnqueuedAt = priorEnqueuedAt ?? now,
             DispatchedAt = initialStatus == WorkItemStatus.Dispatched ? now : null,
             TimeoutSeconds = request.TimeoutSeconds,
             ProjectId = request.ProjectId
         };
 
-        await using var db = await _dbFactory.CreateDbContextAsync(ct);
         db.WorkItems.Add(entity);
 
         try
@@ -167,12 +186,31 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     public virtual async Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        return await db.WorkItems
+
+        // Check for active (non-terminal) WorkItems
+        var hasActive = await db.WorkItems
             .AsNoTracking()
             .AnyAsync(w =>
                 w.IssueIdentifier == issueIdentifier &&
                 w.IssueProviderConfigId == issueProviderConfigId &&
                 ActiveStatuses.Contains(w.Status),
+                ct);
+        if (hasActive) return true;
+
+        // Also check for recently-terminal items within the cooldown window (prevents re-dispatch on restart).
+        // Only block items whose failure was infrastructure-induced (InfrastructureFailure, Timeout) —
+        // these are the ones that would recur on restart. Business failures (AgentError, TokenRefreshFailure,
+        // null/legacy) are allowed through for immediate retry when agent:next is re-applied.
+        var cutoff = DateTimeOffset.UtcNow - _recentTerminalCooldown;
+        return await db.WorkItems
+            .AsNoTracking()
+            .AnyAsync(w =>
+                w.IssueIdentifier == issueIdentifier &&
+                w.IssueProviderConfigId == issueProviderConfigId &&
+                !ActiveStatuses.Contains(w.Status) &&
+                w.CompletedAt >= cutoff &&
+                (w.FailureReason == FailureReason.InfrastructureFailure ||
+                 w.FailureReason == FailureReason.Timeout),
                 ct);
     }
 
@@ -180,15 +218,35 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     public virtual async Task<HashSet<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var pairs = await db.WorkItems
+
+        // Active (non-terminal) items
+        var activePairs = await db.WorkItems
             .AsNoTracking()
             .Where(w => ActiveStatuses.Contains(w.Status))
             .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
             .ToListAsync(ct);
 
-        return pairs
+        // Recently-terminal items within cooldown window (prevents re-dispatch on restart).
+        // Only block infrastructure failures (InfrastructureFailure, Timeout) — business failures
+        // (AgentError, TokenRefreshFailure, null/legacy) are allowed through for immediate retry.
+        var cutoff = DateTimeOffset.UtcNow - _recentTerminalCooldown;
+        var recentTerminalPairs = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => !ActiveStatuses.Contains(w.Status) &&
+                        w.CompletedAt >= cutoff &&
+                        (w.FailureReason == FailureReason.InfrastructureFailure ||
+                         w.FailureReason == FailureReason.Timeout))
+            .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
+            .ToListAsync(ct);
+
+        var result = activePairs
             .Select(p => (p.IssueIdentifier, p.IssueProviderConfigId))
             .ToHashSet();
+
+        foreach (var p in recentTerminalPairs)
+            result.Add((p.IssueIdentifier, p.IssueProviderConfigId));
+
+        return result;
     }
 
     // ── Shared: Reconciliation (default no-op, overridden by SignalR) ─────
