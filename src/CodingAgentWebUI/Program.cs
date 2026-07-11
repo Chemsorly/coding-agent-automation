@@ -301,7 +301,9 @@ if (!string.IsNullOrEmpty(dbConnectionString))
                     ? PipelineStep.GeneratingCode
                     : PipelineStep.Created;
 
-                var run = PipelineRunFactory.FromDistributionRequest(request, agentId: null, initialStep);
+                var run = PipelineRunFactory.FromDistributionRequest(
+                    request, agentId: null, initialStep,
+                    startedAt: item.DispatchedAt ?? item.CreatedAt);
                 runService.AddRun(run);
                 rehydratedCount++;
             }

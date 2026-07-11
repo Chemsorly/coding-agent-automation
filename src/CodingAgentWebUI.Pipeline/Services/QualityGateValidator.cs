@@ -549,8 +549,11 @@ public class QualityGateValidator : IQualityGateValidator
         using var process = new Process { StartInfo = psi };
         process.Start();
 
-        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+        // Do not pass ct to ReadToEndAsync — cancellation is handled by killing the process (which
+        // closes the pipes and causes ReadToEndAsync to complete). Passing ct would make the drain
+        // in the external cancellation path a no-op since ct is already cancelled there.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
+        var stderrTask = process.StandardError.ReadToEndAsync(CancellationToken.None);
 
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeoutCts.CancelAfter(timeout);
@@ -570,15 +573,15 @@ public class QualityGateValidator : IQualityGateValidator
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             try { process.Kill(entireProcessTree: true); } catch { }
-            // TODO: The stdoutTask/stderrTask were started with the parent ct (already cancelled here),
-            // so the drain is effectively a no-op. Pipes may not be fully drained before process disposal.
-            // Acceptable since we're killing + shutting down, but differs from the timeout path where ct is still valid.
             using var drainCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             try { await stdoutTask.WaitAsync(drainCts.Token); } catch { }
             try { await stderrTask.WaitAsync(drainCts.Token); } catch { }
             throw;
         }
 
+        // TODO: Normal completion path has no bounded timeout on pipe drain. If a grandchild process
+        // inherits stdout/stderr handles and outlives the parent, these awaits block indefinitely.
+        // Consider wrapping with a bounded timeout (e.g., stdoutTask.WaitAsync(timeoutCts.Token)).
         var stdout = await stdoutTask;
         var stderr = await stderrTask;
 
