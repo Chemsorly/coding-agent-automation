@@ -1066,4 +1066,95 @@ public class AgentCodingPageServiceTests
         Assert.False(success);
         Assert.Contains("Disk full", error!);
     }
+
+    // ── RequiresConnectedAgents guard tests ──────────────────────────────
+
+    [Fact]
+    public async Task DispatchIssueAsync_ReturnsError_WhenRequiresConnectedAgentsAndNoneConnected()
+    {
+        var template = MakeTemplate();
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
+
+        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(true);
+
+        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
+
+        Assert.False(success);
+        Assert.Contains("no agents are currently connected", error!);
+    }
+
+    [Fact]
+    public async Task DispatchPrReviewAsync_ReturnsError_WhenRequiresConnectedAgentsAndNoneConnected()
+    {
+        var template = MakeTemplate();
+        var pr = new PullRequestSummary { Identifier = "1", Title = "Test PR", BranchName = "feat/x", TargetBranch = "main", Url = "http://x", Description = "", Labels = [], IsDraft = false, Number = 1 };
+
+        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(true);
+
+        var (success, error, _) = await _service.DispatchPrReviewAsync(pr, template);
+
+        Assert.False(success);
+        Assert.Contains("no agents are currently connected", error!);
+    }
+
+    [Fact]
+    public async Task DispatchDecompositionAsync_ReturnsError_WhenRequiresConnectedAgentsAndNoneConnected()
+    {
+        var template = MakeTemplate();
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
+
+        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(true);
+
+        var (success, error, _) = await _service.DispatchDecompositionAsync(MakeIssue(), template);
+
+        Assert.False(success);
+        Assert.Contains("no agents are currently connected", error!);
+    }
+
+    [Fact]
+    public async Task DispatchIssueAsync_Proceeds_WhenNotRequiresConnectedAgentsAndNoneConnected()
+    {
+        var template = MakeTemplate();
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
+
+        _mockWorkDistributor.Setup(w => w.RequiresConnectedAgents).Returns(false);
+
+        _mockDependencyChecker.Setup(d => d.CheckAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IIssueProvider>(),
+            It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DependencyCheckResult.NoDependencies);
+
+        _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
+            It.IsAny<PipelineProject>(),
+            It.IsAny<WorkItemTaskType>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new JobDistributionRequest
+            {
+                IssueIdentifier = "42",
+                IssueProviderConfigId = "ip-1",
+                RepoProviderConfigId = "rp-1",
+                InitiatedBy = "manual",
+                TaskType = WorkItemTaskType.Implementation,
+                AgentSelector = "default",
+                TimeoutSeconds = 3600,
+                ProviderConfigs = new List<ProviderConfig>
+                {
+                    new() { Id = "rp-1", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Repo" }
+                }
+            });
+
+        _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(
+            It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DispatchOutcome(true, false, null));
+
+        var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
+
+        // Should not be blocked by the guard — dispatch proceeds
+        Assert.True(success);
+        Assert.Null(error);
+    }
 }

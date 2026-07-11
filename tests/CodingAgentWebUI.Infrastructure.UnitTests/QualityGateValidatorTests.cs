@@ -796,11 +796,9 @@ public class QualityGateValidatorTests
         finally { try { if (Directory.Exists(tempWorkspace)) Directory.Delete(tempWorkspace, true); } catch { } }
     }
 
-    // TODO: This test only verifies OCE is thrown but doesn't prove the process was actually killed.
-    // WaitForExitAsync throws OCE from token cancellation regardless of whether Kill is called.
-    // A stronger test would capture the process PID and assert it no longer exists after cancellation.
-    // TODO: Missing test for bounded pipe drain timeout — a process holding stdout/stderr pipes open
-    // after being killed should still allow the method to return within ~5s, not hang indefinitely.
+    // TODO: Missing test for bounded pipe drain timeout. A process that holds stdout/stderr pipes
+    // open after being killed (e.g., grandchild inheriting handles) should still allow the method
+    // to return within ~5s due to the drain CancellationTokenSource.
     [Fact]
     public async Task RunProcessAsync_ExternalCancellation_KillsProcessAndThrowsOperationCanceledException()
     {
@@ -814,9 +812,16 @@ public class QualityGateValidatorTests
         var act = () => validator.RunProcessPublicAsync(
             "sleep", "300", Directory.GetCurrentDirectory(), cts.Token, TimeSpan.FromMinutes(10));
 
-        // Assert: OperationCanceledException is thrown (proves kill executed — process would
-        // block WaitForExitAsync indefinitely otherwise)
+        // Assert: OperationCanceledException is thrown within bounded time.
+        // The method must complete promptly (kill + 5s drain timeout at most) — if the process
+        // wasn't killed, ReadToEndAsync would block until the 300s sleep finishes.
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         await act.Should().ThrowAsync<OperationCanceledException>();
+        sw.Stop();
+
+        // Must complete well within the drain timeout window (5s) + cancel delay (500ms) + margin.
+        // If Kill didn't work, this would take 300s (the sleep duration).
+        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(15));
     }
 
     private sealed class ProcessExposingValidator : QualityGateValidator
