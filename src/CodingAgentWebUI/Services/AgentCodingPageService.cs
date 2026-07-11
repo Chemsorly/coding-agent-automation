@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Components.Pages;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -361,7 +360,7 @@ public class AgentCodingPageService : IDisposable
     {
         if (!IssueProviders.Any(p => p.Id == template.IssueProviderId) || !RepoProviders.Any(p => p.Id == template.RepoProviderId))
             return (false, "Template references providers that no longer exist.", null);
-        if (_workDistributor is LegacyWorkDistributor && _agentRegistry.GetAllAgents().Count == 0)
+        if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
             return (false, "Could not dispatch — no agents are currently connected.", null);
 
         var depProviderConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
@@ -443,7 +442,7 @@ public class AgentCodingPageService : IDisposable
     public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchPrReviewAsync(
         PullRequestSummary pr, PipelineJobTemplate template)
     {
-        if (_workDistributor is LegacyWorkDistributor && _agentRegistry.GetAllAgents().Count == 0)
+        if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
             return (false, "Could not dispatch — no agents are currently connected.", null);
 
         // DB mode: use full orchestration for ProviderConfigs + RunId + token vending
@@ -554,7 +553,7 @@ public class AgentCodingPageService : IDisposable
     {
         if (!IssueProviders.Any(p => p.Id == template.IssueProviderId) || !RepoProviders.Any(p => p.Id == template.RepoProviderId))
             return (false, "Template references providers that no longer exist.", null);
-        if (_workDistributor is LegacyWorkDistributor && _agentRegistry.GetAllAgents().Count == 0)
+        if (_workDistributor.RequiresConnectedAgents && _agentRegistry.GetAllAgents().Count == 0)
             return (false, "Could not dispatch — no agents are currently connected.", null);
 
         var phaseType = issue.Labels.Contains(AgentLabels.EpicApproved, StringComparer.OrdinalIgnoreCase)

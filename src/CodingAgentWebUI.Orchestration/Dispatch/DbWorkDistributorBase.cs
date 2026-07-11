@@ -47,6 +47,9 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
         _logger = logger;
     }
 
+    /// <inheritdoc />
+    public virtual bool RequiresConnectedAgents => false;
+
     /// <summary>Exposed for subclass DB operations.</summary>
     protected IDbContextFactory<PipelineDbContext> DbFactory => _dbFactory;
 
