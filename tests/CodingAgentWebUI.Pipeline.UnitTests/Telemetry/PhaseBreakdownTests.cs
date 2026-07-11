@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
