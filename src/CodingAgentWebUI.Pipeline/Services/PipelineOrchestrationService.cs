@@ -326,9 +326,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
         foreach (var run in allRuns)
         {
-            var targetKind = run.RunType == PipelineRunType.Review
-                ? LabelTargetKind.PullRequest
-                : LabelTargetKind.Issue;
+            var targetKind = run.LabelTargetKind;
             var providerConfigId = targetKind == LabelTargetKind.PullRequest
                 ? run.RepoProviderConfigId
                 : run.IssueProviderConfigId;
@@ -514,9 +512,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             run.RunId, issueId, newLabel, run.RunType, run.CurrentStep);
         try
         {
-            var targetKind = run.RunType == PipelineRunType.Review
-                ? LabelTargetKind.PullRequest
-                : LabelTargetKind.Issue;
+            var targetKind = run.LabelTargetKind;
             var providerConfigId = targetKind == LabelTargetKind.PullRequest
                 ? run.RepoProviderConfigId
                 : run.IssueProviderConfigId;
@@ -532,9 +528,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     {
         try
         {
-            var targetKind = run.RunType == PipelineRunType.Review
-                ? LabelTargetKind.PullRequest
-                : LabelTargetKind.Issue;
+            var targetKind = run.LabelTargetKind;
             var providerConfigId = targetKind == LabelTargetKind.PullRequest
                 ? run.RepoProviderConfigId
                 : run.IssueProviderConfigId;
@@ -599,25 +593,26 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     private sealed class OrchestratorCallbacks(
         PipelineOrchestrationService svc,
         PipelineRun run,
-        Func<Steps.PipelineStepContext?> ctxAccessor) : IPipelineCallbacks
+        Func<Steps.PipelineStepContext?> ctxAccessor) : PipelineCallbacksBase
     {
-        public void TransitionTo(PipelineStep step) => svc._lifecycle.TransitionTo(run, step);
-        public void EmitOutputLine(string line) => svc._lifecycle.EmitOutputLine(line);
-        public void NotifyChange() => svc._lifecycle.NotifyChange();
-        public void AddRunToHistory(PipelineRun r) => svc._lifecycle.AddRunToHistory(r);
-        public Task UpdateFileChangeStats(PipelineRun r) => svc.UpdateFileChangeStatsAsync(r);
-        public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
+        protected override PipelineRun Run => run;
+        public override void TransitionTo(PipelineStep step) => svc._lifecycle.TransitionTo(run, step);
+        public override void EmitOutputLine(string line) => svc._lifecycle.EmitOutputLine(line);
+        public override void NotifyChange() => svc._lifecycle.NotifyChange();
+        public override void AddRunToHistory(PipelineRun r) => svc._lifecycle.AddRunToHistory(r);
+        public override Task UpdateFileChangeStats(PipelineRun r) => svc.UpdateFileChangeStatsAsync(r);
+        public override Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
             => svc.SwapAgentLabelAsync(run, issueIdentifier, label, ct);
-        public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
+        public override Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
             => svc.RemoveAllAgentLabelsAsync(run, issueIdentifier, ct);
-        public Task CreatePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
+        public override Task CreatePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
             SyncActiveIssueContext();
             return svc.CreatePullRequestAsync(r, report, isDraft, ct);
         }
-        public Task CreateDraftPrIfNotExists(PipelineRun r, CancellationToken ct)
+        public override Task CreateDraftPrIfNotExists(PipelineRun r, CancellationToken ct)
             => svc.CreateDraftPrIfNotExistsAsync(r, ct);
-        public Task FinalizePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
+        public override Task FinalizePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
             SyncActiveIssueContext();
             return svc.FinalizePullRequestAsync(r, report, isDraft, ct);
@@ -629,7 +624,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             svc._activeParsedIssue = ctx?.ParsedIssue;
             svc._activeIssueComments = ctx?.IssueComments;
         }
-        public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
+        public override Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
         {
             run.BrainContextLoaded = contextLoaded;
             run.BrainKnowledgeFileCount = knowledgeFileCount;

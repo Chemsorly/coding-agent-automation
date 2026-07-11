@@ -815,7 +815,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
     /// <summary>
     /// Adapts the agent executor's callback methods to <see cref="IPipelineCallbacks"/>.
-    /// Routes label swaps based on <see cref="PipelineRun.RunType"/>:
+    /// Routes label swaps based on <see cref="PipelineRun.LabelTargetKind"/>:
     /// Implementation runs swap labels on issues, Review runs swap labels on PRs.
     /// </summary>
     private sealed class AgentCallbacks(
@@ -827,53 +827,36 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         IRepositoryProvider repoProvider,
         Action<QualityGateReport> reportQualityGateResult,
         Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> createPullRequest,
-        Func<bool, int, Task> reportBrainSyncResult) : IPipelineCallbacks
+        Func<bool, int, Task> reportBrainSyncResult) : PipelineCallbacksBase
     {
-        public void TransitionTo(PipelineStep step) => transitionTo(step);
-        public void EmitOutputLine(string line) => emitOutputLine(line);
-        public void NotifyChange() { }
-        public void AddRunToHistory(PipelineRun run) { }
-        public Task UpdateFileChangeStats(PipelineRun run)
+        protected override PipelineRun Run => run;
+        public override void TransitionTo(PipelineStep step) => transitionTo(step);
+        public override void EmitOutputLine(string line) => emitOutputLine(line);
+        public override void NotifyChange() { }
+        public override void AddRunToHistory(PipelineRun run) { }
+        public override Task UpdateFileChangeStats(PipelineRun run)
             => prOrchestrator.UpdateFileChangeStatsAsync(run, repoProvider);
-        public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
-        {
-            var targetKind = run.RunType == PipelineRunType.Review
-                ? LabelTargetKind.PullRequest
-                : LabelTargetKind.Issue;
-            return orchestratorProxy.SwapLabelAsync(issueIdentifier, label, targetKind, ct);
-        }
-        public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
-        {
-            var targetKind = run.RunType == PipelineRunType.Review
-                ? LabelTargetKind.PullRequest
-                : LabelTargetKind.Issue;
-            return orchestratorProxy.SwapLabelAsync(issueIdentifier, string.Empty, targetKind, ct);
-        }
-        public Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
+        public override Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
+            => orchestratorProxy.SwapLabelAsync(issueIdentifier, label, GetLabelTargetKind(), ct);
+        public override Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
+            => orchestratorProxy.SwapLabelAsync(issueIdentifier, string.Empty, GetLabelTargetKind(), ct);
+        public override Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
             reportQualityGateResult(report);
             return createPullRequest(run, report, isDraft, ct);
         }
-        public async Task CreateDraftPrIfNotExists(PipelineRun run, CancellationToken ct)
+        protected override Task CreateDraftPrCoreAsync(PipelineRun run, CancellationToken ct)
+            => prOrchestrator.CreateDraftPrIfNotExistsAsync(run, repoProvider, ct);
+        protected override void LogDraftPrFailure(PipelineRun run, Exception ex)
         {
-            try
-            {
-                await prOrchestrator.CreateDraftPrIfNotExistsAsync(run, repoProvider, ct);
-                if (!string.IsNullOrEmpty(run.PullRequestNumber))
-                    emitOutputLine($"📋 Draft PR #{run.PullRequestNumber} created");
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                // Non-fatal on agent side as well
-                Serilog.Log.Warning(ex, "Agent {RunId} failed to create draft PR, continuing", run.RunId);
-            }
+            Serilog.Log.Warning(ex, "Agent {RunId} failed to create draft PR, continuing", run.RunId);
         }
-        public Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
+        public override Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
             reportQualityGateResult(report);
             return createPullRequest(run, report, isDraft, ct);
         }
-        public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
+        public override Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
             => reportBrainSyncResult(contextLoaded, knowledgeFileCount);
     }
 }
