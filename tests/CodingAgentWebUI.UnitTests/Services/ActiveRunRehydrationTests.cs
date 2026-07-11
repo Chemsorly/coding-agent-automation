@@ -66,6 +66,9 @@ public sealed class ActiveRunRehydrationTests : IDisposable
         dispatchedRun!.IssueIdentifier.Should().Be("owner/repo#1");
         dispatchedRun.IssueTitle.Should().Be("Fix bug");
         dispatchedRun.AgentId.Should().BeNull();
+        // TODO: Assert StartedAtOffset matches the InsertWorkItem's DispatchedAt/CreatedAt value
+        // to validate the timestamp propagation fix (BUG-08). Currently this test would pass
+        // even if the startedAt parameter were removed from the FromDistributionRequest call.
 
         var runningRun = _runService.GetRun(runningRunId);
         runningRun.Should().NotBeNull();
@@ -274,7 +277,9 @@ public sealed class ActiveRunRehydrationTests : IDisposable
                     ? PipelineStep.GeneratingCode
                     : PipelineStep.Created;
 
-                var run = PipelineRunFactory.FromDistributionRequest(request, agentId: null, initialStep);
+                var run = PipelineRunFactory.FromDistributionRequest(
+                    request, agentId: null, initialStep,
+                    startedAt: item.DispatchedAt ?? item.CreatedAt);
                 _runService.AddRun(run);
             }
             catch (JsonException)
@@ -313,6 +318,10 @@ public sealed class ActiveRunRehydrationTests : IDisposable
         WorkItemTaskType taskType, string? payload)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
+        var createdAt = DateTimeOffset.UtcNow.AddHours(-2);
+        // TODO: DispatchedAt is set equal to CreatedAt here, so the `?? item.CreatedAt` fallback
+        // path is never exercised. Add a separate test with DispatchedAt = null to verify the
+        // fallback scenario (BUG-08: items created but not yet dispatched when orchestrator crashes).
         db.WorkItems.Add(new WorkItemEntity
         {
             Id = Guid.TryParse(runId, out var parsed) ? parsed : Guid.NewGuid(),
@@ -321,7 +330,8 @@ public sealed class ActiveRunRehydrationTests : IDisposable
             Status = status,
             TaskType = taskType,
             AgentSelector = "",
-            CreatedAt = DateTimeOffset.UtcNow,
+            CreatedAt = createdAt,
+            DispatchedAt = createdAt,
             TimeoutSeconds = 1800,
             Payload = payload,
             AssignedAgentId = "agent-assigned"
