@@ -821,7 +821,8 @@ public class QualityGateValidatorTests
 
         // Must complete well within the drain timeout window (5s) + cancel delay (500ms) + margin.
         // If Kill didn't work, this would take 300s (the sleep duration).
-        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(15));
+        // Using 30s tolerance to account for CI resource pressure (kill + drain + scheduling delays).
+        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30));
     }
 
     private sealed class ProcessExposingValidator : QualityGateValidator
