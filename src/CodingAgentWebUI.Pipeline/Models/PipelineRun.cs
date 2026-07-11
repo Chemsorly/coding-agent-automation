@@ -293,6 +293,15 @@ public sealed class PipelineRun
     /// <summary>Discriminates implementation vs review runs.</summary>
     public PipelineRunType RunType { get; init; } = PipelineRunType.Implementation;
 
+    /// <summary>
+    /// Computes the <see cref="LabelTargetKind"/> from <see cref="RunType"/>.
+    /// Review runs target pull requests; all other run types target issues.
+    /// </summary>
+    // TODO: Add unit tests verifying all PipelineRunType values (Implementation, Review, DecompositionAnalysis, Decomposition) produce the expected LabelTargetKind.
+    public LabelTargetKind LabelTargetKind => RunType == PipelineRunType.Review
+        ? LabelTargetKind.PullRequest
+        : LabelTargetKind.Issue;
+
     /// <summary>PR branch name for review runs.</summary>
     public string? ReviewPrBranchName { get; init; }
 
