@@ -54,7 +54,7 @@ public class GitHubProviderResilienceTests
     }
 
     [Fact]
-    public async Task ExecuteWithResilienceAsync_AuthorizationException_RetriesAndFails()
+    public async Task ExecuteWithResilienceAsync_AuthorizationException_FailsImmediately()
     {
         var callCount = 0;
         var act = () => _provider.InvokeWithResilienceAsync<string>(async _ =>
@@ -64,7 +64,7 @@ public class GitHubProviderResilienceTests
         }, "TestOp", CancellationToken.None);
 
         await act.Should().ThrowAsync<AuthorizationException>();
-        callCount.Should().Be(4); // 1 initial + 3 retries (token propagation 401 is now retried)
+        callCount.Should().Be(1); // No retry
     }
 
     [Fact]

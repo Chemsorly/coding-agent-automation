@@ -190,12 +190,13 @@ public class KubernetesWorkDistributorTests : IDisposable
     }
 
     [Fact]
-    public async Task IsIssueDistributedAsync_CancelledItem_ReturnsFalse()
+    public async Task IsIssueDistributedAsync_CancelledItem_WithinCooldown_ReturnsTrue()
     {
         var request = CreateRequest("owner/repo#8", "provider-8");
         var result = await _distributor.DistributeAsync(request, CancellationToken.None);
         await _distributor.CancelJobAsync(result.WorkItemId!, CancellationToken.None);
 
+        // Cancelled items are user-initiated (no infrastructure FailureReason) — not blocked by cooldown
         var distributed = await _distributor.IsIssueDistributedAsync(
             "owner/repo#8", "provider-8", CancellationToken.None);
 

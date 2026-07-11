@@ -69,8 +69,7 @@ public static class WorkDistributionRegistration
             // Queue visibility: wraps in-memory JobDispatcherService
             services.AddSingleton<IPendingWorkQuery>(sp =>
                 new LegacyPendingWorkQuery(sp.GetRequiredService<JobDispatcherService>()));
-            // RunLifecycleManager (Legacy — no WorkItemTransitionService, no K8s cleanup)
-            services.AddSingleton<IJobCleanupStrategy>(new NoOpJobCleanup());
+            // RunLifecycleManager (Legacy — no WorkItemTransitionService)
             services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
                 sp.GetRequiredService<IOrchestratorRunService>(),
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
@@ -78,8 +77,7 @@ public static class WorkDistributionRegistration
                 sp.GetRequiredService<ILabelSwapper>(),
                 sp.GetRequiredService<JobDispatcherService>(),
                 Log.Logger,
-                workItemTransition: null,
-                jobCleanup: sp.GetRequiredService<IJobCleanupStrategy>()));
+                workItemTransition: null));
             Log.Information("WorkDistribution: Legacy mode (no database). Using JsonConfigurationStore + LegacyWorkDistributor");
             return services;
         }
@@ -146,8 +144,6 @@ public static class WorkDistributionRegistration
             Log.Logger));
 
         // ── IRunLifecycleManager (DB mode — coordinates in-memory + DB transitions) ──
-        // TODO: Use GetRequiredService<IJobCleanupStrategy>() instead of GetService to fail fast on
-        // misconfiguration (both K8s and SignalR modes always register an implementation).
         services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
@@ -156,7 +152,11 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<JobDispatcherService>(),
             Log.Logger,
             sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetService<IJobCleanupStrategy>()));
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetService<IKubernetesJobClient>(),
+            configuration.GetValue<string>("WorkDistribution:Namespace")
+                ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
+                ?? "default"));
 
         // ── PostgresConfigurationStore (replaces JsonConfigurationStore) ─────
         // Singleton: consumed by singleton services (LabelSwapper, DispatchResolutionService,
@@ -242,20 +242,20 @@ public static class WorkDistributionRegistration
         services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
 
         // Work distributor (singleton — uses IDbContextFactory for context-per-operation)
-        services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<KubernetesWorkDistributor>>()));
+        services.AddSingleton<IWorkDistributor>(sp =>
+        {
+            var reconciliationOptions = new ReconciliationServiceOptions();
+            configuration.GetSection("WorkDistribution:Reconciliation").Bind(reconciliationOptions);
+            var cooldown = TimeSpan.FromMinutes(reconciliationOptions.RecentTerminalCooldownMinutes);
+            return new KubernetesWorkDistributor(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<KubernetesWorkDistributor>>(),
+                cooldown);
+        });
 
         // Dispatch + Reconciliation (under leader election)
         services.AddSingleton<IKubernetesJobClient>(sp => new KubernetesJobClient(sp.GetRequiredService<IKubernetes>()));
-        services.AddSingleton<IJobCleanupStrategy>(sp => new KubernetesJobCleanup(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<IKubernetesJobClient>(),
-            configuration.GetValue<string>("WorkDistribution:Namespace")
-                ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
-                ?? "default",
-            Log.Logger));
         services.AddHostedService(sp => new DispatchService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<LeaderElectionService>(),
@@ -293,26 +293,30 @@ public static class WorkDistributionRegistration
 
     private static void RegisterSignalRMode(IServiceCollection services, IConfiguration configuration)
     {
-        // No K8s Jobs in SignalR mode — register no-op cleanup strategy
-        services.AddSingleton<IJobCleanupStrategy>(new NoOpJobCleanup());
-
         // Agent resolver (singleton — selects idle label-compatible agent for SignalR push)
         services.AddSingleton<ISignalRWorkDistributorAgentResolver>(sp => new SignalRWorkDistributorAgentResolver(
             sp.GetRequiredService<AgentRegistryService>(),
             sp.GetRequiredService<JobDispatcherService>()));
 
         // Work distributor (singleton — uses IDbContextFactory for context-per-operation)
-        services.AddSingleton<IWorkDistributor>(sp => new SignalRWorkDistributor(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<IAgentCommunication>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>(),
-            sp.GetService<Pipeline.Interfaces.IRunLifecycleManager>(),
-            sp.GetService<Pipeline.Interfaces.IAgentCancellationSender>()));
+        services.AddSingleton<IWorkDistributor>(sp =>
+        {
+            var reconciliationOptions = new ReconciliationServiceOptions();
+            configuration.GetSection("WorkDistribution:Reconciliation").Bind(reconciliationOptions);
+            var cooldown = TimeSpan.FromMinutes(reconciliationOptions.RecentTerminalCooldownMinutes);
+            return new SignalRWorkDistributor(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<IAgentCommunication>(),
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
+                sp.GetRequiredService<IOrchestratorRunService>(),
+                sp.GetRequiredService<IProjectStore>(),
+                sp.GetRequiredService<ILabelSwapper>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>(),
+                sp.GetService<Pipeline.Interfaces.IRunLifecycleManager>(),
+                sp.GetService<Pipeline.Interfaces.IAgentCancellationSender>(),
+                cooldown);
+        });
 
         // HeartbeatMonitorService remains registered (handled by AddOrchestrationServices)
         // Queue visibility: queries WorkItems table for Pending status

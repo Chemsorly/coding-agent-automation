@@ -22,6 +22,14 @@ public class WorkItemEntity
     public string AgentSelector { get; set; } = "";
 
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>
+    /// Tracks the original time an issue first entered the queue.
+    /// Carried forward across re-dispatch cycles so the UI shows true wait time.
+    /// Null for legacy items created before this column existed — callers use <c>OriginalEnqueuedAt ?? CreatedAt</c>.
+    /// </summary>
+    public DateTimeOffset? OriginalEnqueuedAt { get; set; }
+
     public DateTimeOffset? DispatchedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public string? K8sJobName { get; set; }

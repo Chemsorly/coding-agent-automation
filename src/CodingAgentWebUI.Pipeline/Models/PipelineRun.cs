@@ -402,9 +402,6 @@ public sealed class PipelineRun
         Feedback = Feedback,
         TotalTokens = TotalTokens,
         TotalCost = TotalCost,
-        PhaseBreakdown = Metrics.PhaseBreakdown.Count > 0
-            ? Metrics.PhaseBreakdown.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
-            : null,
         DecompositionSubIssuesCreated = DecompositionSubIssuesCreated,
         DecompositionSubIssuesAttempted = DecompositionSubIssuesAttempted,
         ProjectName = ProjectName,

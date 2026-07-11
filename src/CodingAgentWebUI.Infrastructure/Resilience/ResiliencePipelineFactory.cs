@@ -56,7 +56,6 @@ public static class ResiliencePipelineFactory
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
                     .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException)
-                    .Handle<Octokit.AuthorizationException>()
                     .Handle<ApiException>(ex => IsRetryableApiException(ex))
                     .Handle<Octokit.RateLimitExceededException>()
                     .Handle<AbuseException>(),
@@ -88,7 +87,6 @@ public static class ResiliencePipelineFactory
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
                     .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException)
-                    .Handle<Octokit.AuthorizationException>()
                     .Handle<ApiException>(ex => IsRetryableApiException(ex))
                     .Handle<Octokit.NotFoundException>(ex =>
                         ex.Message.Contains("BlobNotFound", StringComparison.OrdinalIgnoreCase))

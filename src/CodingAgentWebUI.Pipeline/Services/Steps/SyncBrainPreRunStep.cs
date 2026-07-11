@@ -20,8 +20,6 @@ public sealed class SyncBrainPreRunStep : IPipelineStep
 
         if (context.BrainProvider is null || context.BrainSync is null)
         {
-            context.Logger.Information("SyncBrainPreRun skipped: BrainProvider={HasBrain}, BrainSync={HasSync}",
-                context.BrainProvider is not null, context.BrainSync is not null);
             activity?.SetTag("pipeline.brain_sync.skipped", true);
             return StepResult.Continue;
         }

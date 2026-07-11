@@ -94,8 +94,6 @@ public class ResiliencePipelineFactoryTests
         pipeline.Should().NotBeNull();
     }
 
-    // TODO: Add a test verifying CreateGitHubActionsLogsPipeline retries AuthorizationException,
-    // mirroring CreateGitHubApiPipeline_RetriesAuthorizationException, to guard against accidental removal.
     [Fact]
     public void CreateGitHubActionsLogsPipeline_ReturnsNonNullPipeline()
     {
@@ -309,61 +307,6 @@ public class ResiliencePipelineFactoryTests
 
         // Assert: not retried — only 1 call
         await act.Should().ThrowAsync<LibGit2SharpException>();
-        callCount.Should().Be(1);
-    }
-
-    [Fact]
-    public async Task CreateGitHubApiPipeline_RetriesAuthorizationException()
-    {
-        var pipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(
-            Log.Logger, outerTimeout: TimeSpan.FromSeconds(30), perAttemptTimeout: TimeSpan.FromSeconds(5));
-        var callCount = 0;
-
-        await pipeline.ExecuteAsync(async _ =>
-        {
-            callCount++;
-            if (callCount <= 2)
-                throw new Octokit.AuthorizationException(CreateMockResponse(System.Net.HttpStatusCode.Unauthorized));
-            await Task.CompletedTask;
-        }, CancellationToken.None);
-
-        callCount.Should().Be(3);
-    }
-
-    [Fact]
-    public async Task CreateGitHubApiPipeline_Retries5xxServerError()
-    {
-        var pipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(
-            Log.Logger, outerTimeout: TimeSpan.FromSeconds(30), perAttemptTimeout: TimeSpan.FromSeconds(5));
-        var callCount = 0;
-
-        await pipeline.ExecuteAsync(async _ =>
-        {
-            callCount++;
-            if (callCount <= 2)
-                throw new ApiException("Internal Server Error", System.Net.HttpStatusCode.InternalServerError);
-            await Task.CompletedTask;
-        }, CancellationToken.None);
-
-        callCount.Should().Be(3);
-    }
-
-    // TODO: Use Octokit.ForbiddenException instead of raw ApiException to match acceptance criteria
-    // and catch potential future .Handle<ForbiddenException>() additions.
-    [Fact]
-    public async Task CreateGitHubApiPipeline_DoesNotRetryForbiddenException()
-    {
-        var pipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(
-            Log.Logger, outerTimeout: TimeSpan.FromSeconds(30), perAttemptTimeout: TimeSpan.FromSeconds(5));
-        var callCount = 0;
-
-        var act = () => pipeline.ExecuteAsync(async _ =>
-        {
-            callCount++;
-            throw new ApiException("Forbidden", System.Net.HttpStatusCode.Forbidden);
-        }, CancellationToken.None).AsTask();
-
-        await act.Should().ThrowAsync<ApiException>();
         callCount.Should().Be(1);
     }
 

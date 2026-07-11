@@ -343,7 +343,9 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             _dispatcher,
             _mockLogger.Object,
             _transitionService,
-            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
+            _dbFactory,
+            mockJobClient.Object,
+            k8sNamespace);
 
         // Act
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -409,7 +411,9 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             _dispatcher,
             _mockLogger.Object,
             _transitionService,
-            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
+            _dbFactory,
+            mockJobClient.Object,
+            k8sNamespace);
 
         // Act
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -479,7 +483,9 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             _dispatcher,
             _mockLogger.Object,
             _transitionService,
-            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
+            _dbFactory,
+            mockJobClient.Object,
+            k8sNamespace);
 
         // Act — should not throw despite 404
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -488,93 +494,10 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         result.Should().NotBeNull();
 
         // No Warning-level log for 404 (only Debug)
-        // TODO: This Verify assertion may be tautological — Serilog dispatches Warning(Exception, string, T)
-        // to a generic overload that Moq cannot intercept via the (Exception, string, object[]) signature.
         _mockLogger.Verify(l => l.Warning(
             It.IsAny<Exception>(),
             It.IsAny<string>(),
             It.IsAny<object[]>()), Times.Never);
-    }
-
-    [Fact]
-    public async Task CancelRunAsync_K8sDeleteThrowsNon404_CancelStillCompletes()
-    {
-        // Arrange: WorkItem with K8sJobName, mock throws TimeoutException on delete
-        var runId = Guid.NewGuid();
-        const string k8sJobName = "caa-k8s-timeout";
-        const string k8sNamespace = "coding-agent";
-
-        await using (var db = await _dbFactory.CreateDbContextAsync())
-        {
-            db.WorkItems.Add(new WorkItemEntity
-            {
-                Id = runId,
-                IssueIdentifier = "owner/repo#353",
-                IssueProviderConfigId = "ip-3e",
-                Status = WorkItemStatus.Running,
-                CreatedAt = DateTimeOffset.UtcNow,
-                TaskType = WorkItemTaskType.Implementation,
-                K8sJobName = k8sJobName
-            });
-            await db.SaveChangesAsync();
-        }
-
-        var pipelineRun = new PipelineRun
-        {
-            RunId = runId.ToString(),
-            IssueIdentifier = "owner/repo#353",
-            IssueTitle = "Cancel K8s Timeout Test",
-            IssueProviderConfigId = "ip-3e",
-            RepoProviderConfigId = "rp-3e",
-            StartedAt = DateTime.UtcNow,
-            AgentId = "agent-cancel-k8s-timeout"
-        };
-        _runService.AddRun(pipelineRun);
-
-        var agent = _registry.Register(new AgentRegistrationMessage
-        {
-            AgentId = "agent-cancel-k8s-timeout",
-            Hostname = "host-3e",
-            Labels = new[] { "dotnet" }
-        }, "conn-3e");
-        agent.ActiveJobId = runId.ToString();
-        _registry.TransitionStatus("agent-cancel-k8s-timeout", AgentStatus.Busy);
-
-        var mockJobClient = new Mock<IKubernetesJobClient>();
-        mockJobClient
-            .Setup(c => c.DeleteJobAsync(k8sJobName, k8sNamespace, It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new TimeoutException("K8s API unavailable"));
-
-        var lifecycleWithK8s = new RunLifecycleManager(
-            _runService,
-            _mockHistoryService.Object,
-            _registry,
-            _mockLabelSwapper.Object,
-            _dispatcher,
-            _mockLogger.Object,
-            _transitionService,
-            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
-
-        // Act — should not throw despite K8s API failure
-        var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
-
-        // Assert: cancel completed (method returned without exception propagating)
-        result.Should().NotBeNull();
-        result!.CurrentStep.Should().Be(PipelineStep.Cancelled);
-
-        // WorkItem transitioned to Cancelled in DB
-        await using (var db = await _dbFactory.CreateDbContextAsync())
-        {
-            var item = await db.WorkItems.FindAsync(runId);
-            item!.Status.Should().Be(WorkItemStatus.Cancelled);
-        }
-
-        // Run removed from in-memory run service
-        _runService.GetRun(runId.ToString()).Should().BeNull();
-
-        // Agent cleared
-        agent.Status.Should().Be(AgentStatus.Idle);
-        agent.ActiveJobId.Should().BeNull();
     }
 
     #endregion

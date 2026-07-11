@@ -64,12 +64,6 @@ public interface IWorkDistributor
     Task<HashSet<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct);
 
     /// <summary>
-    /// Whether this distributor requires at least one connected agent before dispatch can proceed.
-    /// True for in-memory distributors (Legacy), false for DB-backed distributors.
-    /// </summary>
-    bool RequiresConnectedAgents => false;
-
-    /// <summary>
     /// Detects and transitions work items stuck in non-terminal states beyond expected thresholds.
     /// In SignalR mode: items stuck in Dispatched > 5 minutes are transitioned to Failed.
     /// In Kubernetes mode: handled by ReconciliationService instead (no-op here).

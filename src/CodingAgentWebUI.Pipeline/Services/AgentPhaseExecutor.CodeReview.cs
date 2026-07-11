@@ -137,6 +137,16 @@ public partial class AgentPhaseExecutor
         var useParallel = agents.Count > 1
                           && context.AgentProvider.SupportsParallelExecution;
 
+        // Launch acceptance criteria compliance check in parallel with code reviewers.
+        // On the first iteration this runs concurrently; results are awaited inside the loop
+        // and non-compliant criteria are injected as CRITICAL findings into the fix prompt.
+        Task<AgentResult?> acceptanceCriteriaTask = Task.FromResult<AgentResult?>(null);
+        var acceptanceCriteriaConsumed = false;
+        if (config.AcceptanceCriteriaEnabled)
+        {
+            acceptanceCriteriaTask = ExecuteAcceptanceCriteriaSafeAsync(context, ct);
+        }
+
         if (useParallel)
         {
             _logger.Information(
@@ -144,152 +154,177 @@ public partial class AgentPhaseExecutor
                 run.RunId, agents.Count, context.AgentProvider.ProviderType);
         }
 
-        for (var i = 0; i < maxIterations; i++)
+        AgentResult? acAgentResult = null;
+        try
         {
-            using var iterationActivity = PipelineTelemetry.ActivitySource.StartActivity("CodeReview.Iteration");
-            iterationActivity?.SetTag("pipeline.run_id", run.RunId);
-            iterationActivity?.SetTag("pipeline.issue", run.IssueIdentifier);
-            iterationActivity?.SetTag("code_review.iteration", i + 1);
-            iterationActivity?.SetTag("code_review.max_iterations", maxIterations);
-            iterationActivity?.SetTag("code_review.parallel", useParallel);
-
-            run.CodeReviewIterationInProgress = i + 1;
-            context.Callbacks.TransitionTo(PipelineStep.ReviewingCode);
-            _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
-                run.RunId, i + 1, maxIterations);
-
-            context.Callbacks.EmitOutputLine(useParallel
-                ? $"🔍 Starting code review iteration {i + 1}/{maxIterations} — parallel (agents: {string.Join(", ", agents.Select(a => a.Name))})"
-                : $"🔍 Starting code review iteration {i + 1}/{maxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
-
-            run.ChatHistory.Enqueue(new ChatEntry
+            for (var i = 0; i < maxIterations; i++)
             {
-                Role = ChatRole.System,
-                Content = $"Code review iteration {i + 1}/{config.CodeReview.MaxIterations} starting{(useParallel ? " (parallel)" : "")}..."
-            });
-            context.Callbacks.NotifyChange();
+                using var iterationActivity = PipelineTelemetry.ActivitySource.StartActivity("CodeReview.Iteration");
+                iterationActivity?.SetTag("pipeline.run_id", run.RunId);
+                iterationActivity?.SetTag("pipeline.issue", run.IssueIdentifier);
+                iterationActivity?.SetTag("code_review.iteration", i + 1);
+                iterationActivity?.SetTag("code_review.max_iterations", maxIterations);
+                iterationActivity?.SetTag("code_review.parallel", useParallel);
 
-            var iterationFindings = new System.Text.StringBuilder();
-            var iterationCriticalCount = 0;
-            var agentsRun = new List<string>();
+                run.CodeReviewIterationInProgress = i + 1;
+                context.Callbacks.TransitionTo(PipelineStep.ReviewingCode);
+                _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
+                    run.RunId, i + 1, maxIterations);
 
-            try
-            {
-                if (useParallel)
-                {
-                    iterationCriticalCount = await ExecuteReviewAgentsParallelAsync(
-                        context, agents, i,
-                        iterationFindings, agentsRun, ct);
-                }
-                else
-                {
-                    iterationCriticalCount = await ExecuteReviewAgentsSequentialAsync(
-                        context, agents, i,
-                        iterationFindings, agentsRun, ct);
-                }
+                context.Callbacks.EmitOutputLine(useParallel
+                    ? $"🔍 Starting code review iteration {i + 1}/{maxIterations} — parallel (agents: {string.Join(", ", agents.Select(a => a.Name))})"
+                    : $"🔍 Starting code review iteration {i + 1}/{maxIterations} (agents: {string.Join(", ", agents.Select(a => a.Name))})");
 
-                run.CodeReviewAgentsRun = agentsRun;
-                var iterationFindingsText = iterationFindings.ToString();
-                run.CodeReviewIterationsCompleted++;
-
-                // Run acceptance criteria check on every iteration so the report reflects current code state
-                if (config.AcceptanceCriteriaEnabled)
-                {
-                    var acResult = await ExecuteAcceptanceCriteriaSafeAsync(context, ct);
-                    if (acResult is not null)
-                    {
-                        run.AccumulateTokenUsage(acResult, phase: "acceptance_criteria");
-                        // TODO: If ParseAsync returns null (e.g., corrupt JSON), this overwrites a valid report from iteration N-1.
-                        // Consider: run.AcceptanceCriteriaReport = parsedReport ?? run.AcceptanceCriteriaReport;
-                        run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
-                            run.WorkspacePath!, _logger, ct);
-
-                        // Inject non-compliant criteria as CRITICAL findings so the fix agent addresses them
-                        if (run.AcceptanceCriteriaReport is { Criteria.Count: > 0 })
-                        {
-                            var nonCompliant = run.AcceptanceCriteriaReport.Criteria
-                                .Where(c => c.Status == CriterionStatus.NonCompliant)
-                                .ToList();
-
-                            if (nonCompliant.Count > 0)
-                            {
-                                _logger.Information(
-                                    "Pipeline {RunId} injecting {Count} non-compliant acceptance criteria as CRITICAL findings",
-                                    run.RunId, nonCompliant.Count);
-                                context.Callbacks.EmitOutputLine($"📋 Acceptance criteria: {nonCompliant.Count} non-compliant → injected as CRITICAL");
-
-                                if (iterationFindings.Length > 0)
-                                    iterationFindings.AppendLine("--- Agent: AcceptanceCriteria ---");
-
-                                foreach (var criterion in nonCompliant)
-                                {
-                                    var reasoning = criterion.Reasoning ?? "No reasoning provided";
-                                    iterationFindings.AppendLine($"[CRITICAL] — Acceptance criterion not met: \"{criterion.Criterion}\". {reasoning}");
-                                    iterationCriticalCount++;
-                                }
-
-                                run.AddCodeReviewCounts(nonCompliant.Count, 0, 0);
-                                iterationFindingsText = iterationFindings.ToString();
-                            }
-                        }
-                    }
-                }
-
-                // NOTE: [UX-16] CodeReview*Count fields are cumulative across iterations — per-iteration counters deferred to separate issue
-                context.Callbacks.EmitOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
-
-                if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && iterationCriticalCount > 0)
-                {
-                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
-                        run.RunId, i + 1, iterationCriticalCount, agents.Count);
-                    context.Callbacks.EmitOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
-
-                    await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
-                        $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes", ct);
-                }
-                else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && !string.IsNullOrEmpty(iterationFindingsText))
-                {
-                    // No critical findings but warnings/suggestions exist — send fix prompt then exit.
-                    // Warnings are actionable (TODO comments per fixPrompt instructions) but don't
-                    // warrant another full review cycle since no code logic changes.
-                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings but warnings present, sending fix prompt then exiting review loop",
-                        run.RunId, i + 1);
-                    context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
-
-                    await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
-                        $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", ct);
-                    break;
-                }
-                else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt))
-                {
-                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no findings, exiting review loop",
-                        run.RunId, i + 1);
-
-                    // Early exit: no findings at all — re-reviewing won't produce different results.
-                    break;
-                }
-            }
-            catch (OperationCanceledException) when (context.OrchestratorCts?.IsCancellationRequested == true)
-            {
-                run.CodeReviewAgentsRun = agentsRun;
-                throw;
-            }
-            catch (Exception ex)
-            {
-                run.CodeReviewAgentsRun = agentsRun;
-                _logger.Warning(ex, "Pipeline {RunId} code review iteration {Iteration} failed, skipping remaining reviews",
-                    run.RunId, i + 1);
                 run.ChatHistory.Enqueue(new ChatEntry
                 {
                     Role = ChatRole.System,
-                    Content = $"Code review iteration {i + 1} failed: {ex.Message}"
+                    Content = $"Code review iteration {i + 1}/{config.CodeReview.MaxIterations} starting{(useParallel ? " (parallel)" : "")}..."
                 });
                 context.Callbacks.NotifyChange();
-                break;
+
+                var iterationFindings = new System.Text.StringBuilder();
+                var iterationCriticalCount = 0;
+                var agentsRun = new List<string>();
+
+                try
+                {
+                    if (useParallel)
+                    {
+                        iterationCriticalCount = await ExecuteReviewAgentsParallelAsync(
+                            context, agents, i,
+                            iterationFindings, agentsRun, ct);
+                    }
+                    else
+                    {
+                        iterationCriticalCount = await ExecuteReviewAgentsSequentialAsync(
+                            context, agents, i,
+                            iterationFindings, agentsRun, ct);
+                    }
+
+                    run.CodeReviewAgentsRun = agentsRun;
+                    var iterationFindingsText = iterationFindings.ToString();
+                    run.CodeReviewIterationsCompleted++;
+
+                    // Await acceptance criteria results (first iteration only — AC doesn't need re-running after fixes)
+                    if (!acceptanceCriteriaConsumed && config.AcceptanceCriteriaEnabled)
+                    {
+                        var acResult = await acceptanceCriteriaTask;
+                        acceptanceCriteriaConsumed = true;
+
+                        if (acResult is not null)
+                        {
+                            run.AccumulateTokenUsage(acResult, phase: "acceptance_criteria");
+                            run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
+                                run.WorkspacePath!, _logger, ct);
+
+                            // Inject non-compliant criteria as CRITICAL findings so the fix agent addresses them
+                            if (run.AcceptanceCriteriaReport is { Criteria.Count: > 0 })
+                            {
+                                var nonCompliant = run.AcceptanceCriteriaReport.Criteria
+                                    .Where(c => c.Status == CriterionStatus.NonCompliant)
+                                    .ToList();
+
+                                if (nonCompliant.Count > 0)
+                                {
+                                    _logger.Information(
+                                        "Pipeline {RunId} injecting {Count} non-compliant acceptance criteria as CRITICAL findings",
+                                        run.RunId, nonCompliant.Count);
+                                    context.Callbacks.EmitOutputLine($"📋 Acceptance criteria: {nonCompliant.Count} non-compliant → injected as CRITICAL");
+
+                                    if (iterationFindings.Length > 0)
+                                        iterationFindings.AppendLine("--- Agent: AcceptanceCriteria ---");
+
+                                    foreach (var criterion in nonCompliant)
+                                    {
+                                        var reasoning = criterion.Reasoning ?? "No reasoning provided";
+                                        iterationFindings.AppendLine($"[CRITICAL] — Acceptance criterion not met: \"{criterion.Criterion}\". {reasoning}");
+                                        iterationCriticalCount++;
+                                    }
+
+                                    run.AddCodeReviewCounts(nonCompliant.Count, 0, 0);
+                                    iterationFindingsText = iterationFindings.ToString();
+                                }
+                            }
+                        }
+                    }
+
+                    // NOTE: [UX-16] CodeReview*Count fields are cumulative across iterations — per-iteration counters deferred to separate issue
+                    context.Callbacks.EmitOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
+
+                    if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && iterationCriticalCount > 0)
+                    {
+                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
+                            run.RunId, i + 1, iterationCriticalCount, agents.Count);
+                        context.Callbacks.EmitOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
+
+                        await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
+                            $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes", ct);
+                    }
+                    else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && !string.IsNullOrEmpty(iterationFindingsText))
+                    {
+                        // No critical findings but warnings/suggestions exist — send fix prompt then exit.
+                        // Warnings are actionable (TODO comments per fixPrompt instructions) but don't
+                        // warrant another full review cycle since no code logic changes.
+                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings but warnings present, sending fix prompt then exiting review loop",
+                            run.RunId, i + 1);
+                        context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
+
+                        await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
+                            $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", ct);
+                        break;
+                    }
+                    else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt))
+                    {
+                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no findings, exiting review loop",
+                            run.RunId, i + 1);
+
+                        // Early exit: no findings at all — re-reviewing won't produce different results.
+                        break;
+                    }
+                }
+                catch (OperationCanceledException) when (context.OrchestratorCts?.IsCancellationRequested == true)
+                {
+                    run.CodeReviewAgentsRun = agentsRun;
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    run.CodeReviewAgentsRun = agentsRun;
+                    _logger.Warning(ex, "Pipeline {RunId} code review iteration {Iteration} failed, skipping remaining reviews",
+                        run.RunId, i + 1);
+                    run.ChatHistory.Enqueue(new ChatEntry
+                    {
+                        Role = ChatRole.System,
+                        Content = $"Code review iteration {i + 1} failed: {ex.Message}"
+                    });
+                    context.Callbacks.NotifyChange();
+                    break;
+                }
+            }
+
+            run.CodeReviewIterationInProgress = 0;
+
+            // Await acceptance criteria task if it wasn't consumed inside the loop
+            // (e.g., loop exited on first iteration with no findings before AC completed)
+            if (!acceptanceCriteriaConsumed && config.AcceptanceCriteriaEnabled)
+            {
+                acAgentResult = await acceptanceCriteriaTask;
             }
         }
+        finally
+        {
+            // Ensure the task is observed even if the loop threw (e.g., OperationCanceledException).
+            // Awaiting an already-completed task is a no-op.
+            try { await acceptanceCriteriaTask.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+        }
 
-        run.CodeReviewIterationInProgress = 0;
+        if (!acceptanceCriteriaConsumed && acAgentResult is not null)
+        {
+            run.AccumulateTokenUsage(acAgentResult, phase: "acceptance_criteria");
+            run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
+                run.WorkspacePath!, _logger, ct);
+        }
     }
 
     /// <summary>

@@ -287,8 +287,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     {
                         // Orchestrator restarted — in-memory PipelineRun was lost.
                         // Re-create it from the serialized request payload.
-                        var recreatedRun = PipelineRunFactory.FromDistributionRequest(
-                            request, agentId, startedAt: item.DispatchedAt ?? item.CreatedAt);
+                        var recreatedRun = PipelineRunFactory.FromDistributionRequest(request, agentId);
                         _runService.AddRun(recreatedRun);
                         _logger.LogInformation(
                             "PendingWorkItemDrainService: re-created in-memory PipelineRun {RunId} for issue {IssueIdentifier} (orchestrator restart recovery)",

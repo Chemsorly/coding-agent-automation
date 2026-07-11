@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using CodingAgentWebUI.Agent.KiroCli;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline;
@@ -99,14 +100,18 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(outputBatcher);
 
-        // TODO: Duration metric inflation — using-declaration causes Dispose() to run AFTER the finally block's
-        // provider disposal, so JobDuration now includes provider cleanup time. Consider stopping the stopwatch
-        // explicitly before provider disposal or moving instrumentation inside a narrower scope.
-        using var instrumentation = PipelineRunInstrumentation.Start(
-            job.JobId, job.IssueIdentifier, job.RunType, job.ProjectId, job.ProjectName,
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity(
+            "ExecutePipeline",
             ActivityKind.Consumer,
             PipelineTelemetry.ExtractTraceContext(job.TraceContext));
-        instrumentation.Activity?.SetTag("pipeline.agent_id", _agentIdentity.Id);
+        activity?.SetTag("pipeline.run_id", job.JobId);
+        activity?.SetTag("pipeline.issue", job.IssueIdentifier);
+        activity?.SetTag("pipeline.agent_id", _agentIdentity.Id);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var tags = PipelineTelemetry.BuildTags(job.RunType, job.ProjectId, job.ProjectName);
+        PipelineTelemetry.SetProjectTags(activity, job.ProjectId, job.ProjectName);
+        PipelineTelemetry.JobsDispatched.Add(1, tags);
 
         var config = job.PipelineConfiguration;
         var issueOps = new OrchestratorProxy(connection, job.JobId);
@@ -157,24 +162,36 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
                 issueOps, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
 
-            if (result.FinalStep == PipelineStep.Completed)
-                instrumentation.MarkCompleted();
-
-            instrumentation.Activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
+            activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
             // TODO: Add test that verifies cancelled runs set pipeline.cancelled tag with Unset status (no Error)
             if (result.FinalStep == PipelineStep.Cancelled)
-                instrumentation.Activity?.SetTag("pipeline.cancelled", true);
+                activity?.SetTag("pipeline.cancelled", true);
             else if (result.FinalStep != PipelineStep.Completed)
-                instrumentation.Activity?.SetStatus(ActivityStatusCode.Error, result.FinalStep.ToString());
+                activity?.SetStatus(ActivityStatusCode.Error, result.FinalStep.ToString());
             return result;
         }
         catch (Exception ex)
         {
-            instrumentation.Activity?.RecordError(ex, ct);
+            activity?.RecordError(ex, ct);
             throw;
         }
         finally
         {
+            sw.Stop();
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            if (job.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+            {
+                var phase = job.RunType == PipelineRunType.DecompositionAnalysis ? "analysis" : "creation";
+                PipelineTelemetry.DecompositionDuration.Record(sw.Elapsed.TotalSeconds,
+                    PipelineTelemetry.ProjectIdTag(job.ProjectId),
+                    PipelineTelemetry.ProjectNameTag(job.ProjectName),
+                    new KeyValuePair<string, object?>("phase", phase));
+            }
+            if (result is null || result.FinalStep != PipelineStep.Completed)
+                PipelineTelemetry.JobsFailed.Add(1, tags);
+            else
+                PipelineTelemetry.JobsCompleted.Add(1, tags);
+
             await ProviderDisposer.DisposeAllAsync(repoProvider, agentProvider, brainProvider, pipelineProvider);
             if (additionalRepoProviders is not null)
                 await ProviderDisposer.DisposeAllAsync(additionalRepoProviders.Select(p => p.Provider as IAsyncDisposable));

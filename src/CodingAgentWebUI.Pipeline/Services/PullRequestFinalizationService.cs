@@ -168,8 +168,7 @@ public sealed class PullRequestFinalizationService
 
             run.AccumulateTokenUsage(result, phase: "pr_description");
 
-            var rawDescription = string.Join("\n", result.OutputLines).Trim();
-            var description = StripBlockquotePrefix(rawDescription);
+            var description = string.Join("\n", result.OutputLines).Trim();
             if (string.IsNullOrWhiteSpace(description))
             {
                 _logger.Warning("Pipeline {RunId} PR description generation returned empty output", run.RunId);
@@ -304,23 +303,5 @@ public sealed class PullRequestFinalizationService
             run.Feedback = feedbackService.CreateFallbackFeedback(FeedbackOutcome.Success,
                 $"Feedback collection failed: {ex.Message}", DateTime.UtcNow);
         }
-    }
-
-    /// <summary>
-    /// Strips leading blockquote prefix (<c>&gt; </c>) from each line.
-    /// Kiro CLI prefixes assistant response lines with <c>&gt;</c> on stdout.
-    /// Lines starting with "<c>&gt; </c>" have the prefix removed; bare "<c>&gt;</c>" lines become empty strings.
-    /// Mid-line <c>&gt;</c> characters (code, comparisons) are preserved.
-    /// </summary>
-    // TODO: text.Split('\n') does not handle \r\n (Windows/CRLF) line endings. If agent output contains \r\n,
-    // line == ">" would fail (it would be ">\r"). Consider using text.ReplaceLineEndings("\n").Split('\n') for robustness.
-    private static string StripBlockquotePrefix(string text)
-    {
-        var lines = text.Split('\n');
-        var stripped = lines.Select(line =>
-            line.StartsWith("> ") ? line[2..] :
-            line == ">" ? "" :
-            line);
-        return string.Join("\n", stripped).Trim();
     }
 }

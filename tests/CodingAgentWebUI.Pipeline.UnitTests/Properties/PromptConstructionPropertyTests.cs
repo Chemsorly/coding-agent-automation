@@ -318,29 +318,6 @@ public class PromptConstructionPropertyTests
     }
 
     /// <summary>
-    /// Default implementation prompt includes the bug-fix test-first instruction
-    /// scoped to bug fixes only, with imperative language.
-    /// </summary>
-    [Fact]
-    public void ImplementationPrompt_ContainsBugFixTestFirstInstruction()
-    {
-        DefaultImpl.Should().Contain("If the issue is a bug fix, write a failing test that reproduces the bug before implementing the fix.");
-        DefaultImpl.Should().Contain("2. **Test first (bug fixes)**");
-    }
-
-    /// <summary>
-    /// Default implementation prompt has consistent 4-step numbering after test-first addition.
-    /// </summary>
-    [Fact]
-    public void ImplementationPrompt_HasConsistentFourStepNumbering()
-    {
-        DefaultImpl.Should().Contain("1. **Understand**");
-        DefaultImpl.Should().Contain("2. **Test first (bug fixes)**");
-        DefaultImpl.Should().Contain("3. **Implement**");
-        DefaultImpl.Should().Contain("4. **Verify**");
-    }
-
-    /// <summary>
     /// Prompts reference brain context file when brainContextWritten is true.
     /// </summary>
     [Fact]

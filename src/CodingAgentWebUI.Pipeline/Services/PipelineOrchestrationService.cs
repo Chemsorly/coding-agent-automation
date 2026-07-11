@@ -187,8 +187,14 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
     {
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
-        using var instrumentation = PipelineRunInstrumentation.Start(
-            run.RunId, run.IssueIdentifier, run.RunType, run.ProjectId, run.ProjectName);
+        using var activity = PipelineTelemetry.ActivitySource.StartActivity("ExecutePipeline");
+        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag("pipeline.issue", run.IssueIdentifier);
+        PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var tags = PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName);
+        PipelineTelemetry.JobsDispatched.Add(1, tags);
 
         IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
         Steps.PipelineStepContext? ctx = null;
@@ -217,15 +223,22 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             await Steps.PipelineStepRunner.ExecuteAsync(BuildStepPipeline(), ctx, ct);
 
+            sw.Stop();
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
             if (run.CurrentStep == PipelineStep.Completed)
-                instrumentation.MarkCompleted();
+                PipelineTelemetry.JobsCompleted.Add(1, tags);
+            else
+                PipelineTelemetry.JobsFailed.Add(1, tags);
 
-            instrumentation.Activity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
+            activity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
         }
         catch (OperationCanceledException)
         {
-            instrumentation.Activity?.SetTag("pipeline.cancelled", true);
-            instrumentation.Activity?.SetTag("pipeline.final_step", "Cancelled");
+            sw.Stop();
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            PipelineTelemetry.JobsFailed.Add(1, tags);
+            activity?.SetTag("pipeline.cancelled", true);
+            activity?.SetTag("pipeline.final_step", "Cancelled");
 
             if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
             {
@@ -239,8 +252,11 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         }
         catch (Exception ex)
         {
-            instrumentation.Activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            instrumentation.Activity?.AddException(ex);
+            sw.Stop();
+            PipelineTelemetry.JobDuration.Record(sw.Elapsed.TotalSeconds, tags);
+            PipelineTelemetry.JobsFailed.Add(1, tags);
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.AddException(ex);
             throw;
         }
     }

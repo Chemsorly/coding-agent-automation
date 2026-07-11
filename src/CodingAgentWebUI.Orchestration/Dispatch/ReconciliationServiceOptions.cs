@@ -28,4 +28,11 @@ public sealed class ReconciliationServiceOptions
     /// Duration in seconds after Dispatched before warning about pod not Ready. Default: 60.
     /// </summary>
     public int PodStartupWarningSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// Cooldown period in minutes for recently-terminal work items.
+    /// Issues with WorkItems that reached terminal status within this window are treated as
+    /// still-distributed (preventing re-dispatch on pod restart). Default: 5.
+    /// </summary>
+    public int RecentTerminalCooldownMinutes { get; set; } = 5;
 }

@@ -93,8 +93,7 @@ internal sealed class AgentProviderResolver
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            _logger.Warning(ex, "Brain provider validation failed ({ExType}: {ExMessage}), disabling brain sync",
-                ex.GetType().Name, ex.Message);
+            _logger.Warning(ex, "Brain provider validation failed, disabling brain sync");
             if (brainProvider is not null) await brainProvider.DisposeAsync();
             return null;
         }

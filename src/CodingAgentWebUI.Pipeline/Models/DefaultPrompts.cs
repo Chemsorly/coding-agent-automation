@@ -206,9 +206,8 @@ public static class DefaultPrompts
         "Implement the following issue. Write the code — do not just analyze or plan.\n\n" +
         "Follow this approach:\n" +
         "1. **Understand** — Read the analysis and the issue. Explore relevant files before making changes.\n" +
-        "2. **Test first (bug fixes)** — If the issue is a bug fix, write a failing test that reproduces the bug before implementing the fix.\n" +
-        "3. **Implement** — Make focused, minimal changes. Fix root causes, not symptoms. Maintain the existing code style and conventions.\n" +
-        "4. **Verify** — Run the project's build, linter, and tests. If a command fails:\n" +
+        "2. **Implement** — Make focused, minimal changes. Fix root causes, not symptoms. Maintain the existing code style and conventions.\n" +
+        "3. **Verify** — Run the project's build, linter, and tests. If a command fails:\n" +
         "   a. Read the error output carefully\n" +
         "   b. Identify the root cause (not just the symptom)\n" +
         "   c. Determine what specific change caused the failure\n" +

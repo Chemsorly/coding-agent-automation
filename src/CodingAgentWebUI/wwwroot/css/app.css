@@ -1536,9 +1536,3 @@ select option { background: var(--surface); color: var(--text); }
 /* ═══ Freshness Indicator ═══ */
 .freshness-indicator { font-size: 0.8rem; color: var(--text-muted); }
 .freshness-indicator.freshness-warning { color: var(--warning); font-weight: 500; }
-
-/* ═══ Phase Breakdown (Run Detail Modal) ═══ */
-.phase-breakdown { margin-top: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); }
-.phase-breakdown-header { padding: 8px 14px; font-size: 0.82rem; font-weight: 600; color: var(--text-muted); cursor: pointer; user-select: none; }
-.phase-breakdown-header:hover { color: var(--text); }
-.phase-breakdown-body { padding: 0 14px 12px; }

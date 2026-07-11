@@ -21,8 +21,9 @@ public sealed class KubernetesWorkDistributor : DbWorkDistributorBase
     public KubernetesWorkDistributor(
         IDbContextFactory<PipelineDbContext> dbFactory,
         WorkItemTransitionService transitionService,
-        ILogger<KubernetesWorkDistributor> logger)
-        : base(dbFactory, transitionService, logger) { }
+        ILogger<KubernetesWorkDistributor> logger,
+        TimeSpan? recentTerminalCooldown = null)
+        : base(dbFactory, transitionService, logger, recentTerminalCooldown) { }
 
     /// <inheritdoc />
     public override async Task<DistributionResult> DistributeAsync(JobDistributionRequest request, CancellationToken ct)

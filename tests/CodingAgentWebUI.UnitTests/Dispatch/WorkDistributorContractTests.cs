@@ -228,12 +228,6 @@ public class SignalRWorkDistributorContractTests : WorkDistributorContractTests
 
     protected override IWorkDistributor CreateSut() => _sut;
 
-    [Fact]
-    public void RequiresConnectedAgents_ReturnsFalse()
-    {
-        _sut.RequiresConnectedAgents.Should().BeFalse();
-    }
-
     protected override void SetupForDistribution(JobDistributionRequest request)
     {
         // Mock agent resolution to return a valid agent
@@ -416,22 +410,6 @@ public class WorkDistributorAdditionalTests
         cancelled.Should().BeTrue();
         var status = await sut.GetJobStatusAsync(result.WorkItemId!, CancellationToken.None);
         status.Should().Be(JobDistributionStatus.Cancelled);
-    }
-
-    // ── RequiresConnectedAgents — Property Value Verification ───────────
-
-    [Fact]
-    public void LegacyWorkDistributor_RequiresConnectedAgents_ReturnsTrue()
-    {
-        var sut = CreateLegacy();
-        sut.RequiresConnectedAgents.Should().BeTrue();
-    }
-
-    [Fact]
-    public void KubernetesWorkDistributor_RequiresConnectedAgents_ReturnsFalse()
-    {
-        var sut = CreateKubernetes();
-        sut.RequiresConnectedAgents.Should().BeFalse();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
