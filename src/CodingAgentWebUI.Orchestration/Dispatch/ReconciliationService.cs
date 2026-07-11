@@ -30,7 +30,7 @@ public sealed class ReconciliationService : BackgroundService
     private const string WorkItemIdLabel = "caa/work-item-id";
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly LeaderElectionService _leaderElection;
+    private readonly ILeaderElectionService _leaderElection;
     private readonly IKubernetes _kubeClient;
     private readonly WorkItemTransitionService _transitionService;
     private readonly ILabelSwapper? _labelSwapper;
@@ -44,7 +44,7 @@ public sealed class ReconciliationService : BackgroundService
 
     public ReconciliationService(
         IDbContextFactory<PipelineDbContext> dbFactory,
-        LeaderElectionService leaderElection,
+        ILeaderElectionService leaderElection,
         IKubernetes kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration,

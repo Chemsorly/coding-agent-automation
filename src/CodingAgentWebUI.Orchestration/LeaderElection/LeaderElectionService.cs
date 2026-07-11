@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.Orchestration.LeaderElection;
 /// Exposes <see cref="IsLeader"/> property and <see cref="LeaderToken"/> which is cancelled
 /// when leadership is lost, allowing dependent services to stop gracefully.
 /// </summary>
-public sealed class LeaderElectionService : IHostedService, IDisposable
+public sealed class LeaderElectionService : ILeaderElectionService, IHostedService, IDisposable
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<LeaderElectionService>();
 
