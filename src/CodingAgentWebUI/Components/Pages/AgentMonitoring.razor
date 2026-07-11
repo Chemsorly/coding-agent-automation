@@ -225,6 +225,32 @@
                                 }
                             </div>
 
+                            @if (modalRun.Metrics.PhaseBreakdown.Count > 0)
+                            {
+                                <Collapsible CssClass="phase-breakdown" HeaderClass="phase-breakdown-header" BodyClass="phase-breakdown-body">
+                                    <Header>
+                                        <span>Cost Breakdown (@modalRun.Metrics.PhaseBreakdown.Count phases)</span>
+                                    </Header>
+                                    <ChildContent>
+                                        <table class="monitoring-table" style="margin-top: 6px;">
+                                            <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th></tr></thead>
+                                            <tbody>
+                                            @foreach (var phase in modalRun.Metrics.PhaseBreakdown
+                                                .OrderByDescending(p => p.Value.Cost ?? 0m)
+                                                .ThenByDescending(p => p.Value.Tokens))
+                                            {
+                                                <tr>
+                                                    <td>@PhaseNameFormatter.HumanizePhase(phase.Key)</td>
+                                                    <td>@CostFormatter.FormatTokens(phase.Value.Tokens)</td>
+                                                    <td>@CostFormatter.FormatCost(phase.Value.Cost)</td>
+                                                </tr>
+                                            }
+                                            </tbody>
+                                        </table>
+                                    </ChildContent>
+                                </Collapsible>
+                            }
+
                             @* ── Agent Info Section ── *@
                             <div class="modal-agent-section">
                                 <h4 style="font-size: 0.85rem; margin: 12px 0 6px;">Agent</h4>
@@ -711,6 +737,31 @@
                     @if (_selectedHistoryRun.TotalTokens > 0)
                     {
                         <div><strong>Tokens:</strong> @CostFormatter.FormatTokens(_selectedHistoryRun.TotalTokens)</div>
+                    }
+                    @if (_selectedHistoryRun.PhaseBreakdown is { Count: > 0 } historyPhases)
+                    {
+                        <Collapsible CssClass="phase-breakdown" HeaderClass="phase-breakdown-header" BodyClass="phase-breakdown-body">
+                            <Header>
+                                <span>Cost Breakdown (@historyPhases.Count phases)</span>
+                            </Header>
+                            <ChildContent>
+                                <table class="monitoring-table" style="margin-top: 6px;">
+                                    <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th></tr></thead>
+                                    <tbody>
+                                    @foreach (var phase in historyPhases
+                                        .OrderByDescending(p => p.Value.Cost ?? 0m)
+                                        .ThenByDescending(p => p.Value.Tokens))
+                                    {
+                                        <tr>
+                                            <td>@PhaseNameFormatter.HumanizePhase(phase.Key)</td>
+                                            <td>@CostFormatter.FormatTokens(phase.Value.Tokens)</td>
+                                            <td>@CostFormatter.FormatCost(phase.Value.Cost)</td>
+                                        </tr>
+                                    }
+                                    </tbody>
+                                </table>
+                            </ChildContent>
+                        </Collapsible>
                     }
                     @if (_selectedHistoryRun.ModelName != null)
                     {
