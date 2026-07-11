@@ -133,6 +133,39 @@ public sealed class PipelineRunFactoryTests
         run.AgentId.Should().BeNull();
     }
 
+    [Fact]
+    public void FromDistributionRequest_WithExplicitStartedAt_UsesProvidedTimestamp()
+    {
+        // Arrange
+        var request = CreateMinimalRequest("run-explicit-start");
+        var timestamp = new DateTimeOffset(2024, 6, 15, 8, 30, 0, TimeSpan.Zero);
+
+        // Act
+        var run = PipelineRunFactory.FromDistributionRequest(request, startedAt: timestamp);
+
+        // Assert
+        run.StartedAtOffset.Should().Be(timestamp);
+#pragma warning disable CS0618
+        run.StartedAt.Should().Be(timestamp.UtcDateTime);
+#pragma warning restore CS0618
+    }
+
+    [Fact]
+    public void FromDistributionRequest_WithoutStartedAt_DefaultsToApproximatelyUtcNow()
+    {
+        // Arrange
+        var request = CreateMinimalRequest("run-default-start");
+        var before = DateTimeOffset.UtcNow;
+
+        // Act
+        var run = PipelineRunFactory.FromDistributionRequest(request);
+
+        // Assert
+        var after = DateTimeOffset.UtcNow;
+        run.StartedAtOffset.Should().BeOnOrAfter(before);
+        run.StartedAtOffset.Should().BeOnOrBefore(after);
+    }
+
     private static JobDistributionRequest CreateMinimalRequest(string runId) => new()
     {
         IssueIdentifier = "owner/repo#1",
