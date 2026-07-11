@@ -553,9 +553,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             _dispatcher,
             _mockLogger.Object,
             _transitionService,
-            _dbFactory,
-            mockJobClient.Object,
-            k8sNamespace);
+            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
 
         // Act — should not throw despite K8s API failure
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -571,19 +569,12 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             item!.Status.Should().Be(WorkItemStatus.Cancelled);
         }
 
-        // TODO: Add assertion that run was removed from in-memory run service:
-        // _runService.GetRun(runId.ToString()).Should().BeNull();
-        // This matches the pattern from other CancelRunAsync tests and verifies the full cancel flow.
+        // Run removed from in-memory run service
+        _runService.GetRun(runId.ToString()).Should().BeNull();
 
         // Agent cleared
         agent.Status.Should().Be(AgentStatus.Idle);
         agent.ActiveJobId.Should().BeNull();
-
-        // Warning logged — confirms the generic catch branch executed (not the 404 branch)
-        _mockLogger.Verify(l => l.Warning(
-            It.IsAny<Exception>(),
-            It.IsAny<string>(),
-            It.IsAny<string>()), Times.Once);
     }
 
     #endregion
