@@ -289,7 +289,114 @@ public partial class AgentPhaseExecutor
             }
         }
 
+        // Generate review summary (non-fatal) — runs regardless of finding counts
+        await GenerateReviewSummaryAsync(context, ct);
+
         run.CodeReviewIterationInProgress = 0;
+    }
+
+    /// <summary>
+    /// Generates an AI summary of the review findings (change summary + verdict).
+    /// Non-fatal — if the agent fails, output is empty, or parsing fails, the fields remain null
+    /// and the pipeline continues with a warning log.
+    /// </summary>
+    private async Task GenerateReviewSummaryAsync(AgentPhaseContext context, CancellationToken ct)
+    {
+        var run = context.Run;
+        var config = context.Config;
+
+        try
+        {
+            _logger.Information("Pipeline {RunId} generating review summary", run.RunId);
+            context.Callbacks.EmitOutputLine("📝 Generating review summary...");
+
+            // Gather inputs: diff stat, issue title, concatenated findings
+            var diffStat = string.Empty;
+            if (run.WorkspacePath is not null)
+            {
+                var diffStatPath = Path.Combine(run.WorkspacePath, AgentWorkspacePaths.DiffStatFilePath);
+                if (File.Exists(diffStatPath))
+                {
+                    try
+                    {
+                        diffStat = await File.ReadAllTextAsync(diffStatPath, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        _logger.Debug("Pipeline {RunId} failed to read diff stat for summary: {Error}", run.RunId, ex.Message);
+                    }
+                }
+            }
+
+            // TODO: The first agent's findings are appended without a "--- Agent: {name} ---" header
+            // because the header is only added when findingsBuilder.Length > 0. This means the summary
+            // agent receives the first agent's findings unlabeled, reducing attribution quality in multi-agent reviews.
+            var findingsBuilder = new System.Text.StringBuilder();
+            foreach (var kvp in run.CodeReviewAgentFindings)
+            {
+                if (!string.IsNullOrEmpty(kvp.Value))
+                {
+                    if (findingsBuilder.Length > 0)
+                        findingsBuilder.AppendLine($"--- Agent: {kvp.Key} ---");
+                    findingsBuilder.AppendLine(kvp.Value);
+                }
+            }
+
+            var prompt = Prompts.PromptBuilder.BuildReviewSummaryPrompt(
+                run.IssueTitle,
+                diffStat,
+                findingsBuilder.ToString());
+
+            // TODO: run.WorkspacePath can be null (evidenced by the null check at line 318 for diffStat reading).
+            // If null, the null-forgiving operator below would pass null to AgentStallMonitor and throw NRE.
+            // The outer try/catch makes this non-fatal, but the NRE message won't indicate the root cause.
+            // Consider adding an explicit null guard with a descriptive warning log and early return.
+            var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                context.AgentProvider,
+                new AgentRequest
+                {
+                    Prompt = prompt,
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = config.AgentTimeout,
+                    UseResume = false
+                },
+                run, config, "Review summary generation",
+                context.Callbacks.NotifyChange, _logger, ct,
+                line => context.Callbacks.EmitOutputLine($"[Summary] {line}"));
+
+            run.AccumulateTokenUsage(agentResult, phase: "review_summary");
+
+            // Parse the output
+            var outputText = agentResult.OutputLines.Count > 0
+                ? string.Join(Environment.NewLine, agentResult.OutputLines)
+                : string.Empty;
+
+            var (changeSummary, verdictSummary) = ReviewSummaryParser.Parse(outputText);
+
+            if (changeSummary is null && verdictSummary is null)
+            {
+                _logger.Warning(
+                    "Pipeline {RunId} review summary agent produced no parseable output ({OutputLength} chars), skipping summary",
+                    run.RunId, outputText.Length);
+            }
+            else
+            {
+                run.CodeReviewChangeSummary = changeSummary;
+                run.CodeReviewVerdictSummary = verdictSummary;
+                _logger.Information(
+                    "Pipeline {RunId} review summary generated (changeSummary={HasChange}, verdict={HasVerdict})",
+                    run.RunId, changeSummary is not null, verdictSummary is not null);
+                context.Callbacks.EmitOutputLine("✅ Review summary generated");
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw; // Propagate cancellation
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} review summary generation failed (non-fatal), continuing without summary", run.RunId);
+        }
     }
 
     /// <summary>

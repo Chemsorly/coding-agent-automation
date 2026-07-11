@@ -17,6 +17,28 @@ internal static class ReviewFindingsFormatter
         sb.AppendLine("## 🤖 Automated Code Review");
         sb.AppendLine();
 
+        // Change summary (what the PR did)
+        // TODO: Apply TextSanitizer.SanitizeMarkdown() to AI-generated ChangeSummary before rendering.
+        // Agent output could contain @username mentions (triggering GitHub pings) or HTML tags.
+        // Other agent-produced content in this codebase (FeedbackCommentFormatter, PostDecompositionPlanStep)
+        // uses SanitizeMarkdown for this reason.
+        if (!string.IsNullOrEmpty(run.CodeReviewChangeSummary))
+        {
+            var truncated = ReviewSummaryParser.TruncateAtSentenceBoundary(run.CodeReviewChangeSummary) ?? run.CodeReviewChangeSummary;
+            sb.AppendLine($"**Changes**: {truncated}");
+            sb.AppendLine();
+        }
+
+        // Review verdict (synthesized assessment)
+        // TODO: Apply TextSanitizer.SanitizeMarkdown() to AI-generated VerdictSummary before rendering.
+        // Same risk as ChangeSummary above — unescaped @mentions or HTML in agent output.
+        if (!string.IsNullOrEmpty(run.CodeReviewVerdictSummary))
+        {
+            var truncated = ReviewSummaryParser.TruncateAtSentenceBoundary(run.CodeReviewVerdictSummary) ?? run.CodeReviewVerdictSummary;
+            sb.AppendLine($"**Review verdict**: {truncated}");
+            sb.AppendLine();
+        }
+
         if (run.CodeReviewAgentsRun.Count > 0)
             sb.AppendLine($"**Review Agents**: {string.Join(", ", run.CodeReviewAgentsRun)}");
         sb.AppendLine();

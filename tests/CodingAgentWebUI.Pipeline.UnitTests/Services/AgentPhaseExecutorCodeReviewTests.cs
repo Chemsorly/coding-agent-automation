@@ -161,8 +161,8 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
         await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
 
-        // Review agent + fix agent = 2 calls
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
+        // Review agent + fix agent + summary agent = 3 calls
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(3));
     }
 
     [Fact]
@@ -173,8 +173,8 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
         await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
 
-        // Review agent + fix prompt for warnings (no re-review since no criticals → early exit)
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
+        // Review agent + fix prompt for warnings (no re-review since no criticals → early exit) + summary agent = 3 calls
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(3));
     }
 
     [Fact]
@@ -187,9 +187,11 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
         await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
 
-        // Exception breaks the loop — only 1 attempt (the first iteration fails)
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Once);
+        // Exception breaks the loop — 1 attempt in the loop + 1 summary attempt (also throws, caught non-fatally) = 2
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
         _run.CodeReviewIterationsCompleted.Should().Be(0);
+        // TODO: Assert that _run.CodeReviewChangeSummary and _run.CodeReviewVerdictSummary remain null
+        // after the exception, to fully verify the non-fatal failure path per acceptance criteria.
     }
 
     [Fact]
@@ -343,8 +345,8 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         // TODO: Add _run.CodeReviewIterationsCompleted.Should().Be(2) to distinguish 2 iterations ran vs report being stale-compliant from a single iteration
         // TODO: Add _run.CodeReviewCriticalCount.Should().Be(2) to verify non-compliant criteria were injected as CRITICAL on iteration 1
 
-        // Assert: 5 agent calls total (review + AC + fix + review + AC)
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(5));
+        // Assert: 5 agent calls total (review + AC + fix + review + AC) + 1 summary = 6
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(6));
     }
 
     [Fact]
@@ -387,8 +389,8 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         _run.AcceptanceCriteriaReport!.Criteria.Should().HaveCount(2);
         _run.AcceptanceCriteriaReport.Criteria.Should().AllSatisfy(c => c.Status.Should().Be(CriterionStatus.Compliant));
 
-        // Assert: only 2 calls (review + AC), loop exits after single iteration (no findings)
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
+        // Assert: only 2 calls (review + AC), loop exits after single iteration (no findings) + 1 summary = 3
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(3));
         _run.CodeReviewIterationsCompleted.Should().Be(1);
     }
 
@@ -433,8 +435,8 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
         // TODO: Add assertion _run.AcceptanceCriteriaReport.Should().NotBeNull() to verify report is stored alongside CRITICAL injection
 
-        // Assert: fix prompt dispatched (review + AC + fix = 3 calls)
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(3));
+        // Assert: fix prompt dispatched (review + AC + fix = 3 calls) + 1 summary = 4
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(4));
     }
 
     [Fact]
@@ -481,9 +483,9 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
         // Act
         await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
 
-        // Assert: 5 calls × 150 tokens each = 750 total
-        _run.TotalTokens.Should().Be(750);
-        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(5));
+        // Assert: 5 calls × 150 tokens each + 1 summary call × 150 = 900 total
+        _run.TotalTokens.Should().Be(900);
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(6));
     }
 
     [Fact]

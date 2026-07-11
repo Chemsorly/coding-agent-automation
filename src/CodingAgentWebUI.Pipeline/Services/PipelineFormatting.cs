@@ -158,6 +158,17 @@ public static partial class PipelineFormatting
         sb.AppendLine("## AI Code Review Findings");
         sb.AppendLine();
 
+        // Render verdict before the no-findings early-return so zero-findings runs still show it
+        // TODO: Apply TextSanitizer.SanitizeMarkdown() to AI-generated VerdictSummary before rendering
+        // into the PR body. Agent output could contain @username mentions (triggering GitHub pings)
+        // or HTML tags. Other agent-produced content uses SanitizeMarkdown for this reason.
+        if (!string.IsNullOrEmpty(summary.VerdictSummary))
+        {
+            var truncated = ReviewSummaryParser.TruncateAtSentenceBoundary(summary.VerdictSummary) ?? summary.VerdictSummary;
+            sb.AppendLine($"**Review verdict**: {truncated}");
+            sb.AppendLine();
+        }
+
         if (summary.CriticalCount == 0 && summary.WarningCount == 0 && summary.SuggestionCount == 0
             && summary.AgentFindings.Count == 0)
         {

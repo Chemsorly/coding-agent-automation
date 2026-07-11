@@ -681,4 +681,37 @@ public static class PromptBuilder
 
         return sb.ToString().TrimEnd();
     }
+
+    /// <summary>
+    /// Builds the prompt for the review summary agent that synthesizes per-agent findings
+    /// into a change summary and review verdict.
+    /// </summary>
+    // TODO: Add ArgumentNullException.ThrowIfNull for issueTitle, diffStat, and findings parameters
+    // to match the validation pattern used by other public methods in this class (e.g., lines 31-33, 90-91).
+    // Currently null is handled gracefully via IsNullOrWhiteSpace checks, but the inconsistency could mask caller bugs.
+    public static string BuildReviewSummaryPrompt(string issueTitle, string diffStat, string findings)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("You are summarizing a code review. Read the findings below and produce two sections:");
+        sb.AppendLine();
+        sb.AppendLine("## Change Summary");
+        sb.AppendLine("In 2-3 sentences, describe what this PR does. Reference specific files/components affected.");
+        sb.AppendLine();
+        sb.AppendLine("## Review Verdict");
+        sb.AppendLine("In 1-2 sentences, summarize the review outcome. Name the 1-2 most impactful findings specifically (e.g., \"race condition in drain service's pre-reservation flow\", not \"some issues\"). Include severity count and disposition (fixed/reported/clean). If no findings exist, state that the implementation is clean.");
+        sb.AppendLine();
+        sb.AppendLine("Be specific about WHAT was found rather than generic. Maximum 3 sentences per section.");
+        sb.AppendLine("Output ONLY the two sections above with their ## headings — no other text, no file writes, no code changes.");
+        sb.AppendLine();
+        sb.AppendLine("--- DIFF STAT ---");
+        sb.AppendLine(string.IsNullOrWhiteSpace(diffStat) ? "(not available)" : diffStat);
+        sb.AppendLine();
+        sb.AppendLine("--- ISSUE CONTEXT ---");
+        sb.AppendLine(string.IsNullOrWhiteSpace(issueTitle) ? "(not available)" : issueTitle);
+        sb.AppendLine();
+        sb.AppendLine("--- FINDINGS ---");
+        sb.AppendLine(string.IsNullOrWhiteSpace(findings) ? "(no findings — clean review)" : findings);
+
+        return sb.ToString().TrimEnd();
+    }
 }

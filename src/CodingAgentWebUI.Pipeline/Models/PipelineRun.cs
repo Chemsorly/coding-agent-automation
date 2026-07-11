@@ -257,6 +257,12 @@ public sealed class PipelineRun
     /// <summary>Names of review agents that were executed during this run.</summary>
     public IReadOnlyList<string> CodeReviewAgentsRun { get; set; } = Array.Empty<string>();
 
+    /// <summary>AI-generated summary of what the PR changed (2-3 sentences), or null if not generated.</summary>
+    public string? CodeReviewChangeSummary { get; set; }
+
+    /// <summary>AI-generated review verdict synthesizing findings (1-2 sentences), or null if not generated.</summary>
+    public string? CodeReviewVerdictSummary { get; set; }
+
     /// <summary>Brain repository provider config ID, or null if no brain repo selected.</summary>
     public string? BrainProviderConfigId { get; init; }
 
