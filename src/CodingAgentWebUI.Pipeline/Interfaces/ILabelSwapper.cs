@@ -16,6 +16,15 @@ public interface ILabelSwapper
         LabelTargetKind targetKind, CancellationToken ct);
 
     /// <summary>
+    /// Swaps the agent label on an entity with transition validation.
+    /// If <paramref name="expectedCurrentLabel"/> is provided, validates the transition via
+    /// <see cref="LabelStateMachine"/> and logs a warning on invalid transitions (fail-open).
+    /// </summary>
+    Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel,
+        LabelTargetKind targetKind, string? expectedCurrentLabel, CancellationToken ct)
+        => SwapLabelAsync(providerConfigId, identifier, newLabel, targetKind, ct);
+
+    /// <summary>
     /// Ensures agent status labels exist for the given target kind.
     /// Routes to IIssueProvider.EnsureAgentLabelsAsync for Issues,
     /// or IRepositoryProvider.EnsureAgentLabelsForPullRequestsAsync for PRs.

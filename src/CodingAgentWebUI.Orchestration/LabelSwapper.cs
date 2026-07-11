@@ -38,9 +38,34 @@ public sealed class LabelSwapper : ILabelSwapper
         LabelTargetKind targetKind,
         CancellationToken ct)
     {
+        await SwapLabelAsync(providerConfigId, identifier, newLabel, targetKind, expectedCurrentLabel: null, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task SwapLabelAsync(
+        string providerConfigId,
+        string identifier,
+        string newLabel,
+        LabelTargetKind targetKind,
+        string? expectedCurrentLabel,
+        CancellationToken ct)
+    {
         ArgumentNullException.ThrowIfNull(providerConfigId);
         ArgumentNullException.ThrowIfNull(identifier);
         ArgumentNullException.ThrowIfNull(newLabel);
+
+        // Validate the transition if the caller provides the expected current label.
+        // This is observational only — invalid transitions log a warning but do NOT block.
+        // TODO: Align guard condition with AgentLabelOperations.SwapAsync which also checks
+        //       !string.IsNullOrEmpty(newLabel). Current divergence is benign (IsValidTransition
+        //       returns true for empty targets) but may confuse future maintainers.
+        // TODO: Consider that downstream AgentLabelOperations.SwapAsync does not receive
+        //       expectedCurrentLabel from SwapIssueLabelAsync/SwapPrLabelAsync callers — validation
+        //       only happens here. If the entry point changes, this could mask issues.
+        if (expectedCurrentLabel is not null)
+        {
+            LabelStateMachine.ValidateTransition(expectedCurrentLabel, newLabel, identifier);
+        }
 
         _logger.Information(
             "Label swap: {Identifier} → {NewLabel} (target={TargetKind}, provider={ProviderConfigId})",

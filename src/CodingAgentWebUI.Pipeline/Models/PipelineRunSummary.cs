@@ -88,4 +88,7 @@ public sealed class PipelineRunSummary
     /// Null for non-decomposition runs.
     /// </summary>
     public string? DecompositionSource { get; init; }
+
+    /// <summary>Per-phase token/cost breakdown, or null if no phase data was collected (e.g. old runs).</summary>
+    public IReadOnlyDictionary<string, PhaseUsage>? PhaseBreakdown { get; init; }
 }
