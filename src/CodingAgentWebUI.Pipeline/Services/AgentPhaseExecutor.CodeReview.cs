@@ -290,6 +290,93 @@ public partial class AgentPhaseExecutor
         }
 
         run.CodeReviewIterationInProgress = 0;
+
+        // Generate review summary (non-fatal — runs regardless of finding counts)
+        await ExecuteReviewSummaryAsync(context, ct);
+    }
+
+    /// <summary>
+    /// Executes the review summary agent to generate a change summary and review verdict.
+    /// Non-fatal — on any failure, logs a warning and continues without summaries.
+    /// Runs regardless of finding counts (a "clean review" verdict is valuable).
+    /// </summary>
+    private async Task ExecuteReviewSummaryAsync(AgentPhaseContext context, CancellationToken ct)
+    {
+        var run = context.Run;
+        try
+        {
+            _logger.Information("Pipeline {RunId} generating review summary", run.RunId);
+            context.Callbacks.EmitOutputLine("📝 Generating review summary...");
+
+            // Read diff-stat from pre-computed file
+            var diffStat = "";
+            var diffStatPath = run.WorkspacePath is not null
+                ? Path.Combine(run.WorkspacePath, AgentWorkspacePaths.DiffStatFilePath)
+                : null;
+            if (diffStatPath is not null && File.Exists(diffStatPath))
+            {
+                diffStat = await File.ReadAllTextAsync(diffStatPath, ct);
+            }
+
+            // Concatenate per-agent findings
+            var findings = string.Join(
+                Environment.NewLine + "---" + Environment.NewLine,
+                run.CodeReviewAgentFindings
+                    .Where(kv => !string.IsNullOrEmpty(kv.Value))
+                    .Select(kv => $"Agent: {kv.Key}\n{kv.Value}"));
+
+            var prompt = PromptBuilder.BuildReviewSummaryPrompt(
+                diffStat,
+                run.IssueTitle ?? "",
+                findings);
+
+            var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+                context.AgentProvider,
+                new AgentRequest
+                {
+                    Prompt = prompt,
+                    // TODO: Add explicit null guard for WorkspacePath (like the diff-stat path check above)
+                    // instead of relying on the null-forgiving operator. Currently non-fatal if null (caught by try/catch).
+                    WorkspacePath = run.WorkspacePath!,
+                    Timeout = context.Config.AgentTimeout,
+                    UseResume = false
+                },
+                run, context.Config, "Review summary generation",
+                context.Callbacks.NotifyChange, _logger, ct,
+                line => context.Callbacks.EmitOutputLine($"[Summary] {line}"));
+
+            run.AccumulateTokenUsage(agentResult, phase: "review_summary");
+
+            // Parse output
+            var output = agentResult.OutputLines.Count > 0
+                ? string.Join(Environment.NewLine, agentResult.OutputLines)
+                : string.Empty;
+
+            var (changeSummary, verdictSummary) = ReviewSummaryParser.Parse(output);
+
+            if (changeSummary is null && verdictSummary is null)
+            {
+                _logger.Warning(
+                    "Pipeline {RunId} review summary agent output missing expected headings, skipping summary",
+                    run.RunId);
+            }
+            else
+            {
+                run.CodeReviewChangeSummary = changeSummary;
+                run.CodeReviewVerdictSummary = verdictSummary;
+                _logger.Information(
+                    "Pipeline {RunId} review summary generated (change={ChangeLen}, verdict={VerdictLen})",
+                    run.RunId, changeSummary?.Length ?? 0, verdictSummary?.Length ?? 0);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} review summary generation failed (non-fatal), continuing without summary", run.RunId);
+        }
     }
 
     /// <summary>

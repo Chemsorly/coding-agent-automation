@@ -681,4 +681,42 @@ public static class PromptBuilder
 
         return sb.ToString().TrimEnd();
     }
+
+    /// <summary>
+    /// Builds a prompt for the review summarization agent. The agent reads the findings
+    /// and produces a brief change summary and review verdict.
+    /// </summary>
+    /// <param name="diffStat">Diff stat output (compact file list with line counts).</param>
+    /// <param name="issueTitle">Issue title for context.</param>
+    /// <param name="findings">Concatenated per-agent findings text.</param>
+    /// <returns>The prompt string for the summary agent.</returns>
+    public static string BuildReviewSummaryPrompt(string diffStat, string issueTitle, string findings)
+    {
+        ArgumentNullException.ThrowIfNull(diffStat);
+        ArgumentNullException.ThrowIfNull(issueTitle);
+        ArgumentNullException.ThrowIfNull(findings);
+
+        var sb = new StringBuilder();
+        sb.AppendLine("You are summarizing a code review. Read the findings below and produce two sections.");
+        sb.AppendLine("Output ONLY the two sections below — no file writes, no code changes, no other text.");
+        sb.AppendLine();
+        sb.AppendLine("## Change Summary");
+        sb.AppendLine("In 2-3 sentences, describe what this PR does. Reference specific files/components affected.");
+        sb.AppendLine();
+        sb.AppendLine("## Review Verdict");
+        sb.AppendLine("In 1-2 sentences, summarize the review outcome. Name the 1-2 most impactful findings specifically (e.g., \"race condition in drain service's pre-reservation flow\", not \"some issues\"). Include severity count and disposition (fixed/reported/clean). If no findings exist, state that the review is clean.");
+        sb.AppendLine();
+        sb.AppendLine("Be specific about WHAT was found rather than generic. Maximum 3 sentences per section.");
+        sb.AppendLine();
+        sb.AppendLine("--- DIFF STAT ---");
+        sb.AppendLine(diffStat);
+        sb.AppendLine();
+        sb.AppendLine("--- ISSUE CONTEXT ---");
+        sb.AppendLine(issueTitle);
+        sb.AppendLine();
+        sb.AppendLine("--- FINDINGS ---");
+        sb.AppendLine(string.IsNullOrWhiteSpace(findings) ? "No findings. All review agents reported clean." : findings);
+
+        return sb.ToString().TrimEnd();
+    }
 }

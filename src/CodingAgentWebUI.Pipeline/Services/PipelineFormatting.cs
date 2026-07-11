@@ -158,6 +158,14 @@ public static partial class PipelineFormatting
         sb.AppendLine("## AI Code Review Findings");
         sb.AppendLine();
 
+        // Verdict renders before the no-findings early-return (valuable even for clean reviews)
+        if (!string.IsNullOrEmpty(summary.VerdictSummary))
+        {
+            var truncatedVerdict = ReviewSummaryParser.TruncateAtSentenceBoundary(summary.VerdictSummary);
+            sb.AppendLine($"**Review verdict**: {truncatedVerdict}");
+            sb.AppendLine();
+        }
+
         if (summary.CriticalCount == 0 && summary.WarningCount == 0 && summary.SuggestionCount == 0
             && summary.AgentFindings.Count == 0)
         {

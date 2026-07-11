@@ -193,6 +193,12 @@ public sealed class PipelineRun
     /// <summary>Per-agent findings accumulated across all review iterations.</summary>
     public ConcurrentDictionary<string, string> CodeReviewAgentFindings { get; } = new();
 
+    /// <summary>AI-generated summary of what the PR changed (2-3 sentences), or null if not generated.</summary>
+    public string? CodeReviewChangeSummary { get; set; }
+
+    /// <summary>AI-generated review verdict synthesizing findings (1-2 sentences), or null if not generated.</summary>
+    public string? CodeReviewVerdictSummary { get; set; }
+
     /// <summary>Thread-safe collections — mutated by orchestration service while UI reads via OnChange.</summary>
     public BoundedConcurrentQueue<string> RetryErrors { get; init; } = new(PipelineConstants.DefaultRetryErrorsCapacity);
     public BoundedConcurrentQueue<ChatEntry> ChatHistory { get; init; } = new(PipelineConstants.DefaultChatHistoryCapacity);

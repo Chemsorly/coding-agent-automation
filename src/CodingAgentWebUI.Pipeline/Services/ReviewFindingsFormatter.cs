@@ -17,6 +17,22 @@ internal static class ReviewFindingsFormatter
         sb.AppendLine("## 🤖 Automated Code Review");
         sb.AppendLine();
 
+        // Change summary (what the PR did) — only for standalone review comments
+        if (!string.IsNullOrEmpty(run.CodeReviewChangeSummary))
+        {
+            var truncatedChange = ReviewSummaryParser.TruncateAtSentenceBoundary(run.CodeReviewChangeSummary);
+            sb.AppendLine($"**Changes**: {truncatedChange}");
+            sb.AppendLine();
+        }
+
+        // Review verdict (synthesized assessment)
+        if (!string.IsNullOrEmpty(run.CodeReviewVerdictSummary))
+        {
+            var truncatedVerdict = ReviewSummaryParser.TruncateAtSentenceBoundary(run.CodeReviewVerdictSummary);
+            sb.AppendLine($"**Review verdict**: {truncatedVerdict}");
+            sb.AppendLine();
+        }
+
         if (run.CodeReviewAgentsRun.Count > 0)
             sb.AppendLine($"**Review Agents**: {string.Join(", ", run.CodeReviewAgentsRun)}");
         sb.AppendLine();
