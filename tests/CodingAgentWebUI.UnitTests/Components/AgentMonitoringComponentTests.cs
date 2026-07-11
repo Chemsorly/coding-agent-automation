@@ -3,15 +3,12 @@ using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
 using Microsoft.JSInterop;
@@ -69,10 +66,6 @@ public class AgentMonitoringComponentTests : BunitContext
         Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
             Services.BuildServiceProvider().GetRequiredService<JobDispatcherService>()));
 
-        // InfrastructureHealthService — Legacy mode defaults (no DB, no Redis)
-        var emptyConfig = new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build();
-        Services.AddSingleton(new InfrastructureHealthService(
-            new ServiceCollection().BuildServiceProvider(), emptyConfig));
         // TODO: Tests that use FakeTimeProvider add a second registration that shadows this one (last-wins DI behavior); consider a more explicit replacement pattern
         Services.AddSingleton(TimeProvider.System);
     }
