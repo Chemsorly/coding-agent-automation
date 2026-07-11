@@ -69,7 +69,8 @@ public static class WorkDistributionRegistration
             // Queue visibility: wraps in-memory JobDispatcherService
             services.AddSingleton<IPendingWorkQuery>(sp =>
                 new LegacyPendingWorkQuery(sp.GetRequiredService<JobDispatcherService>()));
-            // RunLifecycleManager (Legacy — no WorkItemTransitionService)
+            // RunLifecycleManager (Legacy — no WorkItemTransitionService, no K8s cleanup)
+            services.AddSingleton<IJobCleanupStrategy>(new NoOpJobCleanup());
             services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
                 sp.GetRequiredService<IOrchestratorRunService>(),
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
@@ -77,7 +78,8 @@ public static class WorkDistributionRegistration
                 sp.GetRequiredService<ILabelSwapper>(),
                 sp.GetRequiredService<JobDispatcherService>(),
                 Log.Logger,
-                workItemTransition: null));
+                workItemTransition: null,
+                jobCleanup: sp.GetRequiredService<IJobCleanupStrategy>()));
             Log.Information("WorkDistribution: Legacy mode (no database). Using JsonConfigurationStore + LegacyWorkDistributor");
             return services;
         }
@@ -144,6 +146,8 @@ public static class WorkDistributionRegistration
             Log.Logger));
 
         // ── IRunLifecycleManager (DB mode — coordinates in-memory + DB transitions) ──
+        // TODO: Use GetRequiredService<IJobCleanupStrategy>() instead of GetService to fail fast on
+        // misconfiguration (both K8s and SignalR modes always register an implementation).
         services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
@@ -152,11 +156,7 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<JobDispatcherService>(),
             Log.Logger,
             sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetService<IKubernetesJobClient>(),
-            configuration.GetValue<string>("WorkDistribution:Namespace")
-                ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
-                ?? "default"));
+            sp.GetService<IJobCleanupStrategy>()));
 
         // ── PostgresConfigurationStore (replaces JsonConfigurationStore) ─────
         // Singleton: consumed by singleton services (LabelSwapper, DispatchResolutionService,
@@ -249,6 +249,13 @@ public static class WorkDistributionRegistration
 
         // Dispatch + Reconciliation (under leader election)
         services.AddSingleton<IKubernetesJobClient>(sp => new KubernetesJobClient(sp.GetRequiredService<IKubernetes>()));
+        services.AddSingleton<IJobCleanupStrategy>(sp => new KubernetesJobCleanup(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<IKubernetesJobClient>(),
+            configuration.GetValue<string>("WorkDistribution:Namespace")
+                ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
+                ?? "default",
+            Log.Logger));
         services.AddHostedService(sp => new DispatchService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<LeaderElectionService>(),
@@ -286,6 +293,9 @@ public static class WorkDistributionRegistration
 
     private static void RegisterSignalRMode(IServiceCollection services, IConfiguration configuration)
     {
+        // No K8s Jobs in SignalR mode — register no-op cleanup strategy
+        services.AddSingleton<IJobCleanupStrategy>(new NoOpJobCleanup());
+
         // Agent resolver (singleton — selects idle label-compatible agent for SignalR push)
         services.AddSingleton<ISignalRWorkDistributorAgentResolver>(sp => new SignalRWorkDistributorAgentResolver(
             sp.GetRequiredService<AgentRegistryService>(),

@@ -231,6 +231,38 @@ public sealed class AgentHubBehaviorTests : IDisposable
         agent.ActiveJobId.Should().BeNull();
     }
 
+    [Fact]
+    public async Task ReportJobCompleted_RunAlreadyRemoved_NoStateChange_NoDoublePersist()
+    {
+        // Simulates a late ReportJobCompleted arriving after CancelRunAsync already removed the run.
+        // In production, the [RequiresActiveJob] filter would reject this call first (Layer 1 defense).
+        // This test validates the secondary defense (Layer 2): even if the message reaches the hub
+        // method body, CompleteRunAsync is never called and TransitionWorkItemAsync is the only action.
+        // TODO: This test doesn't truly validate "NoDoublePersist" — a proper test would: (1) cancel a run
+        // via CancelRunAsync, (2) send a late ReportJobCompleted, and (3) verify AddRunToHistoryAsync is NOT
+        // called a second time. Currently it only proves CompleteRunAsync isn't called when run is missing.
+        // TODO: Assert agent.ActiveJobId becomes null and TransitionStatus(AgentStatus.Idle) is called after
+        // the call to validate complete agent state cleanup in the late-arrival path (the hub always clears
+        // ActiveJobId and transitions to Idle regardless of run existence).
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Cancelled, CompletedAt = DateTimeOffset.UtcNow };
+
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null); // Run already removed by CancelRunAsync
+
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportJobCompleted("job-1", payload);
+
+        // CompleteRunAsync never called (run not in memory)
+        _mockLifecycleManager.Verify(l => l.CompleteRunAsync(
+            It.IsAny<string>(), It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>()), Times.Never);
+
+        // Recovery path: TransitionWorkItemAsync called (will no-op at DB level for terminal state)
+        _mockFacade.Verify(f => f.TransitionWorkItemAsync(
+            "job-1", WorkItemStatus.Cancelled, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     #endregion
 
     #region ReportJobCompleted_WorkItemTransition

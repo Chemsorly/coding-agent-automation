@@ -1,13 +1,9 @@
-using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using k8s.Autorest;
-using Microsoft.EntityFrameworkCore;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -32,9 +28,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     private readonly ILabelSwapper _labelSwapper;
     private readonly JobDispatcherService _dispatcher;
     private readonly ILogger _logger;
-    private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
-    private readonly IKubernetesJobClient? _jobClient;
-    private readonly string? _k8sNamespace;
+    private readonly IJobCleanupStrategy? _jobCleanup;
 
     public RunLifecycleManager(
         IOrchestratorRunService runService,
@@ -44,9 +38,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         JobDispatcherService dispatcher,
         ILogger logger,
         WorkItemTransitionService? workItemTransition = null,
-        IDbContextFactory<PipelineDbContext>? dbFactory = null,
-        IKubernetesJobClient? jobClient = null,
-        string? k8sNamespace = null)
+        IJobCleanupStrategy? jobCleanup = null)
     {
         ArgumentNullException.ThrowIfNull(runService);
         ArgumentNullException.ThrowIfNull(historyService);
@@ -62,9 +54,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         _labelSwapper = labelSwapper;
         _dispatcher = dispatcher;
         _logger = logger;
-        _dbFactory = dbFactory;
-        _jobClient = jobClient;
-        _k8sNamespace = k8sNamespace;
+        _jobCleanup = jobCleanup;
     }
 
     /// <inheritdoc />
@@ -188,7 +178,10 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         await TrySwapLabelAsync(run, AgentLabels.Cancelled, ct);
 
         // 7. Delete K8s Job to prevent pod retries (backoffLimit)
-        await TryDeleteK8sJobAsync(runId, ct);
+        // TODO: Consider making _jobCleanup non-nullable and using GetRequiredService in all DI registrations
+        // to resolve mode differences entirely at DI registration time (per design goal).
+        if (_jobCleanup is not null)
+            await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
 
         _logger.Information(
             "RunLifecycleManager.CancelRunAsync: run {RunId} cancelled (agent={AgentId})",
@@ -337,50 +330,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         {
             _logger.Warning(ex, "RunLifecycleManager: label swap to {Label} failed for issue {IssueIdentifier} (non-fatal)",
                 label, issueIdentifier);
-        }
-    }
-
-    /// <summary>
-    /// Deletes the K8s Job associated with a work item to prevent the Job controller
-    /// from retrying (backoffLimit). No-op when jobClient/dbFactory are null (non-K8s mode)
-    /// or when the WorkItem has no K8sJobName.
-    /// </summary>
-    private async Task TryDeleteK8sJobAsync(string runId, CancellationToken ct)
-    {
-        if (_jobClient is null || _dbFactory is null || _k8sNamespace is null)
-            return;
-
-        if (!Guid.TryParse(runId, out var workItemId))
-            return;
-
-        try
-        {
-            await using var db = await _dbFactory.CreateDbContextAsync(ct);
-            var jobName = await db.WorkItems
-                .Where(w => w.Id == workItemId)
-                .Select(w => w.K8sJobName)
-                .FirstOrDefaultAsync(ct);
-
-            if (string.IsNullOrEmpty(jobName))
-                return;
-
-            await _jobClient.DeleteJobAsync(jobName, _k8sNamespace, ct);
-            _logger.Information(
-                "RunLifecycleManager: deleted K8s Job {JobName} for cancelled run {RunId}",
-                jobName, runId);
-        }
-        catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.NotFound)
-        {
-            // Job already deleted (e.g., by ReconciliationService race) — expected, not a warning
-            _logger.Debug(
-                "RunLifecycleManager: K8s Job for run {RunId} already deleted (404)",
-                runId);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.Warning(ex,
-                "RunLifecycleManager: failed to delete K8s Job for run {RunId} (non-fatal, Job will expire via TTL)",
-                runId);
         }
     }
 }
