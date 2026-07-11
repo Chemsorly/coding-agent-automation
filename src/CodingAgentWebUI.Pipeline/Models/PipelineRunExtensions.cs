@@ -44,5 +44,16 @@ public static class PipelineRunExtensions
         }
 
         PipelineTelemetry.TokensUsed.Add(result.Usage.TotalTokens, tags);
+
+        if (phase is not null)
+        {
+            // TODO: (existing.Cost ?? 0m) + (result.Cost ?? 0m) coerces null+null to 0m, losing "no cost data" semantic on update.
+            // Consider: existing.Cost is null && result.Cost is null ? null : (existing.Cost ?? 0m) + (result.Cost ?? 0m)
+            run.Metrics.PhaseBreakdown.AddOrUpdate(phase,
+                new PhaseUsage(result.Usage.TotalTokens, result.Cost),
+                (_, existing) => new PhaseUsage(
+                    existing.Tokens + result.Usage.TotalTokens,
+                    (existing.Cost ?? 0m) + (result.Cost ?? 0m)));
+        }
     }
 }
