@@ -240,6 +240,13 @@ public sealed class PipelineStepContext
     /// </summary>
     public IReadOnlyList<IssueComment>? IssueComments { get; set; }
 
+    /// <summary>
+    /// Downloaded issue/PR images on the local filesystem.
+    /// Set by <c>DownloadIssueImagesStep</c> during pipeline execution.
+    /// Read by prompt builders and agent providers to deliver images to the coding agent.
+    /// </summary>
+    public IReadOnlyList<DownloadedImage>? DownloadedImages { get; set; }
+
     // Logger
     public required Serilog.ILogger Logger { get; init; }
 
@@ -269,7 +276,8 @@ public sealed class PipelineStepContext
             Callbacks = Callbacks,
             OrchestratorCts = Cts,
             Issue = Issue,
-            ParsedIssue = ParsedIssue
+            ParsedIssue = ParsedIssue,
+            DownloadedImages = DownloadedImages
         };
     }
 

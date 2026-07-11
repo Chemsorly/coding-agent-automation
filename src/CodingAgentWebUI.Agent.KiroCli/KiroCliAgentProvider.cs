@@ -37,6 +37,9 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// <inheritdoc />
     public IReadOnlyList<string> PipelineInjectedPaths { get; } = [".kiro"];
 
+    /// <inheritdoc />
+    public bool SupportsVisionInput => !IsTextOnlyModel(_model);
+
     /// <summary>The model configured for this agent provider, or null/auto for default.</summary>
     public string? Model => _model;
 
@@ -333,6 +336,18 @@ public partial class KiroCliAgentProvider : IAgentProvider
     /// <summary>Pattern for valid model names: alphanumeric, dots, hyphens, underscores.</summary>
     [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._-]+$")]
     private static partial System.Text.RegularExpressions.Regex ModelNamePattern();
+
+    /// <summary>
+    /// Determines if a model identifier refers to a text-only (non-vision) model.
+    /// Returns false (not text-only) when model is null or empty (assume capable).
+    /// </summary>
+    internal static bool IsTextOnlyModel(string? model)
+    {
+        if (string.IsNullOrEmpty(model))
+            return false;
+
+        return model.Contains("deepseek", StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <inheritdoc />
     public ValueTask DisposeAsync()

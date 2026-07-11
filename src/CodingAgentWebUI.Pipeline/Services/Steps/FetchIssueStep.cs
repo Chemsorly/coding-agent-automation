@@ -4,18 +4,21 @@ namespace CodingAgentWebUI.Pipeline.Services.Steps;
 
 /// <summary>
 /// Fetches the issue from the provider, validates it, parses the description,
-/// and fetches issue comments. Skipped on the agent side where issue data is pre-populated.
+/// extracts images, and fetches issue comments. Skipped on the agent side where issue data is pre-populated.
 /// </summary>
 public sealed class FetchIssueStep : IPipelineStep
 {
     public string StepName => "FetchIssue";
 
     private readonly IssueDescriptionParser _issueParser;
+    private readonly IssueImageExtractor _imageExtractor;
 
-    public FetchIssueStep(IssueDescriptionParser issueParser)
+    public FetchIssueStep(IssueDescriptionParser issueParser, IssueImageExtractor imageExtractor)
     {
         ArgumentNullException.ThrowIfNull(issueParser);
+        ArgumentNullException.ThrowIfNull(imageExtractor);
         _issueParser = issueParser;
+        _imageExtractor = imageExtractor;
     }
 
     public async Task<StepResult> ExecuteAsync(PipelineStepContext context, CancellationToken ct)
@@ -47,8 +50,6 @@ public sealed class FetchIssueStep : IPipelineStep
         context.Run.IssueTitle = issue.Title;
         context.Run.IssueLabels = issue.Labels;
         var parsed = _issueParser.Parse(issue.Description);
-        context.Issue = issue;
-        context.ParsedIssue = parsed;
 
         context.Callbacks.EmitOutputLine($"🚀 Pipeline started for issue #{context.Run.IssueIdentifier} — {issue.Title}");
 
@@ -63,6 +64,22 @@ public sealed class FetchIssueStep : IPipelineStep
         {
             context.Logger.Warning(ex, "Pipeline {RunId} failed to fetch issue comments, proceeding without them", context.Run.RunId);
         }
+
+        // Extract images from body + comments
+        var images = _imageExtractor.Extract(issue.Description, issueComments, issue.Identifier, ImageSourceKind.Issue);
+
+        // Reconstruct IssueDetail with Images populated (init properties require new instance)
+        issue = new IssueDetail
+        {
+            Description = issue.Description,
+            Identifier = issue.Identifier,
+            Labels = issue.Labels,
+            Title = issue.Title,
+            Images = images
+        };
+
+        context.Issue = issue;
+        context.ParsedIssue = parsed;
         context.IssueComments = issueComments;
 
         return StepResult.Continue;

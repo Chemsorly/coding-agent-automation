@@ -47,6 +47,7 @@ RUN apt-get update && \
         nodejs \
         npm \
         libasound2t64 \
+        libvips42 \
     && rm -rf /var/lib/apt/lists/*
 
 # Reuse existing ubuntu user (UID 1000) from the base image

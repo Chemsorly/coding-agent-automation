@@ -29,7 +29,7 @@ public partial class AgentPhaseExecutor
                 run.BrainContextLoaded, run.RunId, run.IssueIdentifier, config.BrainReadOnly);
 
             var prompt = promptOverride
-                ?? PromptBuilder.BuildPrompt(config.ImplementationPrompt, context.Issue, context.ParsedIssue, brainWriteInstructions, brainContextWritten);
+                ?? PromptBuilder.BuildPrompt(config.ImplementationPrompt, context.Issue, context.ParsedIssue, brainWriteInstructions, brainContextWritten, imageCount: context.DownloadedImages?.Count ?? 0);
             _logger.Debug("Pipeline {RunId} implementation prompt:\n{Prompt}", run.RunId, prompt);
             Activity.Current?.SetTag("pipeline.prompt_length_chars", prompt.Length);
 
@@ -41,7 +41,8 @@ public partial class AgentPhaseExecutor
                     Prompt = prompt,
                     WorkspacePath = run.WorkspacePath!,
                     Timeout = config.AgentTimeout,
-                    UseResume = true
+                    UseResume = true,
+                    ImagePaths = context.DownloadedImages?.Select(d => d.LocalPath).ToList()
                 },
                 run, config, "Code generation agent", context.Callbacks.NotifyChange, _logger, ct,
                 line => context.Callbacks.EmitOutputLine(line));

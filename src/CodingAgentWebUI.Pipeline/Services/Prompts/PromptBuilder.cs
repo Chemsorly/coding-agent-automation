@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -26,7 +27,7 @@ public static class PromptBuilder
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
     /// </summary>
     public static string BuildAnalysisPrompt(string analysisInstructions, IssueDetail issue, ParsedIssue parsed,
-        bool brainContextWritten = false)
+        bool brainContextWritten = false, int imageCount = 0)
     {
         ArgumentNullException.ThrowIfNull(analysisInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -76,6 +77,12 @@ public static class PromptBuilder
         }
 
         sb.AppendLine($"Analyze the workspace now and write your recommendation to `{AgentWorkspacePaths.AnalysisFilePath}`.");
+
+        if (imageCount > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"This issue includes {imageCount} screenshot(s)/image(s) in `.agent/images/` — examine them for visual context about the problem or expected behavior.");
+        }
 
         return sb.ToString().TrimEnd();
     }
@@ -131,7 +138,7 @@ public static class PromptBuilder
     /// The configurable implementation instructions are prepended, followed by pipeline mechanics.
     /// </summary>
     public static string BuildPrompt(string implementationInstructions, IssueDetail issue, ParsedIssue parsed,
-        string? brainWriteInstructions = null, bool brainContextWritten = false)
+        string? brainWriteInstructions = null, bool brainContextWritten = false, int imageCount = 0)
     {
         ArgumentNullException.ThrowIfNull(implementationInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -164,6 +171,12 @@ public static class PromptBuilder
             sb.AppendLine(brainWriteInstructions);
         }
 
+        if (imageCount > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"This issue includes {imageCount} screenshot(s)/image(s) in `.agent/images/` — examine them for visual context about the problem or expected behavior.");
+        }
+
         return sb.ToString().TrimEnd();
     }
 
@@ -174,7 +187,7 @@ public static class PromptBuilder
     /// details (title, description, requirements, acceptance criteria, and comments).
     /// </summary>
     public static string BuildReviewPrompt(string reviewInstructions, IssueDetail issue,
-        ParsedIssue parsed, string findingsFilePath, bool inlineCommentsEnabled = false, bool hasLinkedPr = false)
+        ParsedIssue parsed, string findingsFilePath, bool inlineCommentsEnabled = false, bool hasLinkedPr = false, int imageCount = 0)
     {
         ArgumentNullException.ThrowIfNull(reviewInstructions);
         ArgumentNullException.ThrowIfNull(issue);
@@ -223,6 +236,12 @@ public static class PromptBuilder
         {
             sb.AppendLine();
             AppendStructuredOutputInstructions(sb);
+        }
+
+        if (imageCount > 0)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"This issue includes {imageCount} screenshot(s)/image(s) in `.agent/images/` — examine them for visual context about the problem or expected behavior.");
         }
 
         return sb.ToString().TrimEnd();
@@ -278,18 +297,30 @@ public static class PromptBuilder
     /// <summary>
     /// Builds the markdown content for the issue context file (.agent/issue-context.md).
     /// Contains the full issue description, requirements, and filtered comments.
+    /// When downloaded images are provided, replaces inline image URLs with local paths
+    /// and appends an attached images table.
     /// </summary>
     public static string BuildIssueContextFileContent(IssueDetail issue, ParsedIssue parsed,
-        IReadOnlyList<IssueComment>? comments = null)
+        IReadOnlyList<IssueComment>? comments = null, IReadOnlyList<DownloadedImage>? downloadedImages = null)
     {
         ArgumentNullException.ThrowIfNull(issue);
         ArgumentNullException.ThrowIfNull(parsed);
+
+        var hasImages = downloadedImages is { Count: > 0 };
+        var urlToLocalPath = hasImages
+            ? downloadedImages!.ToDictionary(d => d.Reference.Url, d => d.LocalPath)
+            : null;
 
         var sb = new StringBuilder();
         sb.AppendLine($"# Issue: {issue.Title}");
         sb.AppendLine();
         sb.AppendLine("## Description");
-        sb.AppendLine(issue.Description);
+
+        if (hasImages)
+            AppendProcessedText(sb, issue.Description, urlToLocalPath!);
+        else
+            sb.AppendLine(issue.Description);
+
         sb.AppendLine();
 
         if (!string.IsNullOrWhiteSpace(parsed.RequirementsSection))
@@ -310,6 +341,9 @@ public static class PromptBuilder
         }
 
         AppendComments(sb, comments);
+
+        if (hasImages)
+            AppendAttachedImagesTable(sb, downloadedImages!);
 
         return sb.ToString().TrimEnd();
     }
@@ -335,6 +369,114 @@ public static class PromptBuilder
             sb.AppendLine($"**@{comment.Author}** ({comment.CreatedAt:yyyy-MM-dd}):");
             sb.AppendLine(comment.Body);
             sb.AppendLine();
+        }
+    }
+
+    /// <summary>
+    /// Regex matching inline markdown images: ![alt](url) or ![alt](url "title")
+    /// </summary>
+    private static readonly Regex InlineImageRegex = new(
+        @"!\[([^\]]*)\]\(([^)\s]+)(?:\s+""[^""]*"")?\)",
+        RegexOptions.Compiled);
+
+    /// <summary>
+    /// Regex matching HTML img tags with src attribute (any attribute order).
+    /// </summary>
+    private static readonly Regex HtmlImgSrcRegex = new(
+        @"<img\s[^>]*\bsrc\s*=\s*[""']([^""']+)[""'][^>]*>",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// Processes text line-by-line with fence-tracking state machine.
+    /// Replaces image URLs with local paths outside code blocks.
+    /// </summary>
+    private static void AppendProcessedText(StringBuilder sb, string text, Dictionary<string, string> urlToLocalPath)
+    {
+        var lines = text.Split('\n');
+        string? fenceDelimiter = null; // null = not in fence, "```" or "~~~" = which opened it
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.TrimEnd('\r');
+            var trimmed = line.TrimStart();
+
+            if (fenceDelimiter is null)
+            {
+                // Not inside a fence — check if this line opens one
+                if (trimmed.StartsWith("```"))
+                {
+                    fenceDelimiter = "```";
+                    sb.AppendLine(line);
+                    continue;
+                }
+                if (trimmed.StartsWith("~~~"))
+                {
+                    fenceDelimiter = "~~~";
+                    sb.AppendLine(line);
+                    continue;
+                }
+
+                // Outside code blocks — perform replacements
+                var processedLine = ReplaceInlineImages(line, urlToLocalPath);
+
+                // Check for HTML <img> tags and add comment below if URL matched
+                var imgMatch = HtmlImgSrcRegex.Match(processedLine);
+                if (imgMatch.Success && urlToLocalPath.TryGetValue(imgMatch.Groups[1].Value, out var localPath))
+                {
+                    sb.AppendLine(processedLine);
+                    sb.AppendLine($"<!-- Downloaded as {localPath} -->");
+                }
+                else
+                {
+                    sb.AppendLine(processedLine);
+                }
+            }
+            else
+            {
+                // Inside a fence — check if this line closes it (must match opening delimiter)
+                if (trimmed.StartsWith(fenceDelimiter))
+                {
+                    fenceDelimiter = null;
+                }
+                sb.AppendLine(line);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Replaces ![alt](url) patterns with ![alt](localPath) when url is in the lookup.
+    /// </summary>
+    private static string ReplaceInlineImages(string line, Dictionary<string, string> urlToLocalPath)
+    {
+        return InlineImageRegex.Replace(line, match =>
+        {
+            var altText = match.Groups[1].Value;
+            var url = match.Groups[2].Value;
+
+            if (urlToLocalPath.TryGetValue(url, out var localPath))
+                return $"![{altText}]({localPath})";
+
+            return match.Value;
+        });
+    }
+
+    /// <summary>
+    /// Appends the ## Attached Images table listing all downloaded images.
+    /// </summary>
+    private static void AppendAttachedImagesTable(StringBuilder sb, IReadOnlyList<DownloadedImage> downloadedImages)
+    {
+        sb.AppendLine("## Attached Images");
+        sb.AppendLine();
+        sb.AppendLine("| # | File | Alt Text | Source |");
+        sb.AppendLine("|---|------|----------|--------|");
+
+        for (var i = 0; i < downloadedImages.Count; i++)
+        {
+            var img = downloadedImages[i];
+            var source = img.Reference.SourceType == ImageSourceType.Body
+                ? "Body"
+                : $"Comment #{img.Reference.SourceIndex}";
+            sb.AppendLine($"| {i + 1} | {img.LocalFilename} | {img.Reference.AltText} | {source} |");
         }
     }
 

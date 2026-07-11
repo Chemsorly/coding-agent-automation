@@ -50,7 +50,7 @@ public partial class AgentPhaseExecutor
             var agentDir = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.MetadataDirectory);
             Directory.CreateDirectory(agentDir);
 
-            var issueContextContent = PromptBuilder.BuildIssueContextFileContent(context.Issue, context.ParsedIssue, issueComments);
+            var issueContextContent = PromptBuilder.BuildIssueContextFileContent(context.Issue, context.ParsedIssue, issueComments, context.DownloadedImages);
             await File.WriteAllTextAsync(Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.IssueContextFilePath), issueContextContent, ct);
             _logger.Debug("Pipeline {RunId} wrote issue context to {FilePath}", run.RunId, AgentWorkspacePaths.IssueContextFilePath);
         }
@@ -94,7 +94,7 @@ public partial class AgentPhaseExecutor
 
                         var brainContextWrittenForAnalysis = await WriteBrainContextIfNeededAsync(run, ct);
 
-                        var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, context.Issue, context.ParsedIssue, brainContextWrittenForAnalysis);
+                        var analysisPrompt = PromptBuilder.BuildAnalysisPrompt(config.AnalysisPrompt, context.Issue, context.ParsedIssue, brainContextWrittenForAnalysis, imageCount: context.DownloadedImages?.Count ?? 0);
                         _logger.Debug("Pipeline {RunId} analysis prompt:\n{Prompt}", run.RunId, analysisPrompt);
                         Activity.Current?.SetTag("pipeline.prompt_length_chars", analysisPrompt.Length);
 
@@ -105,7 +105,8 @@ public partial class AgentPhaseExecutor
                                 Prompt = analysisPrompt,
                                 WorkspacePath = run.WorkspacePath!,
                                 Timeout = config.AgentTimeout,
-                                UseResume = true
+                                UseResume = true,
+                                ImagePaths = context.DownloadedImages?.Select(d => d.LocalPath).ToList()
                             },
                             run, config, "Analysis agent", context.Callbacks.NotifyChange, _logger, ct,
                             line => context.Callbacks.EmitOutputLine(line));

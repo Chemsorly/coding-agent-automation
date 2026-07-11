@@ -160,7 +160,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
             result = await ExecutePipelineStepsAsync(
                 job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
-                issueOps, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
+                issueOps, repoConfig, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
 
             activity?.SetTag("pipeline.final_step", result.FinalStep.ToString());
             // TODO: Add test that verifies cancelled runs set pipeline.cancelled tag with Unset status (no Error)
@@ -221,6 +221,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         IRepositoryProvider? brainProvider,
         IPipelineProvider? pipelineProvider,
         OrchestratorProxy issueOps,
+        ProviderConfig repoConfig,
         HubConnection connection,
         OutputBatcher outputBatcher,
         Action<PipelineStep?>? onStepChanged,
@@ -332,10 +333,10 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             // Build step pipeline based on run type
             var steps = run.RunType switch
             {
-                PipelineRunType.Review => BuildReviewStepPipeline(job),
-                PipelineRunType.DecompositionAnalysis => BuildDecompositionAnalysisStepPipeline(job, _openIssueContextWriter),
-                PipelineRunType.Decomposition => BuildDecompositionStepPipeline(job, _openIssueContextWriter),
-                _ => BuildAgentStepPipeline(job, connection)
+                PipelineRunType.Review => BuildReviewStepPipeline(job, issueOps, repoConfig),
+                PipelineRunType.DecompositionAnalysis => BuildDecompositionAnalysisStepPipeline(job, _openIssueContextWriter, issueOps, repoConfig),
+                PipelineRunType.Decomposition => BuildDecompositionStepPipeline(job, _openIssueContextWriter, issueOps, repoConfig),
+                _ => BuildAgentStepPipeline(job, connection, issueOps, repoConfig)
             };
 
             await PipelineStepRunner.ExecuteAsync(steps, context, linkedCt);
@@ -529,14 +530,17 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     }
 
     /// <summary>
-    /// Builds the full step prefix (common prefix + RunEnvironmentSetup + SyncBrainPreRun).
+    /// Builds the full step prefix (common prefix + RunEnvironmentSetup + SyncBrainPreRun + DownloadIssueImages).
     /// Used by agent and decomposition pipelines.
     /// </summary>
-    private static List<IPipelineStep> BuildFullPrefix(JobAssignmentMessage job, bool includeProjectClone = false)
+    private static List<IPipelineStep> BuildFullPrefix(JobAssignmentMessage job, OrchestratorProxy proxy, ProviderConfig repoConfig, bool includeProjectClone = false)
     {
         var steps = BuildCommonPrefix(job, includeProjectClone);
         steps.Add(new RunEnvironmentSetupStep(job));
         steps.Add(new SyncBrainPreRunStep());
+        steps.Add(new DownloadIssueImagesStep(
+            ct => proxy.RequestTokenRefreshAsync(ProviderKind.Repository, ct),
+            repoConfig));
         return steps;
     }
 
@@ -545,24 +549,28 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     /// Skips FetchIssueStep (issue data comes from job assignment) and adds MCP config step.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildAgentStepPipeline(
-        JobAssignmentMessage job, HubConnection connection)
+        JobAssignmentMessage job, HubConnection connection, OrchestratorProxy proxy, ProviderConfig repoConfig)
     {
-        var steps = BuildFullPrefix(job);
+        var steps = BuildFullPrefix(job, proxy, repoConfig);
         steps.AddRange(PipelineStepFactory.CreateCoreImplementationSteps());
         return steps;
     }
 
     /// <summary>
     /// Builds the ordered step pipeline for PR review runs.
-    /// Shorter sequence: Clone → WriteMcpConfig → WriteSteering → CreateBranch → SyncBrain → ExtractLinkedIssues → ReviewCode → PostFindings.
+    /// Shorter sequence: Clone → WriteMcpConfig → WriteSteering → CreateBranch → SyncBrain → DownloadIssueImages → ExtractLinkedIssues → ReviewCode → PostFindings.
     /// Skips analysis, code generation, quality gates, and rework detection.
     /// </summary>
-    internal static IReadOnlyList<IPipelineStep> BuildReviewStepPipeline(JobAssignmentMessage job)
+    internal static IReadOnlyList<IPipelineStep> BuildReviewStepPipeline(
+        JobAssignmentMessage job, OrchestratorProxy proxy, ProviderConfig repoConfig)
     {
         var steps = BuildCommonPrefix(job);
         steps.AddRange([
             new CreateBranchStep(),
             new SyncBrainPreRunStep(),
+            new DownloadIssueImagesStep(
+                ct => proxy.RequestTokenRefreshAsync(ProviderKind.Repository, ct),
+                repoConfig),
             new ExtractLinkedIssuesStep(new IssueDescriptionParser()),
             new ReviewCodeStep(),
             new PostReviewFindingsStep()
@@ -572,14 +580,16 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
     /// <summary>
     /// Builds the step pipeline for DecompositionAnalysis (Phase 1).
-    /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → WriteProjectContext → WriteOpenIssueContext → DecompositionAnalysis → PostDecompositionPlan.
+    /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → DownloadIssueImages → WriteProjectContext → WriteOpenIssueContext → DecompositionAnalysis → PostDecompositionPlan.
     /// IOpenIssueContextWriter is injected into the WriteOpenIssueContextStep via constructor.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildDecompositionAnalysisStepPipeline(
         JobAssignmentMessage job,
-        IOpenIssueContextWriter openIssueContextWriter)
+        IOpenIssueContextWriter openIssueContextWriter,
+        OrchestratorProxy proxy,
+        ProviderConfig repoConfig)
     {
-        var steps = BuildFullPrefix(job, includeProjectClone: true);
+        var steps = BuildFullPrefix(job, proxy, repoConfig, includeProjectClone: true);
         steps.AddRange([
             new WriteProjectContextStep(),
             new WriteOpenIssueContextStep(openIssueContextWriter),
@@ -591,16 +601,18 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
     /// <summary>
     /// Builds the step pipeline for Decomposition (Phase 2).
-    /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → WriteProjectContext → WriteOpenIssueContext → Decomposition → CreateSubIssues → PostDecompositionSummary.
+    /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → DownloadIssueImages → WriteProjectContext → WriteOpenIssueContext → Decomposition → CreateSubIssues → PostDecompositionSummary.
     /// WriteProjectContextStep is included so the agent has cross-repo routing context
     /// when generating sub-issue JSON files with targetRepository values.
     /// WriteOpenIssueContextStep provides deduplication context for the agent.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildDecompositionStepPipeline(
         JobAssignmentMessage job,
-        IOpenIssueContextWriter openIssueContextWriter)
+        IOpenIssueContextWriter openIssueContextWriter,
+        OrchestratorProxy proxy,
+        ProviderConfig repoConfig)
     {
-        var steps = BuildFullPrefix(job, includeProjectClone: true);
+        var steps = BuildFullPrefix(job, proxy, repoConfig, includeProjectClone: true);
         steps.AddRange([
             new WriteProjectContextStep(),
             new WriteOpenIssueContextStep(openIssueContextWriter),

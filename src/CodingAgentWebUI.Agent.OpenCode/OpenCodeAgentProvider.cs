@@ -40,6 +40,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public bool SupportsParallelExecution => true;
 
     /// <inheritdoc />
+    public bool SupportsVisionInput => !IsTextOnlyModel(_model);
+
+    /// <inheritdoc />
     public IReadOnlyList<string> PipelineInjectedPaths { get; } = ["AGENTS.md"];
 
     public OpenCodeAgentProvider(
@@ -230,9 +233,49 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                         using var client = workspacePath is not null
                             ? CreateDirectoryClientForPath(workspacePath)
                             : CreateDirectoryClient();
+
+                        var parts = new List<MessagePart>
+                        {
+                            new() { Type = "text", Text = request.Prompt }
+                        };
+
+                        // Add image file parts when available
+                        if (request.ImagePaths is { Count: > 0 })
+                        {
+                            foreach (var imagePath in request.ImagePaths)
+                            {
+                                try
+                                {
+                                    byte[] bytes;
+                                    try
+                                    {
+                                        bytes = ImageResizer.DownscaleIfNeeded(imagePath);
+                                    }
+                                    catch
+                                    {
+                                        // Fallback to raw bytes if resizer fails (e.g., NetVips unavailable)
+                                        bytes = File.ReadAllBytes(imagePath);
+                                    }
+                                    var mime = GetMimeFromExtension(Path.GetExtension(imagePath));
+                                    var base64 = Convert.ToBase64String(bytes);
+                                    parts.Add(new MessagePart
+                                    {
+                                        Type = "file",
+                                        Mime = mime,
+                                        Url = $"data:{mime};base64,{base64}",
+                                        Filename = Path.GetFileName(imagePath)
+                                    });
+                                }
+                                catch (Exception ex)
+                                {
+                                    _logger.Warning(ex, "Failed to encode image {Path} as file part", imagePath);
+                                }
+                            }
+                        }
+
                         var messageRequest = new SendMessageRequest
                         {
-                            Parts = [new MessagePart { Type = "text", Text = request.Prompt }],
+                            Parts = parts,
                             Model = null // Model is configured server-side via OPENCODE_CONFIG_CONTENT
                         };
 
@@ -998,4 +1041,28 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
         return KiroCliLib.Core.AnsiStripper.Strip(input);
     }
+
+    /// <summary>
+    /// Determines if a model identifier refers to a text-only (non-vision) model.
+    /// Returns false (not text-only) when model is null or empty (assume capable).
+    /// </summary>
+    internal static bool IsTextOnlyModel(string? model)
+    {
+        if (string.IsNullOrEmpty(model))
+            return false;
+
+        return model.Contains("deepseek", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Maps a file extension to its MIME type for image file parts.
+    /// </summary>
+    internal static string GetMimeFromExtension(string extension) => extension.ToLowerInvariant() switch
+    {
+        ".png" => "image/png",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".webp" => "image/webp",
+        ".gif" => "image/gif",
+        _ => "application/octet-stream"
+    };
 }
