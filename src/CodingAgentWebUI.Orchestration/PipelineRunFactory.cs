@@ -15,10 +15,13 @@ public static class PipelineRunFactory
     /// <param name="request">The deserialized job distribution request (must have non-null RunId).</param>
     /// <param name="agentId">Optional agent ID. Null during rehydration (agents reconnect later).</param>
     /// <param name="initialStep">Optional initial pipeline step. Defaults to <see cref="PipelineStep.Created"/>.</param>
+    /// <param name="startedAt">Optional explicit start time. When null, defaults to <see cref="DateTimeOffset.UtcNow"/>.
+    /// Used during rehydration to preserve the original dispatch timestamp.</param>
     public static PipelineRun FromDistributionRequest(
         JobDistributionRequest request,
         string? agentId = null,
-        PipelineStep? initialStep = null)
+        PipelineStep? initialStep = null,
+        DateTimeOffset? startedAt = null)
     {
         var run = PipelineRun.Create(
             runId: request.RunId!,
@@ -33,7 +36,8 @@ public static class PipelineRunFactory
             // dispatchers so this is unlikely to trigger, but consider whether the drain path should pass
             // its own fallback or if "rehydrated" is acceptable for both callers.
             initiatedBy: request.InitiatedBy ?? "rehydrated",
-            agentId: agentId);
+            agentId: agentId,
+            startedAt: startedAt);
 
         if (initialStep.HasValue)
             run.CurrentStep = initialStep.Value;
