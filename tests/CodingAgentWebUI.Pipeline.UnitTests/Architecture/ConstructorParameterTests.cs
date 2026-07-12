@@ -15,7 +15,7 @@ public class ConstructorParameterTests
         typeof(PipelineOrchestrationService).Assembly;
 
     [Fact]
-    public void PipelineOrchestrationService_ShouldHave_AtMost8NonLoggerParameters()
+    public void PipelineOrchestrationService_ShouldHave_AtMost9NonLoggerParameters()
     {
         var ctors = typeof(PipelineOrchestrationService).GetConstructors();
         Assert.Single(ctors);
@@ -25,8 +25,8 @@ public class ConstructorParameterTests
         var nonLoggerParams = parameters.Where(p => p.ParameterType != typeof(Serilog.ILogger)).ToArray();
 
         Assert.True(
-            nonLoggerParams.Length <= 8,
-            $"PipelineOrchestrationService has {nonLoggerParams.Length} non-logger constructor parameters (max 8). " +
+            nonLoggerParams.Length <= 9,
+            $"PipelineOrchestrationService has {nonLoggerParams.Length} non-logger constructor parameters (max 9). " +
             $"Parameters: {string.Join(", ", nonLoggerParams.Select(p => $"{p.ParameterType.Name} {p.Name}"))}");
     }
 

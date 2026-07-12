@@ -23,6 +23,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private readonly IDispatchRunCreator _orchestration;
     private readonly IOrchestratorRunService _runService;
     private readonly IWorkDistributor _workDistributor;
+    private readonly IAgentProfileStore _agentProfileStore;
+    private readonly IProviderConfigStore _providerConfigStore;
+    private readonly IPipelineConfigStore _pipelineConfigStore;
+    private readonly IProjectStore _projectStore;
     private readonly ILogger _logger;
 
     public DispatchOrchestrationService(
@@ -30,18 +34,30 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IDispatchRunCreator orchestration,
         IOrchestratorRunService runService,
         IWorkDistributor workDistributor,
+        IAgentProfileStore agentProfileStore,
+        IProviderConfigStore providerConfigStore,
+        IPipelineConfigStore pipelineConfigStore,
+        IProjectStore projectStore,
         ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(orchestration);
         ArgumentNullException.ThrowIfNull(runService);
         ArgumentNullException.ThrowIfNull(workDistributor);
+        ArgumentNullException.ThrowIfNull(agentProfileStore);
+        ArgumentNullException.ThrowIfNull(providerConfigStore);
+        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
+        ArgumentNullException.ThrowIfNull(projectStore);
         ArgumentNullException.ThrowIfNull(logger);
 
         _infra = infra;
         _orchestration = orchestration;
         _runService = runService;
         _workDistributor = workDistributor;
+        _agentProfileStore = agentProfileStore;
+        _providerConfigStore = providerConfigStore;
+        _pipelineConfigStore = pipelineConfigStore;
+        _projectStore = projectStore;
         _logger = logger;
     }
 
@@ -187,7 +203,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private async Task<AgentProfile?> ResolveProfileByLabelsAsync(
         IReadOnlyList<string> requiredLabels, CancellationToken ct)
     {
-        var profiles = await _infra.Resolution.ConfigStore.LoadAgentProfilesAsync(ct);
+        var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
 
         // Find the best profile whose match labels COVER all required labels.
         // Profile.MatchLabels = "agent must have these labels for this profile to apply."
@@ -220,7 +236,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private async Task<IssueContext?> PrepareIssueContextAsync(
         string issueIdentifier, string issueProviderId, CancellationToken ct)
     {
-        var issueConfig = await _infra.Resolution.ConfigStore
+        var issueConfig = await _providerConfigStore
             .GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
         if (issueConfig is null)
             return null;
@@ -293,14 +309,19 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         CancellationToken ct)
     {
         var configs = new List<ProviderConfig>();
-        var store = _infra.Resolution.ConfigStore;
+        // ProviderConfigResolver.ResolveAsync requires IConfigurationStore for InvalidateCaches().
+        // The DI-registered IProviderConfigStore instance always implements IConfigurationStore.
+        // TODO: Unsafe downcast — if DI ever registers a standalone IProviderConfigStore that doesn't implement
+        // IConfigurationStore, this will throw InvalidCastException at runtime. Consider injecting IConfigurationStore
+        // as an additional parameter for ProviderConfigResolver calls, or refactoring ProviderConfigResolver to accept a narrower interface.
+        var store = (IConfigurationStore)_providerConfigStore;
 
-        var repoConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+        var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = await ProviderConfigResolver.ResolveAsync(
             store, repoProviderId, ProviderKind.Repository, repoConfigs, required: true, _logger, ct);
         configs.Add(repoConfig!);
 
-        var agentConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
+        var agentConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
         var agentConfig = await ProviderConfigResolver.ResolveAsync(
             store, agentProviderId, ProviderKind.Agent, agentConfigs, required: true, _logger, ct);
         configs.Add(agentConfig!);
@@ -315,7 +336,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
         if (!string.IsNullOrEmpty(pipelineProviderId))
         {
-            var pipelineConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
+            var pipelineConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
             var pipelineConfig = await ProviderConfigResolver.ResolveAsync(
                 store, pipelineProviderId, ProviderKind.Pipeline, pipelineConfigs, required: false, _logger, ct);
             if (pipelineConfig is not null)
@@ -335,9 +356,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
-        var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
         config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-        var templates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
+        var templates = await _projectStore.LoadAllTemplatesAsync(ct);
         return ApplyTemplateOverrides(
             config, repoProviderId, brainProviderId, providerConfigs, templates);
     }
@@ -470,9 +491,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private async Task<IReadOnlyList<string>> ResolveRequiredLabelsInternalAsync(
         string repoProviderId, CancellationToken ct)
     {
-        var repoConfig = await _infra.Resolution.ConfigStore
+        var repoConfig = await _providerConfigStore
             .GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
-        var pipelineConfig = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+        var pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
         return LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
 

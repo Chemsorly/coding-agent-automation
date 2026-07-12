@@ -33,8 +33,12 @@ public static class TestOrchestrationFactory
         // TODO: When `lifecycle` is provided externally but `historyService` is not, the completion facade
         // receives a default NullHistoryService while the lifecycle holds a different history service instance.
         // This could cause confusing test failures if a test passes a custom lifecycle and then calls GetRunHistory().
+        var store = configStore ?? throw new ArgumentNullException(nameof(configStore), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object");
+        // TODO: Passing the same store object as both IPipelineConfigStore and IProviderConfigStore prevents tests
+        // from verifying that calls are routed to the correct sub-interface. Consider accepting separate parameters.
         return new PipelineOrchestrationService(
-            configStore ?? throw new ArgumentNullException(nameof(configStore), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object"),
+            store,
+            store,
             providerFactory ?? throw new ArgumentNullException(nameof(providerFactory), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
             issueParser ?? new IssueDescriptionParser(),
             executionFacade ?? CreateDefaultExecutionFacade(logger),
