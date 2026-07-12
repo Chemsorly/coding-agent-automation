@@ -22,7 +22,6 @@
 @inject ILabelSwapper LabelSwapper
 @inject IPipelineRunHistoryService HistoryService
 @inject IRunLifecycleManager LifecycleManager
-@inject InfrastructureHealthService InfraHealth
 @inject IJSRuntime JS
 @inject TimeProvider Clock
 @using Microsoft.AspNetCore.SignalR
@@ -47,7 +46,7 @@
         </span>
     </header>
 
-    <RunHistoryStats Runs="_runHistory" Agents="Registry.GetAllAgents()" QueueLength="_queuedJobs.Count" ShowAgentStats="true" DatabaseStatus="_dbStatus" RedisStatus="_redisStatus" />
+    <RunHistoryStats Runs="_runHistory" Agents="Registry.GetAllAgents()" QueueLength="_queuedJobs.Count" ShowAgentStats="true" />
 
     <!-- Active Runs -->
     <section class="settings-section" style="margin: 16px 20px;">
@@ -825,8 +824,6 @@
     private bool _showDisconnectConfirm;
     private DateTimeOffset _lastSuccessfulRefresh;
     private bool _lastRefreshFailed;
-    private bool? _dbStatus;
-    private bool? _redisStatus;
 
     protected override async Task OnInitializedAsync()
     {
@@ -915,8 +912,6 @@
         _agents = Registry.GetAllAgents();
         _runHistory = PipelineService.GetRunHistory();
         _queuedJobs = await PendingWorkQuery.GetPendingJobsAsync();
-        _dbStatus = InfraHealth.DatabaseConnected;
-        _redisStatus = InfraHealth.RedisConnected;
 
         if (includeConsolidation)
             await RefreshConsolidationAsync();
