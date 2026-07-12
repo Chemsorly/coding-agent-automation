@@ -31,8 +31,10 @@ public class PromptBuilderTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsInstructions()
     {
+        // TODO: Strengthen assertion — Contain("Analyze carefully") doesn't verify position relative to scope fence.
+        // Consider asserting ordering: result.IndexOf("Analyze carefully").Should().BeLessThan(result.IndexOf(ThoroughnessFooter))
         var result = PromptBuilder.BuildAnalysisPrompt("Analyze carefully", CreateIssue(), CreateParsedIssue());
-        result.Should().StartWith("Analyze carefully");
+        result.Should().Contain("Analyze carefully");
     }
 
     [Fact]
@@ -662,8 +664,10 @@ public class PromptBuilderTests
     [Fact]
     public void BuildAnalysisReviewPrompt_ContainsInstructions()
     {
+        // TODO: Strengthen assertion — Contain("Review carefully") doesn't verify position relative to scope fence.
+        // Consider asserting ordering: result.IndexOf("Review carefully").Should().BeLessThan(result.IndexOf(ThoroughnessFooter))
         var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
-        result.Should().StartWith("Review carefully");
+        result.Should().Contain("Review carefully");
     }
 
     [Fact]
@@ -801,6 +805,81 @@ public class PromptBuilderTests
         // TODO: Add positional assertion to verify custom prompt appears before "## Thoroughness"
         // e.g. result.IndexOf(customPrompt).Should().BeLessThan(result.IndexOf("## Thoroughness"))
         // to guard against accidental reordering in future refactors.
+    }
+
+    #endregion
+
+    #region ScopeFences
+
+    [Fact]
+    public void BuildAnalysisPrompt_StartsWithAnalysisScopeFence()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Analyze carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().StartWith(PromptBuilder.AnalysisScopeFence);
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_StartsWithReviewScopeFence()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().StartWith(PromptBuilder.ReviewScopeFence);
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_StartsWithReviewScopeFence()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().StartWith(PromptBuilder.ReviewScopeFence);
+    }
+
+    [Fact]
+    public void BuildAcceptanceCriteriaPrompt_StartsWithReviewScopeFence()
+    {
+        var result = PromptBuilder.BuildAcceptanceCriteriaPrompt("Evaluate compliance");
+        result.Should().StartWith(PromptBuilder.ReviewScopeFence);
+    }
+
+    [Fact]
+    public void BuildPrompt_ContainsVerificationClause()
+    {
+        var result = PromptBuilder.BuildPrompt("Implement now", CreateIssue(), CreateParsedIssue());
+        result.Should().Contain(PromptBuilder.VerificationClause);
+    }
+
+    [Fact]
+    public void BuildPrompt_VerificationClauseAfterInstructions()
+    {
+        var result = PromptBuilder.BuildPrompt("Implement now", CreateIssue(), CreateParsedIssue());
+        var instructionsIndex = result.IndexOf("Implement now", StringComparison.Ordinal);
+        var clauseIndex = result.IndexOf("## Verification Before Use", StringComparison.Ordinal);
+        clauseIndex.Should().BeGreaterThan(instructionsIndex,
+            "VerificationClause should appear after configurable instructions");
+    }
+
+    [Fact]
+    public void BuildPrompt_VerificationClauseBeforeGitRestriction()
+    {
+        var result = PromptBuilder.BuildPrompt("Implement now", CreateIssue(), CreateParsedIssue());
+        var clauseIndex = result.IndexOf("## Verification Before Use", StringComparison.Ordinal);
+        var gitIndex = result.IndexOf("Do NOT run git write commands", StringComparison.Ordinal);
+        clauseIndex.Should().BeLessThan(gitIndex,
+            "VerificationClause should appear before GitRestrictionFull");
+    }
+
+    [Fact]
+    public void ScopeFences_DoNotContainAnyFiles()
+    {
+        PromptBuilder.ReviewScopeFence.Should().NotContain("any files");
+        PromptBuilder.AnalysisScopeFence.Should().NotContain("any files");
+    }
+
+    [Fact]
+    public void VerificationClause_TokenBudget()
+    {
+        // ≤400 characters ≈ ≤80 tokens (using ~5 chars/token as conservative proxy for English+markdown)
+        // Acceptance criterion: total per-prompt overhead ≤80 tokens; clause is the largest single addition
+        PromptBuilder.VerificationClause.Length.Should().BeLessThanOrEqualTo(400);
     }
 
     #endregion

@@ -21,6 +21,32 @@ public static class PromptBuilder
         "Check interactions between changed components — a change in one area may break assumptions in another.";
 
     /// <summary>
+    /// Scope fence prepended to review prompts. Exploits primacy effect for behavioral compliance.
+    /// Uses affirmative framing (distinct from the negation-framed constraint at prompt end).
+    /// Restricts source/project files only — does not conflict with designated output file writes.
+    /// </summary>
+    internal const string ReviewScopeFence =
+        "Report findings only. Do not modify source code or project files.\n\n";
+
+    /// <summary>
+    /// Scope fence prepended to analysis prompts.
+    /// </summary>
+    internal const string AnalysisScopeFence =
+        "Analysis only. Do not modify source code. Write output to designated files only.\n\n";
+
+    /// <summary>
+    /// Anti-fabrication clause for implementation prompts. Addresses documented 5-26% API
+    /// hallucination rate. Kept brief per Compliance Gap research (arXiv:2605.01771).
+    /// </summary>
+    internal const string VerificationClause =
+        "\n## Verification Before Use\n\n" +
+        "- Confirm method exists and signature matches before calling.\n" +
+        "- Verify import targets and file paths exist before referencing.\n" +
+        "- Confirm parameter names, types, and order match the declaration.\n" +
+        "- No stubs or placeholders. Every method must contain real logic.\n" +
+        "- If referenced code is missing, search for it. Adapt — never fabricate.\n";
+
+    /// <summary>
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
     /// issue and writes its recommendation to .agent/analysis.md without making any other changes.
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
@@ -33,6 +59,9 @@ public static class PromptBuilder
         ArgumentNullException.ThrowIfNull(parsed);
 
         var sb = new StringBuilder();
+
+        // Scope fence (non-overridable, exploits primacy effect)
+        sb.AppendLine(AnalysisScopeFence);
 
         // Configurable instructions
         sb.AppendLine(analysisInstructions);
@@ -93,6 +122,9 @@ public static class PromptBuilder
 
         var sb = new StringBuilder();
 
+        // Scope fence (non-overridable, exploits primacy effect)
+        sb.AppendLine(ReviewScopeFence);
+
         sb.AppendLine(reviewInstructions);
         sb.AppendLine();
         sb.AppendLine(ThoroughnessFooter);
@@ -141,7 +173,7 @@ public static class PromptBuilder
 
         // Configurable instructions
         sb.AppendLine(implementationInstructions);
-        sb.AppendLine();
+        sb.AppendLine(VerificationClause);
 
         // Pipeline mechanics (non-configurable)
         sb.AppendLine(PipelineConstants.GitRestrictionFull);
@@ -182,6 +214,9 @@ public static class PromptBuilder
         ArgumentNullException.ThrowIfNull(findingsFilePath);
 
         var sb = new StringBuilder();
+
+        // Scope fence (non-overridable, exploits primacy effect)
+        sb.AppendLine(ReviewScopeFence);
 
         sb.AppendLine("You are reviewing code changes made by another agent. You have no prior context about how or why these changes were made — judge purely on correctness, security, and adherence to requirements.");
         sb.AppendLine();
@@ -641,6 +676,10 @@ public static class PromptBuilder
         ArgumentNullException.ThrowIfNull(instructions);
 
         var sb = new StringBuilder();
+
+        // Scope fence (non-overridable, exploits primacy effect)
+        sb.AppendLine(ReviewScopeFence);
+
         sb.AppendLine(instructions);
         sb.AppendLine();
         sb.AppendLine($"Write your assessment to `{AgentWorkspacePaths.AcceptanceCriteriaFilePath}`. Do NOT print results to stdout — only write the JSON file.");
