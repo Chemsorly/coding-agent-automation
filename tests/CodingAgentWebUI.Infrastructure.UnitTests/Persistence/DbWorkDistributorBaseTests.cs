@@ -191,15 +191,18 @@ public class DbWorkDistributorBaseTests : IDisposable
     }
 
     [Fact]
-    public async Task IsIssueDistributedAsync_CancelledItem_ReturnsFalse()
+    public async Task IsIssueDistributedAsync_CancelledItem_WithinCooldown_ReturnsTrue()
     {
+        // A just-cancelled item is within the restart dedup cooldown window,
+        // so IsIssueDistributed returns true to prevent re-dispatch during restart scenarios.
+        // After the cooldown expires (5 minutes), it would return false.
         var request = CreateRequest("owner/repo#10", "provider-10");
         var result = await _distributor.DistributeAsync(request, CancellationToken.None);
         await _distributor.CancelJobAsync(result.WorkItemId!, CancellationToken.None);
 
         var distributed = await _distributor.IsIssueDistributedAsync("owner/repo#10", "provider-10", CancellationToken.None);
 
-        distributed.Should().BeFalse();
+        distributed.Should().BeTrue("recently-cancelled items within the restart dedup cooldown are treated as distributed");
     }
 
     // ── Shared: GetActiveIssueIdentifiersAsync ──────────────────────────
@@ -221,6 +224,234 @@ public class DbWorkDistributorBaseTests : IDisposable
         active.Should().Contain(("a-1", "p1"));
         active.Should().Contain(("a-2", "p2"));
         active.Should().NotContain(("done-1", "p3"));
+    }
+
+    // ── Restart Dedup: Recently-terminated WorkItems within cooldown ─────
+    // TODO: Add boundary condition tests: CompletedAt exactly at cooldown edge (UtcNow.AddMinutes(-5)), terminal item with CompletedAt=null, and Succeeded status within cooldown (see BUG-10 test quality review findings)
+
+    [Fact]
+    public async Task GetActiveIssueIdentifiersAsync_RecentlyTerminatedWithinCooldown_IncludedInDedup()
+    {
+        // Simulate: issue with a Failed WorkItem from 1 minute ago (within 5-min cooldown)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = "restart-issue-1",
+            IssueProviderConfigId = "provider-restart",
+            Status = WorkItemStatus.Failed,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2),
+            CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-1), // Failed 1 min ago — within cooldown
+            AgentSelector = "kiro",
+            TimeoutSeconds = 1800
+        });
+        await db.SaveChangesAsync();
+
+        var active = await _distributor.GetActiveIssueIdentifiersAsync(CancellationToken.None);
+
+        // Should be treated as "active" for dedup purposes — prevents re-dispatch on restart
+        active.Should().Contain(("restart-issue-1", "provider-restart"));
+    }
+
+    [Fact]
+    public async Task GetActiveIssueIdentifiersAsync_TerminatedOutsideCooldown_NotIncludedInDedup()
+    {
+        // Simulate: issue with a Failed WorkItem from 10 minutes ago (outside 5-min cooldown)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = "old-issue-1",
+            IssueProviderConfigId = "provider-old",
+            Status = WorkItemStatus.Failed,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-15),
+            CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-10), // Failed 10 min ago — outside cooldown
+            AgentSelector = "kiro",
+            TimeoutSeconds = 1800
+        });
+        await db.SaveChangesAsync();
+
+        var active = await _distributor.GetActiveIssueIdentifiersAsync(CancellationToken.None);
+
+        // Should NOT be included — legitimate re-dispatch should be allowed
+        active.Should().NotContain(("old-issue-1", "provider-old"));
+    }
+
+    [Fact]
+    public async Task IsIssueDistributedAsync_RecentlyFailedWithinCooldown_ReturnsTrue()
+    {
+        // Simulate restart scenario: issue's WorkItem failed 1 minute ago
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = "restart-check-1",
+            IssueProviderConfigId = "provider-check",
+            Status = WorkItemStatus.Failed,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-3),
+            CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-1), // Failed 1 min ago
+            AgentSelector = "kiro",
+            TimeoutSeconds = 1800
+        });
+        await db.SaveChangesAsync();
+
+        var distributed = await _distributor.IsIssueDistributedAsync("restart-check-1", "provider-check", CancellationToken.None);
+
+        distributed.Should().BeTrue("recently-failed WorkItem within cooldown should block re-dispatch");
+    }
+
+    [Fact]
+    public async Task IsIssueDistributedAsync_FailedOutsideCooldown_ReturnsFalse()
+    {
+        // Issue failed 10 minutes ago — outside cooldown, eligible for re-dispatch
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = "old-check-1",
+            IssueProviderConfigId = "provider-old-check",
+            Status = WorkItemStatus.Failed,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-15),
+            CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-10), // Failed 10 min ago
+            AgentSelector = "kiro",
+            TimeoutSeconds = 1800
+        });
+        await db.SaveChangesAsync();
+
+        var distributed = await _distributor.IsIssueDistributedAsync("old-check-1", "provider-old-check", CancellationToken.None);
+
+        distributed.Should().BeFalse("WorkItem failed outside cooldown should allow legitimate re-dispatch");
+    }
+
+    [Fact]
+    public async Task IsIssueDistributedAsync_CancelledWithinCooldown_ReturnsTrue()
+    {
+        // Issue cancelled 2 minutes ago (within cooldown)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        db.WorkItems.Add(new WorkItemEntity
+        {
+            Id = Guid.NewGuid(),
+            IssueIdentifier = "cancelled-recent-1",
+            IssueProviderConfigId = "provider-cancelled",
+            Status = WorkItemStatus.Cancelled,
+            CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+            CompletedAt = DateTimeOffset.UtcNow.AddMinutes(-2), // Cancelled 2 min ago
+            AgentSelector = "kiro",
+            TimeoutSeconds = 1800
+        });
+        await db.SaveChangesAsync();
+
+        var distributed = await _distributor.IsIssueDistributedAsync("cancelled-recent-1", "provider-cancelled", CancellationToken.None);
+
+        distributed.Should().BeTrue("recently-cancelled WorkItem within cooldown should block re-dispatch");
+    }
+
+    // ── OriginalEnqueuedAt: Preserved across re-dispatches ──────────────
+
+    [Fact]
+    public async Task InsertWorkItem_FirstDispatch_OriginalEnqueuedAtSetToCreatedAt()
+    {
+        var request = CreateRequest("fresh-issue-1", "provider-fresh");
+
+        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FirstAsync(w => w.Id == Guid.Parse(result.WorkItemId!));
+        item.OriginalEnqueuedAt.Should().NotBeNull();
+        // First dispatch: OriginalEnqueuedAt == CreatedAt (within tolerance)
+        (item.OriginalEnqueuedAt!.Value - item.CreatedAt).Duration().Should().BeLessThan(TimeSpan.FromSeconds(1));
+    }
+
+    [Fact]
+    public async Task InsertWorkItem_ReDispatch_PreservesOriginalEnqueuedAt()
+    {
+        var originalTime = DateTimeOffset.UtcNow.AddHours(-2);
+
+        // Simulate a prior WorkItem for the same issue (already terminal)
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                IssueIdentifier = "redispatch-issue-1",
+                IssueProviderConfigId = "provider-redispatch",
+                Status = WorkItemStatus.Failed,
+                CreatedAt = originalTime,
+                CompletedAt = DateTimeOffset.UtcNow.AddHours(-1),
+                AgentSelector = "kiro",
+                TimeoutSeconds = 1800
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Now re-dispatch the same issue — OriginalEnqueuedAt should carry forward
+        var request = CreateRequest("redispatch-issue-1", "provider-redispatch");
+        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        await using var verifyDb = await _dbFactory.CreateDbContextAsync();
+        var newItem = await verifyDb.WorkItems
+            .Where(w => w.Id == Guid.Parse(result.WorkItemId!))
+            .FirstAsync();
+
+        // OriginalEnqueuedAt should be the original time from the first WorkItem
+        newItem.OriginalEnqueuedAt.Should().NotBeNull();
+        (newItem.OriginalEnqueuedAt!.Value - originalTime).Duration().Should().BeLessThan(TimeSpan.FromSeconds(1));
+        // CreatedAt should be recent (the new WorkItem's own creation time)
+        newItem.CreatedAt.Should().BeAfter(originalTime);
+    }
+
+    [Fact]
+    public async Task InsertWorkItem_ReDispatch_PreservesEarliestOriginalEnqueuedAt()
+    {
+        var veryEarlyTime = DateTimeOffset.UtcNow.AddDays(-3);
+        var laterTime = DateTimeOffset.UtcNow.AddDays(-1);
+
+        // Simulate two prior WorkItems — one very early (has OriginalEnqueuedAt), one later
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.AddRange(
+                new WorkItemEntity
+                {
+                    Id = Guid.NewGuid(),
+                    IssueIdentifier = "multi-dispatch-1",
+                    IssueProviderConfigId = "provider-multi",
+                    Status = WorkItemStatus.Failed,
+                    CreatedAt = veryEarlyTime,
+                    OriginalEnqueuedAt = veryEarlyTime,
+                    CompletedAt = veryEarlyTime.AddMinutes(30),
+                    AgentSelector = "kiro",
+                    TimeoutSeconds = 1800
+                },
+                new WorkItemEntity
+                {
+                    Id = Guid.NewGuid(),
+                    IssueIdentifier = "multi-dispatch-1",
+                    IssueProviderConfigId = "provider-multi",
+                    Status = WorkItemStatus.Failed,
+                    CreatedAt = laterTime,
+                    OriginalEnqueuedAt = veryEarlyTime, // Carried forward from first
+                    CompletedAt = laterTime.AddMinutes(30),
+                    AgentSelector = "kiro",
+                    TimeoutSeconds = 1800
+                }
+            );
+            await db.SaveChangesAsync();
+        }
+
+        // Third dispatch
+        var request = CreateRequest("multi-dispatch-1", "provider-multi");
+        var result = await _distributor.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        await using var verifyDb = await _dbFactory.CreateDbContextAsync();
+        var newItem = await verifyDb.WorkItems
+            .Where(w => w.Id == Guid.Parse(result.WorkItemId!))
+            .FirstAsync();
+
+        // Should preserve the earliest OriginalEnqueuedAt from all prior WorkItems
+        (newItem.OriginalEnqueuedAt!.Value - veryEarlyTime).Duration().Should().BeLessThan(TimeSpan.FromSeconds(1));
     }
 
     // ── BuildJobAssignmentMessage ───────────────────────────────────────

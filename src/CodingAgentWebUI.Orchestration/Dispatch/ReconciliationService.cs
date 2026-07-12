@@ -185,6 +185,7 @@ public sealed class ReconciliationService : BackgroundService
     /// <summary>
     /// Issues with in-progress labels but no matching non-terminal work item → swap to agent:next.
     /// </summary>
+    // TODO: This still swaps recently-terminal items back to agent:next on restart (including removing agent:cancelled labels), creating unnecessary label churn. Consider Option C from BUG-10: skip items whose terminal state indicates infrastructure failure (heartbeat timeout, orphan detected) rather than genuine business failure (see BUG-10 review findings)
     private async Task ReconcileStartupLabelsAsync(CancellationToken ct)
     {
         if (_labelSwapper is null) return;
