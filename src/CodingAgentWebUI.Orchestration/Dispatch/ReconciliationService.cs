@@ -356,8 +356,65 @@ public sealed class ReconciliationService : BackgroundService
                 await TryDeleteJobAsync(jobName, ct);
             }
         }
-        // For "Complete" — agent should have already POSTed terminal status.
-        // If not, the poll loop will catch it as orphan/timeout.
+        else if (isComplete)
+        {
+            // Job completed (exit 0) — verify the agent actually reported terminal status.
+            // Grace period: allow 30s for the POST to arrive (network latency, agent shutdown sequence).
+            await HandleCompleteJobWithStuckWorkItemAsync(workItemId, job, ct);
+        }
+    }
+
+    /// <summary>
+    /// Grace period (seconds) after a K8s Job completes before assuming the agent never reported back.
+    /// Prevents false positives during normal agent shutdown (agent exits → K8s marks Complete → POST arrives 1-2s later).
+    /// </summary>
+    internal const int CompleteJobGracePeriodSeconds = 30;
+
+    /// <summary>
+    /// When a K8s Job reaches Complete status, verifies the WorkItem has reached a terminal state.
+    /// If still Dispatched/Running after the grace period, transitions to Failed (agent never reported back).
+    /// </summary>
+    private async Task HandleCompleteJobWithStuckWorkItemAsync(Guid workItemId, V1Job job, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var item = await db.WorkItems.AsNoTracking()
+            .Where(w => w.Id == workItemId)
+            .Select(w => new { w.Status, w.CompletedAt })
+            .FirstOrDefaultAsync(ct);
+
+        if (item is null) return; // Already cleaned up
+
+        if (item.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+            return; // Agent reported correctly — nothing to do
+
+        // WorkItem still non-terminal after Job completed — check grace period
+        var jobCompletionTime = job.Status?.CompletionTime;
+        var gracePeriod = TimeSpan.FromSeconds(CompleteJobGracePeriodSeconds);
+
+        if (jobCompletionTime is null || DateTimeOffset.UtcNow - jobCompletionTime.Value <= gracePeriod)
+            return; // Still within grace period — POST may still arrive
+
+        Log.Warning(
+            "ReconciliationService: Job {JobName} completed but WorkItem {WorkItemId} still in {Status} — agent never reported terminal status",
+            job.Metadata?.Name, workItemId, item.Status);
+
+        // TODO: Check return value of TransitionAsync — if false (e.g., item already transitioned by Watch handler), skip cleanup below for efficiency.
+        await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
+            entity =>
+            {
+                entity.CompletedAt = DateTimeOffset.UtcNow;
+                entity.FailureReason = FailureReason.InfrastructureFailure;
+                entity.ErrorMessage = "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure";
+            }, ct);
+
+        LogTerminalTransition(workItemId, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
+
+        // Release PVC and delete Job (same cleanup as isFailed path)
+        await ReleasePvcForWorkItemAsync(workItemId, ct);
+        if (!string.IsNullOrEmpty(job.Metadata?.Name))
+        {
+            await TryDeleteJobAsync(job.Metadata.Name, ct);
+        }
     }
 
     /// <summary>
@@ -416,6 +473,7 @@ public sealed class ReconciliationService : BackgroundService
     private async Task RunReconciliationCycleAsync(CancellationToken ct)
     {
         await DetectOrphansAsync(ct);
+        await DetectCompletedJobsWithStuckWorkItemsAsync(ct);
         await EnforceTimeoutsAsync(ct);
         await EnforceConsolidationTimeoutsAsync(ct);
         await DetectPodStartupFailuresAsync(ct);
@@ -463,6 +521,91 @@ public sealed class ReconciliationService : BackgroundService
                     }, ct);
 
                 LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
+            }
+        }
+    }
+
+    // ── Completed Job + Stuck WorkItem Detection (Safety Net) ──────────
+
+    /// <summary>
+    /// Poll-based safety net for #1138: detects K8s Jobs that have reached Complete status
+    /// but whose WorkItems remain in Dispatched/Running (agent never reported terminal status).
+    /// Applies the same 30s grace period as the Watch handler.
+    /// Covers missed Watch events (API server disconnect, 410 Gone during the event window).
+    /// </summary>
+    internal async Task DetectCompletedJobsWithStuckWorkItemsAsync(CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        // Find non-terminal WorkItems that have K8s Job names
+        var activeItems = await db.WorkItems
+            .Where(w => (w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+                        && w.K8sJobName != null)
+            .Select(w => new { w.Id, w.K8sJobName })
+            .ToListAsync(ct);
+
+        if (activeItems.Count == 0) return;
+
+        // List all managed Jobs from K8s
+        V1JobList? jobList;
+        try
+        {
+            jobList = await _kubeClient.BatchV1.ListNamespacedJobAsync(
+                _options.Namespace,
+                labelSelector: $"{ManagedByLabel}={ManagedByValue}",
+                cancellationToken: ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            Log.Error(ex, "ReconciliationService: failed to list K8s Jobs for stuck WorkItem detection");
+            return;
+        }
+
+        if (jobList?.Items is null) return;
+
+        // Build lookup: JobName → V1Job (only Complete Jobs)
+        // TODO: ToDictionary could throw ArgumentException if K8s API returns duplicate job names (unlikely but possible due to client pagination bugs). Consider using GroupBy or TryAdd for defensive handling.
+        var completedJobs = jobList.Items
+            .Where(j => j.Metadata?.Name is not null &&
+                        j.Status?.Conditions?.Any(c => c.Type == "Complete" && c.Status == "True") == true)
+            .ToDictionary(j => j.Metadata!.Name, StringComparer.Ordinal);
+
+        if (completedJobs.Count == 0) return;
+
+        var gracePeriod = TimeSpan.FromSeconds(CompleteJobGracePeriodSeconds);
+        var now = DateTimeOffset.UtcNow;
+
+        foreach (var item in activeItems)
+        {
+            if (ct.IsCancellationRequested) break;
+
+            if (!completedJobs.TryGetValue(item.K8sJobName!, out var job))
+                continue; // Job not in Complete state — skip
+
+            var completionTime = job.Status?.CompletionTime;
+            if (completionTime is null || now - completionTime.Value <= gracePeriod)
+                continue; // Still within grace period
+
+            Log.Warning(
+                "ReconciliationService: [poll] Job {JobName} completed at {CompletionTime} but WorkItem {WorkItemId} still non-terminal — failing",
+                item.K8sJobName, completionTime, item.Id);
+
+            // TODO: Check return value of TransitionAsync — if false (item already transitioned), skip cleanup for efficiency and log as no-op.
+            await _transitionService.TransitionAsync(item.Id, WorkItemStatus.Failed,
+                entity =>
+                {
+                    entity.CompletedAt = DateTimeOffset.UtcNow;
+                    entity.FailureReason = FailureReason.InfrastructureFailure;
+                    entity.ErrorMessage = "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure";
+                }, ct);
+
+            LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
+
+            // Release PVC and delete Job
+            await ReleasePvcForWorkItemAsync(item.Id, ct);
+            if (!string.IsNullOrEmpty(item.K8sJobName))
+            {
+                await TryDeleteJobAsync(item.K8sJobName, ct);
             }
         }
     }
