@@ -29,7 +29,9 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         ParsedIssue ParsedIssue,
         IReadOnlyList<IssueComment> IssueComments,
         string? ExistingAnalysis,
-        bool ForceRefreshAnalysis);
+        bool ForceRefreshAnalysis,
+        string? StalenessSignal = null,
+        int RefreshCount = 0);
     private readonly JobDispatcherService _dispatcher;
     private readonly IAgentRegistryService _registry;
     private readonly IOrchestratorRunService _runService;

@@ -83,7 +83,7 @@ public class ThrowLoggingTests : IDisposable
             })
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
-        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         // Should log Warning with "too short" before the throw
         _mockLogger.Verify(l => l.Warning(
@@ -109,7 +109,7 @@ public class ThrowLoggingTests : IDisposable
             })
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
-        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         // Should log Warning about assessment not found
         _mockLogger.Verify(l => l.Warning(
@@ -136,7 +136,7 @@ public class ThrowLoggingTests : IDisposable
             })
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
-        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         // Should log Warning about missing recommendation field
         _mockLogger.Verify(l => l.Warning(
@@ -163,7 +163,7 @@ public class ThrowLoggingTests : IDisposable
             })
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
-        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         // Should log Warning with JsonException before throw
         _mockLogger.Verify(l => l.Warning(

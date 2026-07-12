@@ -18,12 +18,18 @@ public sealed class AnalyzeCodeStep : IPipelineStep
         activity?.SetTag("pipeline.issue", context.Run.IssueIdentifier);
         PipelineTelemetry.SetProjectTags(activity, context.Run.ProjectId, context.Run.ProjectName);
 
+        // Set staleness telemetry tags propagated from dispatch
+        if (context.StalenessSignal is not null)
+            activity?.SetTag("pipeline.analysis.staleness_signal", context.StalenessSignal);
+        activity?.SetTag("pipeline.analysis.refresh_count", context.AnalysisRefreshCount);
+
         context.Callbacks.EmitOutputLine("🔍 Starting analysis...");
 
         var phaseContext = context.BuildAgentPhaseContext();
 
         var shouldContinue = await context.AgentExecution.ExecuteAnalysisPhaseAsync(
-            phaseContext, context.IssueComments ?? Array.Empty<IssueComment>(), ct);
+            phaseContext, context.IssueComments ?? Array.Empty<IssueComment>(),
+            context.ForceRefreshAnalysis, ct);
 
         // Capture session ID for trace correlation
         try

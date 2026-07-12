@@ -59,6 +59,12 @@ public record JobDistributionRequest
     /// <summary>Whether existing analysis should be force-refreshed (e.g., after gate rejection).</summary>
     public bool ForceRefreshAnalysis { get; init; }
 
+    /// <summary>Which staleness signal triggered force-refresh (null if not staleness-triggered).</summary>
+    public string? StalenessSignal { get; init; }
+
+    /// <summary>Number of prior analysis refreshes for this issue (for OTel).</summary>
+    public int AnalysisRefreshCount { get; init; }
+
     // --- Provider configs (serialized without secrets) ---
 
     /// <summary>Provider configurations relevant to this work item.</summary>
