@@ -78,6 +78,8 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     /// <summary>
     /// Inserts a WorkItem entity into the database with the specified initial status.
     /// Handles serialization, entity construction, and DB error handling.
+    /// Carries forward OriginalEnqueuedAt from any prior WorkItem for the same issue
+    /// to preserve the true "time in queue" across re-dispatches.
     /// </summary>
     /// <returns>A <see cref="DistributionResult"/> indicating success or failure.</returns>
     protected async Task<DistributionResult> InsertWorkItemAsync(
@@ -92,6 +94,25 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
 
         var payloadJson = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
 
+        // Look up the original enqueue time from prior WorkItems for this issue.
+        // This preserves the true "time in queue" across re-dispatches.
+        DateTimeOffset? originalEnqueuedAt = null;
+        if (!string.IsNullOrEmpty(request.IssueIdentifier) && !string.IsNullOrEmpty(request.IssueProviderConfigId))
+        {
+            await using var lookupDb = await _dbFactory.CreateDbContextAsync(ct);
+            originalEnqueuedAt = await lookupDb.WorkItems
+                .AsNoTracking()
+                .Where(w => w.IssueIdentifier == request.IssueIdentifier
+                         && w.IssueProviderConfigId == request.IssueProviderConfigId)
+                .OrderBy(w => w.CreatedAt)
+                .Select(w => w.OriginalEnqueuedAt ?? w.CreatedAt)
+                .FirstOrDefaultAsync(ct);
+
+            // FirstOrDefaultAsync returns default(DateTimeOffset) = DateTimeOffset.MinValue when no rows found
+            if (originalEnqueuedAt == default(DateTimeOffset))
+                originalEnqueuedAt = null;
+        }
+
         var entity = new WorkItemEntity
         {
             Id = workItemId,
@@ -102,6 +123,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
             Payload = payloadJson,
             AgentSelector = request.AgentSelector,
             CreatedAt = now,
+            OriginalEnqueuedAt = originalEnqueuedAt ?? now,
             DispatchedAt = initialStatus == WorkItemStatus.Dispatched ? now : null,
             TimeoutSeconds = request.TimeoutSeconds,
             ProjectId = request.ProjectId
@@ -170,12 +192,32 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     public virtual async Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        return await db.WorkItems
+
+        // Check for active (non-terminal) WorkItems
+        var hasActive = await db.WorkItems
             .AsNoTracking()
             .AnyAsync(w =>
                 w.IssueIdentifier == issueIdentifier &&
                 w.IssueProviderConfigId == issueProviderConfigId &&
                 ActiveStatuses.Contains(w.Status),
+                ct);
+
+        if (hasActive)
+            return true;
+
+        // Also check for recently-terminated WorkItems within the restart dedup cooldown.
+        // This prevents re-dispatch of issues whose WorkItems were failed/cancelled during
+        // pod restart (HeartbeatMonitor or ReconciliationService transitioning them to terminal).
+        // TODO: This also blocks re-dispatch of Succeeded items within cooldown — consider excluding Succeeded status if intentional re-runs within 5min should be allowed (see BUG-10 review findings)
+        var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
+        return await db.WorkItems
+            .AsNoTracking()
+            .AnyAsync(w =>
+                w.IssueIdentifier == issueIdentifier &&
+                w.IssueProviderConfigId == issueProviderConfigId &&
+                !ActiveStatuses.Contains(w.Status) &&
+                w.CompletedAt != null &&
+                w.CompletedAt >= recentTerminalCutoff,
                 ct);
     }
 
@@ -183,15 +225,32 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     public virtual async Task<HashSet<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var pairs = await db.WorkItems
+
+        // Load issues with active (non-terminal) WorkItems
+        var activePairs = await db.WorkItems
             .AsNoTracking()
             .Where(w => ActiveStatuses.Contains(w.Status))
             .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
             .ToListAsync(ct);
 
-        return pairs
+        // Also load issues with recently-terminated WorkItems (within restart dedup cooldown).
+        // This prevents re-dispatch of issues whose WorkItems were transitioned to terminal
+        // states during a pod restart window.
+        var recentTerminalCutoff = DateTimeOffset.UtcNow - PipelineConstants.DefaultRestartDedupCooldown;
+        var recentTerminalPairs = await db.WorkItems
+            .AsNoTracking()
+            .Where(w => !ActiveStatuses.Contains(w.Status) &&
+                        w.CompletedAt != null &&
+                        w.CompletedAt >= recentTerminalCutoff)
+            .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
+            .ToListAsync(ct);
+
+        var result = activePairs
+            .Concat(recentTerminalPairs)
             .Select(p => (p.IssueIdentifier, p.IssueProviderConfigId))
             .ToHashSet();
+
+        return result;
     }
 
     // ── Shared: Reconciliation (default no-op, overridden by SignalR) ─────

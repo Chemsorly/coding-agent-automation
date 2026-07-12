@@ -34,7 +34,7 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
             .AsNoTracking()
             .Where(w => w.Status == WorkItemStatus.Pending)
             .OrderBy(w => w.CreatedAt)
-            .Select(w => new { w.Id, w.IssueIdentifier, w.IssueProviderConfigId, w.CreatedAt, w.AgentSelector, w.TaskType, w.Payload })
+            .Select(w => new { w.Id, w.IssueIdentifier, w.IssueProviderConfigId, w.CreatedAt, w.OriginalEnqueuedAt, w.AgentSelector, w.TaskType, w.Payload })
             .ToListAsync(ct);
 
         var result = items.Select(w =>
@@ -47,7 +47,7 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
                 IssueProviderId = w.IssueProviderConfigId,
                 IssueTitle = issueTitle,
                 RepoProviderId = repoProviderId,
-                EnqueuedAt = w.CreatedAt,
+                EnqueuedAt = w.OriginalEnqueuedAt ?? w.CreatedAt,
                 InitiatedBy = "loop",
                 RequiredLabels = string.IsNullOrEmpty(w.AgentSelector)
                     ? []

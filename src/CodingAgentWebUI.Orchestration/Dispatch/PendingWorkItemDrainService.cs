@@ -219,6 +219,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                         _agentResolver.AssignJob(agentId, item.Id.ToString());
 
                         var latency = (DateTimeOffset.UtcNow - item.CreatedAt).TotalSeconds;
+                        // TODO: Use OriginalEnqueuedAt ?? CreatedAt instead of CreatedAt to reflect true time since original enqueue for re-dispatched items (see BUG-10 review findings)
                         WorkDistributionTelemetry.DispatchLatency.Record(latency,
                             new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
                         WorkDistributionTelemetry.PendingDuration.Record(latency,

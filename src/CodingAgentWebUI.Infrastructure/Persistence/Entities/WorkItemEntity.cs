@@ -37,6 +37,14 @@ public class WorkItemEntity
     public string? ProjectId { get; set; }
 
     /// <summary>
+    /// The original enqueue timestamp, carried forward across re-dispatches of the same issue.
+    /// When a WorkItem is created for an issue that has prior WorkItems, this preserves the
+    /// earliest CreatedAt from any predecessor. Falls back to CreatedAt when no prior exists.
+    /// Used by the UI to show true "time in queue" rather than the latest WorkItem creation time.
+    /// </summary>
+    public DateTimeOffset? OriginalEnqueuedAt { get; set; }
+
+    /// <summary>
     /// Last time the agent reported progress (step transition or heartbeat with active step).
     /// Updated with throttling (only when current DB value is >5 min stale) to reduce write load.
     /// Used by ReconciliationService for progress-aware timeout enforcement.

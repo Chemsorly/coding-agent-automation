@@ -190,8 +190,10 @@ public class KubernetesWorkDistributorTests : IDisposable
     }
 
     [Fact]
-    public async Task IsIssueDistributedAsync_CancelledItem_ReturnsFalse()
+    public async Task IsIssueDistributedAsync_CancelledItem_WithinCooldown_ReturnsTrue()
     {
+        // A just-cancelled item is within the restart dedup cooldown window,
+        // so IsIssueDistributed returns true to prevent re-dispatch during restart scenarios.
         var request = CreateRequest("owner/repo#8", "provider-8");
         var result = await _distributor.DistributeAsync(request, CancellationToken.None);
         await _distributor.CancelJobAsync(result.WorkItemId!, CancellationToken.None);
@@ -199,7 +201,7 @@ public class KubernetesWorkDistributorTests : IDisposable
         var distributed = await _distributor.IsIssueDistributedAsync(
             "owner/repo#8", "provider-8", CancellationToken.None);
 
-        distributed.Should().BeFalse();
+        distributed.Should().BeTrue("recently-cancelled items within restart dedup cooldown are treated as distributed");
     }
 
     [Fact]
