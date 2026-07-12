@@ -14,4 +14,17 @@ public sealed record CodeReviewSummary(
     int CriticalCount,
     int WarningCount,
     int SuggestionCount,
-    IReadOnlyList<AgentFindings> AgentFindings);
+    IReadOnlyList<AgentFindings> AgentFindings)
+{
+    /// <summary>
+    /// AI-generated summary of what the PR changed (2-3 sentences).
+    /// Null when summary generation failed or was not run.
+    /// </summary>
+    public string? ChangeSummary { get; init; }
+
+    /// <summary>
+    /// AI-generated synthesis of review findings (1-2 sentences).
+    /// Null when summary generation failed or was not run.
+    /// </summary>
+    public string? VerdictSummary { get; init; }
+}

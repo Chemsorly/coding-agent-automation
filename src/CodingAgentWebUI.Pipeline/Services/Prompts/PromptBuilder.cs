@@ -720,4 +720,38 @@ public static class PromptBuilder
 
         return sb.ToString().TrimEnd();
     }
+
+    /// <summary>
+    /// Builds a prompt that asks the agent to summarize code review findings into a
+    /// change summary and review verdict.
+    /// </summary>
+    /// <param name="diffStat">The git diff stat output showing files changed.</param>
+    /// <param name="issueTitle">The issue title for context.</param>
+    /// <param name="findings">Concatenated per-agent findings text.</param>
+    public static string BuildReviewSummaryPrompt(string diffStat, string issueTitle, string findings)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine("You are summarizing a code review. Read the findings below and produce two sections:");
+        sb.AppendLine();
+        sb.AppendLine("## Change Summary");
+        sb.AppendLine("In 2-3 sentences, describe what this PR does. Reference specific files/components affected.");
+        sb.AppendLine();
+        sb.AppendLine("## Review Verdict");
+        sb.AppendLine("In 1-2 sentences, summarize the review outcome. Name the 1-2 most impactful findings specifically (e.g., \"race condition in drain service's pre-reservation flow\", not \"some issues\"). Include severity count and disposition (fixed/reported/clean). If no findings, state \"No issues found\" and briefly note quality.");
+        sb.AppendLine();
+        sb.AppendLine("Be specific about WHAT was found rather than generic. Maximum 3 sentences per section.");
+        sb.AppendLine();
+        sb.AppendLine("Output ONLY the two markdown sections above — no other text, no code changes, no file writes.");
+        sb.AppendLine();
+        sb.AppendLine("--- DIFF STAT ---");
+        sb.AppendLine(string.IsNullOrWhiteSpace(diffStat) ? "(not available)" : diffStat);
+        sb.AppendLine();
+        sb.AppendLine("--- ISSUE CONTEXT ---");
+        sb.AppendLine(string.IsNullOrWhiteSpace(issueTitle) ? "(not available)" : issueTitle);
+        sb.AppendLine();
+        sb.AppendLine("--- FINDINGS ---");
+        sb.AppendLine(string.IsNullOrWhiteSpace(findings) ? "(no findings — clean review)" : findings);
+
+        return sb.ToString().TrimEnd();
+    }
 }
