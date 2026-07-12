@@ -163,6 +163,11 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             orchestration,
             _runService,
             new Mock<IWorkDistributor>().Object,
+            // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockLogger.Object);
     }
 

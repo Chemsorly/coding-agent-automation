@@ -10,12 +10,12 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 public class PipelineProviderManager : IAsyncDisposable
 {
-    private readonly IConfigurationStore _configStore;
+    private readonly IProviderConfigStore _configStore;
     private readonly IProviderFactory _providerFactory;
     private readonly Serilog.ILogger _logger;
 
     public PipelineProviderManager(
-        IConfigurationStore configStore,
+        IProviderConfigStore configStore,
         IProviderFactory providerFactory,
         Serilog.ILogger logger)
     {

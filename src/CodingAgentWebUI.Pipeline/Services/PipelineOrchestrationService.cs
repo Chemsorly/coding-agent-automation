@@ -23,7 +23,8 @@ namespace CodingAgentWebUI.Pipeline.Services;
 public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrchestrationShutdownAction, IDispatchRunCreator
 {
     private readonly PipelineRunLifecycleService _lifecycle;
-    private readonly IConfigurationStore _configStore;
+    private readonly IPipelineConfigStore _pipelineConfigStore;
+    private readonly IProviderConfigStore _providerConfigStore;
     private readonly IProviderFactory _providerFactory;
     private readonly ILabelSwapper _labelSwapper;
     private readonly IssueDescriptionParser _issueParser;
@@ -95,7 +96,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId) => _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId);
 
     public PipelineOrchestrationService(
-        IConfigurationStore configStore,
+        IPipelineConfigStore pipelineConfigStore,
+        IProviderConfigStore providerConfigStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
         IPipelineExecutionFacade executionFacade,
@@ -105,7 +107,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         ILabelSwapper labelSwapper,
         Serilog.ILogger logger)
     {
-        ArgumentNullException.ThrowIfNull(configStore);
+        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
+        ArgumentNullException.ThrowIfNull(providerConfigStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(issueParser);
         ArgumentNullException.ThrowIfNull(executionFacade);
@@ -115,7 +118,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         ArgumentNullException.ThrowIfNull(labelSwapper);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _configStore = configStore;
+        _pipelineConfigStore = pipelineConfigStore;
+        _providerConfigStore = providerConfigStore;
         _providerFactory = providerFactory;
         _labelSwapper = labelSwapper;
         _issueParser = issueParser;
@@ -123,7 +127,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         _executionFacade = executionFacade;
         _completionFacade = completionFacade;
         _cancellationFacade = cancellationFacade;
-        _providerManager = new PipelineProviderManager(configStore, providerFactory, logger);
+        _providerManager = new PipelineProviderManager(providerConfigStore, providerFactory, logger);
         _lifecycle = lifecycle;
     }
 
@@ -150,7 +154,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             return null;
         }
 
-        var config = await _configStore.LoadPipelineConfigAsync(ct);
+        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
 
         // Resolve repo provider config to get repository name
         var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, ct);
@@ -202,7 +206,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             brainProvider: _providerManager.ActiveBrainProvider,
             pipelineProvider: _providerManager.ActivePipelineProvider,
             cts: _lifecycle.CancellationTokenSource,
-            configStore: _configStore,
+            // TODO: Unsafe downcast — if DI ever registers a standalone IProviderConfigStore that doesn't implement
+            // IConfigurationStore, this will throw InvalidCastException at runtime. Consider injecting IConfigurationStore
+            // directly for PipelineStepContext, or narrowing the configStore parameter type in ForOrchestrator.
+            configStore: (IConfigurationStore)_providerConfigStore,
             callbacks: callbacks,
             issueOps: issueOps,
             agentExecution: _executionFacade.AgentExecution,
@@ -481,7 +488,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             lastUsed["agent"] = agentId;
             if (!string.IsNullOrEmpty(brainId)) lastUsed["brain"] = brainId;
             if (!string.IsNullOrEmpty(pipelineId)) lastUsed["pipeline"] = pipelineId;
-            await _configStore.UpdatePipelineConfigAsync(
+            await _pipelineConfigStore.UpdatePipelineConfigAsync(
                 current => current with { LastUsedProviderIds = lastUsed }, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

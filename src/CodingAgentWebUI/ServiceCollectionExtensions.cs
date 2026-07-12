@@ -111,7 +111,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<Pipeline.Interfaces.IAgentCancellationSender>()));
 
         services.AddSingleton(sp => new PipelineOrchestrationService(
-            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IPipelineConfigStore>(),
+            sp.GetRequiredService<IProviderConfigStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<IssueDescriptionParser>(),
             sp.GetRequiredService<Pipeline.Interfaces.IPipelineExecutionFacade>(),

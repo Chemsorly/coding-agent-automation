@@ -143,6 +143,10 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<Pipeline.Interfaces.IWorkDistributor>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IAgentProfileStore>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IProviderConfigStore>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IPipelineConfigStore>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IProjectStore>(),
             Log.Logger));
 
         // ── IRunLifecycleManager (DB mode — coordinates in-memory + DB transitions) ──
