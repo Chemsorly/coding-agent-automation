@@ -303,9 +303,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     {
         try
         {
-            var targetKind = run.RunType == PipelineRunType.Review
-                ? LabelTargetKind.PullRequest
-                : LabelTargetKind.Issue;
+            var targetKind = run.LabelTargetKind;
 
             var providerConfigId = targetKind == LabelTargetKind.PullRequest
                 ? run.RepoProviderConfigId

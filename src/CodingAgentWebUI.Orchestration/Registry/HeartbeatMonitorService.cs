@@ -445,9 +445,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     /// </summary>
     private async Task TrySwapLabelToErrorAsync(PipelineRun run, CancellationToken ct)
     {
-        var targetKind = run.RunType == PipelineRunType.Review
-            ? LabelTargetKind.PullRequest
-            : LabelTargetKind.Issue;
+        var targetKind = run.LabelTargetKind;
 
         var providerConfigId = targetKind == LabelTargetKind.PullRequest
             ? run.RepoProviderConfigId
