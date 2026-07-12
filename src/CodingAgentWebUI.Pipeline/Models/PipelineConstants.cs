@@ -134,4 +134,12 @@ public static class PipelineConstants
 
     /// <summary>Default interval in minutes between orphaned label recovery sweeps.</summary>
     public const int DefaultOrphanedLabelSweepIntervalMinutes = 30;
+
+    /// <summary>
+    /// Default cooldown period for restart-induced dedup protection.
+    /// Issues with WorkItems that reached terminal state within this window are treated
+    /// as still-active for dedup purposes, preventing duplicate dispatch on pod restart.
+    /// </summary>
+    // TODO: Make configurable via options pattern or environment variable instead of compile-time constant (see BUG-10 review findings)
+    public static readonly TimeSpan DefaultRestartDedupCooldown = TimeSpan.FromMinutes(5);
 }

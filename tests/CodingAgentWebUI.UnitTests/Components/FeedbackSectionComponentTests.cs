@@ -3,15 +3,12 @@ using CodingAgentWebUI.Components.Pages;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.JSInterop;
 using Moq;
@@ -70,10 +67,6 @@ public class FeedbackSectionComponentTests : BunitContext
         Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
             Services.BuildServiceProvider().GetRequiredService<JobDispatcherService>()));
 
-        // InfrastructureHealthService is injected into AgentMonitoring — register with empty config (Legacy mode)
-        var emptyConfig = new ConfigurationBuilder().Build();
-        var emptyServiceProvider = new ServiceCollection().BuildServiceProvider();
-        Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig));
         Services.AddSingleton(TimeProvider.System);
     }
 

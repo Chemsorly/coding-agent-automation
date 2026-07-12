@@ -458,6 +458,7 @@ public sealed class DispatchService : BackgroundService
             await db.SaveChangesAsync(ct);
 
             // Record dispatch latency / pending duration metric
+            // TODO: Use OriginalEnqueuedAt ?? CreatedAt instead of CreatedAt to reflect true time since original enqueue for re-dispatched items (see BUG-10 review findings)
             var latency = (workItem.DispatchedAt.Value - workItem.CreatedAt).TotalSeconds;
             WorkDistributionTelemetry.DispatchLatency.Record(latency,
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));

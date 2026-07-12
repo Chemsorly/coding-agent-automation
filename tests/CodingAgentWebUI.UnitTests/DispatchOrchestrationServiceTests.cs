@@ -87,6 +87,12 @@ public class DispatchOrchestrationServiceTests
             orchestration,
             _runService,
             _mockWorkDistributor.Object,
+            // TODO: Use separate typed mocks for each sub-interface (IAgentProfileStore, IProviderConfigStore,
+            // IPipelineConfigStore, IProjectStore) to detect parameter wiring errors and verify correct routing.
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockLogger.Object);
     }
 
@@ -825,6 +831,11 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             orchestration,
             _runService,
             new Mock<IWorkDistributor>().Object,
+            // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
             _mockLogger.Object);
     }
 
@@ -975,6 +986,11 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
             orchestration,
             _runService,
             _mockWorkDistributor.Object,
+            // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
+            mockConfigStore.Object,
             _mockLogger.Object);
     }
 

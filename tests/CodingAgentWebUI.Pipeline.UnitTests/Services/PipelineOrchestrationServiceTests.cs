@@ -3489,6 +3489,8 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var mockCancellation = new Mock<IAgentCancellationSender>();
 
         var service = new PipelineOrchestrationService(
+            // TODO: Use separate typed mocks for IPipelineConfigStore and IProviderConfigStore to detect parameter wiring errors.
+            _mockConfigStore.Object,
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
@@ -3540,6 +3542,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var service = new PipelineOrchestrationService(
             _mockConfigStore.Object,
+            _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),
             TestOrchestrationFactory.CreateDefaultExecutionFacade(_mockLogger.Object),
@@ -3582,6 +3585,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             mockHistoryService.Object, mockRunService.Object, _mockLogger.Object);
 
         var service = new PipelineOrchestrationService(
+            _mockConfigStore.Object,
             _mockConfigStore.Object,
             _mockFactory.Object,
             new IssueDescriptionParser(),

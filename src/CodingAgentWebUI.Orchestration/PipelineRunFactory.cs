@@ -26,7 +26,9 @@ public static class PipelineRunFactory
         var run = PipelineRun.Create(
             runId: request.RunId!,
             issueIdentifier: request.IssueIdentifier,
-            issueTitle: request.IssueDetail?.Title ?? request.IssueIdentifier,
+            issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title)
+                ? request.IssueIdentifier
+                : request.IssueDetail!.Title,
             issueProviderConfigId: request.IssueProviderConfigId,
             repoProviderConfigId: request.RepoProviderConfigId,
             runType: request.RunType,
