@@ -166,6 +166,96 @@ public sealed class PipelineRunFactoryTests
         run.StartedAtOffset.Should().BeOnOrBefore(after);
     }
 
+    [Fact]
+    public void FromDistributionRequest_FallsBackToIssueIdentifier_WhenTitleIsEmpty()
+    {
+        // Arrange
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#77",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 1800,
+            RunId = "run-empty-title",
+            IssueDetail = new IssueDetail
+            {
+                Identifier = "owner/repo#77",
+                Title = "",
+                Description = "some description",
+                Labels = ["bug"]
+            }
+        };
+
+        // Act
+        var run = PipelineRunFactory.FromDistributionRequest(request);
+
+        // Assert
+        run.IssueTitle.Should().Be("owner/repo#77");
+    }
+
+    [Fact]
+    public void FromDistributionRequest_FallsBackToIssueIdentifier_WhenTitleIsNull()
+    {
+        // Arrange
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#88",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 1800,
+            RunId = "run-null-title",
+            IssueDetail = new IssueDetail
+            {
+                Identifier = "owner/repo#88",
+                Title = null!,
+                Description = "some description",
+                Labels = []
+            }
+        };
+
+        // Act
+        var run = PipelineRunFactory.FromDistributionRequest(request);
+
+        // Assert
+        run.IssueTitle.Should().Be("owner/repo#88");
+    }
+
+    [Fact]
+    public void FromDistributionRequest_UsesTitle_WhenTitleIsPopulated()
+    {
+        // Arrange
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#55",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "manual",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 1800,
+            RunId = "run-real-title",
+            IssueDetail = new IssueDetail
+            {
+                Identifier = "owner/repo#55",
+                Title = "Real Title",
+                Description = "desc",
+                Labels = ["feature"]
+            }
+        };
+
+        // Act
+        var run = PipelineRunFactory.FromDistributionRequest(request);
+
+        // Assert
+        run.IssueTitle.Should().Be("Real Title");
+    }
+
     private static JobDistributionRequest CreateMinimalRequest(string runId) => new()
     {
         IssueIdentifier = "owner/repo#1",
