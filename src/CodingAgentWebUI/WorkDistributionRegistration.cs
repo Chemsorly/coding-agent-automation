@@ -14,6 +14,7 @@ using CodingAgentWebUI.Services;
 using k8s;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Microsoft.Extensions.Resilience;
 using Polly;
 using Polly.CircuitBreaker;
@@ -248,6 +249,7 @@ public static class WorkDistributionRegistration
         // Leader election
         services.Configure<LeaderElectionOptions>(configuration.GetSection(LeaderElectionOptions.SectionName));
         services.AddSingleton<LeaderElectionService>();
+        services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<LeaderElectionService>());
         services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
 
         // Work distributor (singleton — uses IDbContextFactory for context-per-operation)
@@ -267,7 +269,7 @@ public static class WorkDistributionRegistration
             Log.Logger));
         services.AddHostedService(sp => new DispatchService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<LeaderElectionService>(),
+            sp.GetRequiredService<ILeaderElectionService>(),
             sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IConfiguration>(),
@@ -280,7 +282,7 @@ public static class WorkDistributionRegistration
             sp.GetService<IPipelineConfigStore>()));
         services.AddHostedService(sp => new ReconciliationService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<LeaderElectionService>(),
+            sp.GetRequiredService<ILeaderElectionService>(),
             sp.GetRequiredService<IKubernetes>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IConfiguration>(),
@@ -304,6 +306,25 @@ public static class WorkDistributionRegistration
     {
         // No K8s Jobs in SignalR mode — register no-op cleanup strategy
         services.AddSingleton<IJobCleanupStrategy>(new NoOpJobCleanup());
+
+        // ── Postgres advisory lock leader election (multi-replica safety) ────
+        // TODO: No ILeaderElectionService fallback registered in SignalR mode when connectionString
+        // is null/empty. If SignalR mode is active without a DB connection string, any service that
+        // resolves ILeaderElectionService will fail at runtime. Consider registering a no-op
+        // implementation as a fallback (single-instance assumed).
+        var connectionString = Services.DatabaseConnectionResolver.Resolve(configuration);
+        if (!string.IsNullOrEmpty(connectionString))
+        {
+            services.Configure<PostgresLeaderElectionOptions>(
+                configuration.GetSection(PostgresLeaderElectionOptions.SectionName));
+            services.AddSingleton<PostgresLeaderElectionService>(sp =>
+                new PostgresLeaderElectionService(
+                    connectionString,
+                    sp.GetRequiredService<IOptions<PostgresLeaderElectionOptions>>()));
+            services.AddSingleton<ILeaderElectionService>(sp =>
+                sp.GetRequiredService<PostgresLeaderElectionService>());
+            services.AddHostedService(sp => sp.GetRequiredService<PostgresLeaderElectionService>());
+        }
 
         // Agent resolver (singleton — selects idle label-compatible agent for SignalR push)
         services.AddSingleton<ISignalRWorkDistributorAgentResolver>(sp => new SignalRWorkDistributorAgentResolver(

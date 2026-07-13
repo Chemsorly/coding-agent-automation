@@ -33,7 +33,7 @@ public sealed class DispatchService : BackgroundService
     internal const string DefaultJobTemplatesPath = "/app/config/job-templates.yaml";
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly LeaderElectionService _leaderElection;
+    private readonly ILeaderElectionService _leaderElection;
     private readonly IKubernetesJobClient _kubeClient;
     private readonly WorkItemTransitionService _transitionService;
     private readonly DispatchServiceOptions _options;
@@ -49,7 +49,7 @@ public sealed class DispatchService : BackgroundService
 
     public DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
-        LeaderElectionService leaderElection,
+        ILeaderElectionService leaderElection,
         IKubernetesJobClient kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
@@ -116,7 +116,7 @@ public sealed class DispatchService : BackgroundService
     /// </summary>
     internal DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
-        LeaderElectionService leaderElection,
+        ILeaderElectionService leaderElection,
         IKubernetesJobClient kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
