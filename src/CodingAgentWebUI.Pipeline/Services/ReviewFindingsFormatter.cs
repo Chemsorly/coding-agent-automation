@@ -17,6 +17,21 @@ internal static class ReviewFindingsFormatter
         sb.AppendLine("## 🤖 Automated Code Review");
         sb.AppendLine();
 
+        // Render AI-generated summaries before the structured data
+        var truncatedChange = ReviewSummaryParser.TruncateAtSentenceBoundary(run.CodeReviewChangeSummary);
+        if (truncatedChange is not null)
+        {
+            sb.AppendLine($"**Changes**: {truncatedChange}");
+            sb.AppendLine();
+        }
+
+        var truncatedVerdict = ReviewSummaryParser.TruncateAtSentenceBoundary(run.CodeReviewVerdictSummary);
+        if (truncatedVerdict is not null)
+        {
+            sb.AppendLine($"**Review verdict**: {truncatedVerdict}");
+            sb.AppendLine();
+        }
+
         if (run.CodeReviewAgentsRun.Count > 0)
             sb.AppendLine($"**Review Agents**: {string.Join(", ", run.CodeReviewAgentsRun)}");
         sb.AppendLine();
