@@ -61,6 +61,11 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             .Returns(Task.CompletedTask);
         _mockIssueOps.Setup(o => o.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
+        // TODO: Add a test that verifies PostCommentAsync is called with content containing
+        // the <!-- agent:analysis-body-hash:{hash} --> marker. Currently all tests use It.IsAny<string>()
+        // for the comment body, so removing the hash embedding in production would go undetected.
+        // TODO: Add a test exercising the forceRefreshFromDispatch = true path to verify the
+        // dispatch-level staleness merge logic (bool forceRefresh = forceRefreshFromDispatch || ...) works.
     }
 
     public void Dispose()
@@ -73,7 +78,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     {
         SetupAgentWithValidAnalysis("ready");
 
-        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         _mockAgent.Verify(a => a.EnsureSessionAsync(_workspacePath, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -83,7 +88,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     {
         SetupAgentWithValidAnalysis("ready");
 
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeTrue();
     }
@@ -93,7 +98,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     {
         SetupAgentWithValidAnalysis("not_ready", blockingIssues: new[] { "Missing API spec" });
 
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeFalse();
         _mockIssueOps.Verify(o => o.SwapLabelAsync("42", AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Once);
@@ -104,7 +109,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     {
         SetupAgentWithValidAnalysis("wont_do");
 
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeFalse();
         _mockIssueOps.Verify(o => o.SwapLabelAsync("42", AgentLabels.WontDo, It.IsAny<CancellationToken>()), Times.Once);
@@ -116,7 +121,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
         // Even if recommendation is "ready", non-empty BlockingIssues forces not_ready
         SetupAgentWithValidAnalysis("ready", blockingIssues: new[] { "Depends on #123" });
 
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeFalse();
         _mockIssueOps.Verify(o => o.SwapLabelAsync("42", AgentLabels.NeedsRefinement, It.IsAny<CancellationToken>()), Times.Once);
@@ -129,7 +134,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeFalse();
         _run.FailureReason.Should().Contain("Analysis failed");
@@ -148,7 +153,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             })
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeFalse();
         _run.FailureReason.Should().Contain("Analysis failed");
@@ -160,7 +165,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
         // Non-zero exit code does NOT trigger retry if files are valid
         SetupAgentWithValidAnalysis("ready", exitCode: 1);
 
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeTrue();
     }
@@ -184,7 +189,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             })
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeFalse();
         _run.FailureReason.Should().Contain("Analysis failed");
@@ -209,7 +214,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             })
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
 
-        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), CancellationToken.None);
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
 
         result.Should().BeFalse();
         _run.FailureReason.Should().Contain("Analysis failed");
@@ -224,7 +229,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             new IssueComment { Id = "1", Body = $"{CommentMarkers.AnalysisHeader}\nExisting analysis content that is long enough to satisfy checks", Author = "bot", CreatedAt = DateTime.UtcNow }
         };
 
-        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), comments, CancellationToken.None);
+        await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), comments, false, CancellationToken.None);
 
         // EnsureSessionAsync called (warm-up) but ExecuteAsync never called
         _mockAgent.Verify(a => a.EnsureSessionAsync(_workspacePath, It.IsAny<CancellationToken>()), Times.Once);
@@ -242,7 +247,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             .ThrowsAsync(new OperationCanceledException());
 
         var ex = await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), cts.Token));
+            () => _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, cts.Token));
 
         ex.Should().NotBeNull();
     }

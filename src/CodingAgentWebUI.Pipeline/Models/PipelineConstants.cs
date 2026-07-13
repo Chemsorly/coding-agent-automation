@@ -142,4 +142,10 @@ public static class PipelineConstants
     /// </summary>
     // TODO: Make configurable via options pattern or environment variable instead of compile-time constant (see BUG-10 review findings)
     public static readonly TimeSpan DefaultRestartDedupCooldown = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Default number of commits on the default branch since the analysis was produced
+    /// that triggers an automatic analysis refresh. Set to 0 to disable.
+    /// </summary>
+    public const int DefaultAnalysisCommitThreshold = 30;
 }

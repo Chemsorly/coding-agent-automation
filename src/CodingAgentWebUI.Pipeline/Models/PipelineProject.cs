@@ -59,6 +59,12 @@ public sealed record PipelineProject
     public bool? BrainReadOnly { get; init; }
 
     /// <summary>
+    /// Override for <see cref="PipelineConfiguration.AnalysisCommitThreshold"/>.
+    /// Null = inherit from global configuration.
+    /// </summary>
+    public int? AnalysisCommitThreshold { get; init; }
+
+    /// <summary>
     /// Optional markdown steering content written to the agent workspace before each run.
     /// Provides persistent behavioral instructions (code style, tool preferences, constraints).
     /// </summary>

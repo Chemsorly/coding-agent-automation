@@ -137,6 +137,10 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             Log.Logger));
 
+        // ── IWorkItemQueryService (staleness detection queries) ──
+        services.AddSingleton<Pipeline.Interfaces.IWorkItemQueryService>(sp =>
+            sp.GetRequiredService<WorkItemTransitionService>());
+
         // ── DispatchOrchestrationService (DB modes only — null in Legacy mode) ──
         services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
             sp.GetRequiredService<DispatchInfrastructure>(),
@@ -147,7 +151,8 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<Pipeline.Interfaces.IProviderConfigStore>(),
             sp.GetRequiredService<Pipeline.Interfaces.IPipelineConfigStore>(),
             sp.GetRequiredService<Pipeline.Interfaces.IProjectStore>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetRequiredService<Pipeline.Interfaces.IWorkItemQueryService>()));
 
         // ── IRunLifecycleManager (DB mode — coordinates in-memory + DB transitions) ──
         // TODO: Use GetRequiredService<IJobCleanupStrategy>() instead of GetService to fail fast on

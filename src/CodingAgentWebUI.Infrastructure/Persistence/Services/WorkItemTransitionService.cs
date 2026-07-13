@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -12,7 +13,7 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Services;
 /// Uses IDbContextFactory for singleton-safe context creation (compatible with BackgroundServices).
 /// Wraps DB operations with a Polly resilience pipeline for transient fault tolerance.
 /// </summary>
-public sealed class WorkItemTransitionService
+public sealed class WorkItemTransitionService : IWorkItemQueryService
 {
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly ILogger<WorkItemTransitionService> _logger;
@@ -215,5 +216,38 @@ public sealed class WorkItemTransitionService
             item.DispatchedAt = null;
             item.AssignedAgentId = null;
         }, ct);
+    }
+
+    /// <inheritdoc />
+    // TODO: No integration test exists to verify this query correctly filters only
+    // FailureReason.AgentError and excludes Timeout, InfrastructureFailure, and
+    // TokenRefreshFailure. The unit tests mock the interface so the actual DB filtering
+    // logic has no coverage. A regression in the EF predicate would go undetected.
+    public async Task<bool> HasAgentErrorSinceAsync(
+        string issueIdentifier, string issueProviderConfigId,
+        DateTimeOffset since, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.WorkItems.AnyAsync(w =>
+            w.IssueIdentifier == issueIdentifier
+            && w.IssueProviderConfigId == issueProviderConfigId
+            && w.Status == WorkItemStatus.Failed
+            && w.FailureReason == FailureReason.AgentError
+            && w.CompletedAt > since, ct);
+    }
+
+    /// <inheritdoc />
+    public async Task<DateTimeOffset?> GetLastSuccessfulCompletionAsync(
+        string issueIdentifier, string issueProviderConfigId,
+        CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        return await db.WorkItems
+            .Where(w => w.IssueIdentifier == issueIdentifier
+                && w.IssueProviderConfigId == issueProviderConfigId
+                && w.Status == WorkItemStatus.Succeeded
+                && w.CompletedAt != null)
+            .Select(w => (DateTimeOffset?)w.CompletedAt)
+            .MaxAsync(ct);
     }
 }

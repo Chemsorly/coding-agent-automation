@@ -129,7 +129,7 @@ public class SessionIdSpanAttributeTests : IDisposable
         _agentExecution
             .Setup(e => e.ExecuteAnalysisPhaseAsync(
                 It.IsAny<AgentPhaseContext>(), It.IsAny<IReadOnlyList<IssueComment>>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         _agentProvider

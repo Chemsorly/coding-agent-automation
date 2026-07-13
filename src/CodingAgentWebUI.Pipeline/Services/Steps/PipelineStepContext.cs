@@ -240,6 +240,15 @@ public sealed class PipelineStepContext
     /// </summary>
     public IReadOnlyList<IssueComment>? IssueComments { get; set; }
 
+    /// <summary>Whether the dispatch layer determined that analysis should be force-refreshed.</summary>
+    public bool ForceRefreshAnalysis { get; set; }
+
+    /// <summary>Which staleness signal triggered analysis force-refresh (null if not triggered).</summary>
+    public string? StalenessSignal { get; set; }
+
+    /// <summary>Number of prior analysis refreshes for this issue (for OpenTelemetry).</summary>
+    public int AnalysisRefreshCount { get; set; }
+
     // Logger
     public required Serilog.ILogger Logger { get; init; }
 
