@@ -39,6 +39,12 @@ public sealed record DispatchPreparationResult
     /// <summary>Whether existing analysis should be refreshed (e.g., after gate rejection).</summary>
     public bool ForceRefreshAnalysis { get; init; }
 
+    /// <summary>Which staleness signal triggered force-refresh (null if not staleness-triggered).</summary>
+    public string? StalenessSignal { get; init; }
+
+    /// <summary>Number of prior analysis refreshes for this issue (for OTel).</summary>
+    public int AnalysisRefreshCount { get; init; }
+
     /// <summary>The PipelineRun created and registered for this dispatch.</summary>
     public required PipelineRun CreatedRun { get; init; }
 

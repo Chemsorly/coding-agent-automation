@@ -11,9 +11,15 @@ public interface IAgentPhaseExecutor
     /// <summary>
     /// Executes the analysis phase. Returns true if the pipeline should continue, false if it should stop.
     /// </summary>
+    /// <param name="context">The agent phase context (workspace, issue, config).</param>
+    /// <param name="issueComments">Pre-fetched issue comments for detecting existing analysis.</param>
+    /// <param name="forceRefreshFromDispatch">When true, dispatch-level staleness detection determined
+    /// that the existing analysis should be regenerated regardless of gate-rejection markers.</param>
+    /// <param name="ct">Cancellation token.</param>
     Task<bool> ExecuteAnalysisPhaseAsync(
         AgentPhaseContext context,
         IReadOnlyList<IssueComment> issueComments,
+        bool forceRefreshFromDispatch,
         CancellationToken ct);
 
     /// <summary>
