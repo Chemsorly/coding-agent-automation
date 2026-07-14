@@ -545,8 +545,6 @@ public sealed partial class AgentJobDispatcher
         return PipelineConfiguration.ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
     }
 
-
-
     /// <summary>
     /// Handles dispatch failure by resetting agent status, logging the error, and reverting the label.
     /// </summary>
