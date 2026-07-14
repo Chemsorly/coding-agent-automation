@@ -324,6 +324,79 @@ public class DispatchServiceConsolidationTests : IDisposable
         item.ErrorMessage.Should().Contain("payload");
     }
 
+    // ── Label Resolution: AgentSelector must match template key ────────
+
+    /// <summary>
+    /// Regression test: When ConsolidationDispatcher produces an AgentSelector that is a SUBSET
+    /// of the template's label set (e.g., "dotnet,dotnet10" vs template "kiro,dotnet,dotnet10"),
+    /// DispatchService must still resolve the template correctly.
+    ///
+    /// Root cause: ConsolidationDispatcher uses raw requiredLabels as AgentSelector instead of
+    /// resolving the profile's MatchLabels (which IS the template key). Normal pipeline dispatch
+    /// uses profile.MatchLabels and works fine.
+    ///
+    /// This test simulates the production scenario:
+    /// - Template: labels="kiro,dotnet,dotnet10" (3-label key)
+    /// - Work item AgentSelector: "dotnet,dotnet10" (2-label subset, missing "kiro")
+    /// - Expected: dispatch succeeds (after fix resolves profile → full label set)
+    /// - Bug behavior: "No job template for selector: dotnet,dotnet10"
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_SubsetSelector_ResolvesTemplateViaProfile()
+    {
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+
+        // Insert with subset selector — what ConsolidationDispatcher actually produces
+        // when DefaultRequiredAgentLabels = "dotnet,dotnet10" (missing "kiro")
+        await InsertConsolidationWorkItem(workItemId, runId, "dotnet,dotnet10");
+
+        // Profile has the full label set that matches the template key
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new()
+                {
+                    Id = "profile-1",
+                    DisplayName = "Kiro Dotnet10",
+                    Enabled = true,
+                    MatchLabels = ["dotnet", "dotnet10", "kiro"],
+                    AgentProviderConfigId = TestAgentProviderId,
+                    Priority = 1
+                }
+            });
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConsolidationRun
+            {
+                RunId = runId,
+                Type = ConsolidationRunType.BrainConsolidation,
+                StartedAtUtc = DateTimeOffset.UtcNow,
+                Status = ConsolidationRunStatus.Queued
+            });
+
+        // Template keyed by full 3-label set (realistic production config)
+        var service = CreateServiceWithThreeLabelTemplate();
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: With the bug, this FAILS — Resolve("dotnet,dotnet10") finds no template keyed as "dotnet,dotnet10,kiro"
+        // With the fix, DispatchService resolves the profile from AgentSelector labels and uses profile.MatchLabels
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Dispatched,
+            "work item should be dispatched — template resolution must succeed even when AgentSelector is a subset of template labels");
+        item.ErrorMessage.Should().BeNull();
+        item.K8sJobName.Should().StartWith("caa-");
+    }
+
     // ── Integration: Full Lifecycle ─────────────────────────────────────
 
     [Fact]
@@ -508,6 +581,48 @@ public class DispatchServiceConsolidationTests : IDisposable
         };
         var json = JsonSerializer.Serialize(templates);
         return JobTemplateProvider.LoadFromJson(json);
+    }
+
+    /// <summary>
+    /// Builds a template provider with a realistic 3-label template (kiro,dotnet,dotnet10).
+    /// Used to reproduce the subset selector bug where AgentSelector = "dotnet,dotnet10"
+    /// fails to match template key "dotnet,dotnet10,kiro".
+    /// </summary>
+    private static JobTemplateProvider BuildThreeLabelTemplateProvider()
+    {
+        var templates = new List<JobTemplate>
+        {
+            new() { Labels = "kiro,dotnet,dotnet10", Image = "ghcr.io/agent:kiro-dotnet10", ProviderType = "kiro" }
+        };
+        var json = JsonSerializer.Serialize(templates);
+        return JobTemplateProvider.LoadFromJson(json);
+    }
+
+    private DispatchService CreateServiceWithThreeLabelTemplate()
+    {
+        var configData = new Dictionary<string, string?>
+        {
+            ["WorkDistribution:Dispatch:PollIntervalSeconds"] = "10",
+            ["WorkDistribution:Dispatch:RateLimitPerSecond"] = "100",
+            ["WorkDistribution:Namespace"] = "default",
+            ["WorkDistribution:OrchestratorUrl"] = "http://orchestrator:8080",
+            ["WorkDistribution:AgentApiKeySecretName"] = "agent-api-key",
+            ["WorkDistribution:CredentialPools:Kiro:0"] = "pvc-test-1",
+            ["WorkDistribution:CredentialPools:Kiro:1"] = "pvc-test-2"
+        };
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
+        var templateProvider = BuildThreeLabelTemplateProvider();
+
+        return new DispatchService(
+            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider,
+            null,
+            _mockTokenVending.Object,
+            _mockRunStore.Object,
+            _mockProviderConfigStore.Object,
+            _mockAgentProfileStore.Object,
+            _mockProjectStore.Object,
+            _mockPipelineConfigStore.Object);
     }
 
     private async Task InsertConsolidationWorkItem(Guid id, string runId, string selector)

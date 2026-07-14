@@ -25,4 +25,20 @@ public static class LabelMatchStrategies
     /// <returns><c>true</c> if matchLabels is empty or all labels exist in targetSet.</returns>
     public static bool Subset(IReadOnlyList<string> matchLabels, HashSet<string> targetSet)
         => matchLabels.Count == 0 || matchLabels.All(l => targetSet.Contains(l));
+
+    /// <summary>
+    /// ALL target labels must exist in match-labels (superset / coverage).
+    /// Used for "find profiles whose MatchLabels cover all required labels" resolution.
+    /// Inverse of <see cref="Subset"/>: checks targetSet ⊆ matchLabels.
+    /// </summary>
+    /// <param name="matchLabels">The configuration's match labels (must cover all target labels).</param>
+    /// <param name="targetSet">The target label set (required labels that must be covered).</param>
+    /// <returns><c>true</c> if targetSet is empty or all target labels exist in matchLabels (case-insensitive).</returns>
+    public static bool Superset(IReadOnlyList<string> matchLabels, HashSet<string> targetSet)
+    {
+        if (targetSet.Count == 0)
+            return true;
+        var matchSet = new HashSet<string>(matchLabels, StringComparer.OrdinalIgnoreCase);
+        return targetSet.All(l => matchSet.Contains(l));
+    }
 }
