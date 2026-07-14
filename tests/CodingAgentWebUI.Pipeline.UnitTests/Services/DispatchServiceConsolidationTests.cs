@@ -444,10 +444,14 @@ public class DispatchServiceConsolidationTests : IDisposable
         // Assert: ConsolidationRun should ALSO be transitioned to Failed
         _mockRunStore.Verify(
             s => s.SaveRunAsync(
-                It.Is<ConsolidationRun>(r => r.RunId == runId && r.Status == ConsolidationRunStatus.Failed),
+                It.Is<ConsolidationRun>(r =>
+                    r.RunId == runId &&
+                    r.Status == ConsolidationRunStatus.Failed &&
+                    r.Summary != null && r.Summary.Contains("No job template for selector") &&
+                    r.CompletedAtUtc != null),
                 It.IsAny<CancellationToken>()),
             Times.Once,
-            "ConsolidationRun must be transitioned to Failed when its WorkItem fails");
+            "ConsolidationRun must be transitioned to Failed with Summary and CompletedAtUtc set");
     }
 
     // ── Integration: Full Lifecycle ─────────────────────────────────────

@@ -314,7 +314,7 @@ public sealed class DispatchService : BackgroundService
                 var (fallbackTemplate, resolvedSelector) = await ResolveTemplateViaProfileAsync(item.AgentSelector, ct);
                 if (fallbackTemplate is null)
                 {
-                    await FailWorkItem(item.Id, $"No job template for selector: {item.AgentSelector}", ct);
+                    await FailWorkItem(item.Id, $"No job template for selector: {item.AgentSelector}", item.TaskType, item.IssueIdentifier, ct);
                     continue;
                 }
                 template = fallbackTemplate;
@@ -440,7 +440,7 @@ public sealed class DispatchService : BackgroundService
                 workItem.ClaimedPvcName = null;
                 availablePvcs.Add(claimedPvc);
             }
-            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", ct);
+            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -577,7 +577,7 @@ public sealed class DispatchService : BackgroundService
         if (request is null)
         {
             if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            await FailWorkItem(item.Id, "Consolidation WorkItem has no valid payload", ct);
+            await FailWorkItem(item.Id, "Consolidation WorkItem has no valid payload", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -619,7 +619,7 @@ public sealed class DispatchService : BackgroundService
         {
             Log.Error(ex, "DispatchService: failed to resolve provider configs for consolidation WorkItem {WorkItemId}", item.Id);
             if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            await FailWorkItem(item.Id, $"Provider config resolution failed: {ex.Message}", ct);
+            await FailWorkItem(item.Id, $"Provider config resolution failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -685,7 +685,7 @@ public sealed class DispatchService : BackgroundService
                 workItem.ClaimedPvcName = null;
                 availablePvcs.Add(claimedPvc);
             }
-            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", ct);
+            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -967,22 +967,9 @@ public sealed class DispatchService : BackgroundService
         return (template, profileSelector);
     }
 
-    private async Task FailWorkItem(Guid workItemId, string errorMessage, CancellationToken ct)
+    private async Task FailWorkItem(Guid workItemId, string errorMessage,
+        WorkItemTaskType taskType, string? issueIdentifier, CancellationToken ct)
     {
-        // Determine if this is a consolidation item before transitioning (need TaskType + IssueIdentifier)
-        string? consolidationRunId = null;
-        await using (var db = await _dbFactory.CreateDbContextAsync(ct))
-        {
-            var workItem = await db.WorkItems
-                .AsNoTracking()
-                .Where(w => w.Id == workItemId)
-                .Select(w => new { w.TaskType, w.IssueIdentifier })
-                .FirstOrDefaultAsync(ct);
-
-            if (workItem?.TaskType == WorkItemTaskType.Consolidation)
-                consolidationRunId = workItem.IssueIdentifier;
-        }
-
         await _transitionService.TransitionAsync(
             workItemId,
             WorkItemStatus.Failed,
@@ -997,24 +984,35 @@ public sealed class DispatchService : BackgroundService
         Log.Warning("DispatchService: WorkItem {WorkItemId} failed: {Error}", workItemId, errorMessage);
 
         // Cascade to ConsolidationRun: transition to Failed so it doesn't stay stuck in Queued/Running
-        if (consolidationRunId is not null && _consolidationRunStore is not null)
+        if (taskType == WorkItemTaskType.Consolidation && issueIdentifier is not null)
+            await CascadeFailureToConsolidationRunAsync(issueIdentifier, errorMessage, ct);
+    }
+
+    /// <summary>
+    /// Cascades a failure to a ConsolidationRun, transitioning it from Queued/Running to Failed.
+    /// Guards: no-op if run is not found, already terminal, or store is unavailable.
+    /// Safe to call from any failure path (DispatchService, ReconciliationService).
+    /// </summary>
+    internal async Task CascadeFailureToConsolidationRunAsync(string runId, string errorMessage, CancellationToken ct)
+    {
+        if (_consolidationRunStore is null)
+            return;
+
+        try
         {
-            try
+            var run = await _consolidationRunStore.GetByIdAsync(runId, ct);
+            if (run is not null && run.Status is ConsolidationRunStatus.Queued or ConsolidationRunStatus.Running)
             {
-                var run = await _consolidationRunStore.GetByIdAsync(consolidationRunId, ct);
-                if (run is not null && run.Status is ConsolidationRunStatus.Queued or ConsolidationRunStatus.Running)
-                {
-                    run.Status = ConsolidationRunStatus.Failed;
-                    run.Summary = $"WorkItem dispatch failed: {errorMessage}";
-                    run.CompletedAtUtc = DateTimeOffset.UtcNow;
-                    await _consolidationRunStore.SaveRunAsync(run, ct);
-                    Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId}", consolidationRunId);
-                }
+                run.Status = ConsolidationRunStatus.Failed;
+                run.Summary = $"WorkItem dispatch failed: {errorMessage}";
+                run.CompletedAtUtc = DateTimeOffset.UtcNow;
+                await _consolidationRunStore.SaveRunAsync(run, ct);
+                Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId}", runId);
             }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", consolidationRunId);
-            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
         }
     }
 
