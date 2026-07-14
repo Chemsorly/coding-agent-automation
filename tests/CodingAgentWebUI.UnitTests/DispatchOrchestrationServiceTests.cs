@@ -582,6 +582,56 @@ public class DispatchOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task PrepareReviewDistributionRequestAsync_SetsRunTypeOnInMemoryPipelineRun()
+    {
+        // Regression test: the in-memory PipelineRun (registered in OrchestratorRunService)
+        // must have RunType=Review so that label swaps target PullRequests (not Issues)
+        // and the Recent Runs UI shows the correct type badge.
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var reviewRequest = new ReviewDispatchRequest
+        {
+            PrIdentifier = "issue-42",
+            PrBranchName = "feature/my-pr",
+            PrTitle = "My PR",
+            PrDescription = "This PR does things",
+            PrAuthor = "dev-user",
+            PrUrl = "https://github.com/org/repo/pull/42",
+            PrTargetBranch = "main",
+            IssueProviderId = "issue-1",
+            RepoProviderId = "repo-1",
+            BrainProviderId = null,
+            InitiatedBy = "review-loop"
+        };
+
+        var result = await iface.PrepareReviewDistributionRequestAsync(
+            reviewRequest, TestProject, CancellationToken.None);
+
+        result.Should().NotBeNull();
+
+        // The critical assertion: the in-memory PipelineRun must carry RunType=Review
+        var inMemoryRun = _runService.GetRun(result!.RunId!);
+        inMemoryRun.Should().NotBeNull();
+        inMemoryRun!.RunType.Should().Be(PipelineRunType.Review,
+            "the in-memory PipelineRun must have RunType=Review so label swaps target PRs and history shows correct type");
+    }
+
+    [Fact]
     public async Task PrepareReviewDistributionRequestAsync_WhenOrchestrationFails_ReturnsNull()
     {
         SetupStandardMocks();
@@ -679,6 +729,64 @@ public class DispatchOrchestrationServiceTests
         result.RunType.Should().Be(PipelineRunType.Decomposition);
         result.DecompositionSource.Should().Be("https://github.com/org/repo/issues/100");
         result.IssueIdentifier.Should().Be("epic-1");
+    }
+
+    [Fact]
+    public async Task PrepareDecompositionDistributionRequestAsync_SetsRunTypeOnInMemoryPipelineRun()
+    {
+        // Regression test: the in-memory PipelineRun must carry the correct RunType
+        // so label swaps target Issues (not PRs) and history shows the correct badge.
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("epic-2", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "epic-2",
+                Title = "Epic: Decompose",
+                Description = "## Requirements\nDecompose the thing",
+                Labels = ["agent:next"]
+            });
+        mockIssueProvider
+            .Setup(p => p.ListCommentsAsync("epic-2", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<IssueComment>());
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockIssueProvider.Object);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var result = await iface.PrepareDecompositionDistributionRequestAsync(
+            epicIdentifier: "epic-2",
+            epicTitle: "Epic: Decompose",
+            phaseType: PipelineRunType.DecompositionAnalysis,
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            initiatedBy: "decomp-loop",
+            project: TestProject,
+            ct: CancellationToken.None);
+
+        result.Should().NotBeNull();
+
+        var inMemoryRun = _runService.GetRun(result!.RunId!);
+        inMemoryRun.Should().NotBeNull();
+        inMemoryRun!.RunType.Should().Be(PipelineRunType.DecompositionAnalysis,
+            "the in-memory PipelineRun must carry the correct decomposition phase RunType");
     }
 
     [Fact]
@@ -791,6 +899,50 @@ public class DispatchOrchestrationServiceTests
         // The run should be registered in OrchestratorRunService
         var activeRuns = _runService.GetActiveRuns();
         activeRuns.Should().Contain(r => r.IssueIdentifier == "issue-42");
+    }
+
+    [Fact]
+    public async Task PrepareDistributionRequestAsync_WithNonDefaultRunType_SetsRunTypeOnInMemoryRun()
+    {
+        // Coverage: the generic dispatch path must also propagate non-default runType
+        // to the in-memory PipelineRun (not just Review/Decomposition-specific methods).
+        SetupStandardMocks();
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var orchestration = CreateOrchestration();
+        var service = CreateService(orchestration);
+        IDispatchOrchestrationService iface = service;
+
+        var result = await iface.PrepareDistributionRequestAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "loop",
+            project: TestProject,
+            taskType: WorkItemTaskType.Implementation,
+            runType: PipelineRunType.Review, // non-default to exercise the threading
+            ct: CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.RunType.Should().Be(PipelineRunType.Review);
+
+        // The in-memory run must carry the same RunType
+        var inMemoryRun = _runService.GetRun(result.RunId!);
+        inMemoryRun.Should().NotBeNull();
+        inMemoryRun!.RunType.Should().Be(PipelineRunType.Review,
+            "PrepareDistributionRequestAsync must propagate non-default runType to the in-memory PipelineRun");
     }
 }
 

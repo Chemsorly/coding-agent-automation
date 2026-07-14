@@ -18,6 +18,7 @@ public partial class AgentPhaseExecutor
     public async Task<bool> ExecuteAnalysisPhaseAsync(
         AgentPhaseContext context,
         IReadOnlyList<IssueComment> issueComments,
+        bool forceRefreshFromDispatch,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -25,7 +26,10 @@ public partial class AgentPhaseExecutor
         var run = context.Run;
         var config = context.Config;
         string? existingAnalysis = null;
-        var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.AnalysisHeader));
+        var analysisComment = issueComments
+            .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefault();
         var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateRejection));
         var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateWontDo));
 
@@ -34,8 +38,10 @@ public partial class AgentPhaseExecutor
             .OrderByDescending(c => c!.CreatedAt)
             .FirstOrDefault();
 
-        bool forceRefresh = latestGateComment != null
-            && (analysisComment == null || latestGateComment.CreatedAt > analysisComment.CreatedAt);
+        // Merge dispatch-level staleness with local gate-rejection detection
+        bool forceRefresh = forceRefreshFromDispatch
+            || (latestGateComment != null
+                && (analysisComment == null || latestGateComment.CreatedAt > analysisComment.CreatedAt));
 
         if (analysisComment != null && !forceRefresh)
         {
@@ -341,7 +347,13 @@ public partial class AgentPhaseExecutor
         try
         {
             var analysis = IssueAnalysisComment.FromAgentAnalysis(issue, run.AnalysisContent, assessment);
-            await issueOps.PostCommentAsync(run.IssueIdentifier, analysis.ToMarkdown(), ct);
+            var markdown = analysis.ToMarkdown();
+
+            // Embed body hash for staleness detection
+            var bodyHash = AnalysisBodyHash.Compute(issue.Description);
+            markdown += $"\n<!-- agent:analysis-body-hash:{bodyHash} -->";
+
+            await issueOps.PostCommentAsync(run.IssueIdentifier, markdown, ct);
             _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

@@ -23,6 +23,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly IConfigurationStore _configStore;
     private readonly IProjectStore _projectStore;
     private readonly ITokenVendingService _tokenVending;
+    private readonly IConsolidationJobPreparer _jobPreparer;
     private readonly PipelineConfiguration _config;
     private readonly IWorkDistributor _workDistributor;
     private readonly IPipelineRunHistoryService _runHistoryService;
@@ -40,7 +41,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         IWorkDistributor workDistributor,
         IPipelineRunHistoryService runHistoryService,
         ILogger logger,
-        IConsolidationRunStore runStore)
+        IConsolidationRunStore runStore,
+        IConsolidationJobPreparer? jobPreparer = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(jobDispatcher);
@@ -60,6 +62,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         _configStore = configStore;
         _projectStore = projectStore;
         _tokenVending = tokenVending;
+        _jobPreparer = jobPreparer ?? new ConsolidationJobPreparer(configStore, projectStore, tokenVending, logger);
         _config = config;
         _workDistributor = workDistributor;
         _runHistoryService = runHistoryService;
@@ -82,23 +85,28 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         // Resolve required labels from the template's repo provider config (if template-scoped)
         var requiredLabels = await ResolveRequiredLabelsAsync(templateId, ct);
 
+        // Resolve the agent profile to get the full MatchLabels (the template key).
+        // Required labels are a subset used for agent selection; MatchLabels is the full set
+        // that maps to a JobTemplate in K8s mode. Same pattern as DispatchOrchestrationService.
+        var agentSelectorLabels = await ResolveAgentSelectorLabelsAsync(requiredLabels, ct);
+
         // Select an idle agent matching the labels
         var agent = _jobDispatcher.SelectAgent(requiredLabels);
         if (agent is null)
         {
             // No idle agent — enqueue via IWorkDistributor for unified drain
-            // Store required labels on the run for restart rehydration
-            run.QueuedRequiredLabels = requiredLabels.ToList();
+            // Store resolved selector labels on the run for restart rehydration and UI display
+            run.QueuedRequiredLabels = agentSelectorLabels.ToList();
 
             var distributionRequest = new JobDistributionRequest
             {
                 IssueIdentifier = run.RunId,
-                IssueProviderConfigId = "consolidation",
+                IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
                 RepoProviderConfigId = "",
-                InitiatedBy = "consolidation",
+                InitiatedBy = ConsolidationConstants.InitiatedBy,
                 TaskType = WorkItemTaskType.Consolidation,
-                AgentSelector = string.Join(",", requiredLabels),
-                TimeoutSeconds = 0,
+                AgentSelector = string.Join(",", agentSelectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
+                TimeoutSeconds = (int)_config.AgentTimeout.TotalSeconds,
                 ConsolidationRunType = type,
                 ConsolidationTemplateId = templateId,
                 ConsolidationWorkspacePath = workspacePath,
@@ -234,13 +242,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         AgentEntry agent,
         CancellationToken ct)
     {
-        // Build provider configs for the consolidation job and vend tokens
-        var includeIssuePermission = type == ConsolidationRunType.RefactoringDetection;
-        var rawConfigs = await BuildProviderConfigsAsync(type, templateId, agent, ct);
-
-        var template = templateId is not null ? await ResolveTemplateAsync(templateId, ct) : null;
-        var repoProviderId = template?.RepoProviderId ?? "";
-        var providerConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct, includeIssuePermission);
+        // Delegate config resolution and token vending to shared preparer
+        var preparation = await _jobPreparer.PrepareAsync(type, templateId, agent.Labels, ct);
 
         // Resolve last successful run timestamp for this type+template
         var lastSuccessfulRunUtc = await GetLastSuccessfulRunUtcAsync(type, templateId, ct);
@@ -252,7 +255,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
             Type = type,
             TemplateId = templateId,
             TemplateName = run.TemplateName,
-            ProviderConfigs = providerConfigs,
+            ProviderConfigs = preparation.ProviderConfigs,
             PipelineConfiguration = _config,
             LastSuccessfulRunUtc = lastSuccessfulRunUtc?.UtcDateTime,
             FeedbackDataJson = feedbackDataJson,
@@ -358,94 +361,37 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     }
 
     /// <summary>
-    /// Builds the provider configs list for the consolidation job based on the run type and template.
-    /// Uses profile resolution to determine the correct agent provider config for the selected agent
-    /// (same pattern as regular pipeline jobs).
+    /// Resolves the full agent selector labels (profile MatchLabels) from required labels.
+    /// Required labels are a subset used for agent matching; the profile's MatchLabels
+    /// form the complete label set that maps to a JobTemplate key in K8s mode.
+    /// Falls back to requiredLabels if no matching profile is found.
+    /// Same pattern as DispatchOrchestrationService.ResolveProfileByLabelsAsync + MapToRequest.
     /// </summary>
-    private async Task<IReadOnlyList<ProviderConfig>> BuildProviderConfigsAsync(
-        ConsolidationRunType type,
-        string? templateId,
-        AgentEntry agent,
-        CancellationToken ct)
+    internal async Task<IReadOnlyList<string>> ResolveAgentSelectorLabelsAsync(
+        IReadOnlyList<string> requiredLabels, CancellationToken ct)
     {
-        var configs = new List<ProviderConfig>();
-
-        var agentConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-
-        // Resolve agent config via profile (same as regular pipeline jobs)
-        ProviderConfig? agentConfig = null;
-        bool resolvedViaProfile = false;
         var profiles = await _configStore.LoadAgentProfilesAsync(ct);
-        var profileResolver = new ProfileResolver();
-        var profile = profileResolver.Resolve(profiles, agent.Labels);
-        if (profile is not null)
-        {
-            agentConfig = agentConfigs.FirstOrDefault(c => c.Id == profile.AgentProviderConfigId);
-            resolvedViaProfile = agentConfig is not null;
-            _logger.Debug(
-                "Consolidation job resolved agent provider via profile '{ProfileId}' for agent {AgentId}",
-                profile.Id, agent.AgentId);
-        }
-        else if (profiles.Count > 0)
+
+        var resolver = new ProfileResolver();
+        var profile = resolver.ResolveByRequiredLabels(profiles, requiredLabels);
+
+        if (profile is null)
         {
             _logger.Warning(
-                "No profile matches agent {AgentId} labels [{Labels}] for consolidation job. Using fallback.",
-                agent.AgentId, string.Join(", ", agent.Labels));
+                "ConsolidationDispatcher: no profile covers requiredLabels [{Labels}], using raw labels as selector. " +
+                "Template resolution may fail in K8s mode if no template is keyed by this subset.",
+                string.Join(", ", requiredLabels));
+            return requiredLabels;
         }
 
-        agentConfig ??= agentConfigs.FirstOrDefault();
+        _logger.Debug(
+            "ConsolidationDispatcher: resolved profile '{ProfileId}' for requiredLabels [{RequiredLabels}] → MatchLabels [{MatchLabels}]",
+            profile.Id, string.Join(", ", requiredLabels), string.Join(", ", profile.MatchLabels));
 
-        if (agentConfig is not null)
-        {
-            // Validate compatibility only on fallback path — profile resolution is trusted
-            if (!resolvedViaProfile && !IsProviderCompatibleWithAgent(agentConfig, agent))
-            {
-                _logger.Error(
-                    "Fallback provider '{ProviderType}' is incompatible with agent {AgentId} (labels=[{Labels}]). Skipping agent config.",
-                    agentConfig.ProviderType, agent.AgentId, string.Join(", ", agent.Labels));
-                agentConfig = null;
-            }
-        }
-
-        if (agentConfig is not null)
-            configs.Add(agentConfig);
-
-        // Resolve template for repo/brain/issue providers
-        PipelineJobTemplate? template = null;
-        if (templateId is not null)
-            template = await ResolveTemplateAsync(templateId, ct);
-
-        if (template is null)
-            return configs.AsReadOnly();
-
-        // Add repo provider (Work role)
-        if (!string.IsNullOrEmpty(template.RepoProviderId))
-        {
-            var repoConfigs = await _configStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-            var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == template.RepoProviderId);
-            if (repoConfig is not null)
-                configs.Add(repoConfig);
-
-            // Add brain provider if configured
-            if (!string.IsNullOrEmpty(template.BrainProviderId))
-            {
-                var brainConfig = repoConfigs.FirstOrDefault(c => c.Id == template.BrainProviderId);
-                if (brainConfig is not null)
-                    configs.Add(brainConfig);
-            }
-        }
-
-        // Add issue provider for refactoring detection
-        if (type == ConsolidationRunType.RefactoringDetection && !string.IsNullOrEmpty(template.IssueProviderId))
-        {
-            var issueConfig = await _configStore.GetProviderConfigByIdAsync(template.IssueProviderId, ProviderKind.Issue, ct);
-            if (issueConfig is not null)
-                configs.Add(issueConfig);
-        }
-
-        return configs.AsReadOnly();
+        return profile.MatchLabels;
     }
 
+    /// <summary>
     /// <summary>
     /// Gets the CompletedAtUtc of the last successful run for the given type and template.
     /// </summary>
@@ -481,29 +427,4 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     private static Dictionary<string, string>? CaptureTraceContext() =>
         PipelineTelemetry.CaptureTraceContext("DispatchConsolidation");
-
-    /// <summary>
-    /// Validates that the resolved agent provider type is compatible with the selected agent's capabilities.
-    /// Uses the provider config's <see cref="ProviderConfig.RequiredLabels"/> to determine compatibility.
-    /// If no RequiredLabels are set, falls back to provider-type-based heuristic (OpenCode→"opencode", KiroCli→"kiro").
-    /// Returns true if compatible or if no constraints can be determined.
-    /// </summary>
-    private static bool IsProviderCompatibleWithAgent(ProviderConfig agentProviderConfig, AgentEntry agent)
-    {
-        var agentLabelSet = new HashSet<string>(agent.Labels, StringComparer.OrdinalIgnoreCase);
-
-        // Primary: use explicit RequiredLabels from config
-        if (agentProviderConfig.RequiredLabels is { Count: > 0 } required)
-            return required.All(l => agentLabelSet.Contains(l));
-
-        // Fallback: heuristic based on provider type (safety net for configs without RequiredLabels)
-        if (agentProviderConfig.ProviderType.Equals("OpenCode", StringComparison.OrdinalIgnoreCase))
-            return agentLabelSet.Contains("opencode");
-
-        if (agentProviderConfig.ProviderType.Equals("KiroCli", StringComparison.OrdinalIgnoreCase))
-            return agentLabelSet.Contains("kiro");
-
-        // Unknown provider type with no labels — be permissive
-        return true;
-    }
 }

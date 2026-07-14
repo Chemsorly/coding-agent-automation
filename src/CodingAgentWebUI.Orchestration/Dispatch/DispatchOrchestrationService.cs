@@ -27,6 +27,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IProjectStore _projectStore;
+    private readonly AnalysisStalenessDetector? _stalenessDetector;
     private readonly ILogger _logger;
 
     public DispatchOrchestrationService(
@@ -38,7 +39,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IProviderConfigStore providerConfigStore,
         IPipelineConfigStore pipelineConfigStore,
         IProjectStore projectStore,
-        ILogger logger)
+        ILogger logger,
+        IWorkItemQueryService? workItemQuery = null)
     {
         ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(orchestration);
@@ -59,6 +61,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         _pipelineConfigStore = pipelineConfigStore;
         _projectStore = projectStore;
         _logger = logger;
+        _stalenessDetector = workItemQuery is not null
+            ? new AnalysisStalenessDetector(workItemQuery, logger)
+            : null;
     }
 
     /// <summary>
@@ -84,7 +89,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         string initiatedBy,
         IReadOnlyList<string> requiredLabels,
         PipelineProject project,
-        CancellationToken ct)
+        CancellationToken ct,
+        PipelineRunType runType = PipelineRunType.Implementation)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(issueProviderId);
@@ -98,7 +104,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             return await PrepareCoreAsync(
                 issueIdentifier, issueProviderId, repoProviderId,
                 brainProviderId, pipelineProviderId, initiatedBy,
-                requiredLabels, project, ct);
+                requiredLabels, project, ct, runType);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -117,7 +123,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         string initiatedBy,
         IReadOnlyList<string> requiredLabels,
         PipelineProject project,
-        CancellationToken ct)
+        CancellationToken ct,
+        PipelineRunType runType)
     {
         // Resolve profile using required labels (no agent entry — DB mode has no connected agents)
         var profile = await ResolveProfileByLabelsAsync(requiredLabels, ct);
@@ -136,7 +143,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var run = await _orchestration.CreateDispatchedRunAsync(
             issueProviderId, repoProviderId, issueIdentifier,
             agentProviderId, null, ct,
-            brainProviderId, pipelineProviderId, initiatedBy);
+            brainProviderId, pipelineProviderId, initiatedBy, runType);
 
         if (run is null)
         {
@@ -177,6 +184,49 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var config = await LoadAndApplySettingsAsync(
             project, repoProviderId, brainProviderId, providerConfigs, ct);
 
+        // --- Staleness detection (after config is resolved for threshold) ---
+        var stalenessSignal = issueContext.StalenessSignal;
+        var refreshCount = issueContext.RefreshCount;
+        var forceRefresh = issueContext.ForceRefreshAnalysis;
+
+        if (!forceRefresh && issueContext.ExistingAnalysis is not null && _stalenessDetector is not null)
+        {
+            var analysisComment = issueContext.IssueComments
+                .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefault();
+
+            if (analysisComment is not null)
+            {
+                // For signal 3: create a short-lived repo provider for commit counting
+                Func<DateTimeOffset, CancellationToken, Task<int>>? getCommitCount = null;
+                var repoConfig = await _providerConfigStore
+                    .GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+                if (repoConfig is not null)
+                {
+                    getCommitCount = async (since, token) =>
+                    {
+                        await using var repoProvider = _infra.ProviderFactory.CreateRepositoryProvider(repoConfig);
+                        return await repoProvider.GetCommitCountSinceAsync(since, token);
+                    };
+                }
+
+                var result = await _stalenessDetector.EvaluateAsync(
+                    analysisComment, issueContext.IssueComments,
+                    issueContext.IssueDetail.Description,
+                    issueIdentifier, issueProviderId,
+                    config.AnalysisCommitThreshold,
+                    getCommitCount, ct);
+
+                if (result.ForceRefresh)
+                {
+                    forceRefresh = true;
+                    stalenessSignal = result.Signal;
+                }
+                refreshCount = result.RefreshCount;
+            }
+        }
+
         return new DispatchPreparationResult
         {
             ResolvedProfile = profile,
@@ -188,7 +238,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             ParsedIssue = issueContext.ParsedIssue,
             IssueComments = issueContext.IssueComments,
             ExistingAnalysis = issueContext.ExistingAnalysis,
-            ForceRefreshAnalysis = issueContext.ForceRefreshAnalysis,
+            ForceRefreshAnalysis = forceRefresh,
+            StalenessSignal = stalenessSignal,
+            AnalysisRefreshCount = refreshCount,
             CreatedRun = run,
             Project = project,
             McpServers = profile.McpServers,
@@ -205,18 +257,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     {
         var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
 
-        // Find the best profile whose match labels COVER all required labels.
-        // Profile.MatchLabels = "agent must have these labels for this profile to apply."
-        // Any agent matched by such a profile has at least those labels,
-        // so if requiredLabels ⊆ profile.MatchLabels, the agent can satisfy the job.
-        var profile = profiles
-            .Where(p => p.Enabled)
-            .Where(p => requiredLabels.All(rl =>
-                p.MatchLabels.Contains(rl, StringComparer.OrdinalIgnoreCase)))
-            .OrderByDescending(p => p.MatchLabels.Count)
-            .ThenByDescending(p => p.Priority)
-            .ThenBy(p => p.Id, StringComparer.Ordinal)
-            .FirstOrDefault();
+        var resolver = new ProfileResolver();
+        var profile = resolver.ResolveByRequiredLabels(profiles, requiredLabels);
 
         if (profile is null)
         {
@@ -261,8 +303,11 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         // Detect existing analysis and rework state from comments
         string? existingAnalysis = null;
         bool forceRefreshAnalysis = false;
+        string? stalenessSignal = null;
         var analysisComment = issueComments
-            .FirstOrDefault(c => c.Body.Contains(CommentMarkers.AnalysisHeader));
+            .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefault();
         if (analysisComment is not null)
         {
             existingAnalysis = analysisComment.Body;
@@ -270,14 +315,21 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
                 .FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateRejection));
             var gateWontDo = issueComments
                 .FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateWontDo));
-            if ((gateRejection?.CreatedAt > analysisComment.CreatedAt) ||
-                (gateWontDo?.CreatedAt > analysisComment.CreatedAt))
+            if (gateRejection?.CreatedAt > analysisComment.CreatedAt)
+            {
                 forceRefreshAnalysis = true;
+                stalenessSignal = "gate_rejection";
+            }
+            else if (gateWontDo?.CreatedAt > analysisComment.CreatedAt)
+            {
+                forceRefreshAnalysis = true;
+                stalenessSignal = "gate_wont_do";
+            }
         }
 
         return new IssueContext(
             issueDetail, parsedIssue, issueComments,
-            existingAnalysis, forceRefreshAnalysis);
+            existingAnalysis, forceRefreshAnalysis, stalenessSignal, 0);
     }
 
     /// <summary>
@@ -389,7 +441,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         ParsedIssue ParsedIssue,
         IReadOnlyList<IssueComment> IssueComments,
         string? ExistingAnalysis,
-        bool ForceRefreshAnalysis);
+        bool ForceRefreshAnalysis,
+        string? StalenessSignal,
+        int RefreshCount);
 
     // ── IDispatchOrchestrationService implementation ─────────────────────
 
@@ -411,7 +465,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var result = await PrepareAsync(
             issueIdentifier, issueProviderId, repoProviderId,
             brainProviderId, pipelineProviderId, initiatedBy,
-            requiredLabels, project, ct);
+            requiredLabels, project, ct, runType);
 
         return result is null ? null : MapToRequest(result, taskType, runType);
     }
@@ -434,7 +488,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             reviewRequest.BrainProviderId,
             null, // pipelineProviderId
             reviewRequest.InitiatedBy,
-            requiredLabels, project, ct);
+            requiredLabels, project, ct,
+            PipelineRunType.Review);
 
         if (result is null) return null;
 
@@ -474,7 +529,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var result = await PrepareAsync(
             epicIdentifier, issueProviderId, repoProviderId,
             brainProviderId, null, initiatedBy,
-            requiredLabels, project, ct);
+            requiredLabels, project, ct,
+            phaseType);
 
         if (result is null) return null;
 
@@ -527,6 +583,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             IssueComments = result.IssueComments,
             ExistingAnalysis = result.ExistingAnalysis,
             ForceRefreshAnalysis = result.ForceRefreshAnalysis,
+            StalenessSignal = result.StalenessSignal,
+            AnalysisRefreshCount = result.AnalysisRefreshCount,
             ProviderConfigs = result.ProviderConfigs,
             PipelineConfiguration = result.PipelineConfiguration,
             ResolvedProfileId = result.ResolvedProfile.Id,

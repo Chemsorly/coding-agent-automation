@@ -92,6 +92,8 @@ public sealed partial class AgentJobDispatcher
                 IssueComments = issueContext.IssueComments,
                 ExistingAnalysis = issueContext.ExistingAnalysis,
                 ForceRefreshAnalysis = issueContext.ForceRefreshAnalysis,
+                StalenessSignal = issueContext.StalenessSignal,
+                AnalysisRefreshCount = issueContext.RefreshCount,
                 RepoProviderConfigId = repoProviderId,
                 AgentProviderConfigId = agentProviderId,
                 BrainProviderConfigId = brainProviderId,
@@ -165,7 +167,8 @@ public sealed partial class AgentJobDispatcher
             var run = await _orchestration.CreateDispatchedRunAsync(
                 request.IssueProviderId, request.RepoProviderId, request.PrIdentifier,
                 agentProviderId, agent.AgentId, ct,
-                request.BrainProviderId, pipelineProviderId: null, request.InitiatedBy);
+                request.BrainProviderId, pipelineProviderId: null, request.InitiatedBy,
+                PipelineRunType.Review);
 
             if (run == null)
             {
@@ -324,7 +327,7 @@ public sealed partial class AgentJobDispatcher
             var run = await _orchestration.CreateDispatchedRunAsync(
                 issueProviderId, repoProviderId, epicIdentifier,
                 agentProviderId, agent.AgentId, ct,
-                brainProviderId, pipelineProviderId: null, initiatedBy);
+                brainProviderId, pipelineProviderId: null, initiatedBy, phaseType);
 
             if (run == null)
             {
@@ -702,20 +705,35 @@ public sealed partial class AgentJobDispatcher
         // ensuring label state is consistent across all three modes (Legacy, SignalR, K8s).
 
         // Detect existing analysis and rework state from comments
+        // TODO: Legacy mode (AgentJobDispatcher) does not invoke AnalysisStalenessDetector for the
+        // three new signals (body_changed, agent_error, commit_threshold). Only gate_rejection and
+        // gate_wont_do are detected here. If legacy mode still processes issues, staleness detection
+        // silently does not apply. Consider wiring AnalysisStalenessDetector here as well.
         string? existingAnalysis = null;
         bool forceRefreshAnalysis = false;
-        var analysisComment = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.AnalysisHeader));
+        string? stalenessSignal = null;
+        var analysisComment = issueComments
+            .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefault();
         if (analysisComment is not null)
         {
             existingAnalysis = analysisComment.Body;
             var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateRejection));
             var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateWontDo));
-            if ((gateRejection?.CreatedAt > analysisComment.CreatedAt) ||
-                (gateWontDo?.CreatedAt > analysisComment.CreatedAt))
+            if (gateRejection?.CreatedAt > analysisComment.CreatedAt)
+            {
                 forceRefreshAnalysis = true;
+                stalenessSignal = "gate_rejection";
+            }
+            else if (gateWontDo?.CreatedAt > analysisComment.CreatedAt)
+            {
+                forceRefreshAnalysis = true;
+                stalenessSignal = "gate_wont_do";
+            }
         }
 
-        return new IssueContext(issueDetail, parsedIssue, issueComments, existingAnalysis, forceRefreshAnalysis);
+        return new IssueContext(issueDetail, parsedIssue, issueComments, existingAnalysis, forceRefreshAnalysis, stalenessSignal);
     }
 
     /// <summary>

@@ -233,6 +233,14 @@ public sealed record JobAssignmentMessage
     /// <summary>Workspace path for consolidation runs, as determined by the orchestrator.</summary>
     [Key(35)]
     public string? ConsolidationWorkspacePath { get; init; }
+
+    /// <summary>Which staleness signal triggered analysis force-refresh (null if not triggered).</summary>
+    [Key(36)]
+    public string? StalenessSignal { get; init; }
+
+    /// <summary>Number of prior analysis refreshes for this issue (for OpenTelemetry).</summary>
+    [Key(37)]
+    public int AnalysisRefreshCount { get; init; }
 }
 
 /// <summary>

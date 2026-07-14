@@ -235,4 +235,16 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// Returns null when cross-platform auto-close is not supported (e.g., GitHub repo + Jira issues).
     /// </summary>
     string? FormatCloseReference(string issueIdentifier) => $"Closes #{issueIdentifier}";
+
+    /// <summary>
+    /// Returns the count of commits on the default branch since the given timestamp.
+    /// Used by analysis staleness detection to determine if the codebase has evolved
+    /// significantly since the last analysis. Implementation MUST NOT auto-paginate
+    /// (bounded to a single API call with at most 100 results).
+    /// Default implementation returns 0 (effectively disabling commit-count staleness).
+    /// </summary>
+    /// <param name="since">Only count commits after this timestamp.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<int> GetCommitCountSinceAsync(DateTimeOffset since, CancellationToken ct)
+        => Task.FromResult(0);
 }

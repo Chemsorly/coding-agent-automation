@@ -174,6 +174,59 @@ public sealed class ConsolidationDispatcherTests : IDisposable
         result.Should().Be(ConsolidationDispatchResult.Queued);
     }
 
+    /// <summary>
+    /// Regression test for root-cause fix: ConsolidationDispatcher must set AgentSelector to the
+    /// full profile MatchLabels (not just requiredLabels) when enqueueing via IWorkDistributor.
+    /// Without this, K8s DispatchService fails with "No job template for selector" because
+    /// JobTemplateProvider.Resolve() requires exact match on the full template key.
+    /// </summary>
+    [Fact]
+    public async Task TryDispatchAsync_NoIdleAgent_AgentSelectorUsesProfileMatchLabels_NotRawRequiredLabels()
+    {
+        // No agents registered → will enqueue via IWorkDistributor
+
+        // DefaultRequiredAgentLabels = "dotnet,dotnet10" (subset)
+        var config = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = "/tmp",
+            DefaultRequiredAgentLabels = "dotnet,dotnet10"
+        };
+
+        // Profile with full MatchLabels (superset of required labels)
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new()
+                {
+                    Id = "profile-kiro-dotnet10",
+                    DisplayName = "Kiro Dotnet10",
+                    Enabled = true,
+                    MatchLabels = new[] { "kiro", "dotnet", "dotnet10" },
+                    AgentProviderConfigId = "agent-cfg",
+                    Priority = 1
+                }
+            });
+
+        JobDistributionRequest? capturedRequest = null;
+        _mockWorkDistributor
+            .Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<JobDistributionRequest, CancellationToken>((req, _) => capturedRequest = req)
+            .ReturnsAsync(new DistributionResult(true, null, null, Queued: true));
+
+        var svc = CreateService(config);
+        var run = new ConsolidationRun { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow };
+
+        var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
+
+        result.Should().Be(ConsolidationDispatchResult.Queued);
+        capturedRequest.Should().NotBeNull();
+
+        // KEY ASSERTION: AgentSelector must be the full profile MatchLabels (sorted), NOT just "dotnet,dotnet10"
+        // The normalized sorted form of ["kiro", "dotnet", "dotnet10"] is "dotnet,dotnet10,kiro"
+        capturedRequest!.AgentSelector.Should().Be("dotnet,dotnet10,kiro",
+            "AgentSelector must use profile.MatchLabels (the template key), not raw requiredLabels");
+    }
+
     [Fact]
     public async Task TryDispatchAsync_AgentAvailable_DispatchesAndReturnsTrue()
     {
@@ -394,12 +447,14 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     }
 
     [Fact]
-    public async Task TryDispatchAsync_IncompatibleFallbackProvider_SkipsAgentConfig()
+    public async Task TryDispatchAsync_NoProfileMatch_IncompatibleFallback_SkipsAgentConfig()
     {
-        // Agent has kiro labels but no profiles → fallback picks OpenCode config → compatibility rejects it
+        // Agent has kiro labels but no profiles → fallback checks RequiredLabels
+        // on agent configs for compatibility. OpenCode requires "opencode" label
+        // which the agent doesn't have — config is skipped.
         RegisterIdleAgent(labels: new[] { "kiro", "dotnet", "dotnet10" });
 
-        // Only OpenCode provider available (simulates misconfigured fallback)
+        // Only OpenCode provider available — incompatible with agent's labels
         var openCodeConfig = new ProviderConfig
         {
             Id = "opencode-cfg", Kind = ProviderKind.Agent, ProviderType = "OpenCode", DisplayName = "OpenCode",
@@ -419,10 +474,14 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
-        // Job dispatches but without an agent provider config (incompatible one was skipped)
+        // Job dispatches but incompatible agent config is excluded.
+        // With zero eligible configs, token vending is skipped (nothing to vend).
         result.Should().Be(ConsolidationDispatchResult.Dispatched);
-        capturedConfigs.Should().NotBeNull();
-        capturedConfigs!.Any(c => c.Kind == ProviderKind.Agent).Should().BeFalse();
+
+        // Verify via mock: PrepareAgentConfigsAsync should NOT be called (no configs to process)
+        _mockTokenVending.Verify(
+            t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Never);
     }
 
     #endregion

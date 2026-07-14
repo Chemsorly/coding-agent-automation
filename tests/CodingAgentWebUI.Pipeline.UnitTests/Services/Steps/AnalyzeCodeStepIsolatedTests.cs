@@ -56,7 +56,7 @@ public class AnalyzeCodeStepIsolatedTests
     {
         _agentExecution
             .Setup(x => x.ExecuteAnalysisPhaseAsync(
-                It.IsAny<AgentPhaseContext>(), It.IsAny<IReadOnlyList<IssueComment>>(), It.IsAny<CancellationToken>()))
+                It.IsAny<AgentPhaseContext>(), It.IsAny<IReadOnlyList<IssueComment>>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var context = BuildContext();
@@ -73,7 +73,7 @@ public class AnalyzeCodeStepIsolatedTests
     {
         _agentExecution
             .Setup(x => x.ExecuteAnalysisPhaseAsync(
-                It.IsAny<AgentPhaseContext>(), It.IsAny<IReadOnlyList<IssueComment>>(), It.IsAny<CancellationToken>()))
+                It.IsAny<AgentPhaseContext>(), It.IsAny<IReadOnlyList<IssueComment>>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         var context = BuildContext();
@@ -95,7 +95,7 @@ public class AnalyzeCodeStepIsolatedTests
 
         _agentExecution
             .Setup(x => x.ExecuteAnalysisPhaseAsync(
-                It.IsAny<AgentPhaseContext>(), It.IsAny<IReadOnlyList<IssueComment>>(), It.IsAny<CancellationToken>()))
+                It.IsAny<AgentPhaseContext>(), It.IsAny<IReadOnlyList<IssueComment>>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var context = BuildContext();
@@ -108,7 +108,7 @@ public class AnalyzeCodeStepIsolatedTests
         _agentExecution.Verify(x => x.ExecuteAnalysisPhaseAsync(
             It.IsAny<AgentPhaseContext>(),
             It.Is<IReadOnlyList<IssueComment>>(c => c.Count == 1 && c[0].Id == "c1"),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -116,7 +116,7 @@ public class AnalyzeCodeStepIsolatedTests
     {
         _agentExecution
             .Setup(x => x.ExecuteAnalysisPhaseAsync(
-                It.IsAny<AgentPhaseContext>(), It.IsAny<IReadOnlyList<IssueComment>>(), It.IsAny<CancellationToken>()))
+                It.IsAny<AgentPhaseContext>(), It.IsAny<IReadOnlyList<IssueComment>>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var context = BuildContext();
@@ -129,6 +129,6 @@ public class AnalyzeCodeStepIsolatedTests
         _agentExecution.Verify(x => x.ExecuteAnalysisPhaseAsync(
             It.IsAny<AgentPhaseContext>(),
             It.Is<IReadOnlyList<IssueComment>>(c => c.Count == 0),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 }

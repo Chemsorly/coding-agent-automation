@@ -34,6 +34,7 @@ public class DispatchServiceConsolidationTests : IDisposable
     private readonly Mock<IKubernetesJobClient> _mockKubeClient;
     private readonly Mock<ITokenVendingService> _mockTokenVending;
     private readonly Mock<IConsolidationRunStore> _mockRunStore;
+    private readonly Mock<IConsolidationService> _mockConsolidationService;
     private readonly Mock<IProviderConfigStore> _mockProviderConfigStore;
     private readonly Mock<IAgentProfileStore> _mockAgentProfileStore;
     private readonly Mock<IProjectStore> _mockProjectStore;
@@ -60,6 +61,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         _mockKubeClient = new Mock<IKubernetesJobClient>();
         _mockTokenVending = new Mock<ITokenVendingService>();
         _mockRunStore = new Mock<IConsolidationRunStore>();
+        _mockConsolidationService = new Mock<IConsolidationService>();
         _mockProviderConfigStore = new Mock<IProviderConfigStore>();
         _mockAgentProfileStore = new Mock<IAgentProfileStore>();
         _mockProjectStore = new Mock<IProjectStore>();
@@ -289,6 +291,15 @@ public class DispatchServiceConsolidationTests : IDisposable
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.ErrorMessage.Should().Contain("K8s Job creation failed");
+
+        // Verify cascade fires for K8s creation failure path too (not just template resolution)
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(
+                workItemId.ToString(),
+                ConsolidationRunStatus.Failed,
+                It.Is<string>(summary => summary.Contains("K8s Job creation failed")),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -322,6 +333,143 @@ public class DispatchServiceConsolidationTests : IDisposable
         var item = await dbCheck.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.ErrorMessage.Should().Contain("payload");
+
+        // Verify cascade fires for invalid payload path (IssueIdentifier = workItemId.ToString())
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(
+                workItemId.ToString(),
+                ConsolidationRunStatus.Failed,
+                It.Is<string>(summary => summary.Contains("payload")),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    // ── Label Resolution: AgentSelector must match template key ────────
+
+    /// <summary>
+    /// Regression test: When ConsolidationDispatcher produces an AgentSelector that is a SUBSET
+    /// of the template's label set (e.g., "dotnet,dotnet10" vs template "kiro,dotnet,dotnet10"),
+    /// DispatchService must still resolve the template correctly.
+    ///
+    /// Root cause: ConsolidationDispatcher uses raw requiredLabels as AgentSelector instead of
+    /// resolving the profile's MatchLabels (which IS the template key). Normal pipeline dispatch
+    /// uses profile.MatchLabels and works fine.
+    ///
+    /// This test simulates the production scenario:
+    /// - Template: labels="kiro,dotnet,dotnet10" (3-label key)
+    /// - Work item AgentSelector: "dotnet,dotnet10" (2-label subset, missing "kiro")
+    /// - Expected: dispatch succeeds (after fix resolves profile → full label set)
+    /// - Bug behavior: "No job template for selector: dotnet,dotnet10"
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_SubsetSelector_ResolvesTemplateViaProfile()
+    {
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+
+        // Insert with subset selector — what ConsolidationDispatcher actually produces
+        // when DefaultRequiredAgentLabels = "dotnet,dotnet10" (missing "kiro")
+        await InsertConsolidationWorkItem(workItemId, runId, "dotnet,dotnet10");
+
+        // Profile has the full label set that matches the template key
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new()
+                {
+                    Id = "profile-1",
+                    DisplayName = "Kiro Dotnet10",
+                    Enabled = true,
+                    MatchLabels = ["dotnet", "dotnet10", "kiro"],
+                    AgentProviderConfigId = TestAgentProviderId,
+                    Priority = 1
+                }
+            });
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConsolidationRun
+            {
+                RunId = runId,
+                Type = ConsolidationRunType.BrainConsolidation,
+                StartedAtUtc = DateTimeOffset.UtcNow,
+                Status = ConsolidationRunStatus.Queued
+            });
+
+        // Template keyed by full 3-label set (realistic production config)
+        var service = CreateServiceWithThreeLabelTemplate();
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: With the bug, this FAILS — Resolve("dotnet,dotnet10") finds no template keyed as "dotnet,dotnet10,kiro"
+        // With the fix, DispatchService resolves the profile from AgentSelector labels and uses profile.MatchLabels
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Dispatched,
+            "work item should be dispatched — template resolution must succeed even when AgentSelector is a subset of template labels");
+        item.ErrorMessage.Should().BeNull();
+        item.K8sJobName.Should().StartWith("caa-");
+    }
+
+    // ── FailWorkItem cascading to ConsolidationRun ──────────────────────
+
+    /// <summary>
+    /// When a consolidation WorkItem fails (e.g., no template match, K8s Job creation failure),
+    /// the associated ConsolidationRun must also transition to Failed. Without this, the run
+    /// stays in Queued/Running status permanently and the UI shows a stuck entry.
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_FailsWorkItem_CascadesToConsolidationRunFailed()
+    {
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+
+        // Insert with a selector that won't match ANY template (no profile either)
+        await InsertConsolidationWorkItem(workItemId, runId, "nonexistent-label");
+
+        // No profiles match this selector
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>());
+
+        // ConsolidationRun exists in Queued state
+        var consolidationRun = new ConsolidationRun
+        {
+            RunId = runId,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Queued
+        };
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(consolidationRun);
+
+        var service = CreateServiceWithThreeLabelTemplate();
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: WorkItem should be Failed (no template match)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.ErrorMessage.Should().Contain("No job template for selector");
+
+        // Assert: ConsolidationRun should ALSO be transitioned to Failed via IConsolidationService
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(
+                runId,
+                ConsolidationRunStatus.Failed,
+                It.Is<string>(summary => summary.Contains("No job template for selector")),
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "ConsolidationRun must be transitioned to Failed via IConsolidationService.UpdateRunAsync");
     }
 
     // ── Integration: Full Lifecycle ─────────────────────────────────────
@@ -494,10 +642,17 @@ public class DispatchServiceConsolidationTests : IDisposable
             labelSwapper,
             _mockTokenVending.Object,
             _mockRunStore.Object,
+            _mockConsolidationService.Object,
             _mockProviderConfigStore.Object,
             _mockAgentProfileStore.Object,
             _mockProjectStore.Object,
-            _mockPipelineConfigStore.Object);
+            _mockPipelineConfigStore.Object,
+            new ConsolidationJobPreparer(
+                _mockProviderConfigStore.Object,
+                _mockProjectStore.Object,
+                _mockTokenVending.Object,
+                Serilog.Log.Logger,
+                _mockAgentProfileStore.Object));
     }
 
     private static JobTemplateProvider BuildTemplateProvider()
@@ -508,6 +663,55 @@ public class DispatchServiceConsolidationTests : IDisposable
         };
         var json = JsonSerializer.Serialize(templates);
         return JobTemplateProvider.LoadFromJson(json);
+    }
+
+    /// <summary>
+    /// Builds a template provider with a realistic 3-label template (kiro,dotnet,dotnet10).
+    /// Used to reproduce the subset selector bug where AgentSelector = "dotnet,dotnet10"
+    /// fails to match template key "dotnet,dotnet10,kiro".
+    /// </summary>
+    private static JobTemplateProvider BuildThreeLabelTemplateProvider()
+    {
+        var templates = new List<JobTemplate>
+        {
+            new() { Labels = "kiro,dotnet,dotnet10", Image = "ghcr.io/agent:kiro-dotnet10", ProviderType = "kiro" }
+        };
+        var json = JsonSerializer.Serialize(templates);
+        return JobTemplateProvider.LoadFromJson(json);
+    }
+
+    private DispatchService CreateServiceWithThreeLabelTemplate()
+    {
+        var configData = new Dictionary<string, string?>
+        {
+            ["WorkDistribution:Dispatch:PollIntervalSeconds"] = "10",
+            ["WorkDistribution:Dispatch:RateLimitPerSecond"] = "100",
+            ["WorkDistribution:Namespace"] = "default",
+            ["WorkDistribution:OrchestratorUrl"] = "http://orchestrator:8080",
+            ["WorkDistribution:AgentApiKeySecretName"] = "agent-api-key",
+            ["WorkDistribution:CredentialPools:Kiro:0"] = "pvc-test-1",
+            ["WorkDistribution:CredentialPools:Kiro:1"] = "pvc-test-2"
+        };
+
+        var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
+        var templateProvider = BuildThreeLabelTemplateProvider();
+
+        return new DispatchService(
+            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider,
+            null,
+            _mockTokenVending.Object,
+            _mockRunStore.Object,
+            _mockConsolidationService.Object,
+            _mockProviderConfigStore.Object,
+            _mockAgentProfileStore.Object,
+            _mockProjectStore.Object,
+            _mockPipelineConfigStore.Object,
+            new ConsolidationJobPreparer(
+                _mockProviderConfigStore.Object,
+                _mockProjectStore.Object,
+                _mockTokenVending.Object,
+                Serilog.Log.Logger,
+                _mockAgentProfileStore.Object));
     }
 
     private async Task InsertConsolidationWorkItem(Guid id, string runId, string selector)

@@ -33,7 +33,7 @@ public sealed class DispatchService : BackgroundService
     internal const string DefaultJobTemplatesPath = "/app/config/job-templates.yaml";
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly LeaderElectionService _leaderElection;
+    private readonly ILeaderElectionService _leaderElection;
     private readonly IKubernetesJobClient _kubeClient;
     private readonly WorkItemTransitionService _transitionService;
     private readonly DispatchServiceOptions _options;
@@ -41,25 +41,29 @@ public sealed class DispatchService : BackgroundService
     private readonly ILabelSwapper? _labelSwapper;
     private readonly ITokenVendingService? _tokenVending;
     private readonly IConsolidationRunStore? _consolidationRunStore;
+    private readonly IConsolidationService? _consolidationService;
     private readonly IProviderConfigStore? _providerConfigStore;
     private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IProjectStore? _projectStore;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
+    private readonly IConsolidationJobPreparer? _consolidationJobPreparer;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
     public DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
-        LeaderElectionService leaderElection,
+        ILeaderElectionService leaderElection,
         IKubernetesJobClient kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
         ILabelSwapper? labelSwapper = null,
         ITokenVendingService? tokenVending = null,
         IConsolidationRunStore? consolidationRunStore = null,
+        IConsolidationService? consolidationService = null,
         IProviderConfigStore? providerConfigStore = null,
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
-        IPipelineConfigStore? pipelineConfigStore = null)
+        IPipelineConfigStore? pipelineConfigStore = null,
+        IConsolidationJobPreparer? consolidationJobPreparer = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
@@ -68,10 +72,12 @@ public sealed class DispatchService : BackgroundService
         _labelSwapper = labelSwapper;
         _tokenVending = tokenVending;
         _consolidationRunStore = consolidationRunStore;
+        _consolidationService = consolidationService;
         _providerConfigStore = providerConfigStore;
         _agentProfileStore = agentProfileStore;
         _projectStore = projectStore;
         _pipelineConfigStore = pipelineConfigStore;
+        _consolidationJobPreparer = consolidationJobPreparer;
         _options = new DispatchServiceOptions();
         configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
 
@@ -116,7 +122,7 @@ public sealed class DispatchService : BackgroundService
     /// </summary>
     internal DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
-        LeaderElectionService leaderElection,
+        ILeaderElectionService leaderElection,
         IKubernetesJobClient kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
@@ -124,10 +130,12 @@ public sealed class DispatchService : BackgroundService
         ILabelSwapper? labelSwapper = null,
         ITokenVendingService? tokenVending = null,
         IConsolidationRunStore? consolidationRunStore = null,
+        IConsolidationService? consolidationService = null,
         IProviderConfigStore? providerConfigStore = null,
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
-        IPipelineConfigStore? pipelineConfigStore = null)
+        IPipelineConfigStore? pipelineConfigStore = null,
+        IConsolidationJobPreparer? consolidationJobPreparer = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
@@ -136,10 +144,12 @@ public sealed class DispatchService : BackgroundService
         _labelSwapper = labelSwapper;
         _tokenVending = tokenVending;
         _consolidationRunStore = consolidationRunStore;
+        _consolidationService = consolidationService;
         _providerConfigStore = providerConfigStore;
         _agentProfileStore = agentProfileStore;
         _projectStore = projectStore;
         _pipelineConfigStore = pipelineConfigStore;
+        _consolidationJobPreparer = consolidationJobPreparer;
         _templateProvider = templateProvider;
         _options = new DispatchServiceOptions();
         configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
@@ -304,10 +314,34 @@ public sealed class DispatchService : BackgroundService
 
             // Resolve template — fail immediately if no match (before PVC gating)
             var template = _templateProvider.Resolve(item.AgentSelector);
+            var effectiveSelector = item.AgentSelector;
             if (template is null)
             {
-                await FailWorkItem(item.Id, $"No job template for selector: {item.AgentSelector}", ct);
-                continue;
+                // Fallback: AgentSelector might be a subset of the template's label set
+                // (e.g., consolidation items store requiredLabels ["dotnet","dotnet10"] but template
+                // is keyed by full profile MatchLabels ["dotnet","dotnet10","kiro"]).
+                // Resolve profile to get the full label set, then retry template lookup.
+                var (fallbackTemplate, resolvedSelector) = await ResolveTemplateViaProfileAsync(item.AgentSelector, ct);
+                if (fallbackTemplate is null)
+                {
+                    await FailWorkItem(item.Id, $"No job template for selector: {item.AgentSelector}", item.TaskType, item.IssueIdentifier, ct);
+                    continue;
+                }
+                template = fallbackTemplate;
+                effectiveSelector = resolvedSelector!;
+
+                // Re-check concurrency limit against the resolved selector (the actual template key)
+                var resolvedMaxConcurrent = template.MaxConcurrent;
+                if (resolvedMaxConcurrent > 0)
+                {
+                    var current = concurrencyBySelector.GetValueOrDefault(effectiveSelector, 0);
+                    if (current >= resolvedMaxConcurrent)
+                    {
+                        Log.Debug("DispatchService: resolved selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
+                            effectiveSelector, current, resolvedMaxConcurrent, item.Id);
+                        continue;
+                    }
+                }
             }
 
             var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
@@ -416,7 +450,7 @@ public sealed class DispatchService : BackgroundService
                 workItem.ClaimedPvcName = null;
                 availablePvcs.Add(claimedPvc);
             }
-            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", ct);
+            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -553,7 +587,7 @@ public sealed class DispatchService : BackgroundService
         if (request is null)
         {
             if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            await FailWorkItem(item.Id, "Consolidation WorkItem has no valid payload", ct);
+            await FailWorkItem(item.Id, "Consolidation WorkItem has no valid payload", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -564,26 +598,28 @@ public sealed class DispatchService : BackgroundService
 
         try
         {
-            var (rawConfigs, resolvedRepoProviderId) = await BuildConsolidationProviderConfigsAsync(
-                request.ConsolidationTemplateId,
-                item.AgentSelector,
-                request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-                ct);
-            repoProviderId = resolvedRepoProviderId;
+            // Parse agent labels from selector string
+            var agentLabels = (item.AgentSelector ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList()
+                .AsReadOnly();
 
-            // Vend tokens (replace long-lived keys with short-lived tokens)
-            // TODO: When vending is skipped (empty repoProviderId or rawConfigs), raw configs are assigned
-            // directly without stripping PrivateKeyBase64. If agent configs carry private keys, they will
-            // persist unvended in the DB payload. Also, for agent-only configs (no repo provider), tokens
-            // are never vended — this may diverge from the requirement "Token vending at K8s Job creation time."
-            if (_tokenVending is not null && rawConfigs.Count > 0 && !string.IsNullOrEmpty(repoProviderId))
+            // Delegate config resolution and token vending to shared preparer
+            if (_consolidationJobPreparer is null)
             {
-                vendedConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
+                Log.Error("DispatchService: IConsolidationJobPreparer not available for consolidation WorkItem {WorkItemId}", item.Id);
+                if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+                await FailWorkItem(item.Id, "IConsolidationJobPreparer not registered", item.TaskType, item.IssueIdentifier, ct);
+                return;
             }
-            else
-            {
-                vendedConfigs = rawConfigs;
-            }
+
+            var preparation = await _consolidationJobPreparer.PrepareAsync(
+                request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
+                request.ConsolidationTemplateId,
+                agentLabels,
+                ct);
+            vendedConfigs = preparation.ProviderConfigs;
+            repoProviderId = preparation.RepoProviderConfigId;
 
             // Load pipeline configuration for the agent
             if (_pipelineConfigStore is not null)
@@ -595,7 +631,7 @@ public sealed class DispatchService : BackgroundService
         {
             Log.Error(ex, "DispatchService: failed to resolve provider configs for consolidation WorkItem {WorkItemId}", item.Id);
             if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            await FailWorkItem(item.Id, $"Provider config resolution failed: {ex.Message}", ct);
+            await FailWorkItem(item.Id, $"Provider config resolution failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -633,7 +669,7 @@ public sealed class DispatchService : BackgroundService
             var buildCtx = new JobSpecBuilder.BuildContext
             {
                 WorkItemId = item.Id,
-                AgentSelector = item.AgentSelector,
+                AgentSelector = item.AgentSelector ?? "",
                 TimeoutSeconds = item.TimeoutSeconds,
                 JobName = jobName,
                 ClaimedPvc = claimedPvc,
@@ -661,7 +697,7 @@ public sealed class DispatchService : BackgroundService
                 workItem.ClaimedPvcName = null;
                 availablePvcs.Add(claimedPvc);
             }
-            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", ct);
+            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -687,8 +723,8 @@ public sealed class DispatchService : BackgroundService
             WorkDistributionTelemetry.PendingDuration.Record(latency,
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
 
-            concurrencyBySelector[item.AgentSelector] =
-                concurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0) + 1;
+            concurrencyBySelector[item.AgentSelector ?? ""] =
+                concurrencyBySelector.GetValueOrDefault(item.AgentSelector ?? "", 0) + 1;
 
             Log.Information(
                 "DispatchService: consolidation WorkItem {WorkItemId} dispatched as Job {JobName} (selector={Selector}, pvc={Pvc})",
@@ -738,91 +774,6 @@ public sealed class DispatchService : BackgroundService
         {
             Log.Warning(ex, "DispatchService: failed to transition consolidation run {RunId} to Running (non-fatal)", runId);
         }
-    }
-
-    /// <summary>
-    /// Builds provider configs for a consolidation WorkItem from the configuration store.
-    /// Mirrors ConsolidationDispatcher.BuildProviderConfigsAsync but uses AgentSelector labels
-    /// for profile resolution (no AgentEntry available at K8s dispatch time).
-    /// </summary>
-    /// <returns>A tuple of (provider configs, repo provider config ID).</returns>
-    private async Task<(IReadOnlyList<ProviderConfig> Configs, string RepoProviderId)> BuildConsolidationProviderConfigsAsync(
-        string? consolidationTemplateId,
-        string agentSelector,
-        ConsolidationRunType consolidationRunType,
-        CancellationToken ct)
-    {
-        var repoProviderId = "";
-        var configs = new List<ProviderConfig>();
-
-        // 1. Resolve agent provider config via profile (use AgentSelector labels)
-        if (_agentProfileStore is not null && _providerConfigStore is not null)
-        {
-            var agentLabels = agentSelector
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList()
-                .AsReadOnly();
-
-            var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-            var profileResolver = new ProfileResolver();
-            var profile = profileResolver.Resolve(profiles, agentLabels);
-
-            if (profile is not null)
-            {
-                var agentConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-                var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == profile.AgentProviderConfigId);
-                if (agentConfig is not null)
-                    configs.Add(agentConfig);
-            }
-        }
-
-        // 2. Resolve template for repo/brain/issue providers
-        if (consolidationTemplateId is null || _projectStore is null || _providerConfigStore is null)
-            return (configs.AsReadOnly(), repoProviderId);
-
-        var template = await ResolveConsolidationTemplateAsync(consolidationTemplateId, ct);
-        if (template is null)
-            return (configs.AsReadOnly(), repoProviderId);
-
-        // 3. Add repo provider
-        if (!string.IsNullOrEmpty(template.RepoProviderId))
-        {
-            repoProviderId = template.RepoProviderId;
-            var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-            var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == template.RepoProviderId);
-            if (repoConfig is not null)
-                configs.Add(repoConfig);
-
-            // 4. Add brain provider if configured
-            if (!string.IsNullOrEmpty(template.BrainProviderId))
-            {
-                var brainConfig = repoConfigs.FirstOrDefault(c => c.Id == template.BrainProviderId);
-                if (brainConfig is not null)
-                    configs.Add(brainConfig);
-            }
-        }
-
-        // 5. Add issue provider for refactoring detection
-        if (consolidationRunType == ConsolidationRunType.RefactoringDetection
-            && !string.IsNullOrEmpty(template.IssueProviderId))
-        {
-            var issueConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
-                template.IssueProviderId, ProviderKind.Issue, ct);
-            if (issueConfig is not null)
-                configs.Add(issueConfig);
-        }
-
-        return (configs.AsReadOnly(), repoProviderId);
-    }
-
-    private async Task<PipelineJobTemplate?> ResolveConsolidationTemplateAsync(
-        string templateId, CancellationToken ct)
-    {
-        if (_projectStore is null)
-            return null;
-
-        var templates = await _projectStore.LoadAllTemplatesAsync(ct);
-        return templates.FirstOrDefault(t => t.Id == templateId);
     }
 
     private async Task CreateJobSecretAsync(
@@ -897,7 +848,54 @@ public sealed class DispatchService : BackgroundService
         return null;
     }
 
-    private async Task FailWorkItem(Guid workItemId, string errorMessage, CancellationToken ct)
+    /// <summary>
+    /// Fallback template resolution: when the work item's AgentSelector is a subset of the template's
+    /// label set (e.g., consolidation items that store only requiredLabels), resolve the matching profile
+    /// to get the full MatchLabels, then retry template lookup with the profile's labels.
+    /// This aligns with how DispatchOrchestrationService uses profile.MatchLabels as the AgentSelector.
+    /// </summary>
+    private async Task<(JobTemplate? Template, string? ResolvedSelector)> ResolveTemplateViaProfileAsync(string agentSelector, CancellationToken ct)
+    {
+        if (_agentProfileStore is null)
+            return (null, null);
+
+        var selectorLabels = agentSelector
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+
+        if (selectorLabels.Count == 0)
+            return (null, null);
+
+        var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
+
+        var resolver = new ProfileResolver();
+        var profile = resolver.ResolveByRequiredLabels(profiles, selectorLabels);
+
+        if (profile is null)
+        {
+            Log.Debug("DispatchService: no profile covers selector [{Selector}] for fallback template resolution",
+                agentSelector);
+            return (null, null);
+        }
+
+        // Use profile's MatchLabels as the template key (same as DispatchOrchestrationService.MapToRequest)
+        var profileSelector = string.Join(",",
+            profile.MatchLabels.OrderBy(l => l, StringComparer.Ordinal));
+
+        var template = _templateProvider.Resolve(profileSelector);
+        if (template is not null)
+        {
+            Log.Warning("DispatchService: AgentSelector [{Selector}] required profile expansion to resolve template. " +
+                "Upstream code path may not be setting AgentSelector to full profile.MatchLabels. " +
+                "Resolved via profile '{ProfileId}' → [{ProfileSelector}]",
+                agentSelector, profile.Id, profileSelector);
+        }
+
+        return (template, profileSelector);
+    }
+
+    private async Task FailWorkItem(Guid workItemId, string errorMessage,
+        WorkItemTaskType taskType, string? issueIdentifier, CancellationToken ct)
     {
         await _transitionService.TransitionAsync(
             workItemId,
@@ -911,6 +909,72 @@ public sealed class DispatchService : BackgroundService
             ct);
 
         Log.Warning("DispatchService: WorkItem {WorkItemId} failed: {Error}", workItemId, errorMessage);
+
+        // Cascade to ConsolidationRun: transition to Failed so it doesn't stay stuck in Queued/Running
+        if (taskType == WorkItemTaskType.Consolidation && issueIdentifier is not null)
+            await CascadeFailureToConsolidationRunAsync(issueIdentifier, errorMessage, ct);
+    }
+
+    /// <summary>
+    /// Cascades a failure to a ConsolidationRun, transitioning it from Queued/Running to Failed.
+    /// Delegates to <see cref="IConsolidationService.UpdateRunAsync"/> which handles cache invalidation,
+    /// _runningRuns cleanup, OnChange event, and workspace management.
+    /// Falls back to direct store write if IConsolidationService is unavailable.
+    /// Safe to call from any failure path (DispatchService, ReconciliationService).
+    /// </summary>
+    internal async Task CascadeFailureToConsolidationRunAsync(string runId, string errorMessage, CancellationToken ct)
+    {
+        if (_consolidationService is not null)
+        {
+            try
+            {
+                await _consolidationService.UpdateRunAsync(
+                    runId,
+                    ConsolidationRunStatus.Failed,
+                    $"WorkItem dispatch failed: {errorMessage}",
+                    ct);
+                Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId} via IConsolidationService", runId);
+            }
+            catch (OperationCanceledException)
+            {
+                // Graceful shutdown — cascade skipped, ReconciliationService or startup cleanup will handle it
+                Log.Debug("DispatchService: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
+            }
+            return;
+        }
+
+        // Fallback: direct store write — skips _runningRuns cleanup, OnChange, workspace cleanup.
+        // Only executes in test scenarios or misconfigured DI. Log at Warning for visibility.
+        Log.Warning("DispatchService: IConsolidationService unavailable, using direct store fallback for ConsolidationRun {RunId}. " +
+            "This skips cache invalidation and OnChange events.", runId);
+
+        if (_consolidationRunStore is null)
+            return;
+
+        try
+        {
+            var run = await _consolidationRunStore.GetByIdAsync(runId, ct);
+            if (run is not null && run.Status is ConsolidationRunStatus.Queued or ConsolidationRunStatus.Running)
+            {
+                run.Status = ConsolidationRunStatus.Failed;
+                run.Summary = $"WorkItem dispatch failed: {errorMessage}";
+                run.CompletedAtUtc = DateTimeOffset.UtcNow;
+                await _consolidationRunStore.SaveRunAsync(run, ct);
+                Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId} (direct store)", runId);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Debug("DispatchService: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
+        }
     }
 
     // ── Static helpers (internal for testability) ────────────────────────

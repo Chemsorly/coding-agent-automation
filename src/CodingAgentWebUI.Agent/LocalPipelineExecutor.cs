@@ -625,7 +625,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
             });
 
-        return PipelineStepContext.ForAgent(
+        var ctx = PipelineStepContext.ForAgent(
             run: inputs.Run,
             config: inputs.Config,
             repoProvider: inputs.RepoProvider,
@@ -648,6 +648,14 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             preResolvedReviewerConfigs: inputs.Job.ReviewerConfigs,
             preResolvedQualityGateConfigs: inputs.Job.QualityGateConfigs,
             projectContext: inputs.Job.ProjectContext);
+
+        // Propagate dispatch-level staleness detection results to the step context
+        // so AnalyzeCodeStep can use ForceRefreshAnalysis and set OTel tags correctly.
+        ctx.ForceRefreshAnalysis = inputs.Job.ForceRefreshAnalysis;
+        ctx.StalenessSignal = inputs.Job.StalenessSignal;
+        ctx.AnalysisRefreshCount = inputs.Job.AnalysisRefreshCount;
+
+        return ctx;
     }
 
     private async Task CreatePullRequestAsync(

@@ -56,6 +56,7 @@ public static class TestPipelineConfig
         QualityGateHistoryCapacity = 50,
         RetryErrorsCapacity = 100,
         OrphanedLabelSweepIntervalMinutes = 30,
+        AnalysisCommitThreshold = 30,
     };
 
     /// <summary>
@@ -102,6 +103,7 @@ public static class TestPipelineConfig
         QualityGateHistoryCapacity = 50,
         RetryErrorsCapacity = 100,
         OrphanedLabelSweepIntervalMinutes = 30,
+        AnalysisCommitThreshold = 30,
     };
 
     /// <summary>

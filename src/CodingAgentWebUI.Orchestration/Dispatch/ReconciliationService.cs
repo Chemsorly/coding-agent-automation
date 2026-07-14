@@ -30,7 +30,7 @@ public sealed class ReconciliationService : BackgroundService
     private const string WorkItemIdLabel = "caa/work-item-id";
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly LeaderElectionService _leaderElection;
+    private readonly ILeaderElectionService _leaderElection;
     private readonly IKubernetes _kubeClient;
     private readonly WorkItemTransitionService _transitionService;
     private readonly ILabelSwapper? _labelSwapper;
@@ -44,7 +44,7 @@ public sealed class ReconciliationService : BackgroundService
 
     public ReconciliationService(
         IDbContextFactory<PipelineDbContext> dbFactory,
-        LeaderElectionService leaderElection,
+        ILeaderElectionService leaderElection,
         IKubernetes kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
@@ -349,6 +349,9 @@ public sealed class ReconciliationService : BackgroundService
 
             LogTerminalTransition(workItemId, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
 
+            // Cascade failure to ConsolidationRun if this is a consolidation WorkItem
+            await CascadeConsolidationRunFailureIfApplicableAsync(workItemId, $"K8s Job failed: {reason}", ct);
+
             // Delete the failed Job immediately to release PVC faster (don't wait for TTL controller).
             // Without this, the PVC stays claimed for up to TtlSecondsAfterFinished (default 3600s).
             var jobName = job.Metadata?.Name;
@@ -362,6 +365,46 @@ public sealed class ReconciliationService : BackgroundService
             // Job completed (exit 0) — verify the agent actually reported terminal status.
             // Grace period: allow 30s for the POST to arrive (network latency, agent shutdown sequence).
             await HandleCompleteJobWithStuckWorkItemAsync(workItemId, job, ct);
+        }
+    }
+
+    /// <summary>
+    /// Cascades a failure to a ConsolidationRun if the WorkItem is a consolidation item.
+    /// Looks up TaskType from the DB, then delegates to IConsolidationService.UpdateRunAsync.
+    /// No-op for non-consolidation items or when IConsolidationService is not injected.
+    /// </summary>
+    private async Task CascadeConsolidationRunFailureIfApplicableAsync(Guid workItemId, string errorMessage, CancellationToken ct)
+    {
+        if (_consolidationService is null)
+            return;
+
+        try
+        {
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var workItem = await db.WorkItems
+                .AsNoTracking()
+                .Where(w => w.Id == workItemId)
+                .Select(w => new { w.TaskType, w.IssueIdentifier })
+                .FirstOrDefaultAsync(ct);
+
+            if (workItem?.TaskType != WorkItemTaskType.Consolidation || workItem.IssueIdentifier is null)
+                return;
+
+            await _consolidationService.UpdateRunAsync(
+                workItem.IssueIdentifier,
+                ConsolidationRunStatus.Failed,
+                $"K8s Job failed (detected by reconciliation): {errorMessage}",
+                ct);
+
+            Log.Information("ReconciliationService: cascaded K8s Job failure to ConsolidationRun {RunId}", workItem.IssueIdentifier);
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Debug("ReconciliationService: cascade to ConsolidationRun for WorkItem {WorkItemId} cancelled (shutdown)", workItemId);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "ReconciliationService: failed to cascade failure to ConsolidationRun for WorkItem {WorkItemId} (non-fatal)", workItemId);
         }
     }
 

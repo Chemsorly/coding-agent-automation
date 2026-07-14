@@ -325,7 +325,9 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
             TaskType = request.TaskType,
             ConsolidationRunType = request.ConsolidationRunType,
             ConsolidationTemplateId = request.ConsolidationTemplateId,
-            ConsolidationWorkspacePath = request.ConsolidationWorkspacePath
+            ConsolidationWorkspacePath = request.ConsolidationWorkspacePath,
+            StalenessSignal = request.StalenessSignal,
+            AnalysisRefreshCount = request.AnalysisRefreshCount
             // NOTE: ProjectSecrets are NOT serialized to WorkItem payload (security).
             // Injected at delivery time from IProjectStore.
         };

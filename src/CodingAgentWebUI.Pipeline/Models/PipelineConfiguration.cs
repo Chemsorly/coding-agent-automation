@@ -275,6 +275,14 @@ public sealed record PipelineConfiguration
     [Key(44)]
     public IReadOnlyList<string> PipelineInjectedPaths { get; init; } = Array.Empty<string>();
 
+    /// <summary>
+    /// Number of commits on the default branch since the last analysis that triggers
+    /// an automatic analysis refresh. Set to 0 to disable commit-count staleness detection.
+    /// Configurable at global level and overridable per project via <see cref="ApplyProjectOverrides"/>.
+    /// </summary>
+    [Key(56)]
+    public int AnalysisCommitThreshold { get; init; } = PipelineConstants.DefaultAnalysisCommitThreshold;
+
 
 
     /// <summary>
@@ -344,6 +352,8 @@ public sealed record PipelineConfiguration
                 config = config with { BlacklistedPaths = project.BlacklistedPaths };
             if (project.BrainReadOnly.HasValue)
                 config = config with { BrainReadOnly = project.BrainReadOnly.Value };
+            if (project.AnalysisCommitThreshold.HasValue)
+                config = config with { AnalysisCommitThreshold = project.AnalysisCommitThreshold.Value };
         }
         catch (ArgumentOutOfRangeException ex)
         {

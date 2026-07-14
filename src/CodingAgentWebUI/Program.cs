@@ -399,17 +399,25 @@ var queuedRuns = await consolidationService.RehydrateQueuedRunsAsync(Cancellatio
 if (queuedRuns.Count > 0)
 {
     var workDistributor = app.Services.GetRequiredService<IWorkDistributor>();
+    var profileStore = app.Services.GetRequiredService<IAgentProfileStore>();
+    var profileResolver = new ProfileResolver();
+    var rehydrationProfiles = await profileStore.LoadAgentProfilesAsync(CancellationToken.None);
     foreach (var run in queuedRuns)
     {
+        // Resolve full profile MatchLabels from QueuedRequiredLabels to produce correct AgentSelector
+        var requiredLabels = run.QueuedRequiredLabels ?? [];
+        var profile = profileResolver.ResolveByRequiredLabels(rehydrationProfiles, requiredLabels.ToList());
+        var selectorLabels = profile?.MatchLabels ?? requiredLabels;
+
         var request = new JobDistributionRequest
         {
             IssueIdentifier = run.RunId,
-            IssueProviderConfigId = "consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
             RepoProviderConfigId = "",
-            InitiatedBy = "consolidation",
+            InitiatedBy = ConsolidationConstants.InitiatedBy,
             TaskType = WorkItemTaskType.Consolidation,
-            AgentSelector = string.Join(",", run.QueuedRequiredLabels ?? []),
-            TimeoutSeconds = 0,
+            AgentSelector = string.Join(",", selectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
+            TimeoutSeconds = (int)pipelineConfig.AgentTimeout.TotalSeconds,
             ConsolidationRunType = run.Type,
             ConsolidationTemplateId = run.TemplateId,
             ConsolidationWorkspacePath = Path.Combine(pipelineConfig.WorkspaceBaseDirectory, "consolidation", run.RunId),
