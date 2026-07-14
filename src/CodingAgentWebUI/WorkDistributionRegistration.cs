@@ -280,7 +280,8 @@ public static class WorkDistributionRegistration
             sp.GetService<IProviderConfigStore>(),
             sp.GetService<IAgentProfileStore>(),
             sp.GetService<IProjectStore>(),
-            sp.GetService<IPipelineConfigStore>()));
+            sp.GetService<IPipelineConfigStore>(),
+            sp.GetService<IConsolidationJobPreparer>()));
         services.AddHostedService(sp => new ReconciliationService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<ILeaderElectionService>(),

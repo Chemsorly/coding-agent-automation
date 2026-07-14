@@ -167,7 +167,8 @@ public sealed partial class AgentJobDispatcher
             var run = await _orchestration.CreateDispatchedRunAsync(
                 request.IssueProviderId, request.RepoProviderId, request.PrIdentifier,
                 agentProviderId, agent.AgentId, ct,
-                request.BrainProviderId, pipelineProviderId: null, request.InitiatedBy);
+                request.BrainProviderId, pipelineProviderId: null, request.InitiatedBy,
+                PipelineRunType.Review);
 
             if (run == null)
             {
@@ -326,7 +327,7 @@ public sealed partial class AgentJobDispatcher
             var run = await _orchestration.CreateDispatchedRunAsync(
                 issueProviderId, repoProviderId, epicIdentifier,
                 agentProviderId, agent.AgentId, ct,
-                brainProviderId, pipelineProviderId: null, initiatedBy);
+                brainProviderId, pipelineProviderId: null, initiatedBy, phaseType);
 
             if (run == null)
             {

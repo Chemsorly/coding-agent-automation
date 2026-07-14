@@ -141,7 +141,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         string issueProviderId, string repoProviderId, string issueIdentifier,
         string agentProviderId, string? agentId, CancellationToken ct,
         string? brainProviderId = null, string? pipelineProviderId = null,
-        string initiatedBy = "dispatch")
+        string initiatedBy = "dispatch",
+        PipelineRunType runType = PipelineRunType.Implementation)
     {
         ArgumentNullException.ThrowIfNull(issueProviderId);
         ArgumentNullException.ThrowIfNull(repoProviderId);
@@ -168,6 +169,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             issueTitle: string.Empty,
             issueProviderConfigId: issueProviderId,
             repoProviderConfigId: repoProviderId,
+            runType: runType,
             initiatedBy: initiatedBy,
             agentId: agentId,
             agentProviderConfigId: agentProviderId,

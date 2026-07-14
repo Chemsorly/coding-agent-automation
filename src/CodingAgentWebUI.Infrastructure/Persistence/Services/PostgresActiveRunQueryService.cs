@@ -34,7 +34,8 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
         // to avoid EF Core translation issues with helper methods.
         var rows = await (
             from wi in db.WorkItems.AsNoTracking()
-            where wi.Status == WorkItemStatus.Dispatched || wi.Status == WorkItemStatus.Running
+            where (wi.Status == WorkItemStatus.Dispatched || wi.Status == WorkItemStatus.Running)
+                && wi.TaskType != WorkItemTaskType.Consolidation
             join pr in db.PipelineRuns.AsNoTracking()
                 on wi.Id equals pr.WorkItemId into runs
             from pr in runs.DefaultIfEmpty()
@@ -91,6 +92,11 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
             foreach (var liveRun in _runService.GetActiveRuns())
             {
                 if (dbRunIds.Contains(liveRun.RunId))
+                    continue;
+
+                // Skip consolidation ghost runs (should not exist with proper filtering,
+                // but defensive against edge cases)
+                if (liveRun.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
                     continue;
 
                 summaries.Add(new ActiveRunSummary

@@ -89,7 +89,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         string initiatedBy,
         IReadOnlyList<string> requiredLabels,
         PipelineProject project,
-        CancellationToken ct)
+        CancellationToken ct,
+        PipelineRunType runType = PipelineRunType.Implementation)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(issueProviderId);
@@ -103,7 +104,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             return await PrepareCoreAsync(
                 issueIdentifier, issueProviderId, repoProviderId,
                 brainProviderId, pipelineProviderId, initiatedBy,
-                requiredLabels, project, ct);
+                requiredLabels, project, ct, runType);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -122,7 +123,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         string initiatedBy,
         IReadOnlyList<string> requiredLabels,
         PipelineProject project,
-        CancellationToken ct)
+        CancellationToken ct,
+        PipelineRunType runType)
     {
         // Resolve profile using required labels (no agent entry — DB mode has no connected agents)
         var profile = await ResolveProfileByLabelsAsync(requiredLabels, ct);
@@ -141,7 +143,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var run = await _orchestration.CreateDispatchedRunAsync(
             issueProviderId, repoProviderId, issueIdentifier,
             agentProviderId, null, ct,
-            brainProviderId, pipelineProviderId, initiatedBy);
+            brainProviderId, pipelineProviderId, initiatedBy, runType);
 
         if (run is null)
         {
@@ -463,7 +465,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var result = await PrepareAsync(
             issueIdentifier, issueProviderId, repoProviderId,
             brainProviderId, pipelineProviderId, initiatedBy,
-            requiredLabels, project, ct);
+            requiredLabels, project, ct, runType);
 
         return result is null ? null : MapToRequest(result, taskType, runType);
     }
@@ -486,7 +488,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             reviewRequest.BrainProviderId,
             null, // pipelineProviderId
             reviewRequest.InitiatedBy,
-            requiredLabels, project, ct);
+            requiredLabels, project, ct,
+            PipelineRunType.Review);
 
         if (result is null) return null;
 
@@ -526,7 +529,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var result = await PrepareAsync(
             epicIdentifier, issueProviderId, repoProviderId,
             brainProviderId, null, initiatedBy,
-            requiredLabels, project, ct);
+            requiredLabels, project, ct,
+            phaseType);
 
         if (result is null) return null;
 

@@ -447,12 +447,14 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     }
 
     [Fact]
-    public async Task TryDispatchAsync_IncompatibleFallbackProvider_SkipsAgentConfig()
+    public async Task TryDispatchAsync_NoProfileMatch_IncompatibleFallback_SkipsAgentConfig()
     {
-        // Agent has kiro labels but no profiles → fallback picks OpenCode config → compatibility rejects it
+        // Agent has kiro labels but no profiles → fallback checks RequiredLabels
+        // on agent configs for compatibility. OpenCode requires "opencode" label
+        // which the agent doesn't have — config is skipped.
         RegisterIdleAgent(labels: new[] { "kiro", "dotnet", "dotnet10" });
 
-        // Only OpenCode provider available (simulates misconfigured fallback)
+        // Only OpenCode provider available — incompatible with agent's labels
         var openCodeConfig = new ProviderConfig
         {
             Id = "opencode-cfg", Kind = ProviderKind.Agent, ProviderType = "OpenCode", DisplayName = "OpenCode",
@@ -472,10 +474,14 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
-        // Job dispatches but without an agent provider config (incompatible one was skipped)
+        // Job dispatches but incompatible agent config is excluded.
+        // With zero eligible configs, token vending is skipped (nothing to vend).
         result.Should().Be(ConsolidationDispatchResult.Dispatched);
-        capturedConfigs.Should().NotBeNull();
-        capturedConfigs!.Any(c => c.Kind == ProviderKind.Agent).Should().BeFalse();
+
+        // Verify via mock: PrepareAgentConfigsAsync should NOT be called (no configs to process)
+        _mockTokenVending.Verify(
+            t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Never);
     }
 
     #endregion
