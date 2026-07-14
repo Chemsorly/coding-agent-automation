@@ -40,7 +40,8 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
         var result = items.Select(w =>
         {
             var (issueTitle, repoProviderId, consolidationRunType) = ExtractFromPayload(w.Payload);
-            return new PendingJob
+            var isConsolidation = w.TaskType == WorkItemTaskType.Consolidation;
+            var pendingJob = new PendingJob
             {
                 WorkItemId = w.Id.ToString(),
                 IssueIdentifier = w.IssueIdentifier,
@@ -55,8 +56,20 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
                 RunType = w.TaskType == WorkItemTaskType.Review ? PipelineRunType.Review
                     : w.TaskType == WorkItemTaskType.Decomposition ? PipelineRunType.DecompositionAnalysis
                     : PipelineRunType.Implementation,
-                ConsolidationRunType = w.TaskType == WorkItemTaskType.Consolidation ? consolidationRunType : null
+                ConsolidationRunType = isConsolidation ? consolidationRunType : null
             };
+
+            if (isConsolidation && !pendingJob.IsConsolidation)
+            {
+                // TaskType says Consolidation but payload parsing didn't produce a ConsolidationRunType.
+                // This would cause the UI filter (!IsConsolidation) to incorrectly include this item.
+                Serilog.Log.Warning(
+                    "DbPendingWorkQuery: WorkItem {WorkItemId} has TaskType=Consolidation but ConsolidationRunType is null " +
+                    "(payload extraction failed). IssueIdentifier={IssueIdentifier}",
+                    w.Id, w.IssueIdentifier);
+            }
+
+            return pendingJob;
         }).ToList();
 
         _cachedCount = result.Count;
