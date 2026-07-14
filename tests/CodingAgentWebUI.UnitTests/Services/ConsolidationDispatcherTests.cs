@@ -447,14 +447,14 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     }
 
     [Fact]
-    public async Task TryDispatchAsync_NoProfileMatch_FallsBackToFirstAvailableAgentConfig()
+    public async Task TryDispatchAsync_NoProfileMatch_IncompatibleFallback_SkipsAgentConfig()
     {
-        // Agent has kiro labels but no profiles → fallback picks first available agent config.
-        // The shared preparer does NOT perform agent-specific compatibility checks —
-        // profile-based resolution is the correct mechanism for agent/provider matching.
+        // Agent has kiro labels but no profiles → fallback checks RequiredLabels
+        // on agent configs for compatibility. OpenCode requires "opencode" label
+        // which the agent doesn't have — config is skipped.
         RegisterIdleAgent(labels: new[] { "kiro", "dotnet", "dotnet10" });
 
-        // Only OpenCode provider available (no profile configured)
+        // Only OpenCode provider available — incompatible with agent's labels
         var openCodeConfig = new ProviderConfig
         {
             Id = "opencode-cfg", Kind = ProviderKind.Agent, ProviderType = "OpenCode", DisplayName = "OpenCode",
@@ -474,11 +474,14 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
-        // Job dispatches with the fallback agent config included (no compatibility filtering)
+        // Job dispatches but incompatible agent config is excluded.
+        // With zero eligible configs, token vending is skipped (nothing to vend).
         result.Should().Be(ConsolidationDispatchResult.Dispatched);
-        capturedConfigs.Should().NotBeNull();
-        capturedConfigs!.Any(c => c.Kind == ProviderKind.Agent).Should().BeTrue();
-        capturedConfigs!.First(c => c.Kind == ProviderKind.Agent).Id.Should().Be("opencode-cfg");
+
+        // Verify via mock: PrepareAgentConfigsAsync should NOT be called (no configs to process)
+        _mockTokenVending.Verify(
+            t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()),
+            Times.Never);
     }
 
     #endregion

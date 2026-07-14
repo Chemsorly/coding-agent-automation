@@ -31,7 +31,11 @@ public sealed class ConsolidationJobPreparer : IConsolidationJobPreparer
         ArgumentNullException.ThrowIfNull(logger);
 
         _providerConfigStore = providerConfigStore;
-        _agentProfileStore = agentProfileStore ?? (providerConfigStore as IAgentProfileStore)!;
+        _agentProfileStore = agentProfileStore
+            ?? providerConfigStore as IAgentProfileStore
+            ?? throw new ArgumentException(
+                $"{nameof(providerConfigStore)} must implement IAgentProfileStore when {nameof(agentProfileStore)} is not provided",
+                nameof(providerConfigStore));
         _projectStore = projectStore;
         _tokenVending = tokenVending;
         _logger = logger;
@@ -78,10 +82,24 @@ public sealed class ConsolidationJobPreparer : IConsolidationJobPreparer
         }
         else
         {
-            // No matching profile — use first available agent config as fallback
-            var fallback = agentConfigs.FirstOrDefault();
+            // No matching profile — use first compatible agent config as fallback.
+            // Check RequiredLabels on config to avoid dispatching with wrong provider
+            // (e.g., OpenCode config to a Kiro agent).
+            var agentLabelSet = new HashSet<string>(agentLabels, StringComparer.OrdinalIgnoreCase);
+            var fallback = agentConfigs.FirstOrDefault(c =>
+                c.RequiredLabels is not { Count: > 0 } ||
+                c.RequiredLabels.All(l => agentLabelSet.Contains(l)));
+
             if (fallback is not null)
+            {
                 rawConfigs.Add(fallback);
+            }
+            else if (agentConfigs.Count > 0)
+            {
+                _logger.Warning(
+                    "ConsolidationJobPreparer: no compatible agent config for labels [{Labels}] — skipping agent provider",
+                    string.Join(", ", agentLabels));
+            }
 
             if (profiles.Count > 0)
             {
