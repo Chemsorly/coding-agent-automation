@@ -82,6 +82,11 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         // Resolve required labels from the template's repo provider config (if template-scoped)
         var requiredLabels = await ResolveRequiredLabelsAsync(templateId, ct);
 
+        // Resolve the agent profile to get the full MatchLabels (the template key).
+        // Required labels are a subset used for agent selection; MatchLabels is the full set
+        // that maps to a JobTemplate in K8s mode. Same pattern as DispatchOrchestrationService.
+        var agentSelectorLabels = await ResolveAgentSelectorLabelsAsync(requiredLabels, ct);
+
         // Select an idle agent matching the labels
         var agent = _jobDispatcher.SelectAgent(requiredLabels);
         if (agent is null)
@@ -97,7 +102,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
                 RepoProviderConfigId = "",
                 InitiatedBy = "consolidation",
                 TaskType = WorkItemTaskType.Consolidation,
-                AgentSelector = string.Join(",", requiredLabels),
+                AgentSelector = string.Join(",", agentSelectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
                 TimeoutSeconds = 0,
                 ConsolidationRunType = type,
                 ConsolidationTemplateId = templateId,
@@ -355,6 +360,37 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
         var repoConfig = await _configStore.GetProviderConfigByIdAsync(template.RepoProviderId, ProviderKind.Repository, ct);
         return JobDispatcherService.ResolveRequiredLabels(repoConfig, _config);
+    }
+
+    /// <summary>
+    /// Resolves the full agent selector labels (profile MatchLabels) from required labels.
+    /// Required labels are a subset used for agent matching; the profile's MatchLabels
+    /// form the complete label set that maps to a JobTemplate key in K8s mode.
+    /// Falls back to requiredLabels if no matching profile is found.
+    /// Same pattern as DispatchOrchestrationService.ResolveProfileByLabelsAsync + MapToRequest.
+    /// </summary>
+    internal async Task<IReadOnlyList<string>> ResolveAgentSelectorLabelsAsync(
+        IReadOnlyList<string> requiredLabels, CancellationToken ct)
+    {
+        var profiles = await _configStore.LoadAgentProfilesAsync(ct);
+
+        var resolver = new ProfileResolver();
+        var profile = resolver.ResolveByRequiredLabels(profiles, requiredLabels);
+
+        if (profile is null)
+        {
+            _logger.Warning(
+                "ConsolidationDispatcher: no profile covers requiredLabels [{Labels}], using raw labels as selector. " +
+                "Template resolution may fail in K8s mode if no template is keyed by this subset.",
+                string.Join(", ", requiredLabels));
+            return requiredLabels;
+        }
+
+        _logger.Debug(
+            "ConsolidationDispatcher: resolved profile '{ProfileId}' for requiredLabels [{RequiredLabels}] → MatchLabels [{MatchLabels}]",
+            profile.Id, string.Join(", ", requiredLabels), string.Join(", ", profile.MatchLabels));
+
+        return profile.MatchLabels;
     }
 
     /// <summary>
