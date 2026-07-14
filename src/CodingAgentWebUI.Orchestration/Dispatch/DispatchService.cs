@@ -969,6 +969,20 @@ public sealed class DispatchService : BackgroundService
 
     private async Task FailWorkItem(Guid workItemId, string errorMessage, CancellationToken ct)
     {
+        // Determine if this is a consolidation item before transitioning (need TaskType + IssueIdentifier)
+        string? consolidationRunId = null;
+        await using (var db = await _dbFactory.CreateDbContextAsync(ct))
+        {
+            var workItem = await db.WorkItems
+                .AsNoTracking()
+                .Where(w => w.Id == workItemId)
+                .Select(w => new { w.TaskType, w.IssueIdentifier })
+                .FirstOrDefaultAsync(ct);
+
+            if (workItem?.TaskType == WorkItemTaskType.Consolidation)
+                consolidationRunId = workItem.IssueIdentifier;
+        }
+
         await _transitionService.TransitionAsync(
             workItemId,
             WorkItemStatus.Failed,
@@ -981,6 +995,27 @@ public sealed class DispatchService : BackgroundService
             ct);
 
         Log.Warning("DispatchService: WorkItem {WorkItemId} failed: {Error}", workItemId, errorMessage);
+
+        // Cascade to ConsolidationRun: transition to Failed so it doesn't stay stuck in Queued/Running
+        if (consolidationRunId is not null && _consolidationRunStore is not null)
+        {
+            try
+            {
+                var run = await _consolidationRunStore.GetByIdAsync(consolidationRunId, ct);
+                if (run is not null && run.Status is ConsolidationRunStatus.Queued or ConsolidationRunStatus.Running)
+                {
+                    run.Status = ConsolidationRunStatus.Failed;
+                    run.Summary = $"WorkItem dispatch failed: {errorMessage}";
+                    run.CompletedAtUtc = DateTimeOffset.UtcNow;
+                    await _consolidationRunStore.SaveRunAsync(run, ct);
+                    Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId}", consolidationRunId);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", consolidationRunId);
+            }
+        }
     }
 
     // ── Static helpers (internal for testability) ────────────────────────

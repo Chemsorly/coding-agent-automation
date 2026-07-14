@@ -397,6 +397,59 @@ public class DispatchServiceConsolidationTests : IDisposable
         item.K8sJobName.Should().StartWith("caa-");
     }
 
+    // ── FailWorkItem cascading to ConsolidationRun ──────────────────────
+
+    /// <summary>
+    /// When a consolidation WorkItem fails (e.g., no template match, K8s Job creation failure),
+    /// the associated ConsolidationRun must also transition to Failed. Without this, the run
+    /// stays in Queued/Running status permanently and the UI shows a stuck entry.
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_FailsWorkItem_CascadesToConsolidationRunFailed()
+    {
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+
+        // Insert with a selector that won't match ANY template (no profile either)
+        await InsertConsolidationWorkItem(workItemId, runId, "nonexistent-label");
+
+        // No profiles match this selector
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>());
+
+        // ConsolidationRun exists in Queued state
+        var consolidationRun = new ConsolidationRun
+        {
+            RunId = runId,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Queued
+        };
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(consolidationRun);
+
+        var service = CreateServiceWithThreeLabelTemplate();
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: WorkItem should be Failed (no template match)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.ErrorMessage.Should().Contain("No job template for selector");
+
+        // Assert: ConsolidationRun should ALSO be transitioned to Failed
+        _mockRunStore.Verify(
+            s => s.SaveRunAsync(
+                It.Is<ConsolidationRun>(r => r.RunId == runId && r.Status == ConsolidationRunStatus.Failed),
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "ConsolidationRun must be transitioned to Failed when its WorkItem fails");
+    }
+
     // ── Integration: Full Lifecycle ─────────────────────────────────────
 
     [Fact]
