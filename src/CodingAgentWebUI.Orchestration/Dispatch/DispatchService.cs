@@ -750,15 +750,29 @@ public sealed class DispatchService : BackgroundService
     /// </summary>
     private async Task TransitionConsolidationRunToRunningAsync(JobDistributionRequest request, CancellationToken ct)
     {
-        if (_consolidationRunStore is null)
-            return;
-
-        // TODO: RunId lookup uses request.RunId ?? request.IssueIdentifier, but codebase convention
-        // (PendingWorkItemDrainService, ConsolidationDispatcher, StartupTasks) stores RunId AS IssueIdentifier.
-        // If request.RunId diverges from IssueIdentifier, this lookup will fail to find the ConsolidationRun.
-        // Consider using request.IssueIdentifier directly for consistency.
         var runId = request.RunId ?? request.IssueIdentifier;
         if (string.IsNullOrEmpty(runId))
+            return;
+
+        // Use IConsolidationService.UpdateRunAsync (not direct store write) to ensure
+        // the GetRunHistoryAsync cache is invalidated. Without this, the Active Runs
+        // section shows "(0)" even when an agent is busy with a consolidation job.
+        if (_consolidationService is not null)
+        {
+            try
+            {
+                await _consolidationService.UpdateRunAsync(
+                    runId, ConsolidationRunStatus.Running, null, ct);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DispatchService: failed to transition consolidation run {RunId} to Running (non-fatal)", runId);
+            }
+            return;
+        }
+
+        // Fallback: direct store write when IConsolidationService not available (shouldn't happen in production)
+        if (_consolidationRunStore is null)
             return;
 
         try

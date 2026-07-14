@@ -159,9 +159,9 @@ public sealed partial class AgentHub
             // tracking only as ghost entries during orchestrator restart rehydration.
             if (run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
             {
-                _logger.Debug(
-                    "ReportJobCompleted: skipping pipeline persistence for consolidation run {JobId}",
-                    jobId);
+                _logger.Information(
+                    "ReportJobCompleted: skipping pipeline persistence for consolidation run {JobId} (IssueIdentifier={IssueIdentifier})",
+                    jobId, run.IssueIdentifier);
 
                 // Clean up the in-memory run and transition WorkItem (still needed for DB state).
                 // Wrapped in try/catch to ensure agent idle transition always happens.
