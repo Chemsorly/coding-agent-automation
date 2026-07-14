@@ -304,10 +304,34 @@ public sealed class DispatchService : BackgroundService
 
             // Resolve template — fail immediately if no match (before PVC gating)
             var template = _templateProvider.Resolve(item.AgentSelector);
+            var effectiveSelector = item.AgentSelector;
             if (template is null)
             {
-                await FailWorkItem(item.Id, $"No job template for selector: {item.AgentSelector}", ct);
-                continue;
+                // Fallback: AgentSelector might be a subset of the template's label set
+                // (e.g., consolidation items store requiredLabels ["dotnet","dotnet10"] but template
+                // is keyed by full profile MatchLabels ["dotnet","dotnet10","kiro"]).
+                // Resolve profile to get the full label set, then retry template lookup.
+                var (fallbackTemplate, resolvedSelector) = await ResolveTemplateViaProfileAsync(item.AgentSelector, ct);
+                if (fallbackTemplate is null)
+                {
+                    await FailWorkItem(item.Id, $"No job template for selector: {item.AgentSelector}", ct);
+                    continue;
+                }
+                template = fallbackTemplate;
+                effectiveSelector = resolvedSelector!;
+
+                // Re-check concurrency limit against the resolved selector (the actual template key)
+                var resolvedMaxConcurrent = template.MaxConcurrent;
+                if (resolvedMaxConcurrent > 0)
+                {
+                    var current = concurrencyBySelector.GetValueOrDefault(effectiveSelector, 0);
+                    if (current >= resolvedMaxConcurrent)
+                    {
+                        Log.Debug("DispatchService: resolved selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
+                            effectiveSelector, current, resolvedMaxConcurrent, item.Id);
+                        continue;
+                    }
+                }
             }
 
             var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
@@ -895,6 +919,52 @@ public sealed class DispatchService : BackgroundService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Fallback template resolution: when the work item's AgentSelector is a subset of the template's
+    /// label set (e.g., consolidation items that store only requiredLabels), resolve the matching profile
+    /// to get the full MatchLabels, then retry template lookup with the profile's labels.
+    /// This aligns with how DispatchOrchestrationService uses profile.MatchLabels as the AgentSelector.
+    /// </summary>
+    private async Task<(JobTemplate? Template, string? ResolvedSelector)> ResolveTemplateViaProfileAsync(string agentSelector, CancellationToken ct)
+    {
+        if (_agentProfileStore is null)
+            return (null, null);
+
+        var selectorLabels = agentSelector
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList();
+
+        if (selectorLabels.Count == 0)
+            return (null, null);
+
+        var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
+
+        var resolver = new ProfileResolver();
+        var profile = resolver.ResolveByRequiredLabels(profiles, selectorLabels);
+
+        if (profile is null)
+        {
+            Log.Debug("DispatchService: no profile covers selector [{Selector}] for fallback template resolution",
+                agentSelector);
+            return (null, null);
+        }
+
+        // Use profile's MatchLabels as the template key (same as DispatchOrchestrationService.MapToRequest)
+        var profileSelector = string.Join(",",
+            profile.MatchLabels.OrderBy(l => l, StringComparer.Ordinal));
+
+        var template = _templateProvider.Resolve(profileSelector);
+        if (template is not null)
+        {
+            Log.Warning("DispatchService: AgentSelector [{Selector}] required profile expansion to resolve template. " +
+                "Upstream code path may not be setting AgentSelector to full profile.MatchLabels. " +
+                "Resolved via profile '{ProfileId}' → [{ProfileSelector}]",
+                agentSelector, profile.Id, profileSelector);
+        }
+
+        return (template, profileSelector);
     }
 
     private async Task FailWorkItem(Guid workItemId, string errorMessage, CancellationToken ct)

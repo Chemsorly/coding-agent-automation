@@ -33,4 +33,33 @@ public sealed class ProfileResolver
                 .ThenBy(p => p.Id, StringComparer.Ordinal))
             .FirstOrDefault();
     }
+
+    /// <summary>
+    /// Resolves the best profile whose MatchLabels COVER all required labels.
+    /// Used for dispatch: given a set of required labels (from repo config or pipeline defaults),
+    /// find the profile whose MatchLabels are a superset — that profile's labels form the
+    /// template key in K8s mode. Picks the most specific match (highest MatchLabels count),
+    /// then by priority, then by Id for determinism.
+    /// Returns <c>null</c> if no enabled profile covers all required labels.
+    /// </summary>
+    /// <param name="profiles">All available profiles to evaluate.</param>
+    /// <param name="requiredLabels">Labels that must ALL be present in the profile's MatchLabels.</param>
+    /// <returns>The best matching profile, or <c>null</c> if none cover all required labels.</returns>
+    public AgentProfile? ResolveByRequiredLabels(IReadOnlyList<AgentProfile> profiles, IReadOnlyList<string> requiredLabels)
+    {
+        ArgumentNullException.ThrowIfNull(profiles);
+        ArgumentNullException.ThrowIfNull(requiredLabels);
+
+        return LabelMatchResolver.Resolve(
+            profiles,
+            requiredLabels,
+            enabledPredicate: p => p.Enabled,
+            labelSelector: p => p.MatchLabels,
+            matchStrategy: LabelMatchStrategies.Superset,
+            orderBy: items => items
+                .OrderByDescending(p => p.MatchLabels.Count)
+                .ThenByDescending(p => p.Priority)
+                .ThenBy(p => p.Id, StringComparer.Ordinal))
+            .FirstOrDefault();
+    }
 }
