@@ -53,6 +53,7 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
                 RequiredLabels = string.IsNullOrEmpty(w.AgentSelector)
                     ? []
                     : w.AgentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+                TaskType = w.TaskType,
                 RunType = w.TaskType == WorkItemTaskType.Review ? PipelineRunType.Review
                     : w.TaskType == WorkItemTaskType.Decomposition ? PipelineRunType.DecompositionAnalysis
                     : PipelineRunType.Implementation,

@@ -186,6 +186,50 @@ public sealed class DbPendingWorkQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task GetPendingJobsAsync_ConsolidationTaskType_WithNullPayloadConsolidationRunType_StillMarkedAsConsolidation()
+    {
+        // Arrange: WorkItem has TaskType=Consolidation but payload does NOT contain ConsolidationRunType.
+        // This simulates the scenario where payload extraction fails to parse the consolidation type.
+        // IsConsolidation MUST still be true so the UI filters it out of pipeline jobs.
+        var payload = new JobDistributionRequest
+        {
+            IssueIdentifier = "consolidation-run-123",
+            IssueProviderConfigId = "consolidation",
+            RepoProviderConfigId = "",
+            InitiatedBy = "consolidation",
+            TaskType = WorkItemTaskType.Consolidation,
+            AgentSelector = "kiro,dotnet",
+            TimeoutSeconds = 1800,
+            ConsolidationRunType = null // Simulates missing/unparseable field
+        };
+
+        using (var db = new TestPipelineDbContext(_dbOptions))
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                IssueIdentifier = "consolidation-run-123",
+                IssueProviderConfigId = "consolidation",
+                Status = WorkItemStatus.Pending,
+                CreatedAt = DateTimeOffset.UtcNow,
+                Payload = JsonSerializer.Serialize(payload, PipelineJsonOptions.Default),
+                AgentSelector = "kiro,dotnet",
+                TaskType = WorkItemTaskType.Consolidation
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Act
+        var result = await _sut.GetPendingJobsAsync();
+
+        // Assert
+        result.Should().HaveCount(1);
+        result[0].IsConsolidation.Should().BeTrue(
+            "TaskType=Consolidation is the reliable discriminator; " +
+            "ConsolidationRunType from payload is fragile and should not be required");
+    }
+
+    [Fact]
     public void ExtractFromPayload_NullPayload_ReturnsEmptyStrings()
     {
         var (title, repoId, consolidationType) = DbPendingWorkQuery.ExtractFromPayload(null);
