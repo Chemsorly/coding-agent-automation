@@ -430,7 +430,7 @@ public sealed partial class AgentJobDispatcher
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
             config = PipelineConfiguration.ApplyProjectOverrides(config, project);
             var templates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
-            config = ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
+            config = PipelineConfiguration.ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
 
             var message = new JobAssignmentMessage
             {
@@ -542,27 +542,10 @@ public sealed partial class AgentJobDispatcher
         var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
         config = PipelineConfiguration.ApplyProjectOverrides(config, project);
         var templates = await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct);
-        return ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
+        return PipelineConfiguration.ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
     }
 
-    /// <summary>
-    /// Applies template-level overrides to the pipeline configuration: BrainReadOnly from the
-    /// matching template and blacklist settings from the repo provider config.
-    /// </summary>
-    private static PipelineConfiguration ApplyTemplateOverrides(
-        PipelineConfiguration config,
-        string repoProviderId,
-        string? brainProviderId,
-        IReadOnlyList<ProviderConfig> providerConfigs,
-        IReadOnlyList<PipelineJobTemplate> templates)
-    {
-        var matchingTemplate = templates.FirstOrDefault(t =>
-            t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
-        if (matchingTemplate is { BrainReadOnly: true })
-            config = config with { BrainReadOnly = true };
 
-        return PipelineConfiguration.ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
-    }
 
     /// <summary>
     /// Handles dispatch failure by resetting agent status, logging the error, and reverting the label.

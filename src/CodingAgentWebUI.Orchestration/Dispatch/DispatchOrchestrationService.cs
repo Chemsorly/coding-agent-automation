@@ -411,26 +411,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
         config = PipelineConfiguration.ApplyProjectOverrides(config, project);
         var templates = await _projectStore.LoadAllTemplatesAsync(ct);
-        return ApplyTemplateOverrides(
+        return PipelineConfiguration.ApplyTemplateOverrides(
             config, repoProviderId, brainProviderId, providerConfigs, templates);
-    }
-
-    private static PipelineConfiguration ApplyTemplateOverrides(
-        PipelineConfiguration config,
-        string repoProviderId,
-        string? brainProviderId,
-        IReadOnlyList<ProviderConfig> providerConfigs,
-        IReadOnlyList<PipelineJobTemplate> templates)
-    {
-        var matchingTemplate = templates.FirstOrDefault(t =>
-            t.RepoProviderId == repoProviderId
-            && t.BrainProviderId == brainProviderId);
-        if (matchingTemplate is { BrainReadOnly: true })
-            config = config with { BrainReadOnly = true };
-
-        return PipelineConfiguration.ApplyBlacklistOverride(
-            config,
-            providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
     }
 
     /// <summary>
