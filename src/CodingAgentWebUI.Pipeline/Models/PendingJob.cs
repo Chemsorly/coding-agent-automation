@@ -37,6 +37,9 @@ public sealed record PendingJob
     /// </summary>
     public string? DecompositionSource { get; init; }
 
+    /// <summary>The WorkItem task type. Used as the primary discriminator for consolidation jobs.</summary>
+    public WorkItemTaskType TaskType { get; init; } = WorkItemTaskType.Implementation;
+
     // --- Consolidation-specific (Legacy mode queueing) ---
 
     /// <summary>The consolidation run type. When set, this PendingJob represents a consolidation job rather than a pipeline job.</summary>
@@ -48,6 +51,10 @@ public sealed record PendingJob
     /// <summary>Workspace path for the consolidation run.</summary>
     public string? ConsolidationWorkspacePath { get; init; }
 
-    /// <summary>Whether this pending job is a consolidation job (convenience check).</summary>
-    public bool IsConsolidation => ConsolidationRunType.HasValue;
+    /// <summary>
+    /// Whether this pending job is a consolidation job.
+    /// Uses TaskType as the primary discriminator (stored on the WorkItem row, always reliable),
+    /// with ConsolidationRunType.HasValue as a secondary indicator for legacy in-memory mode.
+    /// </summary>
+    public bool IsConsolidation => TaskType == WorkItemTaskType.Consolidation || ConsolidationRunType.HasValue;
 }

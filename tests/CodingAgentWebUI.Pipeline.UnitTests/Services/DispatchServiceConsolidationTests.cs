@@ -118,9 +118,9 @@ public class DispatchServiceConsolidationTests : IDisposable
             k => k.CreateJobAsync(It.IsAny<V1Job>(), "default", It.IsAny<CancellationToken>()),
             Times.Once);
 
-        // Assert: ConsolidationRun transitioned to Running
-        _mockRunStore.Verify(
-            s => s.SaveRunAsync(It.Is<ConsolidationRun>(r => r.Status == ConsolidationRunStatus.Running), It.IsAny<CancellationToken>()),
+        // Assert: ConsolidationRun transitioned to Running (via IConsolidationService for cache invalidation)
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(runId, ConsolidationRunStatus.Running, null, It.IsAny<CancellationToken>(), 0),
             Times.Once);
 
         // Assert: Payload was updated with ProviderConfigs
@@ -263,6 +263,50 @@ public class DispatchServiceConsolidationTests : IDisposable
     }
 
     // ── Error Handling ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_TransitionsViaConsolidationService_NotDirectStore()
+    {
+        // Regression test: TransitionConsolidationRunToRunningAsync must use
+        // IConsolidationService.UpdateRunAsync (which invalidates GetRunHistoryAsync cache)
+        // instead of IConsolidationRunStore.SaveRunAsync (which leaves cache stale).
+        // Without this, the Active Runs section shows "(0)" even when an agent is busy
+        // with a consolidation job.
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+        await InsertConsolidationWorkItem(workItemId, runId, "kiro,dotnet");
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConsolidationRun
+            {
+                RunId = runId,
+                Type = ConsolidationRunType.BrainConsolidation,
+                StartedAtUtc = DateTimeOffset.UtcNow,
+                Status = ConsolidationRunStatus.Queued
+            });
+
+        var service = CreateService();
+
+        await InvokePollAndDispatch(service);
+
+        // Assert: status transition goes through IConsolidationService.UpdateRunAsync
+        // (which invalidates the in-memory cache), NOT directly through IConsolidationRunStore.SaveRunAsync
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(runId, ConsolidationRunStatus.Running, null, It.IsAny<CancellationToken>(), 0),
+            Times.Once,
+            "TransitionConsolidationRunToRunningAsync must use IConsolidationService.UpdateRunAsync to invalidate the history cache");
+
+        // IConsolidationRunStore.SaveRunAsync should NOT be called directly for the transition
+        _mockRunStore.Verify(
+            s => s.SaveRunAsync(It.Is<ConsolidationRun>(r => r.Status == ConsolidationRunStatus.Running), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "Direct store write bypasses cache invalidation — must use ConsolidationService instead");
+    }
 
     // TODO: Missing test for K8s 409 Conflict handling — production code handles HttpOperationException
     // with StatusCode.Conflict by treating it as success (idempotent dispatch). No test covers this path.

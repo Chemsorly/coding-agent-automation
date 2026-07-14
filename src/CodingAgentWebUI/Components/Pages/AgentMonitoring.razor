@@ -911,7 +911,17 @@
             .ToList();
         _agents = Registry.GetAllAgents();
         _runHistory = PipelineService.GetRunHistory();
-        _queuedJobs = await PendingWorkQuery.GetPendingJobsAsync();
+        var allQueuedJobs = await PendingWorkQuery.GetPendingJobsAsync();
+        var consolidationJobs = allQueuedJobs.Where(j => j.IsConsolidation).ToList();
+        _queuedJobs = allQueuedJobs.Where(j => !j.IsConsolidation).ToList();
+
+        if (consolidationJobs.Count > 0)
+        {
+            Log.Debug("AgentMonitoring: {Total} pending jobs, {Consolidation} consolidation (filtered out), {Pipeline} pipeline shown. " +
+                "Consolidation IDs: [{Ids}]",
+                allQueuedJobs.Count, consolidationJobs.Count, _queuedJobs.Count,
+                string.Join(", ", consolidationJobs.Select(j => $"{j.WorkItemId}(type={j.ConsolidationRunType})")));
+        }
 
         if (includeConsolidation)
             await RefreshConsolidationAsync();
