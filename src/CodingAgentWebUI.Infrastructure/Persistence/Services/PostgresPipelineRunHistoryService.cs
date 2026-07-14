@@ -54,6 +54,15 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     public void AddRunToHistory(PipelineRun run)
     {
         ArgumentNullException.ThrowIfNull(run);
+
+        // Defense-in-depth: reject consolidation runs from being persisted to pipeline history.
+        // Consolidation has its own history on the Consolidation page.
+        if (run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
+        {
+            _logger.Debug("AddRunToHistory: skipping consolidation run {RunId}", run.RunId);
+            return;
+        }
+
         var summary = run.ToSummary();
 
         try
@@ -71,6 +80,15 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     public async Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(run);
+
+        // Defense-in-depth: reject consolidation runs from being persisted to pipeline history.
+        // Consolidation has its own history on the Consolidation page.
+        if (run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
+        {
+            _logger.Debug("AddRunToHistoryAsync: skipping consolidation run {RunId}", run.RunId);
+            return;
+        }
+
         var summary = run.ToSummary();
 
         try
@@ -162,7 +180,15 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             .Take(MaxHistorySize)
             .ToListAsync().ConfigureAwait(false);
 
-        return entities.Select(DeserializeSummary).Where(s => s is not null).ToList()!;
+        // TODO: Write guard uses IssueProviderConfigId to reject consolidation runs, but read-time
+        // filter uses InitiatedBy. If a consolidation run has the correct ProviderConfigId but
+        // missing/null InitiatedBy (e.g., code path that sets one without the other), it could
+        // leak through. Consider using the same discriminator for both write and read guards,
+        // or adding a test verifying their interaction under failure conditions.
+        return entities
+            .Select(DeserializeSummary)
+            .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+            .ToList()!;
     }
 
     private async Task<IReadOnlyList<PipelineRunSummary>> GetRunsByAgentIdAsync(string agentId, int limit)
@@ -175,7 +201,10 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             .Take(limit)
             .ToListAsync().ConfigureAwait(false);
 
-        return entities.Select(DeserializeSummary).Where(s => s is not null).ToList()!;
+        return entities
+            .Select(DeserializeSummary)
+            .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+            .ToList()!;
     }
 
     private async Task AddRunToHistoryInternalAsync(PipelineRunSummary summary)
@@ -298,6 +327,10 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         }
 
         // Fallback: reconstruct from columns (for rows inserted before SummaryJson was added)
+        // TODO: InitiatedBy is not populated in this fallback path. If a consolidation ghost entry has
+        // corrupt/null SummaryJson, it will produce a summary with InitiatedBy=null that passes through
+        // the consolidation read-time filter (InitiatedBy != "consolidation"). Consider also checking
+        // IssueProviderConfigId or adding an InitiatedBy column to the entity for robust filtering.
         return new PipelineRunSummary
         {
             RunId = entity.RunId.ToString(),
