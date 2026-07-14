@@ -417,7 +417,7 @@ if (queuedRuns.Count > 0)
             InitiatedBy = "consolidation",
             TaskType = WorkItemTaskType.Consolidation,
             AgentSelector = string.Join(",", selectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
-            TimeoutSeconds = 0,
+            TimeoutSeconds = (int)pipelineConfig.AgentTimeout.TotalSeconds,
             ConsolidationRunType = run.Type,
             ConsolidationTemplateId = run.TemplateId,
             ConsolidationWorkspacePath = Path.Combine(pipelineConfig.WorkspaceBaseDirectory, "consolidation", run.RunId),
