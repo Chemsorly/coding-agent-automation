@@ -41,6 +41,7 @@ public sealed class DispatchService : BackgroundService
     private readonly ILabelSwapper? _labelSwapper;
     private readonly ITokenVendingService? _tokenVending;
     private readonly IConsolidationRunStore? _consolidationRunStore;
+    private readonly IConsolidationService? _consolidationService;
     private readonly IProviderConfigStore? _providerConfigStore;
     private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IProjectStore? _projectStore;
@@ -56,6 +57,7 @@ public sealed class DispatchService : BackgroundService
         ILabelSwapper? labelSwapper = null,
         ITokenVendingService? tokenVending = null,
         IConsolidationRunStore? consolidationRunStore = null,
+        IConsolidationService? consolidationService = null,
         IProviderConfigStore? providerConfigStore = null,
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
@@ -68,6 +70,7 @@ public sealed class DispatchService : BackgroundService
         _labelSwapper = labelSwapper;
         _tokenVending = tokenVending;
         _consolidationRunStore = consolidationRunStore;
+        _consolidationService = consolidationService;
         _providerConfigStore = providerConfigStore;
         _agentProfileStore = agentProfileStore;
         _projectStore = projectStore;
@@ -124,6 +127,7 @@ public sealed class DispatchService : BackgroundService
         ILabelSwapper? labelSwapper = null,
         ITokenVendingService? tokenVending = null,
         IConsolidationRunStore? consolidationRunStore = null,
+        IConsolidationService? consolidationService = null,
         IProviderConfigStore? providerConfigStore = null,
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
@@ -136,6 +140,7 @@ public sealed class DispatchService : BackgroundService
         _labelSwapper = labelSwapper;
         _tokenVending = tokenVending;
         _consolidationRunStore = consolidationRunStore;
+        _consolidationService = consolidationService;
         _providerConfigStore = providerConfigStore;
         _agentProfileStore = agentProfileStore;
         _projectStore = projectStore;
@@ -990,11 +995,32 @@ public sealed class DispatchService : BackgroundService
 
     /// <summary>
     /// Cascades a failure to a ConsolidationRun, transitioning it from Queued/Running to Failed.
-    /// Guards: no-op if run is not found, already terminal, or store is unavailable.
+    /// Delegates to <see cref="IConsolidationService.UpdateRunAsync"/> which handles cache invalidation,
+    /// _runningRuns cleanup, OnChange event, and workspace management.
+    /// Falls back to direct store write if IConsolidationService is unavailable.
     /// Safe to call from any failure path (DispatchService, ReconciliationService).
     /// </summary>
     internal async Task CascadeFailureToConsolidationRunAsync(string runId, string errorMessage, CancellationToken ct)
     {
+        if (_consolidationService is not null)
+        {
+            try
+            {
+                await _consolidationService.UpdateRunAsync(
+                    runId,
+                    ConsolidationRunStatus.Failed,
+                    $"WorkItem dispatch failed: {errorMessage}",
+                    ct);
+                Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId} via IConsolidationService", runId);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
+            }
+            return;
+        }
+
+        // Fallback: direct store write (legacy path when IConsolidationService not injected)
         if (_consolidationRunStore is null)
             return;
 
@@ -1007,7 +1033,7 @@ public sealed class DispatchService : BackgroundService
                 run.Summary = $"WorkItem dispatch failed: {errorMessage}";
                 run.CompletedAtUtc = DateTimeOffset.UtcNow;
                 await _consolidationRunStore.SaveRunAsync(run, ct);
-                Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId}", runId);
+                Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId} (direct store)", runId);
             }
         }
         catch (Exception ex)

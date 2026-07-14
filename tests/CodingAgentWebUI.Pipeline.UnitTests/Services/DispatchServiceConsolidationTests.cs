@@ -34,6 +34,7 @@ public class DispatchServiceConsolidationTests : IDisposable
     private readonly Mock<IKubernetesJobClient> _mockKubeClient;
     private readonly Mock<ITokenVendingService> _mockTokenVending;
     private readonly Mock<IConsolidationRunStore> _mockRunStore;
+    private readonly Mock<IConsolidationService> _mockConsolidationService;
     private readonly Mock<IProviderConfigStore> _mockProviderConfigStore;
     private readonly Mock<IAgentProfileStore> _mockAgentProfileStore;
     private readonly Mock<IProjectStore> _mockProjectStore;
@@ -60,6 +61,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         _mockKubeClient = new Mock<IKubernetesJobClient>();
         _mockTokenVending = new Mock<ITokenVendingService>();
         _mockRunStore = new Mock<IConsolidationRunStore>();
+        _mockConsolidationService = new Mock<IConsolidationService>();
         _mockProviderConfigStore = new Mock<IProviderConfigStore>();
         _mockAgentProfileStore = new Mock<IAgentProfileStore>();
         _mockProjectStore = new Mock<IProjectStore>();
@@ -441,17 +443,15 @@ public class DispatchServiceConsolidationTests : IDisposable
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.ErrorMessage.Should().Contain("No job template for selector");
 
-        // Assert: ConsolidationRun should ALSO be transitioned to Failed
-        _mockRunStore.Verify(
-            s => s.SaveRunAsync(
-                It.Is<ConsolidationRun>(r =>
-                    r.RunId == runId &&
-                    r.Status == ConsolidationRunStatus.Failed &&
-                    r.Summary != null && r.Summary.Contains("No job template for selector") &&
-                    r.CompletedAtUtc != null),
+        // Assert: ConsolidationRun should ALSO be transitioned to Failed via IConsolidationService
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(
+                runId,
+                ConsolidationRunStatus.Failed,
+                It.Is<string>(summary => summary.Contains("No job template for selector")),
                 It.IsAny<CancellationToken>()),
             Times.Once,
-            "ConsolidationRun must be transitioned to Failed with Summary and CompletedAtUtc set");
+            "ConsolidationRun must be transitioned to Failed via IConsolidationService.UpdateRunAsync");
     }
 
     // ── Integration: Full Lifecycle ─────────────────────────────────────
@@ -624,6 +624,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             labelSwapper,
             _mockTokenVending.Object,
             _mockRunStore.Object,
+            _mockConsolidationService.Object,
             _mockProviderConfigStore.Object,
             _mockAgentProfileStore.Object,
             _mockProjectStore.Object,
@@ -676,6 +677,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             null,
             _mockTokenVending.Object,
             _mockRunStore.Object,
+            _mockConsolidationService.Object,
             _mockProviderConfigStore.Object,
             _mockAgentProfileStore.Object,
             _mockProjectStore.Object,
