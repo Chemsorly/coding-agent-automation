@@ -291,6 +291,15 @@ public class DispatchServiceConsolidationTests : IDisposable
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.ErrorMessage.Should().Contain("K8s Job creation failed");
+
+        // Verify cascade fires for K8s creation failure path too (not just template resolution)
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(
+                workItemId.ToString(),
+                ConsolidationRunStatus.Failed,
+                It.Is<string>(summary => summary.Contains("K8s Job creation failed")),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]

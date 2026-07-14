@@ -1013,6 +1013,11 @@ public sealed class DispatchService : BackgroundService
                     ct);
                 Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId} via IConsolidationService", runId);
             }
+            catch (OperationCanceledException)
+            {
+                // Graceful shutdown — cascade skipped, ReconciliationService or startup cleanup will handle it
+                Log.Debug("DispatchService: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
+            }
             catch (Exception ex)
             {
                 Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
@@ -1020,7 +1025,11 @@ public sealed class DispatchService : BackgroundService
             return;
         }
 
-        // Fallback: direct store write (legacy path when IConsolidationService not injected)
+        // Fallback: direct store write — skips _runningRuns cleanup, OnChange, workspace cleanup.
+        // Only executes in test scenarios or misconfigured DI. Log at Warning for visibility.
+        Log.Warning("DispatchService: IConsolidationService unavailable, using direct store fallback for ConsolidationRun {RunId}. " +
+            "This skips cache invalidation and OnChange events.", runId);
+
         if (_consolidationRunStore is null)
             return;
 
