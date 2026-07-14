@@ -646,7 +646,13 @@ public class DispatchServiceConsolidationTests : IDisposable
             _mockProviderConfigStore.Object,
             _mockAgentProfileStore.Object,
             _mockProjectStore.Object,
-            _mockPipelineConfigStore.Object);
+            _mockPipelineConfigStore.Object,
+            new ConsolidationJobPreparer(
+                _mockProviderConfigStore.Object,
+                _mockProjectStore.Object,
+                _mockTokenVending.Object,
+                Serilog.Log.Logger,
+                _mockAgentProfileStore.Object));
     }
 
     private static JobTemplateProvider BuildTemplateProvider()
@@ -699,7 +705,13 @@ public class DispatchServiceConsolidationTests : IDisposable
             _mockProviderConfigStore.Object,
             _mockAgentProfileStore.Object,
             _mockProjectStore.Object,
-            _mockPipelineConfigStore.Object);
+            _mockPipelineConfigStore.Object,
+            new ConsolidationJobPreparer(
+                _mockProviderConfigStore.Object,
+                _mockProjectStore.Object,
+                _mockTokenVending.Object,
+                Serilog.Log.Logger,
+                _mockAgentProfileStore.Object));
     }
 
     private async Task InsertConsolidationWorkItem(Guid id, string runId, string selector)

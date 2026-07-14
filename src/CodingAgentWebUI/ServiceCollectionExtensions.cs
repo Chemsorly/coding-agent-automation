@@ -311,6 +311,12 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         PipelineConfiguration pipelineConfig)
     {
+        services.AddSingleton<IConsolidationJobPreparer>(sp => new ConsolidationJobPreparer(
+            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<IProjectStore>(),
+            sp.GetRequiredService<ITokenVendingService>(),
+            Log.Logger));
+
         services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatcher(
             sp.GetRequiredService<AgentRegistryService>(),
             sp.GetRequiredService<JobDispatcherService>(),
@@ -322,7 +328,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IWorkDistributor>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             Log.Logger,
-            sp.GetRequiredService<IConsolidationRunStore>()));
+            sp.GetRequiredService<IConsolidationRunStore>(),
+            sp.GetRequiredService<IConsolidationJobPreparer>()));
 
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             Log.Logger,

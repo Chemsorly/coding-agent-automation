@@ -46,6 +46,7 @@ public sealed class DispatchService : BackgroundService
     private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IProjectStore? _projectStore;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
+    private readonly IConsolidationJobPreparer? _consolidationJobPreparer;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
     public DispatchService(
@@ -61,7 +62,8 @@ public sealed class DispatchService : BackgroundService
         IProviderConfigStore? providerConfigStore = null,
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
-        IPipelineConfigStore? pipelineConfigStore = null)
+        IPipelineConfigStore? pipelineConfigStore = null,
+        IConsolidationJobPreparer? consolidationJobPreparer = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
@@ -75,6 +77,7 @@ public sealed class DispatchService : BackgroundService
         _agentProfileStore = agentProfileStore;
         _projectStore = projectStore;
         _pipelineConfigStore = pipelineConfigStore;
+        _consolidationJobPreparer = consolidationJobPreparer;
         _options = new DispatchServiceOptions();
         configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
 
@@ -131,7 +134,8 @@ public sealed class DispatchService : BackgroundService
         IProviderConfigStore? providerConfigStore = null,
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
-        IPipelineConfigStore? pipelineConfigStore = null)
+        IPipelineConfigStore? pipelineConfigStore = null,
+        IConsolidationJobPreparer? consolidationJobPreparer = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
@@ -145,6 +149,7 @@ public sealed class DispatchService : BackgroundService
         _agentProfileStore = agentProfileStore;
         _projectStore = projectStore;
         _pipelineConfigStore = pipelineConfigStore;
+        _consolidationJobPreparer = consolidationJobPreparer;
         _templateProvider = templateProvider;
         _options = new DispatchServiceOptions();
         configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
@@ -593,26 +598,28 @@ public sealed class DispatchService : BackgroundService
 
         try
         {
-            var (rawConfigs, resolvedRepoProviderId) = await BuildConsolidationProviderConfigsAsync(
-                request.ConsolidationTemplateId,
-                item.AgentSelector,
-                request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-                ct);
-            repoProviderId = resolvedRepoProviderId;
+            // Parse agent labels from selector string
+            var agentLabels = (item.AgentSelector ?? "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList()
+                .AsReadOnly();
 
-            // Vend tokens (replace long-lived keys with short-lived tokens)
-            // TODO: When vending is skipped (empty repoProviderId or rawConfigs), raw configs are assigned
-            // directly without stripping PrivateKeyBase64. If agent configs carry private keys, they will
-            // persist unvended in the DB payload. Also, for agent-only configs (no repo provider), tokens
-            // are never vended — this may diverge from the requirement "Token vending at K8s Job creation time."
-            if (_tokenVending is not null && rawConfigs.Count > 0 && !string.IsNullOrEmpty(repoProviderId))
+            // Delegate config resolution and token vending to shared preparer
+            if (_consolidationJobPreparer is null)
             {
-                vendedConfigs = await _tokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
+                Log.Error("DispatchService: IConsolidationJobPreparer not available for consolidation WorkItem {WorkItemId}", item.Id);
+                if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+                await FailWorkItem(item.Id, "IConsolidationJobPreparer not registered", item.TaskType, item.IssueIdentifier, ct);
+                return;
             }
-            else
-            {
-                vendedConfigs = rawConfigs;
-            }
+
+            var preparation = await _consolidationJobPreparer.PrepareAsync(
+                request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
+                request.ConsolidationTemplateId,
+                agentLabels,
+                ct);
+            vendedConfigs = preparation.ProviderConfigs;
+            repoProviderId = preparation.RepoProviderConfigId;
 
             // Load pipeline configuration for the agent
             if (_pipelineConfigStore is not null)
@@ -662,7 +669,7 @@ public sealed class DispatchService : BackgroundService
             var buildCtx = new JobSpecBuilder.BuildContext
             {
                 WorkItemId = item.Id,
-                AgentSelector = item.AgentSelector,
+                AgentSelector = item.AgentSelector ?? "",
                 TimeoutSeconds = item.TimeoutSeconds,
                 JobName = jobName,
                 ClaimedPvc = claimedPvc,
@@ -716,8 +723,8 @@ public sealed class DispatchService : BackgroundService
             WorkDistributionTelemetry.PendingDuration.Record(latency,
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
 
-            concurrencyBySelector[item.AgentSelector] =
-                concurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0) + 1;
+            concurrencyBySelector[item.AgentSelector ?? ""] =
+                concurrencyBySelector.GetValueOrDefault(item.AgentSelector ?? "", 0) + 1;
 
             Log.Information(
                 "DispatchService: consolidation WorkItem {WorkItemId} dispatched as Job {JobName} (selector={Selector}, pvc={Pvc})",
@@ -767,91 +774,6 @@ public sealed class DispatchService : BackgroundService
         {
             Log.Warning(ex, "DispatchService: failed to transition consolidation run {RunId} to Running (non-fatal)", runId);
         }
-    }
-
-    /// <summary>
-    /// Builds provider configs for a consolidation WorkItem from the configuration store.
-    /// Mirrors ConsolidationDispatcher.BuildProviderConfigsAsync but uses AgentSelector labels
-    /// for profile resolution (no AgentEntry available at K8s dispatch time).
-    /// </summary>
-    /// <returns>A tuple of (provider configs, repo provider config ID).</returns>
-    private async Task<(IReadOnlyList<ProviderConfig> Configs, string RepoProviderId)> BuildConsolidationProviderConfigsAsync(
-        string? consolidationTemplateId,
-        string agentSelector,
-        ConsolidationRunType consolidationRunType,
-        CancellationToken ct)
-    {
-        var repoProviderId = "";
-        var configs = new List<ProviderConfig>();
-
-        // 1. Resolve agent provider config via profile (use AgentSelector labels)
-        if (_agentProfileStore is not null && _providerConfigStore is not null)
-        {
-            var agentLabels = agentSelector
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList()
-                .AsReadOnly();
-
-            var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-            var profileResolver = new ProfileResolver();
-            var profile = profileResolver.Resolve(profiles, agentLabels);
-
-            if (profile is not null)
-            {
-                var agentConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-                var agentConfig = agentConfigs.FirstOrDefault(c => c.Id == profile.AgentProviderConfigId);
-                if (agentConfig is not null)
-                    configs.Add(agentConfig);
-            }
-        }
-
-        // 2. Resolve template for repo/brain/issue providers
-        if (consolidationTemplateId is null || _projectStore is null || _providerConfigStore is null)
-            return (configs.AsReadOnly(), repoProviderId);
-
-        var template = await ResolveConsolidationTemplateAsync(consolidationTemplateId, ct);
-        if (template is null)
-            return (configs.AsReadOnly(), repoProviderId);
-
-        // 3. Add repo provider
-        if (!string.IsNullOrEmpty(template.RepoProviderId))
-        {
-            repoProviderId = template.RepoProviderId;
-            var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-            var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == template.RepoProviderId);
-            if (repoConfig is not null)
-                configs.Add(repoConfig);
-
-            // 4. Add brain provider if configured
-            if (!string.IsNullOrEmpty(template.BrainProviderId))
-            {
-                var brainConfig = repoConfigs.FirstOrDefault(c => c.Id == template.BrainProviderId);
-                if (brainConfig is not null)
-                    configs.Add(brainConfig);
-            }
-        }
-
-        // 5. Add issue provider for refactoring detection
-        if (consolidationRunType == ConsolidationRunType.RefactoringDetection
-            && !string.IsNullOrEmpty(template.IssueProviderId))
-        {
-            var issueConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
-                template.IssueProviderId, ProviderKind.Issue, ct);
-            if (issueConfig is not null)
-                configs.Add(issueConfig);
-        }
-
-        return (configs.AsReadOnly(), repoProviderId);
-    }
-
-    private async Task<PipelineJobTemplate?> ResolveConsolidationTemplateAsync(
-        string templateId, CancellationToken ct)
-    {
-        if (_projectStore is null)
-            return null;
-
-        var templates = await _projectStore.LoadAllTemplatesAsync(ct);
-        return templates.FirstOrDefault(t => t.Id == templateId);
     }
 
     private async Task CreateJobSecretAsync(

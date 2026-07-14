@@ -153,6 +153,50 @@ public sealed partial class AgentHub
 
         if (run is not null)
         {
+            // Skip pipeline history persistence for consolidation runs.
+            // Consolidation runs have their own completion path (ReportConsolidationComplete)
+            // and their own history on the Consolidation page. They enter the PipelineRun
+            // tracking only as ghost entries during orchestrator restart rehydration.
+            if (run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
+            {
+                _logger.Debug(
+                    "ReportJobCompleted: skipping pipeline persistence for consolidation run {JobId}",
+                    jobId);
+
+                // Clean up the in-memory run and transition WorkItem (still needed for DB state).
+                // Wrapped in try/catch to ensure agent idle transition always happens.
+                var consolidationWorkItemStatus = payload.FinalStep switch
+                {
+                    PipelineStep.Completed => WorkItemStatus.Succeeded,
+                    PipelineStep.Cancelled => WorkItemStatus.Cancelled,
+                    _ => WorkItemStatus.Failed
+                };
+
+                _facade.RemoveRun(jobId);
+                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+                try
+                {
+                    await _facade.TransitionWorkItemAsync(jobId, consolidationWorkItemStatus, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "ReportJobCompleted: failed to transition consolidation WorkItem {JobId} (non-fatal)", jobId);
+                }
+
+                // Transition agent to Idle and signal drain service for next dispatch
+                if (agent is not null)
+                {
+                    agent.ActiveJobId = null;
+                    agent.OrphanRestoredAt = null;
+                    agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
+                    _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                }
+
+                _orchestration.NotifyChange();
+                return;
+            }
+
             // Update run with completion data
             JobCompletionMapper.Apply(run, payload);
 

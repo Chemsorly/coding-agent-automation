@@ -151,6 +151,27 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
                 if (!inHistory)
                 {
+                    // Skip restoration for consolidation runs — they have their own
+                    // completion path (ReportConsolidationComplete) and should not
+                    // enter pipeline run tracking or history.
+                    if (message.ActiveJob.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
+                    {
+                        _logger.Information(
+                            "Agent {AgentId} reported active consolidation job {RunId} — skipping pipeline run restoration (handled by ReportConsolidationComplete)",
+                            message.AgentId, message.ActiveJob.RunId);
+
+                        // Still mark agent as busy with this job so it's tracked correctly
+                        var consolEntry = _facade.GetByAgentId(message.AgentId);
+                        if (consolEntry is not null)
+                        {
+                            consolEntry.ActiveJobId = message.ActiveJob.RunId;
+                            _facade.TransitionStatus(message.AgentId, AgentStatus.Busy);
+                        }
+
+                        _orchestration.NotifyChange();
+                    }
+                    else
+                    {
                     var restoredRun = PipelineRun.Create(
                         runId: message.ActiveJob.RunId,
                         issueIdentifier: message.ActiveJob.IssueIdentifier,
@@ -186,6 +207,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                         message.ActiveJob.RunId, message.AgentId, message.ActiveJob.IssueIdentifier, message.ActiveJob.CurrentStep);
 
                     _orchestration.NotifyChange();
+                    }
                 }
                 else
                 {

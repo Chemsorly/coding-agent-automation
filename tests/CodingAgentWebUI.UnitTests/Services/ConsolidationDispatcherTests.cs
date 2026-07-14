@@ -447,12 +447,14 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     }
 
     [Fact]
-    public async Task TryDispatchAsync_IncompatibleFallbackProvider_SkipsAgentConfig()
+    public async Task TryDispatchAsync_NoProfileMatch_FallsBackToFirstAvailableAgentConfig()
     {
-        // Agent has kiro labels but no profiles → fallback picks OpenCode config → compatibility rejects it
+        // Agent has kiro labels but no profiles → fallback picks first available agent config.
+        // The shared preparer does NOT perform agent-specific compatibility checks —
+        // profile-based resolution is the correct mechanism for agent/provider matching.
         RegisterIdleAgent(labels: new[] { "kiro", "dotnet", "dotnet10" });
 
-        // Only OpenCode provider available (simulates misconfigured fallback)
+        // Only OpenCode provider available (no profile configured)
         var openCodeConfig = new ProviderConfig
         {
             Id = "opencode-cfg", Kind = ProviderKind.Agent, ProviderType = "OpenCode", DisplayName = "OpenCode",
@@ -472,10 +474,11 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 
         var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
 
-        // Job dispatches but without an agent provider config (incompatible one was skipped)
+        // Job dispatches with the fallback agent config included (no compatibility filtering)
         result.Should().Be(ConsolidationDispatchResult.Dispatched);
         capturedConfigs.Should().NotBeNull();
-        capturedConfigs!.Any(c => c.Kind == ProviderKind.Agent).Should().BeFalse();
+        capturedConfigs!.Any(c => c.Kind == ProviderKind.Agent).Should().BeTrue();
+        capturedConfigs!.First(c => c.Kind == ProviderKind.Agent).Id.Should().Be("opencode-cfg");
     }
 
     #endregion

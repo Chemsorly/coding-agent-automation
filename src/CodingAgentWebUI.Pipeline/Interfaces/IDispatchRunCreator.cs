@@ -40,7 +40,8 @@ public interface IDispatchRunCreator
         string issueProviderId, string repoProviderId, string issueIdentifier,
         string agentProviderId, string? agentId, CancellationToken ct,
         string? brainProviderId = null, string? pipelineProviderId = null,
-        string initiatedBy = "dispatch");
+        string initiatedBy = "dispatch",
+        PipelineRunType runType = PipelineRunType.Implementation);
 
     /// <summary>
     /// Returns all currently active pipeline runs from both local and multi-run tracking sources.

@@ -412,9 +412,9 @@ if (queuedRuns.Count > 0)
         var request = new JobDistributionRequest
         {
             IssueIdentifier = run.RunId,
-            IssueProviderConfigId = "consolidation",
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId,
             RepoProviderConfigId = "",
-            InitiatedBy = "consolidation",
+            InitiatedBy = ConsolidationConstants.InitiatedBy,
             TaskType = WorkItemTaskType.Consolidation,
             AgentSelector = string.Join(",", selectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
             TimeoutSeconds = (int)pipelineConfig.AgentTimeout.TotalSeconds,
