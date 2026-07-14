@@ -276,6 +276,7 @@ public static class WorkDistributionRegistration
             sp.GetService<ILabelSwapper>(),
             sp.GetService<ITokenVendingService>(),
             sp.GetService<IConsolidationRunStore>(),
+            sp.GetService<IConsolidationService>(),
             sp.GetService<IProviderConfigStore>(),
             sp.GetService<IAgentProfileStore>(),
             sp.GetService<IProjectStore>(),

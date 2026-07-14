@@ -41,6 +41,7 @@ public sealed class DispatchService : BackgroundService
     private readonly ILabelSwapper? _labelSwapper;
     private readonly ITokenVendingService? _tokenVending;
     private readonly IConsolidationRunStore? _consolidationRunStore;
+    private readonly IConsolidationService? _consolidationService;
     private readonly IProviderConfigStore? _providerConfigStore;
     private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IProjectStore? _projectStore;
@@ -56,6 +57,7 @@ public sealed class DispatchService : BackgroundService
         ILabelSwapper? labelSwapper = null,
         ITokenVendingService? tokenVending = null,
         IConsolidationRunStore? consolidationRunStore = null,
+        IConsolidationService? consolidationService = null,
         IProviderConfigStore? providerConfigStore = null,
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
@@ -68,6 +70,7 @@ public sealed class DispatchService : BackgroundService
         _labelSwapper = labelSwapper;
         _tokenVending = tokenVending;
         _consolidationRunStore = consolidationRunStore;
+        _consolidationService = consolidationService;
         _providerConfigStore = providerConfigStore;
         _agentProfileStore = agentProfileStore;
         _projectStore = projectStore;
@@ -124,6 +127,7 @@ public sealed class DispatchService : BackgroundService
         ILabelSwapper? labelSwapper = null,
         ITokenVendingService? tokenVending = null,
         IConsolidationRunStore? consolidationRunStore = null,
+        IConsolidationService? consolidationService = null,
         IProviderConfigStore? providerConfigStore = null,
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
@@ -136,6 +140,7 @@ public sealed class DispatchService : BackgroundService
         _labelSwapper = labelSwapper;
         _tokenVending = tokenVending;
         _consolidationRunStore = consolidationRunStore;
+        _consolidationService = consolidationService;
         _providerConfigStore = providerConfigStore;
         _agentProfileStore = agentProfileStore;
         _projectStore = projectStore;
@@ -314,7 +319,7 @@ public sealed class DispatchService : BackgroundService
                 var (fallbackTemplate, resolvedSelector) = await ResolveTemplateViaProfileAsync(item.AgentSelector, ct);
                 if (fallbackTemplate is null)
                 {
-                    await FailWorkItem(item.Id, $"No job template for selector: {item.AgentSelector}", ct);
+                    await FailWorkItem(item.Id, $"No job template for selector: {item.AgentSelector}", item.TaskType, item.IssueIdentifier, ct);
                     continue;
                 }
                 template = fallbackTemplate;
@@ -440,7 +445,7 @@ public sealed class DispatchService : BackgroundService
                 workItem.ClaimedPvcName = null;
                 availablePvcs.Add(claimedPvc);
             }
-            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", ct);
+            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -577,7 +582,7 @@ public sealed class DispatchService : BackgroundService
         if (request is null)
         {
             if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            await FailWorkItem(item.Id, "Consolidation WorkItem has no valid payload", ct);
+            await FailWorkItem(item.Id, "Consolidation WorkItem has no valid payload", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -619,7 +624,7 @@ public sealed class DispatchService : BackgroundService
         {
             Log.Error(ex, "DispatchService: failed to resolve provider configs for consolidation WorkItem {WorkItemId}", item.Id);
             if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            await FailWorkItem(item.Id, $"Provider config resolution failed: {ex.Message}", ct);
+            await FailWorkItem(item.Id, $"Provider config resolution failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -685,7 +690,7 @@ public sealed class DispatchService : BackgroundService
                 workItem.ClaimedPvcName = null;
                 availablePvcs.Add(claimedPvc);
             }
-            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", ct);
+            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
@@ -967,7 +972,8 @@ public sealed class DispatchService : BackgroundService
         return (template, profileSelector);
     }
 
-    private async Task FailWorkItem(Guid workItemId, string errorMessage, CancellationToken ct)
+    private async Task FailWorkItem(Guid workItemId, string errorMessage,
+        WorkItemTaskType taskType, string? issueIdentifier, CancellationToken ct)
     {
         await _transitionService.TransitionAsync(
             workItemId,
@@ -981,6 +987,72 @@ public sealed class DispatchService : BackgroundService
             ct);
 
         Log.Warning("DispatchService: WorkItem {WorkItemId} failed: {Error}", workItemId, errorMessage);
+
+        // Cascade to ConsolidationRun: transition to Failed so it doesn't stay stuck in Queued/Running
+        if (taskType == WorkItemTaskType.Consolidation && issueIdentifier is not null)
+            await CascadeFailureToConsolidationRunAsync(issueIdentifier, errorMessage, ct);
+    }
+
+    /// <summary>
+    /// Cascades a failure to a ConsolidationRun, transitioning it from Queued/Running to Failed.
+    /// Delegates to <see cref="IConsolidationService.UpdateRunAsync"/> which handles cache invalidation,
+    /// _runningRuns cleanup, OnChange event, and workspace management.
+    /// Falls back to direct store write if IConsolidationService is unavailable.
+    /// Safe to call from any failure path (DispatchService, ReconciliationService).
+    /// </summary>
+    internal async Task CascadeFailureToConsolidationRunAsync(string runId, string errorMessage, CancellationToken ct)
+    {
+        if (_consolidationService is not null)
+        {
+            try
+            {
+                await _consolidationService.UpdateRunAsync(
+                    runId,
+                    ConsolidationRunStatus.Failed,
+                    $"WorkItem dispatch failed: {errorMessage}",
+                    ct);
+                Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId} via IConsolidationService", runId);
+            }
+            catch (OperationCanceledException)
+            {
+                // Graceful shutdown — cascade skipped, ReconciliationService or startup cleanup will handle it
+                Log.Debug("DispatchService: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
+            }
+            return;
+        }
+
+        // Fallback: direct store write — skips _runningRuns cleanup, OnChange, workspace cleanup.
+        // Only executes in test scenarios or misconfigured DI. Log at Warning for visibility.
+        Log.Warning("DispatchService: IConsolidationService unavailable, using direct store fallback for ConsolidationRun {RunId}. " +
+            "This skips cache invalidation and OnChange events.", runId);
+
+        if (_consolidationRunStore is null)
+            return;
+
+        try
+        {
+            var run = await _consolidationRunStore.GetByIdAsync(runId, ct);
+            if (run is not null && run.Status is ConsolidationRunStatus.Queued or ConsolidationRunStatus.Running)
+            {
+                run.Status = ConsolidationRunStatus.Failed;
+                run.Summary = $"WorkItem dispatch failed: {errorMessage}";
+                run.CompletedAtUtc = DateTimeOffset.UtcNow;
+                await _consolidationRunStore.SaveRunAsync(run, ct);
+                Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId} (direct store)", runId);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Debug("DispatchService: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
+        }
     }
 
     // ── Static helpers (internal for testability) ────────────────────────

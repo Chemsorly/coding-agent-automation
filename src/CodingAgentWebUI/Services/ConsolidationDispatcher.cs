@@ -92,8 +92,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         if (agent is null)
         {
             // No idle agent — enqueue via IWorkDistributor for unified drain
-            // Store required labels on the run for restart rehydration
-            run.QueuedRequiredLabels = requiredLabels.ToList();
+            // Store resolved selector labels on the run for restart rehydration and UI display
+            run.QueuedRequiredLabels = agentSelectorLabels.ToList();
 
             var distributionRequest = new JobDistributionRequest
             {
@@ -103,7 +103,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
                 InitiatedBy = "consolidation",
                 TaskType = WorkItemTaskType.Consolidation,
                 AgentSelector = string.Join(",", agentSelectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
-                TimeoutSeconds = 0,
+                TimeoutSeconds = (int)_config.AgentTimeout.TotalSeconds,
                 ConsolidationRunType = type,
                 ConsolidationTemplateId = templateId,
                 ConsolidationWorkspacePath = workspacePath,

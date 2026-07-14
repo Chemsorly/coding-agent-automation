@@ -34,6 +34,7 @@ public class DispatchServiceConsolidationTests : IDisposable
     private readonly Mock<IKubernetesJobClient> _mockKubeClient;
     private readonly Mock<ITokenVendingService> _mockTokenVending;
     private readonly Mock<IConsolidationRunStore> _mockRunStore;
+    private readonly Mock<IConsolidationService> _mockConsolidationService;
     private readonly Mock<IProviderConfigStore> _mockProviderConfigStore;
     private readonly Mock<IAgentProfileStore> _mockAgentProfileStore;
     private readonly Mock<IProjectStore> _mockProjectStore;
@@ -60,6 +61,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         _mockKubeClient = new Mock<IKubernetesJobClient>();
         _mockTokenVending = new Mock<ITokenVendingService>();
         _mockRunStore = new Mock<IConsolidationRunStore>();
+        _mockConsolidationService = new Mock<IConsolidationService>();
         _mockProviderConfigStore = new Mock<IProviderConfigStore>();
         _mockAgentProfileStore = new Mock<IAgentProfileStore>();
         _mockProjectStore = new Mock<IProjectStore>();
@@ -289,6 +291,15 @@ public class DispatchServiceConsolidationTests : IDisposable
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.ErrorMessage.Should().Contain("K8s Job creation failed");
+
+        // Verify cascade fires for K8s creation failure path too (not just template resolution)
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(
+                workItemId.ToString(),
+                ConsolidationRunStatus.Failed,
+                It.Is<string>(summary => summary.Contains("K8s Job creation failed")),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -322,6 +333,15 @@ public class DispatchServiceConsolidationTests : IDisposable
         var item = await dbCheck.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.ErrorMessage.Should().Contain("payload");
+
+        // Verify cascade fires for invalid payload path (IssueIdentifier = workItemId.ToString())
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(
+                workItemId.ToString(),
+                ConsolidationRunStatus.Failed,
+                It.Is<string>(summary => summary.Contains("payload")),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     // ── Label Resolution: AgentSelector must match template key ────────
@@ -395,6 +415,61 @@ public class DispatchServiceConsolidationTests : IDisposable
             "work item should be dispatched — template resolution must succeed even when AgentSelector is a subset of template labels");
         item.ErrorMessage.Should().BeNull();
         item.K8sJobName.Should().StartWith("caa-");
+    }
+
+    // ── FailWorkItem cascading to ConsolidationRun ──────────────────────
+
+    /// <summary>
+    /// When a consolidation WorkItem fails (e.g., no template match, K8s Job creation failure),
+    /// the associated ConsolidationRun must also transition to Failed. Without this, the run
+    /// stays in Queued/Running status permanently and the UI shows a stuck entry.
+    /// </summary>
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_FailsWorkItem_CascadesToConsolidationRunFailed()
+    {
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+
+        // Insert with a selector that won't match ANY template (no profile either)
+        await InsertConsolidationWorkItem(workItemId, runId, "nonexistent-label");
+
+        // No profiles match this selector
+        _mockAgentProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>());
+
+        // ConsolidationRun exists in Queued state
+        var consolidationRun = new ConsolidationRun
+        {
+            RunId = runId,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            Status = ConsolidationRunStatus.Queued
+        };
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(consolidationRun);
+
+        var service = CreateServiceWithThreeLabelTemplate();
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: WorkItem should be Failed (no template match)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.ErrorMessage.Should().Contain("No job template for selector");
+
+        // Assert: ConsolidationRun should ALSO be transitioned to Failed via IConsolidationService
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(
+                runId,
+                ConsolidationRunStatus.Failed,
+                It.Is<string>(summary => summary.Contains("No job template for selector")),
+                It.IsAny<CancellationToken>()),
+            Times.Once,
+            "ConsolidationRun must be transitioned to Failed via IConsolidationService.UpdateRunAsync");
     }
 
     // ── Integration: Full Lifecycle ─────────────────────────────────────
@@ -567,6 +642,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             labelSwapper,
             _mockTokenVending.Object,
             _mockRunStore.Object,
+            _mockConsolidationService.Object,
             _mockProviderConfigStore.Object,
             _mockAgentProfileStore.Object,
             _mockProjectStore.Object,
@@ -619,6 +695,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             null,
             _mockTokenVending.Object,
             _mockRunStore.Object,
+            _mockConsolidationService.Object,
             _mockProviderConfigStore.Object,
             _mockAgentProfileStore.Object,
             _mockProjectStore.Object,
