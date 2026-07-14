@@ -911,7 +911,8 @@
             .ToList();
         _agents = Registry.GetAllAgents();
         _runHistory = PipelineService.GetRunHistory();
-        _queuedJobs = await PendingWorkQuery.GetPendingJobsAsync();
+        var allQueuedJobs = await PendingWorkQuery.GetPendingJobsAsync();
+        _queuedJobs = allQueuedJobs.Where(j => !j.IsConsolidation).ToList();
 
         if (includeConsolidation)
             await RefreshConsolidationAsync();
