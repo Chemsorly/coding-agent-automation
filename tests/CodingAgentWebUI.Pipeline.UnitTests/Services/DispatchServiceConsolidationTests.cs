@@ -333,6 +333,15 @@ public class DispatchServiceConsolidationTests : IDisposable
         var item = await dbCheck.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.ErrorMessage.Should().Contain("payload");
+
+        // Verify cascade fires for invalid payload path (IssueIdentifier = workItemId.ToString())
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(
+                workItemId.ToString(),
+                ConsolidationRunStatus.Failed,
+                It.Is<string>(summary => summary.Contains("payload")),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     // ── Label Resolution: AgentSelector must match template key ────────

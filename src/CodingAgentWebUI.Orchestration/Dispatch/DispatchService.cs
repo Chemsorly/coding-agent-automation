@@ -1045,6 +1045,10 @@ public sealed class DispatchService : BackgroundService
                 Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId} (direct store)", runId);
             }
         }
+        catch (OperationCanceledException)
+        {
+            Log.Debug("DispatchService: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);

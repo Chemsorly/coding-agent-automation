@@ -398,6 +398,10 @@ public sealed class ReconciliationService : BackgroundService
 
             Log.Information("ReconciliationService: cascaded K8s Job failure to ConsolidationRun {RunId}", workItem.IssueIdentifier);
         }
+        catch (OperationCanceledException)
+        {
+            Log.Debug("ReconciliationService: cascade to ConsolidationRun for WorkItem {WorkItemId} cancelled (shutdown)", workItemId);
+        }
         catch (Exception ex)
         {
             Log.Warning(ex, "ReconciliationService: failed to cascade failure to ConsolidationRun for WorkItem {WorkItemId} (non-fatal)", workItemId);
