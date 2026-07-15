@@ -233,6 +233,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     {
                         // Dispatch failed — revert to Pending for next cycle
                         _agentResolver.ReleaseAgent(agentId);
+                        // Note: this path still uses `ct` — the outer catch handler provides the safety net
+                        // by retrying with CancellationToken.None if this revert fails during shutdown.
                         await _transitionService.TransitionAsync(
                             item.Id, WorkItemStatus.Pending,
                             entity =>
@@ -258,7 +260,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                             {
                                 entity.DispatchedAt = null;
                                 entity.AssignedAgentId = null;
-                            }, ct);
+                            }, CancellationToken.None);
                     }
                     catch (Exception revertEx)
                     {
@@ -354,9 +356,6 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 // Consider checking the return value and manually incrementing RetryCount in that case.
                 try
                 {
-                    // TODO: Using the same stoppingToken (ct) here means the revert will also fail if
-                    // the original exception was due to cancellation (shutdown). Consider using
-                    // CancellationToken.None to ensure revert completes during graceful shutdown.
                     await _transitionService.TransitionAsync(
                         item.Id, WorkItemStatus.Pending,
                         entity =>
@@ -364,7 +363,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                             entity.DispatchedAt = null;
                             entity.AssignedAgentId = null;
                             entity.RetryCount++;
-                        }, ct);
+                        }, CancellationToken.None);
                 }
                 catch (Exception revertEx)
                 {
