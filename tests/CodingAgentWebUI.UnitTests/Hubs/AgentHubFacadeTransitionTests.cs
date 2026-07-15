@@ -264,6 +264,86 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         result!.Status.Should().Be(WorkItemStatus.Failed); // unchanged
     }
 
+    // ── ErrorMessage and FailureReason propagation ────────────────────────
+
+    [Fact]
+    public async Task TransitionWorkItemAsync_FailedWithErrorMessage_SetsOnEntity()
+    {
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+
+        await _facade.TransitionWorkItemAsync(id.ToString(), WorkItemStatus.Failed, CancellationToken.None,
+            "Something went wrong", FailureReason.AgentError);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var item = await db.WorkItems.FindAsync(id);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.ErrorMessage.Should().Be("Something went wrong");
+        item.FailureReason.Should().Be(FailureReason.AgentError);
+    }
+
+    [Fact]
+    public async Task TransitionWorkItemAsync_FailedWithoutErrorMessage_SetsDefaultMessage()
+    {
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+
+        await _facade.TransitionWorkItemAsync(id.ToString(), WorkItemStatus.Failed, CancellationToken.None);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var item = await db.WorkItems.FindAsync(id);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.ErrorMessage.Should().NotBeNullOrEmpty();
+        item.ErrorMessage.Should().Be("Job failed without specific error information");
+        item.FailureReason.Should().Be(FailureReason.AgentError);
+    }
+
+    [Fact]
+    public async Task TransitionWorkItemAsync_FailedWithInfrastructureFailure_SetsCorrectEnum()
+    {
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+
+        await _facade.TransitionWorkItemAsync(id.ToString(), WorkItemStatus.Failed, CancellationToken.None,
+            "Job rejected by agent after 3 attempts: busy", FailureReason.InfrastructureFailure);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var item = await db.WorkItems.FindAsync(id);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.ErrorMessage.Should().Be("Job rejected by agent after 3 attempts: busy");
+        item.FailureReason.Should().Be(FailureReason.InfrastructureFailure);
+    }
+
+    [Fact]
+    public async Task TransitionWorkItemAsync_Succeeded_DoesNotSetErrorMessage()
+    {
+        var id = await SeedWorkItem(WorkItemStatus.Running);
+
+        await _facade.TransitionWorkItemAsync(id.ToString(), WorkItemStatus.Succeeded, CancellationToken.None);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var item = await db.WorkItems.FindAsync(id);
+        item!.Status.Should().Be(WorkItemStatus.Succeeded);
+        item.ErrorMessage.Should().BeNull();
+        item.FailureReason.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task TransitionWorkItemAsync_TwoStepFallback_PreservesErrorMessage()
+    {
+        // Dispatched → Failed requires two-step (Dispatched → Running → Failed)
+        var id = await SeedWorkItem(WorkItemStatus.Dispatched);
+
+        await _facade.TransitionWorkItemAsync(id.ToString(), WorkItemStatus.Failed, CancellationToken.None,
+            "Consolidation run failed", FailureReason.AgentError);
+
+        await using var db = _dbFactory.CreateDbContext();
+        var item = await db.WorkItems.FindAsync(id);
+        // Two-step path should try Running first, then direct fail succeeds from Running.
+        // The item may end up in Failed via the infrastructure-failure recovery path.
+        // Assert unconditionally that it reached Failed status, then verify fields.
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.ErrorMessage.Should().Be("Consolidation run failed");
+        item.FailureReason.Should().Be(FailureReason.AgentError);
+    }
+
     // ── Helper ───────────────────────────────────────────────────────────
 
     private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>

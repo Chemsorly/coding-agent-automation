@@ -779,6 +779,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     {
         FinalStep = run.CurrentStep,
         FailureReason = run.FailureReason,
+        FailureCategory = run.FailureCategory,
         PullRequestUrl = run.PullRequestUrl,
         PullRequestNumber = run.PullRequestNumber,
         IsDraftPr = run.IsDraftPr,
@@ -787,10 +788,11 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         AnalysisRecommendation = run.AnalysisRecommendation
     };
 
-    internal static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason) => BuildPayloadBase(run) with
+    internal static JobCompletionPayload BuildFailurePayload(PipelineRun run, string reason, FailureReason? failureCategory = null) => BuildPayloadBase(run) with
     {
         FinalStep = PipelineStep.Failed,
         FailureReason = reason,
+        FailureCategory = failureCategory,
         CompletedAt = DateTimeOffset.UtcNow
     };
 

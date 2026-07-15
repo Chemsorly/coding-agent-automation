@@ -15,5 +15,8 @@ public enum FailureReason
     AgentError,
 
     /// <summary>Token refresh failed, agent lost access to provider APIs.</summary>
-    TokenRefreshFailure
+    TokenRefreshFailure,
+
+    /// <summary>Agent process exited with a non-zero exit code (SIGINT, OOM kill, crash).</summary>
+    ExitCodeFailure
 }

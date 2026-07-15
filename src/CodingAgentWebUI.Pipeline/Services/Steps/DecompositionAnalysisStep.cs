@@ -85,7 +85,7 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
             logger.Warning("Agent exited with code {ExitCode} for decomposition analysis run {RunId}",
                 agentResult.ExitCode, run.RunId);
             context.Callbacks.EmitOutputLine($"❌ Agent exited with code {agentResult.ExitCode}");
-            await context.FailRunAsync($"Agent exited with non-zero exit code: {agentResult.ExitCode}", ct);
+            await context.FailRunAsync($"Agent exited with non-zero exit code: {agentResult.ExitCode}", FailureReason.ExitCodeFailure, ct);
             return StepResult.Stop;
         }
 
