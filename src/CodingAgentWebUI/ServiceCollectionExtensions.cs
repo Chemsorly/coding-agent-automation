@@ -223,8 +223,8 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<ILabelSwapper>(),
                 sp.GetRequiredService<IConfigurationStore>(),
                 Log.Logger,
-                sp.GetService<IConsolidationService>(),
-                sp.GetRequiredService<IRunLifecycleManager>()));
+                sp.GetRequiredService<IRunLifecycleManager>(),
+                sp.GetService<IConsolidationService>()));
         }
 
         // JobQueueDrainService: registered as singleton always (AgentHubFacade depends on it),
