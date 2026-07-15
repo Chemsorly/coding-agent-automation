@@ -443,9 +443,6 @@ public partial class AgentPhaseExecutor
             run.CodeReviewAgentFindings[agent.Name] = result.FindingsText;
         }
 
-        // TODO: The original parallel path logged "parallel review agent" while sequential logged "review agent".
-        // This shared method uses the sequential wording for both, which changes observable log output for the parallel path.
-        // Consider accepting a caller-provided prefix or restoring the "parallel" qualifier for parallel callers.
         _logger.Information(
             "Pipeline {RunId} review agent '{AgentName}' (iteration {Iteration}) completed with exit code {ExitCode}. " +
             "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",

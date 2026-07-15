@@ -10,9 +10,6 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// Isolated unit tests for <see cref="AgentPhaseExecutor.ExecuteCodeReviewAsync"/>.
 /// Tests multi-reviewer loop, findings aggregation, fix prompt dispatch, and exception handling.
 /// </summary>
-// TODO: Add a dedicated test that asserts all side effects of MergeReviewAgentResult:
-// ChatHistory.Enqueue, CodeReviewAgentFindings dictionary population, AccumulateTokenUsage phase label,
-// and the findings separator logic. Current tests only partially verify severity counts.
 public class AgentPhaseExecutorCodeReviewTests : IDisposable
 {
     private readonly Mock<IAgentProvider> _mockAgent;
