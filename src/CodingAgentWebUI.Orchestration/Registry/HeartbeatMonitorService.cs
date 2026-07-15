@@ -14,6 +14,14 @@ namespace CodingAgentWebUI.Orchestration.Registry;
 /// </summary>
 public sealed class HeartbeatMonitorService : BackgroundService
 {
+    /// <summary>
+    /// Grace period for the ResolveAgent → AssignJob/run-registration window.
+    /// Must exceed the worst-case drain operation duration under load (DB pool
+    /// exhaustion, SignalR backpressure). 30 s is ~6× typical drain duration (~5 s)
+    /// and still well below the progress timeout (60 min default).
+    /// </summary>
+    private static readonly TimeSpan BusySinceGracePeriod = TimeSpan.FromSeconds(30);
+
     private readonly IAgentRegistryService _registry;
     private readonly IOrchestratorRunService _runService;
     private readonly IPipelineRunHistoryService _historyService;
@@ -260,7 +268,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                         // DisconnectedAt/OrphanRestoredAt in this loop, but consider reading under lock
                         // for correctness on non-x86-64 targets.
                         var busySince = agent.BusySince;
-                        if (busySince.HasValue && (now - busySince.Value) < TimeSpan.FromSeconds(10))
+                        if (busySince.HasValue && (now - busySince.Value) < BusySinceGracePeriod)
                         {
                             continue;
                         }

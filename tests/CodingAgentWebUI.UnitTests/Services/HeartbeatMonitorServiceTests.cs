@@ -558,7 +558,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         var entry = RegisterAgent("agent-1", "conn-1");
         entry.ActiveJobId = "job-missing";
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
-        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Backdate past grace period
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-60); // Backdate past grace period
 
         // No run added for this job — simulates race condition where run was removed concurrently
         await _monitor.SweepAsync(CancellationToken.None);
@@ -576,7 +576,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         entry.ActiveJobId = "job-vanished";
         entry.OrphanRestoredAt = null;
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
-        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Backdate past grace period
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-60); // Backdate past grace period
 
         // No run exists for this job ID — simulates ReportJobCompleted removing the run
         // but failing to transition agent to Idle (e.g., SignalR exception)
@@ -613,9 +613,11 @@ public class HeartbeatMonitorServiceTests : IDisposable
         var entry = RegisterAgent("agent-1", "conn-1");
         entry.ActiveJobId = "job-stale";
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
-        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Well past grace period
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-60); // Well past grace period
 
-        // No run exists for this job — and agent has been Busy for 30s
+        // TODO: Stale comment — agent has been Busy for 60s (not 30s). Update comment to reflect
+        // the actual -60s backdating used after the grace period was increased to 30s.
+        // No run exists for this job — and agent has been Busy for 60s (well past 30s grace)
         await _monitor.SweepAsync(CancellationToken.None);
 
         // Agent should be reset — grace period expired, legitimately stuck
@@ -636,6 +638,50 @@ public class HeartbeatMonitorServiceTests : IDisposable
         await _monitor.SweepAsync(CancellationToken.None);
 
         // Agent should be reset — null BusySince means no grace period protection
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Idle);
+        agent.ActiveJobId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_LongDrainWithinGrace_SkipsReset()
+    {
+        // Scenario: Drain operation took 20s under load (DB pool exhaustion, SignalR backpressure).
+        // Agent has ActiveJobId set but run not found (edge case: null RunId or concurrent removal).
+        // BusySince is 20s ago — within the 30s grace window. Agent should NOT be reset.
+        // TODO: This test covers the "ActiveJobId set, run not found" sub-race (Phase 1.6 path).
+        // The original issue describes the race as ActiveJobId being null between ResolveAgent and
+        // AssignJob. That null-ActiveJobId case is implicitly safe (Phase 1.6 condition requires
+        // ActiveJobId is not null), but a dedicated test would document this invariant explicitly.
+        // See also TODO at SweepAsync_BusyAgent_RecentlyBusy_NoRun_SkipsReset.
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-slow-drain";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-20); // Within 30s grace period
+
+        // No run exists — simulates edge case where run is not findable
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent should NOT be reset — still within grace period
+        var agent = _registry.GetByAgentId("agent-1")!;
+        agent.Status.Should().Be(AgentStatus.Busy);
+        agent.ActiveJobId.Should().Be("job-slow-drain");
+    }
+
+    [Fact]
+    public async Task SweepAsync_BusyAgent_BusySinceExpiredPastNewGrace_ResetsToIdle()
+    {
+        // Scenario: Agent has been Busy for 45s with no run found.
+        // This is well past the 30s grace window — agent is genuinely stuck.
+        var entry = RegisterAgent("agent-1", "conn-1");
+        entry.ActiveJobId = "job-stuck";
+        _registry.TransitionStatus("agent-1", AgentStatus.Busy);
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-45); // Past 30s grace period
+
+        // No run exists for this job
+        await _monitor.SweepAsync(CancellationToken.None);
+
+        // Agent should be reset — grace period expired, genuinely stuck
         var agent = _registry.GetByAgentId("agent-1")!;
         agent.Status.Should().Be(AgentStatus.Idle);
         agent.ActiveJobId.Should().BeNull();
@@ -1123,7 +1169,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         var entry = RegisterAgent("agent-partition", "conn-partition");
         entry.ActiveJobId = "completed-during-partition";
         _registry.TransitionStatus("agent-partition", AgentStatus.Busy);
-        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-30); // Backdate past grace period
+        entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-60); // Backdate past grace period
 
         // The run has already been removed by the replayed ReportJobCompleted
         // (simulating: agent reconnected → buffer drained → ReportJobCompleted processed
