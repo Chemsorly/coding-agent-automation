@@ -62,4 +62,11 @@ public interface IAgentProvider : IAsyncDisposable
     /// Returns null if no sessions exist or the operation is not supported.
     /// </summary>
     Task<string?> GetLatestSessionIdAsync(string workspacePath, CancellationToken ct);
+
+    /// <summary>
+    /// Whether the configured model supports vision/image input.
+    /// Used to skip image download steps for text-only models (e.g., DeepSeek).
+    /// Returns true by default (assume capable) when model is unknown.
+    /// </summary>
+    bool SupportsVisionInput { get; }
 }

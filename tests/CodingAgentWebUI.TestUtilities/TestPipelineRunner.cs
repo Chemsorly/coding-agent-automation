@@ -1,4 +1,4 @@
-using CodingAgentWebUI.Pipeline;
+﻿using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -33,7 +33,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
 
     private readonly PipelineRunLifecycleService _lifecycle;
 
-    /// <summary>Provider manager for the active run — stored for cancel-time label swap.</summary>
+    /// <summary>Provider manager for the active run â€” stored for cancel-time label swap.</summary>
     private PipelineProviderManager? _activeProviderManager;
 
     /// <summary>The currently active run, or null if idle.</summary>
@@ -166,7 +166,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 run.FailureReason = ex.Message;
                 run.CompletedAt = DateTime.UtcNow;
                 run.CompletedAtOffset = DateTimeOffset.UtcNow;
-                _lifecycle.EmitOutputLine($"❌ Pipeline failed: {ex.Message}");
+                _lifecycle.EmitOutputLine($"âŒ Pipeline failed: {ex.Message}");
                 _lifecycle.TransitionTo(run, PipelineStep.Failed);
                 _lifecycle.AddRunToHistory(run);
             }
@@ -250,7 +250,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
     {
         var steps = new List<IPipelineStep>
         {
-            new FetchIssueStep(_issueParser),
+            new FetchIssueStep(_issueParser, new IssueImageExtractor()),
             new CloneRepositoryStep(),
             new RunEnvironmentSetupStep(),
             new SyncBrainPreRunStep(),
@@ -341,7 +341,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     r.CompletedAtOffset = DateTimeOffset.UtcNow;
                     r.FinalLabel = AgentLabels.Error;
                     await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
-                    lifecycle.EmitOutputLine($"❌ Pipeline failed: {r.FailureReason}");
+                    lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                     lifecycle.TransitionTo(r, PipelineStep.Failed);
                     lifecycle.AddRunToHistory(r);
                     return;
@@ -357,7 +357,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 r.CompletedAtOffset = DateTimeOffset.UtcNow;
                 r.FinalLabel = AgentLabels.Error;
                 await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
-                lifecycle.EmitOutputLine($"❌ Pipeline failed: {r.FailureReason}");
+                lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                 lifecycle.TransitionTo(r, PipelineStep.Failed);
                 lifecycle.AddRunToHistory(r);
             }
@@ -391,7 +391,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     r.CompletedAtOffset = DateTimeOffset.UtcNow;
                     r.FinalLabel = AgentLabels.Error;
                     await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
-                    lifecycle.EmitOutputLine($"❌ Pipeline failed: {r.FailureReason}");
+                    lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                     lifecycle.TransitionTo(r, PipelineStep.Failed);
                     lifecycle.AddRunToHistory(r);
                     return;
@@ -409,7 +409,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 r.CompletedAtOffset = DateTimeOffset.UtcNow;
                 r.FinalLabel = AgentLabels.Error;
                 await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
-                lifecycle.EmitOutputLine($"❌ Pipeline failed: {r.FailureReason}");
+                lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                 lifecycle.TransitionTo(r, PipelineStep.Failed);
                 lifecycle.AddRunToHistory(r);
             }
@@ -449,7 +449,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
-                { /* non-fatal — match production behavior */ }
+                { /* non-fatal â€” match production behavior */ }
 
                 lifecycle.TransitionTo(r, PipelineStep.SyncingBrainRepoPostRun);
                 try
@@ -477,7 +477,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 historyService.TryDeleteWorkspace(r.WorkspacePath, r.RunId, config?.WorkspaceBaseDirectory ?? "");
             }
             else
-                lifecycle.EmitOutputLine($"❌ Pipeline failed: {r.FailureReason}");
+                lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
         }
 
         public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)

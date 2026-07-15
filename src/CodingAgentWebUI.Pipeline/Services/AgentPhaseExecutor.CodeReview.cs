@@ -120,7 +120,7 @@ public partial class AgentPhaseExecutor
             if (!File.Exists(issueContextPath))
             {
                 var issueContextContent = PromptBuilder.BuildIssueContextFileContent(
-                    context.Issue, context.ParsedIssue, Array.Empty<IssueComment>());
+                    context.Issue, context.ParsedIssue, Array.Empty<IssueComment>(), context.DownloadedImages);
                 await File.WriteAllTextAsync(issueContextPath, issueContextContent, ct);
                 _logger.Debug("Pipeline {RunId} wrote issue context to {FilePath} for review agents",
                     run.RunId, AgentWorkspacePaths.IssueContextFilePath);
@@ -661,7 +661,7 @@ public partial class AgentPhaseExecutor
         if (File.Exists(findingsFilePath))
             File.Delete(findingsFilePath);
 
-        var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, inlineCommentsEnabled: config.CodeReview.InlineComments.Enabled, hasLinkedPr: run.LinkedPullRequest is not null);
+        var reviewPrompt = PromptBuilder.BuildReviewPrompt(agent.Prompt, context.Issue, context.ParsedIssue, agentFindingsRelativePath, inlineCommentsEnabled: config.CodeReview.InlineComments.Enabled, hasLinkedPr: run.LinkedPullRequest is not null, imageCount: context.DownloadedImages?.Count ?? 0);
         _logger.Debug("Pipeline {RunId} review prompt (iteration {Iteration}, agent '{AgentName}'):\n{Prompt}", run.RunId, iterationIndex + 1, agent.Name, reviewPrompt);
         activity?.SetTag("pipeline.prompt_length_chars", reviewPrompt.Length);
 
@@ -672,7 +672,8 @@ public partial class AgentPhaseExecutor
                 Prompt = reviewPrompt,
                 WorkspacePath = run.WorkspacePath!,
                 Timeout = config.AgentTimeout,
-                UseResume = false
+                UseResume = false,
+                ImagePaths = context.DownloadedImages?.Select(d => d.LocalPath).ToList()
             },
             run, config, $"Code review agent '{agent.Name}'", context.Callbacks.NotifyChange, _logger, ct,
             line => context.Callbacks.EmitOutputLine($"[{agent.Name}] {line}"));

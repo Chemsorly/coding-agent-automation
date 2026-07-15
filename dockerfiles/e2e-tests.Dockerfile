@@ -43,6 +43,9 @@ ENV ASPNETCORE_ENVIRONMENT=Development
 # Disable the Terminal Logger's animated progress/timer display (noisy in non-TTY output)
 ENV MSBUILDTERMINALLOGGER=off
 
+# Install libvips for NetVips image processing (used by pipeline under test)
+RUN apt-get update && apt-get install -y --no-install-recommends libvips42 && rm -rf /var/lib/apt/lists/*
+
 # Install PowerShell (needed for playwright.ps1 browser installer)
 RUN apt-get update && apt-get install -y --no-install-recommends wget apt-transport-https \
     && wget -q https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb \

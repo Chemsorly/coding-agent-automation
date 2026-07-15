@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿﻿﻿using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -40,7 +40,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     protected ParsedIssue? _activeParsedIssue;
     protected IReadOnlyList<IssueComment>? _activeIssueComments;
 
-    // ── Delegating properties (backward compatibility) ───────────────────
+    // â”€â”€ Delegating properties (backward compatibility) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     /// <summary>Fired after each state transition for UI binding. Delegates to lifecycle service.</summary>
     public event Action? OnChange
@@ -84,7 +84,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     public bool HasAnyActiveRuns => _lifecycle.HasAnyActiveRuns;
 
     /// <summary>
-    /// Returns all active runs — both the in-process run (if any) and all agent-dispatched runs.
+    /// Returns all active runs â€” both the in-process run (if any) and all agent-dispatched runs.
     /// Delegates to lifecycle service.
     /// </summary>
     public IReadOnlyList<PipelineRun> GetAllActiveRuns() => _lifecycle.GetAllActiveRuns();
@@ -134,7 +134,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// <summary>
     /// Creates a <see cref="PipelineRun"/> for dispatch to a remote agent.
     /// The run is tracked via <see cref="IOrchestratorRunService"/> (not the local <see cref="ActiveRun"/>).
-    /// Does NOT execute the pipeline locally — the agent handles execution.
+    /// Does NOT execute the pipeline locally â€” the agent handles execution.
     /// </summary>
     /// <returns>The created <see cref="PipelineRun"/> ready for dispatch, or <c>null</c> if the issue is already being processed.</returns>
     public async Task<PipelineRun?> CreateDispatchedRunAsync(
@@ -183,7 +183,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             return null;
 
         _logger.Information(
-            "Dispatched run {RunId} created for issue {IssueIdentifier} → agent {AgentId}",
+            "Dispatched run {RunId} created for issue {IssueIdentifier} â†’ agent {AgentId}",
             run.RunId, issueIdentifier, agentId);
 
         return run;
@@ -241,7 +241,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
                 _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
                 run.MarkCompleted();
                 await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
-                _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
+                _lifecycle.EmitOutputLine("ðŸš« Pipeline cancelled");
                 _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
                 _lifecycle.AddRunToHistory(run);
             }
@@ -256,14 +256,14 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
     /// <summary>
     /// Builds the ordered list of pipeline steps. Step ordering is explicit and configurable.
-    /// Orchestrator prefix (FetchIssue → Clone → RunEnvironmentSetup → SyncBrainPreRun) followed
+    /// Orchestrator prefix (FetchIssue â†’ Clone â†’ RunEnvironmentSetup â†’ SyncBrainPreRun) followed
     /// by the shared core implementation steps from <see cref="Steps.PipelineStepFactory"/>.
     /// </summary>
     private IReadOnlyList<Steps.IPipelineStep> BuildStepPipeline()
     {
         var steps = new List<Steps.IPipelineStep>
         {
-            new Steps.FetchIssueStep(_issueParser),
+            new Steps.FetchIssueStep(_issueParser, new IssueImageExtractor()),
             new Steps.CloneRepositoryStep(),
             new Steps.RunEnvironmentSetupStep(),
             new Steps.SyncBrainPreRunStep(),
@@ -302,7 +302,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         if (allRuns.Count == 0) return;
 
         // Send CancelJob to each agent in parallel (2s per-agent timeout)
-        // Non-fatal — agent may already be disconnected
+        // Non-fatal â€” agent may already be disconnected
         if (_cancellationFacade.AgentCancellation is not null)
         {
             try
@@ -313,7 +313,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             }
             catch (Exception ex)
             {
-                _logger.Warning(ex, "One or more CancelJob sends failed during shutdown — proceeding with cleanup");
+                _logger.Warning(ex, "One or more CancelJob sends failed during shutdown â€” proceeding with cleanup");
             }
         }
 
@@ -328,7 +328,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
                 providerConfigId, run.IssueIdentifier, AgentLabels.Cancelled, targetKind, CancellationToken.None);
         }
 
-        // Delegate state changes to lifecycle — returns cancelled issue identifiers
+        // Delegate state changes to lifecycle â€” returns cancelled issue identifiers
         var cancelledIssues = await _lifecycle.MarkAgentRunsCancelled();
 
         // Release dedup guards so issues become re-dispatchable after restart
@@ -391,7 +391,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
                 run, _providerManager.ActiveRepoProvider!, ct,
                 issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
             if (prUrl != null)
-                _lifecycle.EmitOutputLine($"📋 Draft PR #{run.PullRequestNumber} created");
+                _lifecycle.EmitOutputLine($"ðŸ“‹ Draft PR #{run.PullRequestNumber} created");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -501,7 +501,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     private async Task SwapAgentLabelAsync(PipelineRun run, string issueId, string newLabel, CancellationToken ct)
     {
         _logger.Information(
-            "Pipeline {RunId} SwapAgentLabelAsync: {IssueIdentifier} → {Label} (runType={RunType}, step={CurrentStep})",
+            "Pipeline {RunId} SwapAgentLabelAsync: {IssueIdentifier} â†’ {Label} (runType={RunType}, step={CurrentStep})",
             run.RunId, issueId, newLabel, run.RunType, run.CurrentStep);
         try
         {
@@ -556,7 +556,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     }
     public void Dispose()
     {
-        // Do not call DisposePreviousProvidersAsync synchronously — .GetAwaiter().GetResult()
+        // Do not call DisposePreviousProvidersAsync synchronously â€” .GetAwaiter().GetResult()
         // deadlocks in Blazor Server's SynchronizationContext (review finding #13).
         // DisposeAsync() is the correct disposal path; sync Dispose handles only sync resources.
         GC.SuppressFinalize(this);

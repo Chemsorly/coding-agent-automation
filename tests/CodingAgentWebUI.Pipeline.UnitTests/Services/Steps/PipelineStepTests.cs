@@ -1,4 +1,4 @@
-using AwesomeAssertions;
+﻿using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -7,7 +7,7 @@ using Moq;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services.Steps;
 
-// Decision (Issue #297): Approach 1 selected — IAgentPhaseExecutor and IQualityGateExecutor interfaces
+// Decision (Issue #297): Approach 1 selected â€” IAgentPhaseExecutor and IQualityGateExecutor interfaces
 // already exist and are fully mockable. Isolated tests for AnalyzeCodeStep, ReviewCodeStep, and
 // RunQualityGatesStep are in dedicated test classes below (AnalyzeCodeStepIsolatedTests,
 // ReviewCodeStepIsolatedTests, RunQualityGatesStepIsolatedTests).
@@ -73,7 +73,7 @@ public class PipelineStepTests
         };
     }
 
-    // ── FetchIssueStep ──
+    // â”€â”€ FetchIssueStep â”€â”€
 
     [Fact]
     public async Task FetchIssueStep_Success_SetsContextIssueAndComments()
@@ -83,12 +83,12 @@ public class PipelineStepTests
         _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
         _issueProvider.Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(comments);
 
-        var step = new FetchIssueStep(new IssueDescriptionParser());
+        var step = new FetchIssueStep(new IssueDescriptionParser(), new IssueImageExtractor());
         var context = BuildContext();
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
         Assert.Equal(StepResult.Continue, result);
-        context.Issue.Should().Be(issue);
+        context.Issue!.Identifier.Should().Be("42");
         context.IssueComments.Should().BeEquivalentTo(comments);
         _run.IssueTitle.Should().Be("Test");
     }
@@ -99,7 +99,7 @@ public class PipelineStepTests
         var issue = new IssueDetail { Identifier = "42", Title = "", Description = "Desc", Labels = [] };
         _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
 
-        var step = new FetchIssueStep(new IssueDescriptionParser());
+        var step = new FetchIssueStep(new IssueDescriptionParser(), new IssueImageExtractor());
         var context = BuildContext();
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
@@ -113,7 +113,7 @@ public class PipelineStepTests
         var issue = new IssueDetail { Identifier = "42", Title = "Title", Description = "  ", Labels = [] };
         _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
 
-        var step = new FetchIssueStep(new IssueDescriptionParser());
+        var step = new FetchIssueStep(new IssueDescriptionParser(), new IssueImageExtractor());
         var context = BuildContext();
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
@@ -127,7 +127,7 @@ public class PipelineStepTests
         _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Network error"));
 
-        var step = new FetchIssueStep(new IssueDescriptionParser());
+        var step = new FetchIssueStep(new IssueDescriptionParser(), new IssueImageExtractor());
         var context = BuildContext();
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
@@ -143,7 +143,7 @@ public class PipelineStepTests
         _issueProvider.Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("fail"));
 
-        var step = new FetchIssueStep(new IssueDescriptionParser());
+        var step = new FetchIssueStep(new IssueDescriptionParser(), new IssueImageExtractor());
         var context = BuildContext();
         var result = await step.ExecuteAsync(context, CancellationToken.None);
 
@@ -151,7 +151,68 @@ public class PipelineStepTests
         context.IssueComments.Should().BeEmpty();
     }
 
-    // ── CloneRepositoryStep ──
+    [Fact]
+    public async Task FetchIssueStep_WithImagesInBody_PopulatesIssueImages()
+    {
+        var description = "Here is a screenshot:\n![error](https://user-images.githubusercontent.com/123/image.png)\nEnd.";
+        var issue = new IssueDetail { Identifier = "42", Title = "Bug", Description = description, Labels = ["bug"] };
+        var comments = new List<IssueComment>();
+        _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
+        _issueProvider.Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(comments);
+
+        var step = new FetchIssueStep(new IssueDescriptionParser(), new IssueImageExtractor());
+        var context = BuildContext();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Continue, result);
+        context.Issue!.Images.Should().HaveCount(1);
+        context.Issue.Images[0].Url.Should().Be("https://user-images.githubusercontent.com/123/image.png");
+        context.Issue.Images[0].AltText.Should().Be("error");
+        context.Issue.Images[0].SourceType.Should().Be(ImageSourceType.Body);
+    }
+
+    [Fact]
+    public async Task FetchIssueStep_WithNoImages_ReconstructsIssueDetailWithEmptyImages()
+    {
+        var issue = new IssueDetail { Identifier = "42", Title = "Feature", Description = "No images here", Labels = [] };
+        var comments = new List<IssueComment>();
+        _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
+        _issueProvider.Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(comments);
+
+        var step = new FetchIssueStep(new IssueDescriptionParser(), new IssueImageExtractor());
+        var context = BuildContext();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Continue, result);
+        // After image extraction integration, the step reconstructs IssueDetail.
+        // The context.Issue should NOT be the same reference as the input issue.
+        context.Issue.Should().NotBeSameAs(issue);
+        context.Issue!.Images.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task FetchIssueStep_WithImagesInComments_PopulatesIssueImages()
+    {
+        var issue = new IssueDetail { Identifier = "42", Title = "Bug", Description = "Description text", Labels = [] };
+        var comments = new List<IssueComment>
+        {
+            new() { Id = "c1", Author = "user", Body = "See ![screenshot](https://example.com/img.png)", CreatedAt = DateTime.UtcNow }
+        };
+        _issueProvider.Setup(p => p.GetIssueAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(issue);
+        _issueProvider.Setup(p => p.ListCommentsAsync("42", It.IsAny<CancellationToken>())).ReturnsAsync(comments);
+
+        var step = new FetchIssueStep(new IssueDescriptionParser(), new IssueImageExtractor());
+        var context = BuildContext();
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepResult.Continue, result);
+        context.Issue!.Images.Should().HaveCount(1);
+        context.Issue.Images[0].Url.Should().Be("https://example.com/img.png");
+        context.Issue.Images[0].SourceType.Should().Be(ImageSourceType.Comment);
+        context.Issue.Images[0].SourceIndex.Should().Be(0);
+    }
+
+    // â”€â”€ CloneRepositoryStep â”€â”€
 
     [Fact]
     public async Task CloneRepositoryStep_Success_SetsWorkspaceAndTransitions()
@@ -182,7 +243,7 @@ public class PipelineStepTests
         _run.FailureReason.Should().Contain("Clone failed");
     }
 
-    // ── SyncBrainPreRunStep ──
+    // â”€â”€ SyncBrainPreRunStep â”€â”€
 
     [Fact]
     public async Task SyncBrainPreRunStep_NoBrainProvider_Skips()
@@ -254,7 +315,7 @@ public class PipelineStepTests
             .Which.ContextLoaded.Should().BeFalse();
     }
 
-    // ── DetectReworkStep ──
+    // â”€â”€ DetectReworkStep â”€â”€
 
     [Fact]
     public async Task DetectReworkStep_FindsPr_SetsLinkedPullRequest()
@@ -418,7 +479,7 @@ public class PipelineStepTests
         _repoProvider.Verify(p => p.ClosePullRequestAsync(5, It.IsAny<CancellationToken>()), Times.Never);
     }
 
-    // ── CreateBranchStep ──
+    // â”€â”€ CreateBranchStep â”€â”€
 
     [Fact]
     public async Task CreateBranchStep_NewIssue_CreatesBranch()
@@ -506,7 +567,7 @@ public class PipelineStepTests
         _run.FailureReason.Should().Contain("branch");
     }
 
-    // ── GenerateCodeStep ──
+    // â”€â”€ GenerateCodeStep â”€â”€
 
     [Fact]
     public async Task GenerateCodeStep_ReworkNoPrompt_SkipsCodeGen()
@@ -527,7 +588,7 @@ public class PipelineStepTests
         _outputLines.Should().Contain(l => l.Contains("skipping code generation"));
     }
 
-    // ── BrainPullBeforeWriteStep ──
+    // â”€â”€ BrainPullBeforeWriteStep â”€â”€
 
     [Fact]
     public async Task BrainPullBeforeWriteStep_NoBrain_Skips()
@@ -553,7 +614,7 @@ public class PipelineStepTests
         Assert.Equal(StepResult.Continue, result);
     }
 
-    // ── PipelineStepRunner ──
+    // â”€â”€ PipelineStepRunner â”€â”€
 
     [Fact]
     public async Task PipelineStepRunner_ExecutesStepsInOrder()
@@ -604,7 +665,7 @@ public class PipelineStepTests
             () => PipelineStepRunner.ExecuteAsync([step], context, cts.Token));
     }
 
-    // ── AnalyzeCodeStep ──
+    // â”€â”€ AnalyzeCodeStep â”€â”€
 
     [Fact]
     public async Task AnalyzeCodeStep_NullIssue_ThrowsInvalidOperationException()
@@ -630,7 +691,7 @@ public class PipelineStepTests
             () => step.ExecuteAsync(context, CancellationToken.None));
     }
 
-    // ── GenerateCodeStep (null guard) ──
+    // â”€â”€ GenerateCodeStep (null guard) â”€â”€
 
     [Fact]
     public async Task GenerateCodeStep_NullIssue_ThrowsInvalidOperationException()
@@ -645,7 +706,7 @@ public class PipelineStepTests
             () => step.ExecuteAsync(context, CancellationToken.None));
     }
 
-    // ── ReviewCodeStep (null guard) ──
+    // â”€â”€ ReviewCodeStep (null guard) â”€â”€
 
     [Fact]
     public async Task ReviewCodeStep_NullIssue_ThrowsInvalidOperationException()
@@ -660,7 +721,7 @@ public class PipelineStepTests
             () => step.ExecuteAsync(context, CancellationToken.None));
     }
 
-    // ── RunQualityGatesStep ──
+    // â”€â”€ RunQualityGatesStep â”€â”€
 
     [Fact]
     public async Task RunQualityGatesStep_RunAlreadyFailed_ReturnsStop()
@@ -704,7 +765,7 @@ public class PipelineStepTests
         Assert.Equal(StepResult.Stop, result);
     }
 
-    // ── PipelineStepRunner (null guard) ──
+    // â”€â”€ PipelineStepRunner (null guard) â”€â”€
 
     [Fact]
     public async Task PipelineStepRunner_NullSteps_ThrowsArgumentNullException()
@@ -721,7 +782,7 @@ public class PipelineStepTests
             () => PipelineStepRunner.ExecuteAsync([], null!, CancellationToken.None));
     }
 
-    // ── Helper ──
+    // â”€â”€ Helper â”€â”€
 
     private sealed class TestStep : IPipelineStep
     {

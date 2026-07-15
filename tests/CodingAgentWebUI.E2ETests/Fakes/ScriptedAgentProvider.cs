@@ -18,6 +18,8 @@ public sealed class ScriptedAgentProvider : IAgentProvider
 
     public bool SupportsParallelExecution => false;
 
+    public bool SupportsVisionInput => true;
+
     public IReadOnlyList<string> PipelineInjectedPaths { get; } = [".kiro"];
 
     /// <summary>

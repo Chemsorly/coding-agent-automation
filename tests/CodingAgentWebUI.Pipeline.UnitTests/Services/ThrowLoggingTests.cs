@@ -1,4 +1,4 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using AwesomeAssertions;
 using Moq;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -48,7 +48,7 @@ public class ThrowLoggingTests : IDisposable
             AgentTimeout = TimeSpan.FromMinutes(10),
             StallPollInterval = TimeSpan.FromMilliseconds(50),
             StallWarningInterval = TimeSpan.FromHours(1),
-            MaxAnalysisRetries = 0, // no retries — fail immediately
+            MaxAnalysisRetries = 0, // no retries â€” fail immediately
             AnalysisReviewEnabled = false
         };
 
@@ -69,7 +69,7 @@ public class ThrowLoggingTests : IDisposable
         try { Directory.Delete(_workspacePath, recursive: true); } catch { }
     }
 
-    // ─── AgentPhaseExecutor.Analysis: analysis.md too short ───────────────────────
+    // â”€â”€â”€ AgentPhaseExecutor.Analysis: analysis.md too short â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task Analysis_FileTooShort_LogsWarningBeforeThrow()
@@ -91,7 +91,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>(), It.IsAny<long>(), It.IsAny<int>()), Times.AtLeastOnce);
     }
 
-    // ─── AgentPhaseExecutor.Analysis: assessment not found ────────────────────────
+    // â”€â”€â”€ AgentPhaseExecutor.Analysis: assessment not found â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task Analysis_AssessmentNotFound_LogsWarningBeforeThrow()
@@ -117,7 +117,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>(), It.IsAny<string>()), Times.AtLeastOnce);
     }
 
-    // ─── AgentPhaseExecutor.Analysis: assessment null recommendation ─────────────
+    // â”€â”€â”€ AgentPhaseExecutor.Analysis: assessment null recommendation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task Analysis_NullRecommendation_LogsWarningBeforeThrow()
@@ -144,7 +144,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>()), Times.AtLeastOnce);
     }
 
-    // ─── AgentPhaseExecutor.Analysis: malformed JSON assessment ───────────────────
+    // â”€â”€â”€ AgentPhaseExecutor.Analysis: malformed JSON assessment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task Analysis_MalformedJsonAssessment_LogsWarningBeforeThrow()
@@ -172,7 +172,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>()), Times.AtLeastOnce);
     }
 
-    // ─── PipelineProviderManager: ResolveProviderConfigAsync not found ────────────
+    // â”€â”€â”€ PipelineProviderManager: ResolveProviderConfigAsync not found â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task ProviderManager_ResolveNotFound_LogsErrorBeforeThrow()
@@ -195,7 +195,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>(), It.IsAny<ProviderKind>()), Times.Once);
     }
 
-    // ─── PipelineProviderManager: ValidateProvidersAsync repo validation fails ───
+    // â”€â”€â”€ PipelineProviderManager: ValidateProvidersAsync repo validation fails â”€â”€â”€
 
     [Fact]
     public async Task ProviderManager_RepoValidationFails_LogsErrorBeforeThrow()
@@ -227,7 +227,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>()), Times.Once);
     }
 
-    // ─── PipelineProviderManager: ValidateProvidersAsync agent validation fails ──
+    // â”€â”€â”€ PipelineProviderManager: ValidateProvidersAsync agent validation fails â”€â”€
 
     [Fact]
     public async Task ProviderManager_AgentValidationFails_LogsErrorBeforeThrow()
@@ -261,7 +261,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>()), Times.Once);
     }
 
-    // ─── PipelineStepContext: BuildAgentPhaseContext with null Issue ──────────────
+    // â”€â”€â”€ PipelineStepContext: BuildAgentPhaseContext with null Issue â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public void StepContext_BuildAgentPhaseContext_NullIssue_LogsErrorBeforeThrow()
@@ -278,7 +278,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>()), Times.Once);
     }
 
-    // ─── PipelineStepContext: BuildAgentPhaseContext with null ParsedIssue ────────
+    // â”€â”€â”€ PipelineStepContext: BuildAgentPhaseContext with null ParsedIssue â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public void StepContext_BuildAgentPhaseContext_NullParsedIssue_LogsErrorBeforeThrow()
@@ -296,7 +296,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>()), Times.Once);
     }
 
-    // ─── CreateBranchStep: Issue null before branch creation ──────────────────────
+    // â”€â”€â”€ CreateBranchStep: Issue null before branch creation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task CreateBranchStep_NullIssue_LogsErrorBeforeThrow()
@@ -316,7 +316,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>()), Times.Once);
     }
 
-    // ─── FetchIssueStep: null IssueProvider ──────────────────────────────────────
+    // â”€â”€â”€ FetchIssueStep: null IssueProvider â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public async Task FetchIssueStep_NullIssueProvider_LogsErrorBeforeThrow()
@@ -325,7 +325,7 @@ public class ThrowLoggingTests : IDisposable
         var context = CreateMinimalStepContext(logger.Object);
         // IssueProvider is null by default in CreateMinimalStepContext
 
-        var step = new FetchIssueStep(new IssueDescriptionParser());
+        var step = new FetchIssueStep(new IssueDescriptionParser(), new IssueImageExtractor());
 
         var ex = await Assert.ThrowsAsync<InvalidOperationException>(
             () => step.ExecuteAsync(context, CancellationToken.None));
@@ -336,7 +336,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>()), Times.Once);
     }
 
-    // ─── PullRequestFinalizationService: bare throw after activity status set ────
+    // â”€â”€â”€ PullRequestFinalizationService: bare throw after activity status set â”€â”€â”€â”€
 
     [Fact]
     public async Task PrFinalization_ExceptionDuringPrCreation_LogsErrorBeforeRethrow()
@@ -365,7 +365,7 @@ public class ThrowLoggingTests : IDisposable
             It.IsAny<string>()), Times.Never); // baseline: no calls yet
     }
 
-    // ─── GitHubJwtGenerator: invalid PEM ─────────────────────────────────────────
+    // â”€â”€â”€ GitHubJwtGenerator: invalid PEM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     [Fact]
     public void GitHubJwtGenerator_InvalidPem_LogsErrorBeforeThrow()
@@ -377,11 +377,11 @@ public class ThrowLoggingTests : IDisposable
             () => CodingAgentWebUI.Pipeline.GitHub.GitHubJwtGenerator.GenerateFromBase64("client-id", invalidBase64));
 
         ex.Message.Should().Contain("PEM private key");
-        // GitHubJwtGenerator is static — uses Serilog.Log.Error
+        // GitHubJwtGenerator is static â€” uses Serilog.Log.Error
         // Verify the throw still happens correctly (static logging tested indirectly)
     }
 
-    // ─── Helpers ─────────────────────────────────────────────────────────────────
+    // â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private AgentPhaseContext BuildContext()
     {
