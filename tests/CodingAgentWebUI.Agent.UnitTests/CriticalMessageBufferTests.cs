@@ -242,6 +242,50 @@ public class CriticalMessageBufferTests
         buffer.HasPendingMessages.Should().BeFalse();
     }
 
+    // ── Base-Type DrainAttempts Increment (via buffer round-trip) ──────
+
+    // TODO: These tests validate buffer-level semantics (enqueue preserves derived type after
+    // base-type with-expression increment). The production DrainBufferAsync path for a non-
+    // BufferedJobCompleted subtype is tested in CriticalMessageBufferReplayTests.
+    // See: DrainBufferAsync_DropsNonJobCompletedSubtype_WhenMaxAttemptsExceeded
+
+    // TODO(review): These tests exercise C# record with-expression semantics in test code,
+    // not the production DrainBufferAsync code path. They would still pass if the production
+    // fix were reverted. They document a language behavior assumption rather than guarding
+    // against regression in the production increment logic.
+
+    [Fact]
+    public void BaseTypeWithExpression_BufferRoundTrip_PreservesDerivedType()
+    {
+        var buffer = new CriticalMessageBuffer();
+        BufferedCriticalMessage msg = new BufferedJobCompleted("job-1", CreatePayload(), DateTimeOffset.UtcNow, DrainAttempts: 2);
+
+        // Simulate what production DrainBufferAsync does: increment via base type, re-enqueue
+        var rebuffered = msg with { DrainAttempts = msg.DrainAttempts + 1 };
+        buffer.Enqueue(rebuffered);
+
+        var drained = buffer.DrainAll();
+        drained[0].Should().BeOfType<BufferedJobCompleted>();
+        drained[0].DrainAttempts.Should().Be(3);
+        ((BufferedJobCompleted)drained[0]).JobId.Should().Be("job-1");
+    }
+
+    [Fact]
+    public void BaseTypeWithExpression_BufferRoundTrip_WorksForAnySubtype()
+    {
+        var buffer = new CriticalMessageBuffer();
+        BufferedCriticalMessage msg = new TestBufferedMessage("test-reason", DateTimeOffset.UtcNow, DrainAttempts: 0);
+
+        // Simulate what production DrainBufferAsync does: increment via base type, re-enqueue
+        var rebuffered = msg with { DrainAttempts = msg.DrainAttempts + 1 };
+        buffer.Enqueue(rebuffered);
+
+        var drained = buffer.DrainAll();
+        drained[0].Should().BeOfType<TestBufferedMessage>();
+        drained[0].DrainAttempts.Should().Be(1);
+        ((TestBufferedMessage)drained[0]).Reason.Should().Be("test-reason");
+    }
+
     // ── Null Validation ──────────────────────────────────────────────────
 
     [Fact]
@@ -253,6 +297,11 @@ public class CriticalMessageBufferTests
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
+
+    private sealed record TestBufferedMessage(
+        string Reason,
+        DateTimeOffset EnqueuedAt,
+        int DrainAttempts = 0) : BufferedCriticalMessage(EnqueuedAt, DrainAttempts);
 
     private static BufferedJobCompleted CreateCompletedMessage(string jobId) =>
         new(jobId, CreatePayload(), DateTimeOffset.UtcNow);

@@ -101,7 +101,8 @@ public sealed class ActiveRunRehydrationIntegrationTests : IDisposable
             dispatcher,
             mockLabelSwapper.Object,
             mockConfigStore.Object,
-            _mockLogger.Object);
+            _mockLogger.Object,
+            lifecycleManager: new Mock<IRunLifecycleManager>().Object);
 
         // Act — run a sweep (Phase 3 checks for orphaned runs)
         await monitor.SweepAsync(CancellationToken.None);

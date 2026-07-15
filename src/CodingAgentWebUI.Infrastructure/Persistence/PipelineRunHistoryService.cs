@@ -53,6 +53,15 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     public void AddRunToHistory(PipelineRun run)
     {
         ArgumentNullException.ThrowIfNull(run);
+
+        // Defense-in-depth: reject consolidation runs from being persisted to pipeline history.
+        // Consolidation has its own history on the Consolidation page.
+        if (run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
+        {
+            _logger.Debug("AddRunToHistory: skipping consolidation run {RunId}", run.RunId);
+            return;
+        }
+
         var summary = run.ToSummary();
         lock (_lock)
         {
@@ -97,7 +106,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
                 {
                     var json = File.ReadAllText(file.FullName);
                     var summary = System.Text.Json.JsonSerializer.Deserialize<PipelineRunSummary>(json, JsonOptions);
-                    if (summary != null)
+                    if (summary != null && summary.InitiatedBy != ConsolidationConstants.InitiatedBy)
                         summaries.Add(summary);
                 }
                 catch (Exception ex)
