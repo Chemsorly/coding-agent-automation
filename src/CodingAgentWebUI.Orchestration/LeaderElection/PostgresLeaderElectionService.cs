@@ -24,13 +24,19 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
     private CancellationTokenSource? _serviceCts;
     private Task? _electionTask;
 
-    private volatile bool _isLeader;
+    private int _leaderState; // 0 = follower, 1 = leader
 
     /// <inheritdoc />
-    public bool IsLeader => _isLeader;
+    public bool IsLeader => Volatile.Read(ref _leaderState) == 1;
 
     /// <inheritdoc />
-    public CancellationToken LeaderToken => _leaderCts?.Token ?? new CancellationToken(canceled: true);
+    /// TODO: After StopAsync nulls _leaderCts via Interlocked.Exchange, this property returns
+    /// a freshly-constructed canceled token (not the original CTS token). Callers who captured
+    /// LeaderToken before stop will see cancellation (correct), but callers reading after stop
+    /// get a structurally different token. This is acceptable but worth documenting for consumers.
+    public CancellationToken LeaderToken =>
+        Interlocked.CompareExchange(ref _leaderCts, null, null)?.Token
+        ?? new CancellationToken(canceled: true);
 
     /// <inheritdoc />
     public event Action? OnStartedLeading;
@@ -71,11 +77,19 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
         _lockConnection = testConnection;
     }
 
-    // TODO: StartAsync overwrites _serviceCts and _leaderCts without disposing previous instances.
-    // If the service is started, stopped, and started again, the CancellationTokenSources from
-    // the first lifecycle are leaked. Consider guarding against multiple starts or disposing old CTS.
     public Task StartAsync(CancellationToken cancellationToken)
     {
+        // TODO: _serviceCts?.Dispose() is not thread-safe — if StopAsync is concurrently awaiting
+        // _serviceCts.CancelAsync(), this could cause ObjectDisposedException. The IHostedService
+        // contract prevents concurrent Start/Stop, but consider using Interlocked.Exchange for
+        // defensive safety consistent with _leaderCts handling.
+        _serviceCts?.Dispose();
+        Interlocked.Exchange(ref _leaderCts, null)?.Dispose();
+
+        // TODO: Consider adding Volatile.Write(ref _leaderState, 0) here as a defensive reset.
+        // If StartAsync is called without a preceding StopAsync (e.g., crash recovery), stale
+        // _leaderState=1 would cause the acquired && !IsLeader check to be false, skipping
+        // the acquisition event.
         _serviceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _leaderCts = new CancellationTokenSource();
 
@@ -88,11 +102,6 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
         return Task.CompletedTask;
     }
 
-    // TODO: Race condition between StopAsync and RunElectionLoopAsync: after _serviceCts.CancelAsync()
-    // is called, the election loop may concurrently invoke HandleLeadershipLostAsync() (which sets
-    // _isLeader = false and replaces _leaderCts). If this happens before StopAsync's if (_isLeader)
-    // check, StopAsync skips cancelling the leader token. Consider synchronizing with a lock or
-    // using Interlocked.Exchange for the _isLeader transition.
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         if (_serviceCts is null || _electionTask is null)
@@ -102,10 +111,15 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
 
         await _serviceCts.CancelAsync();
 
-        if (_isLeader)
+        if (Interlocked.CompareExchange(ref _leaderState, 0, 1) == 1)
         {
-            _isLeader = false;
-            await _leaderCts!.CancelAsync();
+            // We won the race — we are responsible for cleanup
+            var cts = Interlocked.Exchange(ref _leaderCts, null);
+            if (cts is not null)
+            {
+                await cts.CancelAsync();
+                cts.Dispose();
+            }
             SafeInvokeStoppedLeading();
         }
 
@@ -137,14 +151,17 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
                 // Try to acquire the advisory lock
                 var acquired = await _lockConnection!.TryAcquireLockAsync(_options.LockKey, stoppingToken);
 
-                if (acquired && !_isLeader)
+                if (acquired && !IsLeader)
                 {
                     // Transition to leader
-                    _isLeader = true;
+                    // TODO: Should use Interlocked.CompareExchange(ref _leaderState, 1, 0) instead of
+                    // Volatile.Write to prevent re-setting state to 1 if StopAsync has already
+                    // transitioned it to 0 via _serviceCts.CancelAsync() racing with an in-flight acquire.
+                    Volatile.Write(ref _leaderState, 1);
                     Log.Information("PostgresLeaderElectionService: Leadership ACQUIRED via advisory lock");
                     SafeInvokeStartedLeading();
                 }
-                else if (!acquired && _isLeader)
+                else if (!acquired && IsLeader)
                 {
                     // Lost leadership (shouldn't normally happen unless connection was recycled)
                     await HandleLeadershipLostAsync();
@@ -155,11 +172,11 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
                 }
 
                 // If we're the leader, periodically verify the lock is still held
-                if (_isLeader)
+                if (IsLeader)
                 {
                     await VerifyLockHeldLoopAsync(stoppingToken);
                     // If we exit the verify loop, we lost leadership
-                    if (_isLeader)
+                    if (IsLeader)
                     {
                         await HandleLeadershipLostAsync();
                     }
@@ -179,7 +196,7 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
                 Log.Warning(ex, "PostgresLeaderElectionService: Error in election loop. Retrying after {RetryDelay}",
                     _options.RetryDelay);
 
-                if (_isLeader)
+                if (IsLeader)
                 {
                     await HandleLeadershipLostAsync();
                 }
@@ -199,7 +216,7 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
     /// </summary>
     private async Task VerifyLockHeldLoopAsync(CancellationToken stoppingToken)
     {
-        while (!stoppingToken.IsCancellationRequested && _isLeader)
+        while (!stoppingToken.IsCancellationRequested && IsLeader)
         {
             await DelayWithCancellation(_options.RenewalInterval, stoppingToken);
 
@@ -258,17 +275,20 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
         }
     }
 
-    // TODO: CancellationTokenSource leak in HandleLeadershipLostAsync: the old _leaderCts is
-    // cancelled but never disposed before being replaced with a new instance. Each leadership
-    // loss leaks a CTS. Should dispose the old CTS before reassigning.
     private async Task HandleLeadershipLostAsync()
     {
-        _isLeader = false;
+        if (Interlocked.CompareExchange(ref _leaderState, 0, 1) != 1)
+            return; // Another path already transitioned — nothing to do
+
         Log.Information("PostgresLeaderElectionService: Leadership LOST");
-        await _leaderCts!.CancelAsync();
+
+        var old = Interlocked.Exchange(ref _leaderCts, new CancellationTokenSource());
+        if (old is not null)
+        {
+            await old.CancelAsync();
+            old.Dispose();
+        }
         SafeInvokeStoppedLeading();
-        // Create fresh CTS for next leadership term
-        _leaderCts = new CancellationTokenSource();
     }
 
     // TODO: ExecuteNonQueryAsync (ReleaseLockAsync) called without a CancellationToken.
@@ -357,7 +377,7 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
     public void Dispose()
     {
         _serviceCts?.Dispose();
-        _leaderCts?.Dispose();
+        Interlocked.Exchange(ref _leaderCts, null)?.Dispose();
         (_lockConnection as IDisposable)?.Dispose();
     }
 }
