@@ -29,7 +29,7 @@ public interface IRunLifecycleManager
     /// Returns the removed PipelineRun, or null if the run wasn't found (already processed).
     /// Thread-safe: uses RemoveRun as atomic claim to prevent double-processing.
     /// </summary>
-    Task<PipelineRun?> FailRunAsync(string runId, string failureReason, CancellationToken ct);
+    Task<PipelineRun?> FailRunAsync(string runId, string failureReason, CancellationToken ct, FailureReason? failureReasonEnum = null);
 
     /// <summary>
     /// Atomically terminates a run as Completed/Succeeded. Performs in order:
@@ -42,7 +42,8 @@ public interface IRunLifecycleManager
     /// since the final label depends on business logic in ReportJobCompleted).
     /// Returns the removed PipelineRun, or null if not found.
     /// </summary>
-    Task<PipelineRun?> CompleteRunAsync(string runId, WorkItemStatus terminalStatus, CancellationToken ct);
+    Task<PipelineRun?> CompleteRunAsync(string runId, WorkItemStatus terminalStatus, CancellationToken ct,
+        string? errorMessage = null, FailureReason? failureReason = null);
 
     /// <summary>
     /// Atomically cancels a run. Performs in order:
@@ -78,5 +79,6 @@ public interface IRunLifecycleManager
     /// but the DB row is still in a non-terminal state.
     /// No-op in Legacy mode.
     /// </summary>
-    Task TransitionWorkItemToFailedAsync(string runId, CancellationToken ct);
+    Task TransitionWorkItemToFailedAsync(string runId, CancellationToken ct,
+        string? errorMessage = null, FailureReason? failureReason = null);
 }

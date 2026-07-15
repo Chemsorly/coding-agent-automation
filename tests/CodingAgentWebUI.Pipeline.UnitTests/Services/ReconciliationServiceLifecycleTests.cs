@@ -403,7 +403,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
 
         var mockLifecycle = new Mock<IRunLifecycleManager>();
         mockLifecycle
-            .Setup(m => m.FailRunAsync(workItemId.ToString(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(m => m.FailRunAsync(workItemId.ToString(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null); // Simulate "not in memory" — fallback path
 
         var mockLabelSwapper = new Mock<ILabelSwapper>();
@@ -419,7 +419,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         mockLifecycle.Verify(m => m.FailRunAsync(
             workItemId.ToString(),
             It.Is<string>(s => s.Contains("Timeout")),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()), Times.Once);
 
         // Fallback: DB transition fires
         await using var db = await _dbFactory.CreateDbContextAsync();
@@ -450,7 +450,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
             "ip-1", "rp-1", initiatedBy: "manual");
         var mockLifecycle = new Mock<IRunLifecycleManager>();
         mockLifecycle
-            .Setup(m => m.FailRunAsync(workItemId.ToString(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(m => m.FailRunAsync(workItemId.ToString(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync(mockRun); // Lifecycle manager handled it fully
 
         var service = CreateService(lifecycleManager: mockLifecycle.Object);
@@ -462,7 +462,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         mockLifecycle.Verify(m => m.FailRunAsync(
             workItemId.ToString(),
             It.Is<string>(s => s.Contains("Timeout")),
-            It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()), Times.Once);
 
         // DB item should NOT have been transitioned by ReconciliationService directly
         // (FailRunAsync handles it internally via WorkItemTransitionService)

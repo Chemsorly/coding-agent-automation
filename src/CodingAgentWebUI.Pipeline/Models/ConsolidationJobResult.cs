@@ -40,6 +40,13 @@ public sealed class ConsolidationJobResult
     /// <summary>Token usage from the brain consolidation diff summary call (brain phase only).</summary>
     [Key(8)]
     public TokenUsage? DiffSummaryTokenUsage { get; init; }
+
+    /// <summary>
+    /// Typed failure category. Set to <see cref="FailureReason.ExitCodeFailure"/> when
+    /// the agent process exits with a non-zero code. Null for success or untyped failures.
+    /// </summary>
+    [Key(9)]
+    public FailureReason? FailureCategory { get; init; }
 }
 
 /// <summary>

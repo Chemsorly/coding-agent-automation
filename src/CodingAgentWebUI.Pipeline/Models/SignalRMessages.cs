@@ -320,6 +320,14 @@ public sealed record JobCompletionPayload
 
     [Key(23)]
     public string? FinalLabel { get; init; }
+
+    /// <summary>
+    /// Typed failure category for the WorkItem FailureReason enum.
+    /// When set, reporters use this instead of defaulting to <see cref="Models.FailureReason.AgentError"/>.
+    /// Null means the reporter should apply its own default logic.
+    /// </summary>
+    [Key(24)]
+    public FailureReason? FailureCategory { get; init; }
 }
 
 /// <summary>

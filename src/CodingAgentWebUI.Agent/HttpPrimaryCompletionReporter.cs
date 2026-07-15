@@ -62,7 +62,10 @@ public sealed class HttpPrimaryCompletionReporter : IJobCompletionReporter
             Status = terminalStatus,
             AgentId = _agentIdentity.Id,
             Result = SerializeResult(payload),
-            ErrorMessage = payload.FailureReason
+            ErrorMessage = payload.FailureReason,
+            FailureReason = terminalStatus == "Failed"
+                ? (payload.FailureCategory?.ToString() ?? nameof(Pipeline.Models.FailureReason.AgentError))
+                : null
         };
 
         await _lifecycleClient.PostStatusAsync(_workItemId, terminalUpdate, CancellationToken.None);

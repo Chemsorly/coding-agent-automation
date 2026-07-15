@@ -106,7 +106,9 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
                 try
                 {
-                    await _facade.TransitionWorkItemAsync(jobId, WorkItemStatus.Failed, ct);
+                    var rejectionError = $"Job rejected by agent after {maxRejectionRetries} attempts: {reason}";
+                    await _facade.TransitionWorkItemAsync(jobId, WorkItemStatus.Failed, ct,
+                        rejectionError, FailureReason.InfrastructureFailure);
                 }
                 catch (Exception ex)
                 {
@@ -183,7 +185,14 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
                 try
                 {
-                    await _facade.TransitionWorkItemAsync(jobId, consolidationWorkItemStatus, ct);
+                    var consolidationError = consolidationWorkItemStatus == WorkItemStatus.Failed
+                        ? payload.FailureReason ?? "Consolidation run failed"
+                        : null;
+                    var consolidationFailureEnum = consolidationWorkItemStatus == WorkItemStatus.Failed
+                        ? payload.FailureCategory ?? FailureReason.AgentError
+                        : (FailureReason?)null;
+                    await _facade.TransitionWorkItemAsync(jobId, consolidationWorkItemStatus, ct,
+                        consolidationError, consolidationFailureEnum);
                 }
                 catch (Exception ex)
                 {
@@ -220,7 +229,14 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             // persist history, and mark issue complete in dedup tracker.
             try
             {
-                var completedRun = await _lifecycleManager.CompleteRunAsync(jobId, workItemStatus, ct);
+                var errorMsg = workItemStatus == WorkItemStatus.Failed
+                    ? run.FailureReason ?? "Agent reported failure"
+                    : null;
+                var failureEnum = workItemStatus == WorkItemStatus.Failed
+                    ? payload.FailureCategory ?? FailureReason.AgentError
+                    : (FailureReason?)null;
+                var completedRun = await _lifecycleManager.CompleteRunAsync(jobId, workItemStatus, ct,
+                    errorMsg, failureEnum);
                 if (completedRun is null)
                 {
                     // Race: run was removed by RevertFailedDistributionAsync between GetRun and CompleteRunAsync.
@@ -229,7 +245,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                     _logger.Warning(
                         "CompleteRunAsync returned null for job {JobId} (race with RevertFailedDistributionAsync), attempting direct DB transition",
                         jobId);
-                    await _facade.TransitionWorkItemAsync(jobId, workItemStatus, ct);
+                    await _facade.TransitionWorkItemAsync(jobId, workItemStatus, ct, errorMsg, failureEnum);
                 }
             }
             catch (Exception ex)
@@ -245,7 +261,13 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 // Attempt to transition WorkItem to terminal state so it doesn't stay stuck in Running.
                 try
                 {
-                    await _facade.TransitionWorkItemAsync(jobId, workItemStatus, ct);
+                    var errorMsg = workItemStatus == WorkItemStatus.Failed
+                        ? run.FailureReason ?? "Agent reported failure (defensive cleanup after exception)"
+                        : null;
+                    var failureEnum = workItemStatus == WorkItemStatus.Failed
+                        ? payload.FailureCategory ?? FailureReason.AgentError
+                        : (FailureReason?)null;
+                    await _facade.TransitionWorkItemAsync(jobId, workItemStatus, ct, errorMsg, failureEnum);
                 }
                 catch (Exception innerEx)
                 {
@@ -276,7 +298,13 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 "ReportJobCompleted for job {JobId} — run not found, attempting DB recovery (finalStep={FinalStep})",
                 jobId, payload.FinalStep);
 
-            await _facade.TransitionWorkItemAsync(jobId, workItemStatus, ct);
+            var recoveryErrorMsg = workItemStatus == WorkItemStatus.Failed
+                ? payload.FailureReason ?? "Agent reported failure (run not in memory)"
+                : null;
+            var recoveryFailureEnum = workItemStatus == WorkItemStatus.Failed
+                ? payload.FailureCategory ?? FailureReason.AgentError
+                : (FailureReason?)null;
+            await _facade.TransitionWorkItemAsync(jobId, workItemStatus, ct, recoveryErrorMsg, recoveryFailureEnum);
 
             // TODO: Call _facade.MarkIssueComplete() after successful recovery to update the in-memory dedup tracker.
             // Without it, the closed-loop poll could re-dispatch this issue if the label swap below fails.
