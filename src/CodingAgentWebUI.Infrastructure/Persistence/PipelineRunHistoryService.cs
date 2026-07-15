@@ -62,6 +62,9 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
             return;
         }
 
+        // TODO: [BUG-12] Add terminal step guard (IsTerminal check) matching PostgresPipelineRunHistoryService
+        // to ensure file-based deployments also correct non-terminal CurrentStep before persist.
+        // Currently mitigated by RunLifecycleManager.CompleteRunAsync guard, but direct callers bypass it.
         var summary = run.ToSummary();
         lock (_lock)
         {

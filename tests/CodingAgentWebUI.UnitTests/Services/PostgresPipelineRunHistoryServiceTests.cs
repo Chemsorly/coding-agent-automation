@@ -426,6 +426,68 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         db.PipelineRuns.Should().BeEmpty();
     }
 
+    // ── Terminal Step Guard ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task AddRunToHistoryAsync_NonTerminalStep_ForcedToFailed()
+    {
+        // Arrange: run with non-terminal step (should never happen, but defense-in-depth catches it)
+        // TODO: [BUG-12] Verify that the warning log is emitted (acceptance criteria: "logged warning + corrected").
+        // Currently the logger mock is unverified — the warning could be removed without failing this test.
+        var runId = Guid.NewGuid().ToString();
+        var run = PipelineRun.Create(runId, "owner/repo#99", "Bug fix",
+            "ip-1", "rp-1");
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        run.MarkCompleted();
+
+        // Act
+        await _sut.AddRunToHistoryAsync(run);
+
+        // Assert: persisted with FinalStep corrected to Failed
+        using var db = new InMemoryPipelineDbContext(_dbOptions);
+        var entity = db.PipelineRuns.Single();
+        entity.FinalStep.Should().Be(PipelineStep.Failed);
+    }
+
+    [Fact]
+    public async Task AddRunToHistoryAsync_TerminalStep_NotMutated()
+    {
+        // Arrange: run with terminal step (normal flow)
+        var runId = Guid.NewGuid().ToString();
+        var run = PipelineRun.Create(runId, "owner/repo#100", "Feature",
+            "ip-1", "rp-1");
+        run.CurrentStep = PipelineStep.Completed;
+        run.MarkCompleted();
+
+        // Act
+        await _sut.AddRunToHistoryAsync(run);
+
+        // Assert: persisted with FinalStep unchanged
+        using var db = new InMemoryPipelineDbContext(_dbOptions);
+        var entity = db.PipelineRuns.Single();
+        entity.FinalStep.Should().Be(PipelineStep.Completed);
+    }
+
+    [Fact]
+    public void AddRunToHistory_NonTerminalStep_ForcedToFailed()
+    {
+        // Arrange: non-terminal step via sync (obsolete) method
+        // TODO: [BUG-12] Verify that the warning log is emitted (same gap as async variant above).
+        var runId = Guid.NewGuid().ToString();
+        var run = PipelineRun.Create(runId, "owner/repo#101", "Sync test",
+            "ip-1", "rp-1");
+        run.CurrentStep = PipelineStep.ReviewingCode;
+        run.MarkCompleted();
+
+        // Act
+        _sut.AddRunToHistory(run);
+
+        // Assert: persisted with FinalStep corrected to Failed
+        using var db = new InMemoryPipelineDbContext(_dbOptions);
+        var entity = db.PipelineRuns.Single();
+        entity.FinalStep.Should().Be(PipelineStep.Failed);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static PipelineRun CreateCompletedRun(
