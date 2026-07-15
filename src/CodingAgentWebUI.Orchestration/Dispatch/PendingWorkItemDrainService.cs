@@ -233,9 +233,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     {
                         // Dispatch failed — revert to Pending for next cycle
                         _agentResolver.ReleaseAgent(agentId);
-                        // TODO: This uses `ct` (the stoppingToken) which could be cancelled during shutdown,
-                        // causing the revert to fail — same latent bug pattern as the exception-handler paths.
-                        // For consistency, consider using CancellationToken.None here as well.
+                        // Note: this path still uses `ct` — the outer catch handler provides the safety net
+                        // by retrying with CancellationToken.None if this revert fails during shutdown.
                         await _transitionService.TransitionAsync(
                             item.Id, WorkItemStatus.Pending,
                             entity =>
