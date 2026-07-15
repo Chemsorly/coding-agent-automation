@@ -38,7 +38,8 @@ public class HubAuthorizationTests
             new JobDispatcherService(registry, new Mock<ILogger>().Object),
             new Mock<ILabelSwapper>().Object,
             mockConfigStore.Object,
-            new Mock<ILogger>().Object);
+            new Mock<ILogger>().Object,
+            lifecycleManager: new Mock<IRunLifecycleManager>().Object);
 
     private static AgentEntry RegisterAgent(
         AgentRegistryService registry,

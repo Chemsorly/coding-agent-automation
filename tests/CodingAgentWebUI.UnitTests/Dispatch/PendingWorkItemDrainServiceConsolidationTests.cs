@@ -396,6 +396,69 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
         item.DispatchedAt.Should().BeNull();
     }
 
+    [Fact]
+    public async Task DrainPendingItems_ConsolidationItem_ShutdownDuringDispatch_RevertsWorkItemToPending()
+    {
+        // Reproduction: When stoppingToken is cancelled during consolidation dispatch (graceful shutdown),
+        // the catch block's revert TransitionAsync also used the same cancelled token,
+        // causing the revert to throw OperationCanceledException and leaving the work item
+        // stuck in Dispatched status. Fix: use CancellationToken.None for the revert call.
+        var runId = Guid.NewGuid().ToString();
+        var workItemId = Guid.Parse(runId);
+        await InsertConsolidationWorkItem(workItemId, runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws");
+
+        // Setup: idle agent available
+        _mockResolver.Setup(r => r.ResolveAgent("dotnet"))
+            .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
+
+        // Setup: run exists and is Queued
+        _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
+
+        // Setup: dispatch simulates shutdown by cancelling CTS then throwing
+        using var cts = new CancellationTokenSource();
+        _mockConsolidationDispatcher
+            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
+            .Returns((string _, ConsolidationRunType _, string? _, string _, string _, CancellationToken _) =>
+            {
+                cts.Cancel(); // Simulate graceful shutdown — token is now cancelled
+                throw new OperationCanceledException(cts.Token);
+            });
+
+        var service = new PendingWorkItemDrainService(
+            _dbFactory,
+            _mockResolver.Object,
+            _mockAgentComm.Object,
+            _runService,
+            new WorkItemTransitionService(
+                new CancellationAwareDbContextFactory(_dbOptions),
+                NullLogger<WorkItemTransitionService>.Instance),
+            _mockPendingWork.Object,
+            _mockLabelSwapper.Object,
+            NullLogger<PendingWorkItemDrainService>.Instance,
+            null, // IProjectStore
+            _mockConsolidationDispatcher.Object,
+            _mockConsolidationRunStore.Object);
+
+        // Act: start with the CTS that will be cancelled inside the mock
+        service.Signal();
+        var task = service.StartAsync(cts.Token);
+        // TODO: Task.Delay is timing-dependent and may flake on slow CI runners.
+        // Consider a synchronization signal (e.g., SemaphoreSlim) to confirm processing completed.
+        await Task.Delay(3000);
+        await service.StopAsync(CancellationToken.None);
+
+        // Assert: WorkItem must be reverted to Pending despite the cancelled stoppingToken
+        await using var checkDb = await _dbFactory.CreateDbContextAsync();
+        var item = await checkDb.WorkItems.FindAsync(workItemId);
+        item.Should().NotBeNull();
+        item!.Status.Should().Be(WorkItemStatus.Pending,
+            "WorkItem must revert to Pending during graceful shutdown — revert must use CancellationToken.None");
+        item.AssignedAgentId.Should().BeNull("AssignedAgentId must be cleared on revert");
+        item.DispatchedAt.Should().BeNull("DispatchedAt must be cleared on revert");
+    }
+
     private PendingWorkItemDrainService CreateService()
     {
         return new PendingWorkItemDrainService(
@@ -470,5 +533,24 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
         public InMemoryDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
         public PipelineDbContext CreateDbContext() => new(_options);
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(new PipelineDbContext(_options));
+    }
+
+    /// <summary>
+    /// Factory that throws <see cref="OperationCanceledException"/> when CreateDbContextAsync
+    /// is called with a cancelled token — simulating real DB provider behavior that the
+    /// EF Core InMemory provider does not replicate (see dotnet/efcore#13368).
+    /// Used to prove that the revert path passes CancellationToken.None rather than the
+    /// cancelled stoppingToken.
+    /// </summary>
+    private sealed class CancellationAwareDbContextFactory : IDbContextFactory<PipelineDbContext>
+    {
+        private readonly DbContextOptions<PipelineDbContext> _options;
+        public CancellationAwareDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
+        public PipelineDbContext CreateDbContext() => new(_options);
+        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+        {
+            ct.ThrowIfCancellationRequested();
+            return Task.FromResult(new PipelineDbContext(_options));
+        }
     }
 }

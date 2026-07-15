@@ -907,15 +907,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                     (msg as BufferedJobCompleted)?.JobId ?? "unknown",
                     msg.DrainAttempts + 1, maxDrainAttempts);
 
-                // TODO: The fallback arm (_ => msg) does not increment DrainAttempts. If a new
-                // BufferedCriticalMessage subtype is added without updating this switch, the message
-                // would retry indefinitely. Consider incrementing DrainAttempts on the base type.
-                var rebuffered = msg switch
-                {
-                    BufferedJobCompleted c => c with { DrainAttempts = c.DrainAttempts + 1 },
-                    _ => msg
-                };
-                criticalMessageBuffer.Enqueue((BufferedCriticalMessage)rebuffered);
+                var rebuffered = msg with { DrainAttempts = msg.DrainAttempts + 1 };
+                criticalMessageBuffer.Enqueue(rebuffered);
 
                 // Re-buffer all remaining unprocessed messages to prevent data loss.
                 // These were already dequeued by DrainAll() and would be lost if not re-buffered.
