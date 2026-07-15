@@ -308,6 +308,15 @@ public sealed class PipelineStepContext
     }
 
     /// <summary>
+    /// Fails the run with the given reason and typed failure category.
+    /// </summary>
+    public Task FailRunAsync(string reason, FailureReason failureCategory, CancellationToken ct = default)
+    {
+        Run.FailureCategory = failureCategory;
+        return FailRunAsync(reason, ct);
+    }
+
+    /// <summary>
     /// Executes a critical async action. On failure (non-cancellation), logs an error,
     /// fails the run, and returns <see cref="StepResult.Stop"/>.
     /// Returns <see cref="StepResult.Continue"/> on success.

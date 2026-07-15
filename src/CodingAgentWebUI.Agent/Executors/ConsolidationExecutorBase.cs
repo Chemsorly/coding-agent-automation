@@ -61,7 +61,7 @@ public abstract class ConsolidationExecutorBase
         {
             Logger.Warning("{ExecutorName} agent exited with code {ExitCode} for run {RunId}",
                 ExecutorName, agentResult.ExitCode, jobId);
-            return (agentResult, CreateFailureResult(jobId, $"Agent exited with code {agentResult.ExitCode}"));
+            return (agentResult, CreateFailureResult(jobId, $"Agent exited with code {agentResult.ExitCode}", FailureReason.ExitCodeFailure));
         }
 
         return (agentResult, null);
@@ -92,8 +92,8 @@ public abstract class ConsolidationExecutorBase
         }
     }
 
-    protected static ConsolidationJobResult CreateFailureResult(string jobId, string errorMessage)
-        => new() { JobId = jobId, Success = false, ErrorMessage = errorMessage };
+    protected static ConsolidationJobResult CreateFailureResult(string jobId, string errorMessage, FailureReason? failureCategory = null)
+        => new() { JobId = jobId, Success = false, ErrorMessage = errorMessage, FailureCategory = failureCategory };
 
     protected static ConsolidationJobResult CreateCancelledResult(string jobId)
         => new() { JobId = jobId, Success = false, ErrorMessage = "Consolidation run was cancelled" };

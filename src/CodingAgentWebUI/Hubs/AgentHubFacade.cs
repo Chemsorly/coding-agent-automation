@@ -100,7 +100,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _runService.GetRun(jobId);
 
     /// <inheritdoc />
-    public async Task TransitionWorkItemAsync(string jobId, WorkItemStatus status, CancellationToken ct)
+    public async Task TransitionWorkItemAsync(string jobId, WorkItemStatus status, CancellationToken ct,
+        string? errorMessage = null, FailureReason? failureReason = null)
     {
         if (_workItemTransition is null || !Guid.TryParse(jobId, out var workItemId))
             return;
@@ -119,6 +120,11 @@ public sealed class AgentHubFacade : IAgentHubFacade
                 {
                     if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
                         item.CompletedAt = DateTimeOffset.UtcNow;
+                    if (status == WorkItemStatus.Failed)
+                    {
+                        item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
+                        item.FailureReason ??= failureReason ?? FailureReason.AgentError;
+                    }
                 }, ct);
 
                 if (result)
@@ -167,6 +173,11 @@ public sealed class AgentHubFacade : IAgentHubFacade
                         {
                             if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
                                 item.CompletedAt = DateTimeOffset.UtcNow;
+                            if (status == WorkItemStatus.Failed)
+                            {
+                                item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
+                                item.FailureReason ??= failureReason ?? FailureReason.AgentError;
+                            }
                         }, ct);
                     if (recovered)
                     {

@@ -117,7 +117,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         await hub.ReportJobCompleted("job-1", payload);
 
         // History + removal now delegated to lifecycle manager's CompleteRunAsync
-        _mockLifecycleManager.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLifecycleManager.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once);
     }
 
     [Fact]
@@ -258,11 +258,13 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         // CompleteRunAsync never called (run not in memory)
         _mockLifecycleManager.Verify(l => l.CompleteRunAsync(
-            It.IsAny<string>(), It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<string>(), It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Never);
 
         // Recovery path: TransitionWorkItemAsync called (will no-op at DB level for terminal state)
         _mockFacade.Verify(f => f.TransitionWorkItemAsync(
-            "job-1", WorkItemStatus.Cancelled, It.IsAny<CancellationToken>()), Times.Once);
+            "job-1", WorkItemStatus.Cancelled, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once);
     }
 
     #endregion
@@ -284,7 +286,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockLifecycleManager.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>()), Times.Once);
+        _mockLifecycleManager.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once);
     }
 
     [Fact]
@@ -300,7 +302,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockLifecycleManager.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>()), Times.Once);
+        // TODO: Use specific matchers for errorMsg and failureReason instead of It.IsAny<>().
+        // Current test would not detect a regression where error message or failure reason is
+        // accidentally passed as null or with incorrect values for the Failed path.
+        _mockLifecycleManager.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once);
     }
 
     #endregion
@@ -977,7 +982,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         _mockLifecycleManager
-            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>()))
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
             .ThrowsAsync(new InvalidOperationException("Simulated DB failure"));
 
         var hub = CreateHubWithOrchestration();
@@ -1660,7 +1665,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
         // Should re-queue (transition to Pending with incremented retry), NOT fail
         _mockFacade.Verify(f => f.RequeueWorkItemAsync("job-requeue-1", It.IsAny<CancellationToken>()), Times.Once);
         // Should NOT transition to Failed
-        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-requeue-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>()), Times.Never);
+        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-requeue-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Never);
         // Should NOT swap label to agent:error (item will be retried)
         _mockLabelSwapper.Verify(s => s.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), AgentLabels.Error, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -1682,7 +1688,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
         await hub.JobRejected("job-maxretry-1", "Agent is busy");
 
         // Should permanently fail (not re-queue)
-        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-maxretry-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>()), Times.Once);
+        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-maxretry-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once);
         _mockFacade.Verify(f => f.RequeueWorkItemAsync("job-maxretry-1", It.IsAny<CancellationToken>()), Times.Never);
         // Should swap label to agent:error
         _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);

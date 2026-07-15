@@ -71,7 +71,8 @@ public interface IAgentHubFacade
     /// Called from ReportJobCompleted to ensure DB state matches in-memory state.
     /// No-op if no DB-backed work distribution is configured.
     /// </summary>
-    Task TransitionWorkItemAsync(string jobId, WorkItemStatus status, CancellationToken ct);
+    Task TransitionWorkItemAsync(string jobId, WorkItemStatus status, CancellationToken ct,
+        string? errorMessage = null, FailureReason? failureReason = null);
 
     /// <summary>
     /// Adds a pipeline run to the active runs collection.

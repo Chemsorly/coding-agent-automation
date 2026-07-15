@@ -147,6 +147,22 @@ public class ConsolidationExecutorBaseTests
     }
 
     [Fact]
+    public async Task ExecuteAgentAndCheckAsync_NonZeroExitCode_SetsExitCodeFailureReason()
+    {
+        var executor = CreateExecutor();
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 130, OutputLines = [] });
+
+        var (result, failure) = await executor.InvokeExecuteAgentAndCheckAsync(
+            mockAgent.Object, new AgentRequest { Prompt = "test", WorkspacePath = "/tmp" }, "job-sigint", CancellationToken.None);
+
+        failure.Should().NotBeNull();
+        failure!.FailureCategory.Should().Be(FailureReason.ExitCodeFailure);
+        failure.ErrorMessage.Should().Contain("130");
+    }
+
+    [Fact]
     public async Task WrapWithCancellationHandlingAsync_Success_ReturnsActionResult()
     {
         var executor = CreateExecutor();

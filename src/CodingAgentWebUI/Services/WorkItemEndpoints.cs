@@ -22,6 +22,7 @@ public sealed class WorkItemStatusRequest
     public string? AgentId { get; init; }
     public string? Result { get; init; }
     public string? ErrorMessage { get; init; }
+    public string? FailureReason { get; init; }
 }
 
 /// <summary>
@@ -105,9 +106,25 @@ public static class WorkItemEndpoints
 
                 if (request.ErrorMessage is not null)
                     entity.ErrorMessage = request.ErrorMessage;
+                else if (request.Status == WorkItemStatus.Failed)
+                    entity.ErrorMessage = "Job failed without specific error information";
 
                 if (request.Result is not null)
                     entity.Result = request.Result;
+
+                // Set FailureReason enum from string when status is Failed
+                if (request.Status == WorkItemStatus.Failed)
+                {
+                    if (request.FailureReason is not null
+                        && Enum.TryParse<Pipeline.Models.FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason))
+                    {
+                        entity.FailureReason ??= parsedReason;
+                    }
+                    else
+                    {
+                        entity.FailureReason ??= Pipeline.Models.FailureReason.AgentError;
+                    }
+                }
 
                 // Set CompletedAt for terminal statuses
                 if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
