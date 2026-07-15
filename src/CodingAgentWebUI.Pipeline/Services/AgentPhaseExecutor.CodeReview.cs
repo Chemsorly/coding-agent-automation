@@ -414,6 +414,57 @@ public partial class AgentPhaseExecutor
     }
 
     /// <summary>
+    /// Merges a single successful review agent result into the shared accumulation state:
+    /// token usage, severity counts, findings text, agent findings dictionary, log, and chat history.
+    /// Returns the agent's critical finding count for caller accumulation.
+    /// </summary>
+    /// <remarks>
+    /// Callers are responsible for <c>agentsRun.Add</c> (placement differs between sequential/parallel)
+    /// and <c>context.Callbacks.NotifyChange()</c> (per-agent in sequential, once-after-loop in parallel).
+    /// </remarks>
+    private int MergeReviewAgentResult(
+        AgentPhaseContext context,
+        ReviewAgentConfig agent,
+        ReviewAgentResult result,
+        int iterationIndex,
+        System.Text.StringBuilder iterationFindings)
+    {
+        var run = context.Run;
+        var config = context.Config;
+
+        run.AccumulateTokenUsage(result.AgentResult, phase: $"review_{agent.Name}");
+        run.AddCodeReviewCounts(result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
+
+        if (!string.IsNullOrEmpty(result.FindingsText))
+        {
+            if (iterationFindings.Length > 0)
+                iterationFindings.AppendLine($"--- Agent: {agent.Name} ---");
+            iterationFindings.AppendLine(result.FindingsText);
+            run.CodeReviewAgentFindings[agent.Name] = result.FindingsText;
+        }
+
+        // TODO: The original parallel path logged "parallel review agent" while sequential logged "review agent".
+        // This shared method uses the sequential wording for both, which changes observable log output for the parallel path.
+        // Consider accepting a caller-provided prefix or restoring the "parallel" qualifier for parallel callers.
+        _logger.Information(
+            "Pipeline {RunId} review agent '{AgentName}' (iteration {Iteration}) completed with exit code {ExitCode}. " +
+            "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",
+            run.RunId, agent.Name, iterationIndex + 1, result.AgentResult.ExitCode,
+            result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
+
+        run.ChatHistory.Enqueue(new ChatEntry
+        {
+            Role = ChatRole.Agent,
+            Content = $"[Code review {iterationIndex + 1}/{config.CodeReview.MaxIterations} — {agent.Name}] " +
+                      (result.AgentResult.OutputLines.Count > 0
+                          ? string.Join(Environment.NewLine, result.AgentResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
+                          : PipelineConstants.NoOutputFallback)
+        });
+
+        return result.Severity.Critical;
+    }
+
+    /// <summary>
     /// Executes review agents sequentially (original behavior).
     /// Used for Kiro CLI or when parallel review is disabled.
     /// Returns the number of critical findings in this iteration.
@@ -427,7 +478,6 @@ public partial class AgentPhaseExecutor
         CancellationToken ct)
     {
         var run = context.Run;
-        var config = context.Config;
         var criticalCount = 0;
 
         for (var a = 0; a < agents.Count; a++)
@@ -446,32 +496,7 @@ public partial class AgentPhaseExecutor
             var result = await ExecuteSingleReviewAgentAsync(context, agent, iterationIndex, ct);
             agentsRun.Add(agent.Name);
 
-            run.AccumulateTokenUsage(result.AgentResult, phase: $"review_{agent.Name}");
-            run.AddCodeReviewCounts(result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
-            criticalCount += result.Severity.Critical;
-
-            if (!string.IsNullOrEmpty(result.FindingsText))
-            {
-                if (iterationFindings.Length > 0)
-                    iterationFindings.AppendLine($"--- Agent: {agent.Name} ---");
-                iterationFindings.AppendLine(result.FindingsText);
-                run.CodeReviewAgentFindings[agent.Name] = result.FindingsText;
-            }
-
-            _logger.Information(
-                "Pipeline {RunId} review agent '{AgentName}' (iteration {Iteration}) completed with exit code {ExitCode}. " +
-                "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",
-                run.RunId, agent.Name, iterationIndex + 1, result.AgentResult.ExitCode,
-                result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
-
-            run.ChatHistory.Enqueue(new ChatEntry
-            {
-                Role = ChatRole.Agent,
-                Content = $"[Code review {iterationIndex + 1}/{config.CodeReview.MaxIterations} — {agent.Name}] " +
-                          (result.AgentResult.OutputLines.Count > 0
-                              ? string.Join(Environment.NewLine, result.AgentResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
-                              : PipelineConstants.NoOutputFallback)
-            });
+            criticalCount += MergeReviewAgentResult(context, agent, result, iterationIndex, iterationFindings);
             context.Callbacks.NotifyChange();
         }
 
@@ -493,7 +518,6 @@ public partial class AgentPhaseExecutor
         CancellationToken ct)
     {
         var run = context.Run;
-        var config = context.Config;
 
         _logger.Information(
             "Pipeline {RunId} iteration {Iteration}: launching {AgentCount} review agents in parallel (provider={ProviderType})",
@@ -534,32 +558,7 @@ public partial class AgentPhaseExecutor
                 continue;
             }
 
-            run.AccumulateTokenUsage(result.AgentResult, phase: $"review_{agent.Name}");
-            run.AddCodeReviewCounts(result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
-            localCriticalCount += result.Severity.Critical;
-
-            if (!string.IsNullOrEmpty(result.FindingsText))
-            {
-                if (iterationFindings.Length > 0)
-                    iterationFindings.AppendLine($"--- Agent: {agent.Name} ---");
-                iterationFindings.AppendLine(result.FindingsText);
-                run.CodeReviewAgentFindings[agent.Name] = result.FindingsText;
-            }
-
-            _logger.Information(
-                "Pipeline {RunId} parallel review agent '{AgentName}' (iteration {Iteration}) completed with exit code {ExitCode}. " +
-                "CodeReviewFindings: {Critical} critical, {Warning} warning, {Suggestion} suggestion",
-                run.RunId, agent.Name, iterationIndex + 1, result.AgentResult.ExitCode,
-                result.Severity.Critical, result.Severity.Warning, result.Severity.Suggestion);
-
-            run.ChatHistory.Enqueue(new ChatEntry
-            {
-                Role = ChatRole.Agent,
-                Content = $"[Code review {iterationIndex + 1}/{config.CodeReview.MaxIterations} — {agent.Name}] " +
-                          (result.AgentResult.OutputLines.Count > 0
-                              ? string.Join(Environment.NewLine, result.AgentResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
-                              : PipelineConstants.NoOutputFallback)
-            });
+            localCriticalCount += MergeReviewAgentResult(context, agent, result, iterationIndex, iterationFindings);
         }
 
         context.Callbacks.NotifyChange();
