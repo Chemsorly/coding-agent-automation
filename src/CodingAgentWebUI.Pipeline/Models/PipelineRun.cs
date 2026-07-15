@@ -428,6 +428,7 @@ public sealed class PipelineRun
             : null,
         DecompositionSubIssuesCreated = DecompositionSubIssuesCreated,
         DecompositionSubIssuesAttempted = DecompositionSubIssuesAttempted,
+        ProjectId = ProjectId,
         ProjectName = ProjectName,
         DecompositionSource = DecompositionSource
     };
