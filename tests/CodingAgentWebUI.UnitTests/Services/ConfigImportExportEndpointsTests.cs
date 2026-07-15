@@ -16,6 +16,10 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// Tests for <see cref="ConfigImportExportEndpoints"/>.
 /// Validates export produces a complete bundle and import correctly upserts.
 /// </summary>
+// TODO: Add integration tests (using WebApplicationFactory) that validate the "AgentApiKey" authorization
+// policy on /api/config endpoints — verify 401 for unauthenticated requests and 200 with valid API key.
+// Current tests invoke handler methods directly and bypass routing/authorization middleware, so they
+// provide no regression protection for the RequireAuthorization("AgentApiKey") policy binding.
 public class ConfigImportExportEndpointsTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;

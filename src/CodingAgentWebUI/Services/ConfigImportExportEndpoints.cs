@@ -18,7 +18,7 @@ public static class ConfigImportExportEndpoints
     public static void MapConfigImportExportEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/config")
-            .RequireAuthorization();
+            .RequireAuthorization("AgentApiKey");
 
         group.MapGet("/export", ExportConfigAsync);
         group.MapPost("/import", ImportConfigAsync)
