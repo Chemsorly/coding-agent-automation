@@ -907,12 +907,9 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
 
         // Override with authoritative column values — the Settings JSON may be stale
         // if MoveTemplateAsync (or other code paths) updated columns without re-serializing JSON.
-        // TODO: entity.TemplateIds is a mutable List<string> assigned to IReadOnlyList<string> without a defensive copy.
-        // Safe in practice (DbContext is scoped/disposed shortly after), but a .ToList() would prevent subtle bugs
-        // if the entity's list is ever mutated before the returned record goes out of scope.
-        // TODO: Name, Enabled, and Description also exist as both typed columns and JSON fields but are not overridden here.
-        // If these columns ever diverge (similar to how TemplateIds diverged), DeserializeProject would return stale values.
-        // Consider overriding all typed-column fields for consistency with the null-Settings fallback path (line 893).
+        // NOTE: entity.TemplateIds is a mutable List assigned without a defensive copy (.ToList()).
+        // NOTE: Name, Enabled, Description are not overridden here; if they diverge, consider
+        // overriding all typed-column fields for consistency with the null-Settings fallback path.
         return project with
         {
             Id = entity.Id.ToString(),

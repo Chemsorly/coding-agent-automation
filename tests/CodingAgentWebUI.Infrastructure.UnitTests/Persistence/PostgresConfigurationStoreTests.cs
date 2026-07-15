@@ -675,16 +675,8 @@ public class PostgresConfigurationStoreTests : IDisposable
 
     // ── DeserializeProject correctness (stale Settings JSON) ────────────
 
-    // TODO: This test doesn't fully isolate the stale-JSON scenario. With both ResyncSettingsJson
-    // (syncs JSON during move) AND the DeserializeProject override applied, the JSON is never actually
-    // stale when read. The test passes if only one of the two fixes exists. Consider adding a test that
-    // directly manipulates entity.Settings to have stale TemplateIds (without going through MoveTemplateAsync)
-    // to independently validate the DeserializeProject override.
-    // TODO: Missing test for SaveTemplateAsync → GetProjectByIdAsync path. SaveTemplateAsync adds the
-    // template id to the TemplateIds column but does NOT update Settings JSON or call ResyncSettingsJson.
-    // A test that calls SaveTemplateAsync then loads the project would directly validate the override.
-    // TODO: Missing test for LoadProjectsAsync (bulk-load). The UI's actual code path uses LoadProjectsAsync
-    // which has a cache layer that could mask issues. Only GetProjectByIdAsync (single-entity) is tested.
+    // TODO: Add tests for SaveTemplateAsync → GetProjectByIdAsync path (stale JSON without ResyncSettingsJson)
+    // and LoadProjectsAsync (bulk-load path with cache layer).
     [Fact]
     public async Task MoveTemplateAsync_ProjectReturnsUpdatedTemplateIds_EvenWithStaleJson()
     {
@@ -728,7 +720,7 @@ public class PostgresConfigurationStoreTests : IDisposable
 
         await using (var db = new InMemoryPipelineDbContext(_dbOptions))
         {
-            db.Projects.Add(new CodingAgentWebUI.Infrastructure.Persistence.Entities.ProjectEntity
+            db.Projects.Add(new ProjectEntity
             {
                 Id = entityId,
                 Name = "Test",
