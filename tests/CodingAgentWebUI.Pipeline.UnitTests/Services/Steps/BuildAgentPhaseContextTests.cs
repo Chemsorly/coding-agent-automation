@@ -111,3 +111,94 @@ public class BuildAgentPhaseContextTests
         result.ParsedIssue.Should().BeSameAs(parsedIssue);
     }
 }
+
+// Additional tests for image integration (task 8.3)
+public class BuildAgentPhaseContextImageTests
+{
+    private readonly Mock<IRepositoryProvider> _repoProvider = new();
+    private readonly Mock<IAgentProvider> _agentProvider = new();
+    private readonly Mock<IConfigurationStore> _configStore = new();
+    private readonly Mock<IAgentIssueOperations> _issueOps = new();
+    private readonly Mock<IPipelineCallbacks> _callbacks = new();
+    private readonly Serilog.ILogger _logger = new Serilog.LoggerConfiguration().CreateLogger();
+
+    private PipelineStepContext BuildContext()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "test-run-id",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "issue-config",
+            RepoProviderConfigId = "repo-config",
+            StartedAt = DateTime.UtcNow,
+            CurrentStep = PipelineStep.Created,
+            RepositoryName = "owner/repo"
+        };
+
+        var config = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = Path.GetTempPath()
+        };
+
+        var prOrchestrator = new PullRequestOrchestrator(_logger);
+
+        return new PipelineStepContext
+        {
+            Run = run,
+            Config = config,
+            RepoProvider = _repoProvider.Object,
+            AgentProvider = _agentProvider.Object,
+            BrainProvider = null,
+            PipelineProvider = null,
+            Cts = new CancellationTokenSource(),
+            ConfigStore = _configStore.Object,
+            IssueProvider = null,
+            Callbacks = _callbacks.Object,
+            IssueOps = _issueOps.Object,
+            AgentExecution = new AgentPhaseExecutor(_logger),
+            QualityGates = new QualityGateExecutor(
+                Mock.Of<IQualityGateValidator>(), prOrchestrator, new CiLogWriter(_logger), new FeedbackService(_logger), _logger),
+            BrainSync = null,
+            PrOrchestrator = prOrchestrator,
+            Logger = _logger
+        };
+    }
+
+    [Fact]
+    public void BuildAgentPhaseContext_WithDownloadedImages_PropagatesImages()
+    {
+        var context = BuildContext();
+        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        var parsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
+        context.Issue = issue;
+        context.ParsedIssue = parsedIssue;
+
+        var images = new List<DownloadedImage>
+        {
+            new() { LocalPath = "/workspace/.agent/images/issue-42-image-001.png", LocalFilename = "issue-42-image-001.png",
+                     Reference = new ImageReference { Url = "https://example.com/img.png", AltText = "Screenshot", SourceType = ImageSourceType.Body, SourceIndex = 0 },
+                     FileSizeBytes = 1024, MimeType = "image/png" }
+        };
+        context.DownloadedImages = images;
+
+        var result = context.BuildAgentPhaseContext();
+
+        result.DownloadedImages.Should().BeSameAs(images);
+    }
+
+    [Fact]
+    public void BuildAgentPhaseContext_NullDownloadedImages_PropagatesNull()
+    {
+        var context = BuildContext();
+        var issue = new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = [] };
+        var parsedIssue = new ParsedIssue { RequirementsSection = "req", AcceptanceCriteria = [] };
+        context.Issue = issue;
+        context.ParsedIssue = parsedIssue;
+        context.DownloadedImages = null;
+
+        var result = context.BuildAgentPhaseContext();
+
+        result.DownloadedImages.Should().BeNull();
+    }
+}

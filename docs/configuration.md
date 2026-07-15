@@ -35,6 +35,7 @@ Projects can override most general settings on a per-project basis using a nulla
 | `maxInfrastructureRetries` | 5 | Max retries for transient infrastructure failures (range: 0–10). These retries don't consume the agent's quality gate retry budget. |
 | `heartbeatSweepIntervalSeconds` | 60 | Seconds between heartbeat monitor sweeps |
 | `heartbeatTimeoutSeconds` | 90 | Seconds without a heartbeat before an agent is considered stale |
+| `analysisCommitThreshold` | 30 | Number of commits on the default branch since last analysis that triggers automatic analysis refresh. Set to 0 to disable commit-count staleness detection |
 
 ### Feature Toggles
 
@@ -94,6 +95,7 @@ Code review behavior is configured via the `codeReview` sub-object on the pipeli
 |---------|---------|-------------|
 | `codeReview.maxIterations` | 2 | Max review → fix cycles |
 | `codeReview.fixPrompt` | *(null)* | When set, review splits into find-then-fix: review agents report findings with severity markers, then this fix prompt runs only if `[CRITICAL]` findings exist. When null, falls back to single-pass behavior |
+| `codeReview.reviewIsolation` | Isolated | Controls whether review agents share the code-generation session or run isolated. Values: `Isolated` (default, no shared context — prevents bias) or `Shared` |
 
 ### Inline Comments
 
@@ -106,6 +108,20 @@ Inline comments post review findings directly on PR diff lines. Configured via `
 | `inlineComments.maxRetries` | 1 | Retry attempts when the review agent doesn't produce structured file:line output (range: 0–5). Each retry is an additional LLM API call per agent |
 | `inlineComments.orderBySeverity` | true | Sort inline comments by severity (Critical → Warning → Suggestion) when selecting within the limit |
 | `inlineComments.severityThreshold` | `Warning` | Minimum severity for inline posting. Findings below this threshold appear only in the body summary |
+
+### Image Extraction
+
+Issue and PR bodies can contain embedded images (screenshots, diagrams). The pipeline extracts and downloads these images, then provides them to agents as native image parts for vision-capable models. Configured via the top-level pipeline settings:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enableIssueImageExtraction` | true | Master switch for image extraction from issue/PR bodies |
+| `enableNativeImageParts` | true | Send downloaded images as native image parts to the agent API (requires vision-capable model) |
+| `maxIssueImages` | 10 | Maximum images extracted per issue/PR |
+| `maxImageSizeBytes` | 5242880 | Maximum size in bytes for a single downloaded image (5 MB) |
+| `maxTotalImageSizeBytes` | 20971520 | Maximum total bytes for all downloaded images combined (20 MB) |
+| `imageDownloadTimeoutSeconds` | 30 | Timeout in seconds for downloading a single image |
+| `totalImageDownloadTimeoutSeconds` | 60 | Total time budget in seconds for downloading all images |
 
 ## Closed-Loop Mode
 
@@ -151,7 +167,7 @@ These environment variables are used by the Docker containers:
 | `Database__Port` | PostgreSQL port (default: `5432`) |
 | `Database__Username` | PostgreSQL username |
 | `Database__Password` | PostgreSQL password |
-| `Database__Name` | PostgreSQL database name (no application-level default; must be explicitly configured. `docker-compose.postgres.yml` uses `coding_agent_automation`) |
+| `Database__Name` | PostgreSQL database name (default: `coding_agent_automation`). `docker-compose.postgres.yml` also uses this value. |
 | `Database__SslMode` | Npgsql SSL mode: `Disable`, `Prefer`, `Require`, `VerifyCA`, `VerifyFull`. The application normalizes `Prefer` to `Require` in production environments when no explicit value is set. Use `Disable` for local/in-cluster Postgres without TLS. |
 | `Database__MigrateOnStartup` | Apply EF Core migrations on startup (default: `true`). Disable if running migrations externally. |
 

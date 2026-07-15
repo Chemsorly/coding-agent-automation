@@ -1237,14 +1237,16 @@ public class LocalPipelineExecutorTests : IDisposable
     // DisposeAsync is skipped. Use 'await using' declarations for reliable cleanup.
 
     [Fact]
-    public async Task BuildAgentStepPipeline_Returns14Steps()
+    public async Task BuildAgentStepPipeline_Returns16Steps()
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection);
+        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
 
-        steps.Should().HaveCount(15);
+        steps.Should().HaveCount(16);
         await connection.DisposeAsync();
     }
 
@@ -1253,8 +1255,10 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection);
+        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
 
         steps[0].Should().BeOfType<CloneRepositoryStep>();
         steps[^1].Should().BeOfType<RunQualityGatesStep>();
@@ -1266,10 +1270,26 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection);
+        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
 
         steps[2].Should().BeOfType<WriteMcpConfigStep>();
+        await connection.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task BuildAgentStepPipeline_IncludesDownloadIssueImagesStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
+
+        steps.Should().ContainItemsAssignableTo<DownloadIssueImagesStep>();
         await connection.DisposeAsync();
     }
 
@@ -1301,6 +1321,18 @@ public class LocalPipelineExecutorTests : IDisposable
             QualityGateConfigs = [],
             IssueComments = [],
             InitiatedBy = "test-user"
+        };
+    }
+
+    private static ProviderConfig CreateMinimalRepoConfig()
+    {
+        return new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Test Repo",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            Settings = new Dictionary<string, string>()
         };
     }
 
@@ -1767,88 +1799,151 @@ public class LocalPipelineExecutorTests : IDisposable
     // ── BuildReviewStepPipeline ─────────────────────────────────────────
 
     [Fact]
-    public void BuildReviewStepPipeline_IncludesWriteMcpConfigStep()
+    public async Task BuildReviewStepPipeline_IncludesWriteMcpConfigStep()
     {
         var job = CreateMinimalJobAssignment();
+        var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job);
+        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
+        await connection.DisposeAsync();
     }
 
     [Fact]
-    public void BuildReviewStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
+    public async Task BuildReviewStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
     {
         var job = CreateMinimalJobAssignment();
+        var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job);
+        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
 
         var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
         var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
         mcpIndex.Should().BeGreaterThanOrEqualTo(0, "WriteMcpConfigStep should be present");
         steeringIndex.Should().BeGreaterThanOrEqualTo(0, "WriteSteeringStep should be present");
         mcpIndex.Should().BeLessThan(steeringIndex, "WriteMcpConfigStep should come before WriteSteeringStep");
+        await connection.DisposeAsync();
     }
 
     [Fact]
-    public void BuildReviewStepPipeline_StartsWithCloneRepository()
+    public async Task BuildReviewStepPipeline_StartsWithCloneRepository()
     {
         var job = CreateMinimalJobAssignment();
+        var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job);
+        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
 
         steps[0].Should().BeOfType<CloneRepositoryStep>();
+        await connection.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task BuildReviewStepPipeline_IncludesDownloadIssueImagesStep()
+    {
+        var job = CreateMinimalJobAssignment();
+        var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
+
+        steps.Should().Contain(s => s.GetType() == typeof(DownloadIssueImagesStep));
+        await connection.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task BuildReviewStepPipeline_DownloadIssueImagesStep_AfterSyncBrainPreRun_BeforeExtractLinkedIssues()
+    {
+        var job = CreateMinimalJobAssignment();
+        var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
+
+        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
+
+        var syncIndex = steps.ToList().FindIndex(s => s is SyncBrainPreRunStep);
+        var downloadIndex = steps.ToList().FindIndex(s => s is DownloadIssueImagesStep);
+        var extractIndex = steps.ToList().FindIndex(s => s is ExtractLinkedIssuesStep);
+        syncIndex.Should().BeGreaterThanOrEqualTo(0);
+        downloadIndex.Should().BeGreaterThanOrEqualTo(0);
+        extractIndex.Should().BeGreaterThanOrEqualTo(0);
+        downloadIndex.Should().BeGreaterThan(syncIndex, "DownloadIssueImagesStep should come after SyncBrainPreRunStep");
+        downloadIndex.Should().BeLessThan(extractIndex, "DownloadIssueImagesStep should come before ExtractLinkedIssuesStep");
+        await connection.DisposeAsync();
     }
 
     // ── BuildDecompositionAnalysisStepPipeline ───────────────────────────
 
     [Fact]
-    public void BuildDecompositionAnalysisStepPipeline_IncludesWriteMcpConfigStep()
+    public async Task BuildDecompositionAnalysisStepPipeline_IncludesWriteMcpConfigStep()
     {
         var job = CreateMinimalJobAssignment();
+        var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>());
+        var steps = LocalPipelineExecutor.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
+        await connection.DisposeAsync();
     }
 
     [Fact]
-    public void BuildDecompositionAnalysisStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
+    public async Task BuildDecompositionAnalysisStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
     {
         var job = CreateMinimalJobAssignment();
+        var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>());
+        var steps = LocalPipelineExecutor.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
 
         var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
         var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
         mcpIndex.Should().BeGreaterThanOrEqualTo(0);
         steeringIndex.Should().BeGreaterThanOrEqualTo(0);
         mcpIndex.Should().BeLessThan(steeringIndex);
+        await connection.DisposeAsync();
     }
 
     // ── BuildDecompositionStepPipeline ───────────────────────────────────
 
     [Fact]
-    public void BuildDecompositionStepPipeline_IncludesWriteMcpConfigStep()
+    public async Task BuildDecompositionStepPipeline_IncludesWriteMcpConfigStep()
     {
         var job = CreateMinimalJobAssignment();
+        var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>());
+        var steps = LocalPipelineExecutor.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
+        await connection.DisposeAsync();
     }
 
     [Fact]
-    public void BuildDecompositionStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
+    public async Task BuildDecompositionStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
     {
         var job = CreateMinimalJobAssignment();
+        var connection = CreateDisconnectedHubConnection();
+        var proxy = new OrchestratorProxy(connection, "test-job");
+        var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>());
+        var steps = LocalPipelineExecutor.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
 
         var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
         var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
         mcpIndex.Should().BeGreaterThanOrEqualTo(0);
         steeringIndex.Should().BeGreaterThanOrEqualTo(0);
         mcpIndex.Should().BeLessThan(steeringIndex);
+        await connection.DisposeAsync();
     }
 }

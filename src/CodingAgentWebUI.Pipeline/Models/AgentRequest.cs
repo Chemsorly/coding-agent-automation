@@ -9,4 +9,7 @@ public sealed class AgentRequest
 
     /// <summary>Explicit session ID to resume via --resume-id. Takes precedence over UseResume.</summary>
     public string? ResumeSessionId { get; init; }
+
+    /// <summary>Local file paths of downloaded issue/PR images for native vision delivery.</summary>
+    public IReadOnlyList<string>? ImagePaths { get; init; }
 }

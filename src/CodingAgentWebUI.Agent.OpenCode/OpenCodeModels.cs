@@ -36,6 +36,9 @@ public sealed record MessagePart
 {
     public required string Type { get; init; }
     public string? Text { get; init; }
+    public string? Mime { get; init; }
+    public string? Url { get; init; }
+    public string? Filename { get; init; }
 }
 
 /// <summary>Request body for POST /session/:id/message.</summary>

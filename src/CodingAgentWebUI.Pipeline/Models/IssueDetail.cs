@@ -16,4 +16,7 @@ public sealed class IssueDetail
 
     [Key(3)]
     public required string Title { get; init; }
+
+    [Key(4)]
+    public IReadOnlyList<ImageReference> Images { get; init; } = [];
 }

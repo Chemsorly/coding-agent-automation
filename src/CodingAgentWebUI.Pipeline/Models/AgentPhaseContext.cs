@@ -13,4 +13,7 @@ public sealed record AgentPhaseContext : PipelineContextBase
 
     /// <summary>Parsed issue with structured requirements/acceptance criteria.</summary>
     public required ParsedIssue ParsedIssue { get; init; }
+
+    /// <summary>Downloaded issue/PR images for native vision delivery to agents.</summary>
+    public IReadOnlyList<DownloadedImage>? DownloadedImages { get; init; }
 }

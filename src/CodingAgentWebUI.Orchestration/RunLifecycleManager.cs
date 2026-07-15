@@ -76,7 +76,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         run.CurrentStep = PipelineStep.Failed;
 
         // 2. Transition WorkItem in DB (no-op in Legacy mode)
-        await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct);
+        await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct, failureReason);
 
         // 3. Persist to history — wrapped in try/catch so downstream cleanup still runs
         try
@@ -238,7 +238,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
     // ── Private helpers ─────────────────────────────────────────────────
 
-    private async Task TransitionWorkItemAsync(string runId, WorkItemStatus status, CancellationToken ct)
+    private async Task TransitionWorkItemAsync(string runId, WorkItemStatus status, CancellationToken ct, string? errorMessage = null)
     {
         if (_workItemTransition is null || !Guid.TryParse(runId, out var workItemId))
             return;
@@ -249,6 +249,11 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             {
                 if (status is WorkItemStatus.Failed or WorkItemStatus.Succeeded or WorkItemStatus.Cancelled)
                     item.CompletedAt = DateTimeOffset.UtcNow;
+                if (status == WorkItemStatus.Failed && !string.IsNullOrEmpty(errorMessage))
+                {
+                    item.ErrorMessage = errorMessage;
+                    item.FailureReason ??= FailureReason.AgentError;
+                }
             }, ct);
 
             if (!result)
@@ -262,13 +267,26 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
                         await _workItemTransition.TransitionAsync(workItemId, status, item =>
                         {
                             item.CompletedAt = DateTimeOffset.UtcNow;
+                            if (status == WorkItemStatus.Failed && !string.IsNullOrEmpty(errorMessage))
+                            {
+                                item.ErrorMessage = errorMessage;
+                                item.FailureReason ??= FailureReason.AgentError;
+                            }
                         }, ct);
                     }
                     else
                     {
                         // Third fallback: recover from infrastructure-failure-induced Failed state
                         var recovered = await _workItemTransition.TryRecoverFromInfrastructureFailureAsync(
-                            workItemId, status, item => { item.CompletedAt = DateTimeOffset.UtcNow; }, ct);
+                            workItemId, status, item =>
+                            {
+                                item.CompletedAt = DateTimeOffset.UtcNow;
+                                if (status == WorkItemStatus.Failed && !string.IsNullOrEmpty(errorMessage))
+                                {
+                                    item.ErrorMessage = errorMessage;
+                                    item.FailureReason ??= FailureReason.AgentError;
+                                }
+                            }, ct);
                         if (recovered)
                             _logger.Warning("Recovered WorkItem {RunId} from delivery-timeout Failed to {Status} via lifecycle manager", runId, status);
                     }
