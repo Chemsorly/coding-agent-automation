@@ -1,7 +1,4 @@
-using System.Diagnostics;
 using System.Text.Json;
-using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
