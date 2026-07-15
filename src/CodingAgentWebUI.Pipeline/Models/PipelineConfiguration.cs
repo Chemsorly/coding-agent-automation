@@ -493,6 +493,27 @@ public sealed record PipelineConfiguration
     }
 
     /// <summary>
+    /// Applies template-level overrides to the pipeline configuration.
+    /// Resolution order: find matching template by repo+brain provider IDs → apply BrainReadOnly
+    /// (one-directional: only overrides to true) → apply blacklist from repo provider config.
+    /// Called AFTER <see cref="ApplyProjectOverrides"/> in the dispatch pipeline.
+    /// </summary>
+    public static PipelineConfiguration ApplyTemplateOverrides(
+        PipelineConfiguration config,
+        string repoProviderId,
+        string? brainProviderId,
+        IReadOnlyList<ProviderConfig> providerConfigs,
+        IReadOnlyList<PipelineJobTemplate> templates)
+    {
+        var matchingTemplate = templates.FirstOrDefault(t =>
+            t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
+        if (matchingTemplate is { BrainReadOnly: true })
+            config = config with { BrainReadOnly = true };
+
+        return ApplyBlacklistOverride(config, providerConfigs.FirstOrDefault(c => c.Id == repoProviderId));
+    }
+
+    /// <summary>
     /// Number of days to retain workspace folders for failed or cancelled runs.
     /// Set to 0 to delete immediately. Set to -1 to retain indefinitely.
     /// </summary>

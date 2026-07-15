@@ -26,18 +26,15 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     private TaskCompletionSource _activationSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly Lock _lock = new();
     private readonly TemplateCircuitBreaker _circuitBreaker = new();
+    private readonly ProviderCacheManager _cacheManager;
+    private readonly TemplatePoller _poller;
+    private readonly DispatchScheduler _dispatcher;
 
     private volatile bool _stopRequested;
     private CancellationTokenSource? _loopCts;
     private TaskCompletionSource? _resumeSignal;
 
     // ── Multi-template fields ───────────────────────────────────────────
-
-    /// <summary>Provider cache keyed by IssueProviderId. Reused across cycles.</summary>
-    private readonly Dictionary<string, IIssueProvider> _providerCache = new();
-
-    /// <summary>Repository provider cache keyed by RepoProviderId. Reused across cycles.</summary>
-    private readonly Dictionary<string, IRepositoryProvider> _repoProviderCache = new();
 
     /// <summary>Per-template runtime status. Immutable records swapped atomically.</summary>
     private readonly ConcurrentDictionary<string, ConfigStatusSnapshot> _templateStatuses = new();
@@ -113,6 +110,10 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
         _workDistributor = workDistributor;
         _dispatchOrchestration = dispatchOrchestration;
         _dependencyChecker = dependencyChecker;
+
+        _cacheManager = new ProviderCacheManager(providerFactory, logger);
+        _poller = new TemplatePoller(_cacheManager, logger);
+        _dispatcher = new DispatchScheduler(orchestration, dispatchOrchestration, workDistributor, dependencyChecker, _cacheManager, logger);
     }
 
     /// <summary>
@@ -277,21 +278,8 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
             _loopCts = null;
         }
 
-        // Dispose all cached providers
-        foreach (var kvp in _providerCache)
-        {
-            try { await kvp.Value.DisposeAsync(); }
-            catch (Exception ex) { _logger.Warning(ex, "Failed to dispose cached provider {ProviderId}", kvp.Key); }
-        }
-        _providerCache.Clear();
-
-        // Dispose all cached repo providers
-        foreach (var kvp in _repoProviderCache)
-        {
-            try { await kvp.Value.DisposeAsync(); }
-            catch (Exception ex) { _logger.Warning(ex, "Failed to dispose cached repo provider {ProviderId}", kvp.Key); }
-        }
-        _repoProviderCache.Clear();
+        // Dispose all cached providers via the cache manager
+        await _cacheManager.DisposeAsync();
 
         _templateStatuses.Clear();
 

@@ -301,6 +301,19 @@ public static class ServiceCollectionExtensions
             sp.GetService<PendingWorkItemDrainService>(),
             sp.GetService<IDbContextFactory<PipelineDbContext>>()));
 
+        services.AddSingleton<IHubIssueOperations>(sp => new AgentIssueOperations(
+            sp.GetRequiredService<IAgentHubFacade>(),
+            sp.GetRequiredService<ILabelSwapper>(),
+            Log.Logger));
+
+        services.AddSingleton<IAgentJobLifecycleService>(sp => new AgentJobLifecycleService(
+            sp.GetRequiredService<IAgentHubFacade>(),
+            sp.GetRequiredService<IRunLifecycleManager>(),
+            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<IHubIssueOperations>(),
+            sp.GetRequiredService<PipelineOrchestrationService>(),
+            Log.Logger));
+
         return services;
     }
 
