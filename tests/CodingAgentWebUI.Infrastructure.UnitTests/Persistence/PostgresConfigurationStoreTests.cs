@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Stores;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
@@ -670,6 +671,76 @@ public class PostgresConfigurationStoreTests : IDisposable
         var match = loaded.Should().ContainSingle().Subject;
         match.DisplayName.Should().Be("V2");
         match.Priority.Should().Be(2);
+    }
+
+    // ── DeserializeProject correctness (stale Settings JSON) ────────────
+
+    // TODO: Add tests for SaveTemplateAsync → GetProjectByIdAsync path (stale JSON without ResyncSettingsJson)
+    // and LoadProjectsAsync (bulk-load path with cache layer).
+    [Fact]
+    public async Task MoveTemplateAsync_ProjectReturnsUpdatedTemplateIds_EvenWithStaleJson()
+    {
+        // Arrange: save a project with a template so Settings JSON includes templateIds
+        var sourceId = Guid.NewGuid().ToString();
+        var targetId = Guid.NewGuid().ToString();
+        await _store.SaveProjectAsync(new PipelineProject { Id = sourceId, Name = "Source" }, CancellationToken.None);
+        await _store.SaveProjectAsync(new PipelineProject { Id = targetId, Name = "Target" }, CancellationToken.None);
+
+        var template = new PipelineJobTemplate
+        {
+            Id = Guid.NewGuid().ToString(),
+            Name = "T1",
+            IssueProviderId = "ip1",
+            RepoProviderId = "rp1"
+        };
+        await _store.SaveTemplateAsync(sourceId, template, CancellationToken.None);
+
+        // Act: move template (this updates TemplateIds column but historically left JSON stale)
+        await _store.MoveTemplateAsync(sourceId, targetId, template.Id, CancellationToken.None);
+
+        // Assert: loading projects must reflect the move regardless of JSON state
+        var source = await _store.GetProjectByIdAsync(sourceId, CancellationToken.None);
+        source!.TemplateIds.Should().NotContain(template.Id);
+
+        var target = await _store.GetProjectByIdAsync(targetId, CancellationToken.None);
+        target!.TemplateIds.Should().Contain(template.Id);
+    }
+
+    [Fact]
+    public async Task GetProjectByIdAsync_ReturnsEntityDatabaseId_NotJsonId()
+    {
+        // Arrange: create a project whose Settings JSON contains a DIFFERENT id
+        // (simulates the production scenario where Default project entity has a real DB Id
+        // but Settings JSON contains "00000000-0000-0000-0000-000000000000")
+        var entityId = Guid.NewGuid();
+        var staleJsonId = Guid.Empty.ToString(); // different from entity Id
+        var staleJson = System.Text.Json.JsonSerializer.Serialize(
+            new PipelineProject { Id = staleJsonId, Name = "Test" },
+            PipelineJsonOptions.Default);
+
+        await using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = entityId,
+                Name = "Test",
+                Enabled = true,
+                Settings = staleJson,
+                TemplateIds = []
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Use a fresh store to avoid cache
+        var freshStore = CreateFreshStore();
+
+        // Act: load back from store
+        var loaded = await freshStore.GetProjectByIdAsync(entityId.ToString(), CancellationToken.None);
+
+        // Assert: Id must match the entity's database Id, NOT the stale JSON id
+        loaded.Should().NotBeNull();
+        loaded!.Id.Should().Be(entityId.ToString());
+        loaded.Id.Should().NotBe(staleJsonId);
     }
 
     // ── Helper: InMemoryDbContextFactory ────────────────────────────────

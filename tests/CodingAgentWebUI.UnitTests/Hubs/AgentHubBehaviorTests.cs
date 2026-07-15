@@ -619,8 +619,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(agentEntry);
         _mockFacade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(agentEntry);
         _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
-        // TODO: This mock is not exercised in this test (covers "already tracked" path where GetRun returns non-null).
-        // Add a test for the "run is in history" path (GetRun returns null, GetRunHistoryAsync contains the run ID).
         _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
@@ -654,6 +652,231 @@ public sealed class AgentHubBehaviorTests : IDisposable
         agentEntry.ActiveJobId.Should().Be(runId);
         // Run's AgentId should be updated
         existingRun.AgentId.Should().Be(agentId);
+    }
+
+    #endregion
+
+    #region RegisterAgent — RunInHistory path (cancelled/failed/completed FinalStep)
+
+    [Fact]
+    public async Task RegisterAgent_RunInHistory_CancelledFinalStep_RestoresRunAndSetsAgentBusy()
+    {
+        // Scenario: WorkItem was cancelled (persisted to history with FinalStep=Cancelled),
+        // then re-dispatched with the same RunId. Agent registers reporting that RunId.
+        // Expected: the Cancelled history entry should NOT block restoration.
+        const string agentId = "caa-49fba05c-f2vhg";
+        const string runId = "49fba05c-3210-4a2a-93be-0f8ea7f7cb79";
+
+        var agentEntry = new AgentEntry
+        {
+            AgentId = agentId,
+            ConnectionId = "conn-1",
+            Hostname = "k8s-pod",
+            Labels = new[] { "kiro", "dotnet" },
+            Status = AgentStatus.Idle,
+            ActiveJobId = null,
+            RegisteredAt = DateTimeOffset.UtcNow
+        };
+
+        // GetRun returns null — no in-memory run (K8s mode, no rehydration after cancel)
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(agentEntry);
+        _mockFacade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(agentEntry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
+
+        // History contains the run with FinalStep = Cancelled
+        var cancelledSummary = new PipelineRunSummary
+        {
+            RunId = runId,
+            IssueIdentifier = "owner/repo#1259",
+            IssueTitle = "Fix revert using cancelled token",
+            FinalStep = PipelineStep.Cancelled,
+            StartedAt = DateTime.UtcNow.AddHours(-8),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-8)
+        };
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { cancelledSummary });
+
+        var hub = CreateHubWithRegistrationContext(agentId, "conn-1");
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = agentId,
+            Hostname = "k8s-pod",
+            Labels = new[] { "kiro", "dotnet" },
+            ActiveJob = new ActiveJobState
+            {
+                RunId = runId,
+                IssueIdentifier = "owner/repo#1259",
+                IssueTitle = "Fix revert using cancelled token",
+                IssueProviderConfigId = "ip-1",
+                RepoProviderConfigId = "rp-1",
+                AgentProviderConfigId = "ap-1",
+                InitiatedBy = "loop",
+                CurrentStep = PipelineStep.AnalyzingCode,
+                StartedAt = DateTimeOffset.UtcNow.AddMinutes(-5)
+            }
+        };
+
+        // Act
+        await hub.RegisterAgent(message);
+
+        // Assert: run must be restored via AddRun
+        _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r =>
+            r.RunId == runId &&
+            r.AgentId == agentId &&
+            r.IssueIdentifier == "owner/repo#1259" &&
+            r.CurrentStep == PipelineStep.AnalyzingCode)), Times.Once);
+
+        // Assert: agent transitioned to Busy with ActiveJobId
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+        agentEntry.ActiveJobId.Should().Be(runId);
+    }
+
+    [Fact]
+    public async Task RegisterAgent_RunInHistory_FailedFinalStep_RestoresRunAndSetsAgentBusy()
+    {
+        // Scenario: WorkItem failed (persisted to history with FinalStep=Failed),
+        // then re-dispatched with the same RunId. Agent registers reporting that RunId.
+        // Expected: the Failed history entry should NOT block restoration.
+        const string agentId = "caa-failed-agent";
+        const string runId = "failed-run-id-1234";
+
+        var agentEntry = new AgentEntry
+        {
+            AgentId = agentId,
+            ConnectionId = "conn-1",
+            Hostname = "k8s-pod",
+            Labels = new[] { "kiro", "dotnet" },
+            Status = AgentStatus.Idle,
+            ActiveJobId = null,
+            RegisteredAt = DateTimeOffset.UtcNow
+        };
+
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(agentEntry);
+        _mockFacade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(agentEntry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
+
+        // History contains the run with FinalStep = Failed
+        var failedSummary = new PipelineRunSummary
+        {
+            RunId = runId,
+            IssueIdentifier = "owner/repo#999",
+            IssueTitle = "Previously failed issue",
+            FinalStep = PipelineStep.Failed,
+            StartedAt = DateTime.UtcNow.AddHours(-4),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-4)
+        };
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { failedSummary });
+
+        var hub = CreateHubWithRegistrationContext(agentId, "conn-1");
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = agentId,
+            Hostname = "k8s-pod",
+            Labels = new[] { "kiro", "dotnet" },
+            ActiveJob = new ActiveJobState
+            {
+                RunId = runId,
+                IssueIdentifier = "owner/repo#999",
+                IssueTitle = "Previously failed issue",
+                IssueProviderConfigId = "ip-2",
+                RepoProviderConfigId = "rp-2",
+                AgentProviderConfigId = "ap-2",
+                InitiatedBy = "loop",
+                CurrentStep = PipelineStep.GeneratingCode,
+                StartedAt = DateTimeOffset.UtcNow.AddMinutes(-3)
+            }
+        };
+
+        // Act
+        await hub.RegisterAgent(message);
+
+        // Assert: run must be restored via AddRun
+        _mockFacade.Verify(f => f.AddRun(It.Is<PipelineRun>(r =>
+            r.RunId == runId &&
+            r.AgentId == agentId &&
+            r.IssueIdentifier == "owner/repo#999" &&
+            r.CurrentStep == PipelineStep.GeneratingCode)), Times.Once);
+
+        // Assert: agent transitioned to Busy with ActiveJobId
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Once);
+        agentEntry.ActiveJobId.Should().Be(runId);
+    }
+
+    [Fact]
+    public async Task RegisterAgent_RunInHistory_CompletedFinalStep_IgnoresStaleState()
+    {
+        // Scenario: Run completed successfully (FinalStep=Completed in history).
+        // Agent registers reporting the same RunId (stale state from old pod).
+        // Expected: agent remains Idle, no run restoration.
+        const string agentId = "caa-stale-agent";
+        const string runId = "completed-run-id-5678";
+
+        var agentEntry = new AgentEntry
+        {
+            AgentId = agentId,
+            ConnectionId = "conn-1",
+            Hostname = "k8s-pod",
+            Labels = new[] { "kiro", "dotnet" },
+            Status = AgentStatus.Idle,
+            ActiveJobId = null,
+            RegisteredAt = DateTimeOffset.UtcNow
+        };
+
+        _mockFacade.Setup(f => f.GetRun(runId)).Returns((PipelineRun?)null);
+        _mockFacade.Setup(f => f.GetByAgentId(agentId)).Returns(agentEntry);
+        _mockFacade.Setup(f => f.Register(It.IsAny<AgentRegistrationMessage>(), "conn-1")).Returns(agentEntry);
+        _mockFacade.Setup(f => f.GetActiveRunsByAgent(agentId)).Returns(new List<PipelineRun>());
+
+        // History contains the run with FinalStep = Completed (successful)
+        var completedSummary = new PipelineRunSummary
+        {
+            RunId = runId,
+            IssueIdentifier = "owner/repo#500",
+            IssueTitle = "Successfully completed issue",
+            FinalStep = PipelineStep.Completed,
+            StartedAt = DateTime.UtcNow.AddHours(-2),
+            StartedAtOffset = DateTimeOffset.UtcNow.AddHours(-2)
+        };
+        _mockFacade.Setup(f => f.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { completedSummary });
+
+        var hub = CreateHubWithRegistrationContext(agentId, "conn-1");
+
+        var message = new AgentRegistrationMessage
+        {
+            AgentId = agentId,
+            Hostname = "k8s-pod",
+            Labels = new[] { "kiro", "dotnet" },
+            ActiveJob = new ActiveJobState
+            {
+                RunId = runId,
+                IssueIdentifier = "owner/repo#500",
+                IssueTitle = "Successfully completed issue",
+                IssueProviderConfigId = "ip-3",
+                RepoProviderConfigId = "rp-3",
+                AgentProviderConfigId = "ap-3",
+                InitiatedBy = "loop",
+                CurrentStep = PipelineStep.GeneratingCode,
+                StartedAt = DateTimeOffset.UtcNow.AddMinutes(-10)
+            }
+        };
+
+        // Act
+        await hub.RegisterAgent(message);
+
+        // Assert: AddRun must NOT be called (stale state rejected)
+        _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never);
+
+        // Assert: agent must NOT be transitioned to Busy
+        _mockFacade.Verify(f => f.TransitionStatus(agentId, AgentStatus.Busy), Times.Never);
+
+        // Assert: ActiveJobId remains null
+        agentEntry.ActiveJobId.Should().BeNull();
     }
 
     #endregion
