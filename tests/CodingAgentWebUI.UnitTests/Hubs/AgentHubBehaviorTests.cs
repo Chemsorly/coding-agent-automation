@@ -20,6 +20,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
     private readonly Mock<IConsolidationService> _mockConsolidation = new();
     private readonly ConsolidationBadgeService _badgeService = new();
+    private readonly Mock<IHubIssueOperations> _mockIssueOps = new();
+    private readonly Mock<IAgentJobLifecycleService> _mockLifecycleService = new();
     private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
     private readonly Mock<IRunLifecycleManager> _mockLifecycleManager = new();
     private readonly Mock<ILogger> _mockLogger = new();
@@ -34,8 +36,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
             null!,  // ModelFetchService
             _mockConsolidation.Object,
             _badgeService,
-            _mockLabelSwapper.Object,
-            _mockLifecycleManager.Object,
+            _mockIssueOps.Object,
+            _mockLifecycleService.Object,
             _mockLogger.Object);
 
         var mockContext = new Mock<HubCallerContext>();
@@ -312,7 +314,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         agent.ActiveJobId = "job-1";
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
 
-        var hub = CreateHub();
+        var hub = CreateHubWithOrchestration();
         await hub.JobRejected("job-1", "workspace full");
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
@@ -333,7 +335,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHub();
         await hub.RequestLabelChange("job-1", "agent:error");
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", "agent:error", LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
+        _mockIssueOps.Verify(s => s.SwapLabelAsync(run, "agent:error", LabelTargetKind.Issue), Times.Once);
     }
 
     [Fact]
@@ -344,31 +346,27 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHub();
         await hub.RequestLabelChange("job-1", "agent:error");
 
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockIssueOps.Verify(s => s.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>()), Times.Never);
     }
 
     #endregion
 
     #region RequestPostComment
 
+    // TODO: This test was weakened during lifecycle extraction — it only verifies delegation to IHubIssueOperations mock,
+    // not the full interaction with IssueProvider (PostCommentAsync with correct args). Consider adding an integration-level
+    // test that exercises AgentIssueOperations.PostCommentViaIssueProviderAsync through the hub's RequestPostComment path.
     [Fact]
     public async Task RequestPostComment_AnalysisType_PostsMarkdown()
     {
         var run = CreateRun();
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
-        var issueConfig = new ProviderConfig { Id = "issue-cfg-1", Kind = ProviderKind.Issue, ProviderType = "GitHub", DisplayName = "Test" };
-        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("issue-cfg-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(issueConfig);
-
-        var mockIssueProvider = new Mock<IIssueProvider>();
-        _mockFacade.Setup(f => f.CreateIssueProvider(issueConfig)).Returns(mockIssueProvider.Object);
-
         var hub = CreateHub();
         var payload = new CommentPayload { AnalysisMarkdown = "## Analysis\nLooks good." };
         await hub.RequestPostComment("job-1", CommentType.Analysis, payload);
 
-        mockIssueProvider.Verify(p => p.PostCommentAsync("org/repo#42", "## Analysis\nLooks good.", It.IsAny<CancellationToken>()), Times.Once);
+        _mockIssueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "## Analysis\nLooks good."), Times.Once);
     }
 
     [Fact]
@@ -668,8 +666,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
             null!,  // ModelFetchService
             _mockConsolidation.Object,
             _badgeService,
-            _mockLabelSwapper.Object,
-            _mockLifecycleManager.Object,
+            _mockIssueOps.Object,
+            CreateRealLifecycleService(orchestration),
             _mockLogger.Object);
 
         var mockContext = new Mock<HubCallerContext>();
@@ -690,8 +688,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
             null!,  // ModelFetchService
             _mockConsolidation.Object,
             _badgeService,
-            _mockLabelSwapper.Object,
-            _mockLifecycleManager.Object,
+            _mockIssueOps.Object,
+            CreateRealLifecycleService(orchestration),
             _mockLogger.Object);
 
         // Build a real HttpContext with the agentId query param
@@ -726,6 +724,21 @@ public sealed class AgentHubBehaviorTests : IDisposable
             providerFactory: Mock.Of<IProviderFactory>());
         _orchestrationInstances.Add(service);
         return service;
+    }
+
+    private IAgentJobLifecycleService CreateRealLifecycleService(PipelineOrchestrationService orchestration)
+    {
+        var issueOps = new AgentIssueOperations(
+            _mockFacade.Object,
+            _mockLabelSwapper.Object,
+            _mockLogger.Object);
+        return new AgentJobLifecycleService(
+            _mockFacade.Object,
+            _mockLifecycleManager.Object,
+            _mockLabelSwapper.Object,
+            issueOps,
+            orchestration,
+            _mockLogger.Object);
     }
 
     [Fact]
