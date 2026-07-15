@@ -148,7 +148,6 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
                 // Check history — don't re-register a completed run.
                 // Only treat runs with successful terminal states as stale.
                 // Cancelled/Failed runs may be legitimately re-dispatched with the same RunId.
-                // TODO: Consider using Context.ConnectionAborted instead of CancellationToken.None so the query can be cancelled if the agent disconnects mid-registration.
                 var history = await _facade.GetRunHistoryAsync(CancellationToken.None);
                 var inHistory = history.Any(r => r.RunId == message.ActiveJob.RunId
                     && r.FinalStep != PipelineStep.Cancelled
