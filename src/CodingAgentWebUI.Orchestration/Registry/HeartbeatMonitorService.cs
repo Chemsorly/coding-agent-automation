@@ -138,6 +138,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
                             agent.AgentId, orphanedJobId, gracePeriod, orphanAge.TotalSeconds);
 
                         // Fail the orphaned run directly
+                        // TODO: Pass FailureReason.InfrastructureFailure as the enum parameter.
+                        // Agent disconnection/orphan is an infrastructure event, not an agent logic error.
                         if (orphanedJobId is not null)
                         {
                             var result = await _lifecycleManager.FailRunAsync(orphanedJobId,
@@ -197,6 +199,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
                                 var failureReason = $"Agent busy without progress for {elapsed.TotalMinutes:F0} minutes (progress timeout)";
 
+                                // TODO: Pass FailureReason.Timeout as the enum parameter to match
+                                // ReconciliationService's timeout path which explicitly uses FailureReason.Timeout.
                                 var result = await _lifecycleManager.FailRunAsync(agent.ActiveJobId, failureReason, ct);
                                 if (result is null)
                                 {
@@ -293,6 +297,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 // the agent is Idle in the registry. This is acceptable: the dispatch loop won't
                 // pick up a Disconnected-then-Idle agent in that window because Deregister follows
                 // immediately and the dispatcher checks agent.Status == Idle && connected.
+                // TODO: Pass FailureReason.InfrastructureFailure as the enum parameter.
+                // Agent disconnection is an infrastructure event, not an agent logic error.
                 var result = await _lifecycleManager.FailRunAsync(agent.ActiveJobId, "Agent disconnected", ct);
                 if (result is null)
                 {

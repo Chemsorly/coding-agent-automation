@@ -58,7 +58,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task<PipelineRun?> FailRunAsync(string runId, string failureReason, CancellationToken ct)
+    public async Task<PipelineRun?> FailRunAsync(string runId, string failureReason, CancellationToken ct, FailureReason? failureReasonEnum = null)
     {
         ArgumentNullException.ThrowIfNull(runId);
 
@@ -76,7 +76,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         run.CurrentStep = PipelineStep.Failed;
 
         // 2. Transition WorkItem in DB (no-op in Legacy mode)
-        await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct, failureReason);
+        await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct, failureReason, failureReasonEnum);
 
         // 3. Persist to history — wrapped in try/catch so downstream cleanup still runs
         try
@@ -105,7 +105,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task<PipelineRun?> CompleteRunAsync(string runId, WorkItemStatus terminalStatus, CancellationToken ct)
+    public async Task<PipelineRun?> CompleteRunAsync(string runId, WorkItemStatus terminalStatus, CancellationToken ct,
+        string? errorMessage = null, FailureReason? failureReason = null)
     {
         ArgumentNullException.ThrowIfNull(runId);
 
@@ -116,8 +117,22 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             return null;
         }
 
+        // Ensure CurrentStep is terminal before persist (defense-in-depth).
+        // Normal flow: JobCompletionMapper.Apply already sets terminal step via payload.FinalStep.
+        // This guard catches edge cases where CurrentStep was not set (e.g., legacy heartbeat paths).
+        if (!run.CurrentStep.IsTerminal())
+        {
+            var mapped = terminalStatus == WorkItemStatus.Succeeded
+                ? PipelineStep.Completed
+                : PipelineStep.Failed;
+            _logger.Warning(
+                "CompleteRunAsync: run {RunId} has non-terminal CurrentStep={Step}, mapping to {Mapped}",
+                runId, run.CurrentStep, mapped);
+            run.CurrentStep = mapped;
+        }
+
         // 1. Transition WorkItem in DB
-        await TransitionWorkItemAsync(runId, terminalStatus, ct);
+        await TransitionWorkItemAsync(runId, terminalStatus, ct, errorMessage, failureReason);
 
         // 2. Persist to history — wrapped in try/catch so downstream cleanup still runs
         try
@@ -231,14 +246,15 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task TransitionWorkItemToFailedAsync(string runId, CancellationToken ct)
+    public async Task TransitionWorkItemToFailedAsync(string runId, CancellationToken ct,
+        string? errorMessage = null, FailureReason? failureReason = null)
     {
-        await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct);
+        await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct, errorMessage, failureReason);
     }
 
     // ── Private helpers ─────────────────────────────────────────────────
 
-    private async Task TransitionWorkItemAsync(string runId, WorkItemStatus status, CancellationToken ct, string? errorMessage = null)
+    private async Task TransitionWorkItemAsync(string runId, WorkItemStatus status, CancellationToken ct, string? errorMessage = null, FailureReason? failureReason = null)
     {
         if (_workItemTransition is null || !Guid.TryParse(runId, out var workItemId))
             return;
@@ -249,10 +265,10 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             {
                 if (status is WorkItemStatus.Failed or WorkItemStatus.Succeeded or WorkItemStatus.Cancelled)
                     item.CompletedAt = DateTimeOffset.UtcNow;
-                if (status == WorkItemStatus.Failed && !string.IsNullOrEmpty(errorMessage))
+                if (status == WorkItemStatus.Failed)
                 {
-                    item.ErrorMessage = errorMessage;
-                    item.FailureReason ??= FailureReason.AgentError;
+                    item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
+                    item.FailureReason ??= failureReason ?? FailureReason.AgentError;
                 }
             }, ct);
 
@@ -267,10 +283,10 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
                         await _workItemTransition.TransitionAsync(workItemId, status, item =>
                         {
                             item.CompletedAt = DateTimeOffset.UtcNow;
-                            if (status == WorkItemStatus.Failed && !string.IsNullOrEmpty(errorMessage))
+                            if (status == WorkItemStatus.Failed)
                             {
-                                item.ErrorMessage = errorMessage;
-                                item.FailureReason ??= FailureReason.AgentError;
+                                item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
+                                item.FailureReason ??= failureReason ?? FailureReason.AgentError;
                             }
                         }, ct);
                     }
@@ -281,10 +297,10 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
                             workItemId, status, item =>
                             {
                                 item.CompletedAt = DateTimeOffset.UtcNow;
-                                if (status == WorkItemStatus.Failed && !string.IsNullOrEmpty(errorMessage))
+                                if (status == WorkItemStatus.Failed)
                                 {
-                                    item.ErrorMessage = errorMessage;
-                                    item.FailureReason ??= FailureReason.AgentError;
+                                    item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
+                                    item.FailureReason ??= failureReason ?? FailureReason.AgentError;
                                 }
                             }, ct);
                         if (recovered)

@@ -127,6 +127,12 @@ public sealed class PipelineRun
     public string? WorkspacePath { get; set; }
     public string? BranchName { get; set; }
     public string? FailureReason { get; set; }
+
+    /// <summary>
+    /// Typed failure category for the WorkItem FailureReason enum.
+    /// Set when the failure mode is known (e.g., ExitCodeFailure, Timeout).
+    /// </summary>
+    public FailureReason? FailureCategory { get; set; }
     public string? PullRequestUrl { get; set; }
 
     /// <summary>The PR body content as last set. Used by the description generation step to prepend agent summary.</summary>

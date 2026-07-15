@@ -709,7 +709,7 @@ public sealed class ReconciliationService : BackgroundService
             var lifecycleHandled = false;
             if (_lifecycleManager is not null)
             {
-                var result = await _lifecycleManager.FailRunAsync(item.Id.ToString(), timeoutReason, ct);
+                var result = await _lifecycleManager.FailRunAsync(item.Id.ToString(), timeoutReason, ct, FailureReason.Timeout);
                 lifecycleHandled = result is not null;
             }
 

@@ -197,8 +197,12 @@ public sealed class RunLifecycleManagerTests
     public async Task CompleteRunAsync_RemovesRun_PersistsHistory_MarksIssueComplete()
     {
         // Arrange
+        // TODO: [BUG-12] Consider adding a full-lifecycle test for a run at a non-terminal step (e.g., Created)
+        // going through CompleteRunAsync — verifying run removed, history persisted, issue marked complete,
+        // and label NOT swapped — to complement the existing non-terminal guard tests which only check step mapping.
         var run = CreateRun("run-complete", PipelineRunType.Implementation);
         run.AgentId = "agent-1";
+        run.CurrentStep = PipelineStep.Completed; // Normal flow: JobCompletionMapper.Apply sets terminal step
         _runService.AddRun(run);
 
         // Act
@@ -226,6 +230,67 @@ public sealed class RunLifecycleManagerTests
     {
         var result = await _sut.CompleteRunAsync("ghost", WorkItemStatus.Succeeded, CancellationToken.None);
         result.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_NonTerminalStep_MapsToFailed_WhenStatusFailed()
+    {
+        // Arrange: run stuck at a non-terminal step (edge case — normally JobCompletionMapper sets terminal step)
+        // TODO: [BUG-12] Parameterize with all observed non-terminal steps (RunningQualityGates, ReviewingCode,
+        // PreparingForPullRequest, SyncingBrainRepoPostRun) to catch regressions where guard uses hardcoded
+        // step check instead of IsTerminal().
+        var run = CreateRun("run-nonterminal-fail", PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        _runService.AddRun(run);
+
+        // Act
+        var result = await _sut.CompleteRunAsync("run-nonterminal-fail", WorkItemStatus.Failed, CancellationToken.None);
+
+        // Assert: guard maps non-terminal step to Failed
+        result.Should().NotBeNull();
+        result!.CurrentStep.Should().Be(PipelineStep.Failed);
+
+        // History persisted with corrected step
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.Is<PipelineRun>(r => r.RunId == "run-nonterminal-fail" && r.CurrentStep == PipelineStep.Failed),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_NonTerminalStep_MapsToCompleted_WhenStatusSucceeded()
+    {
+        // Arrange: run stuck at a non-terminal step
+        var run = CreateRun("run-nonterminal-success", PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.ReviewingCode;
+        _runService.AddRun(run);
+
+        // Act
+        var result = await _sut.CompleteRunAsync("run-nonterminal-success", WorkItemStatus.Succeeded, CancellationToken.None);
+
+        // Assert: guard maps non-terminal step to Completed
+        result.Should().NotBeNull();
+        result!.CurrentStep.Should().Be(PipelineStep.Completed);
+
+        // History persisted with corrected step
+        _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
+            It.Is<PipelineRun>(r => r.RunId == "run-nonterminal-success" && r.CurrentStep == PipelineStep.Completed),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task CompleteRunAsync_AlreadyTerminalStep_NotMutated()
+    {
+        // Arrange: run already has terminal step (normal production flow)
+        var run = CreateRun("run-already-terminal", PipelineRunType.Implementation);
+        run.CurrentStep = PipelineStep.Completed;
+        _runService.AddRun(run);
+
+        // Act
+        var result = await _sut.CompleteRunAsync("run-already-terminal", WorkItemStatus.Succeeded, CancellationToken.None);
+
+        // Assert: step unchanged — guard is a no-op
+        result.Should().NotBeNull();
+        result!.CurrentStep.Should().Be(PipelineStep.Completed);
     }
 
     // ── CancelRunAsync ─────────────────────────────────────────────────

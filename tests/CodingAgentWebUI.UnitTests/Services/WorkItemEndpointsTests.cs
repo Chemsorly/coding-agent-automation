@@ -463,4 +463,77 @@ public class WorkItemEndpointsTests : IDisposable
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
             => Task.FromResult(CreateDbContext());
     }
+
+    // ── FailureReason propagation via HTTP path ──────────────────────────
+
+    [Fact]
+    public async Task PostStatus_Failed_WithFailureReason_SetsEnumOnEntity()
+    {
+        var id = Guid.NewGuid();
+        await SeedWorkItemAsync(id, WorkItemStatus.Running);
+
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            ErrorMessage = "Agent crashed",
+            FailureReason = "AgentError"
+        };
+
+        var result = await WorkItemEndpoints.PostStatus(id, request, _transitionService, _runService.Object, _dbFactory);
+
+        result.Should().BeOfType<Ok>();
+
+        await using var db = _dbFactory.CreateDbContext();
+        var item = await db.WorkItems.FindAsync(id);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.ErrorMessage.Should().Be("Agent crashed");
+        item.FailureReason.Should().Be(FailureReason.AgentError);
+    }
+
+    [Fact]
+    public async Task PostStatus_Failed_WithInvalidFailureReason_DefaultsToAgentError()
+    {
+        var id = Guid.NewGuid();
+        await SeedWorkItemAsync(id, WorkItemStatus.Running);
+
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            ErrorMessage = "Something failed",
+            FailureReason = "NotAValidEnum"
+        };
+
+        var result = await WorkItemEndpoints.PostStatus(id, request, _transitionService, _runService.Object, _dbFactory);
+
+        result.Should().BeOfType<Ok>();
+
+        await using var db = _dbFactory.CreateDbContext();
+        var item = await db.WorkItems.FindAsync(id);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.ErrorMessage.Should().Be("Something failed");
+        item.FailureReason.Should().Be(FailureReason.AgentError);
+    }
+
+    [Fact]
+    public async Task PostStatus_Failed_WithTimeoutFailureReason_SetsCorrectEnum()
+    {
+        var id = Guid.NewGuid();
+        await SeedWorkItemAsync(id, WorkItemStatus.Running);
+
+        var request = new WorkItemStatusRequest
+        {
+            Status = WorkItemStatus.Failed,
+            ErrorMessage = "Timeout exceeded",
+            FailureReason = "Timeout"
+        };
+
+        var result = await WorkItemEndpoints.PostStatus(id, request, _transitionService, _runService.Object, _dbFactory);
+
+        result.Should().BeOfType<Ok>();
+
+        await using var db = _dbFactory.CreateDbContext();
+        var item = await db.WorkItems.FindAsync(id);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.FailureReason.Should().Be(FailureReason.Timeout);
+    }
 }
