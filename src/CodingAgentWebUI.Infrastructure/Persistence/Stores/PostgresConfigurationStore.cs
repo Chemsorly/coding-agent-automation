@@ -823,13 +823,19 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             var sourceProject = await db.Projects
                 .FirstOrDefaultAsync(e => e.Id == sourceGuid, ct);
             if (sourceProject is not null)
+            {
                 sourceProject.TemplateIds.Remove(templateId);
+                ResyncSettingsJson(sourceProject);
+            }
 
             // Add to target project's TemplateIds
             var targetProject = await db.Projects
                 .FirstOrDefaultAsync(e => e.Id == targetGuid, ct);
             if (targetProject is not null && !targetProject.TemplateIds.Contains(templateId))
+            {
                 targetProject.TemplateIds.Add(templateId);
+                ResyncSettingsJson(targetProject);
+            }
 
             await db.SaveChangesAsync(ct);
             InvalidateProjectCaches();
@@ -845,6 +851,27 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     private static string SerializeToJson<T>(T value)
     {
         return JsonSerializer.Serialize(value, JsonOptions);
+    }
+
+    /// <summary>
+    /// Re-serializes the Settings JSON on a ProjectEntity to match the current
+    /// TemplateIds column and entity Id, preventing drift between the two data sources.
+    /// </summary>
+    private static void ResyncSettingsJson(ProjectEntity entity)
+    {
+        if (entity.Settings is null)
+            return;
+
+        var project = JsonSerializer.Deserialize<PipelineProject>(entity.Settings, JsonOptions);
+        if (project is null)
+            return;
+
+        var synced = project with
+        {
+            Id = entity.Id.ToString(),
+            TemplateIds = entity.TemplateIds
+        };
+        entity.Settings = SerializeToJson(synced);
     }
 
     private static T? DeserializeFromEntity<T>(string? json) where T : class
@@ -875,8 +902,22 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         }
 
         var project = JsonSerializer.Deserialize<PipelineProject>(entity.Settings, JsonOptions);
+        if (project is null)
+            return null;
 
-        return project;
+        // Override with authoritative column values — the Settings JSON may be stale
+        // if MoveTemplateAsync (or other code paths) updated columns without re-serializing JSON.
+        // TODO: entity.TemplateIds is a mutable List<string> assigned to IReadOnlyList<string> without a defensive copy.
+        // Safe in practice (DbContext is scoped/disposed shortly after), but a .ToList() would prevent subtle bugs
+        // if the entity's list is ever mutated before the returned record goes out of scope.
+        // TODO: Name, Enabled, and Description also exist as both typed columns and JSON fields but are not overridden here.
+        // If these columns ever diverge (similar to how TemplateIds diverged), DeserializeProject would return stale values.
+        // Consider overriding all typed-column fields for consistency with the null-Settings fallback path (line 893).
+        return project with
+        {
+            Id = entity.Id.ToString(),
+            TemplateIds = entity.TemplateIds
+        };
     }
 
     private void InvalidateProviderCache(ProviderKind kind)
