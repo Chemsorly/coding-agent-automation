@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json.Serialization;
 using MessagePack;
 using Serilog;
@@ -86,6 +87,7 @@ public sealed record PipelineConfiguration
     // ── Flat properties (JSON serialization surface, delegate to sub-configs) ──
 
     [Key(41)]
+    [ProjectOverridable(Order = 1)]
     public int MaxRetries
     {
         get => Retry.MaxRetries;
@@ -98,6 +100,7 @@ public sealed record PipelineConfiguration
     /// Set to 0 to disable retry (fail on first failure).
     /// </summary>
     [Key(35)]
+    [ProjectOverridable(Order = 2)]
     public int MaxAnalysisRetries
     {
         get => Retry.MaxAnalysisRetries;
@@ -108,6 +111,7 @@ public sealed record PipelineConfiguration
     public int IssuePageSize { get; init; } = 25;
 
     [Key(4)]
+    [ProjectOverridable(Order = 3)]
     public TimeSpan AgentTimeout
     {
         get => Retry.AgentTimeout;
@@ -122,12 +126,15 @@ public sealed record PipelineConfiguration
     }
 
     [Key(22)]
+    [ProjectOverridable(Order = 10, DeepMerge = true)]
     public CodeReviewConfiguration CodeReview { get; init; } = new();
 
     [Key(5)]
+    [ProjectOverridable(Order = 4)]
     public string AnalysisPrompt { get; init; } = DefaultAnalysisPrompt;
 
     [Key(32)]
+    [ProjectOverridable(Order = 5)]
     public string ImplementationPrompt { get; init; } = DefaultImplementationPrompt;
 
     /// <summary>
@@ -137,6 +144,7 @@ public sealed record PipelineConfiguration
     /// and feasibility issues before implementation begins. Default: true.
     /// </summary>
     [Key(7)]
+    [ProjectOverridable(Order = 6)]
     public bool AnalysisReviewEnabled { get; init; } = true;
 
     /// <summary>
@@ -145,6 +153,7 @@ public sealed record PipelineConfiguration
     /// then writes findings to .agent/analysis-review.md.
     /// </summary>
     [Key(8)]
+    [ProjectOverridable(Order = 7)]
     public string AnalysisReviewPrompt { get; init; } = DefaultAnalysisReviewPrompt;
 
     /// <summary>
@@ -152,6 +161,7 @@ public sealed record PipelineConfiguration
     /// the analysis based on the review feedback at .agent/analysis-review.md.
     /// </summary>
     [Key(6)]
+    [ProjectOverridable(Order = 8)]
     public string AnalysisRefinementPrompt { get; init; } = DefaultAnalysisRefinementPrompt;
 
     /// <summary>
@@ -159,6 +169,7 @@ public sealed record PipelineConfiguration
     /// code reviewers, producing a structured JSON report. Default: true.
     /// </summary>
     [Key(0)]
+    [ProjectOverridable(Order = 9)]
     public bool AcceptanceCriteriaEnabled { get; init; } = true;
 
     /// <summary>
@@ -173,6 +184,7 @@ public sealed record PipelineConfiguration
     /// before issues are created. Default: true.
     /// </summary>
     [Key(48)]
+    [ProjectOverridable(Order = 23)]
     public bool RefactoringReviewEnabled { get; init; } = true;
 
     /// <summary>
@@ -180,6 +192,7 @@ public sealed record PipelineConfiguration
     /// agent before being committed. Default: true.
     /// </summary>
     [Key(11)]
+    [ProjectOverridable(Order = 24)]
     public bool BrainConsolidationReviewEnabled { get; init; } = true;
 
     /// <summary>
@@ -187,6 +200,7 @@ public sealed record PipelineConfiguration
     /// before being persisted. Default: true.
     /// </summary>
     [Key(28)]
+    [ProjectOverridable(Order = 25)]
     public bool HarnessSuggestionsReviewEnabled { get; init; } = true;
 
     /// <summary>
@@ -194,9 +208,11 @@ public sealed record PipelineConfiguration
     /// after branch creation and before code analysis. Default: true.
     /// </summary>
     [Key(9)]
+    [ProjectOverridable(Order = 11)]
     public bool BaselineHealthCheckEnabled { get; init; } = true;
 
     [Key(26)]
+    [ProjectOverridable(Order = 12)]
     public TimeSpan ExternalCiTimeout
     {
         get => ExternalCi.ExternalCiTimeout;
@@ -204,6 +220,7 @@ public sealed record PipelineConfiguration
     }
 
     [Key(25)]
+    [ProjectOverridable(Order = 13)]
     public TimeSpan ExternalCiPollInterval
     {
         get => ExternalCi.ExternalCiPollInterval;
@@ -211,6 +228,7 @@ public sealed record PipelineConfiguration
     }
 
     [Key(38)]
+    [ProjectOverridable(Order = 16)]
     public int MaxInfrastructureRetries
     {
         get => ExternalCi.MaxInfrastructureRetries;
@@ -222,6 +240,7 @@ public sealed record PipelineConfiguration
     /// Triggers a re-push retry instead of burning the full ExternalCiTimeout. Default: 5 minutes.
     /// </summary>
     [Key(53)]
+    [ProjectOverridable(Order = 14)]
     public TimeSpan CiNotStartedTimeout
     {
         get => ExternalCi.CiNotStartedTimeout;
@@ -232,6 +251,7 @@ public sealed record PipelineConfiguration
     /// Maximum re-push retries when CI never starts. Default: 5.
     /// </summary>
     [Key(54)]
+    [ProjectOverridable(Order = 15)]
     public int CiNotStartedMaxRetries
     {
         get => ExternalCi.CiNotStartedMaxRetries;
@@ -243,6 +263,7 @@ public sealed record PipelineConfiguration
     /// The warning resets after each occurrence so it fires again after another interval of silence.
     /// </summary>
     [Key(51)]
+    [ProjectOverridable(Order = 17)]
     public TimeSpan StallWarningInterval
     {
         get => Retry.StallWarningInterval;
@@ -261,6 +282,7 @@ public sealed record PipelineConfiguration
     }
 
     [Key(10)]
+    [ProjectOverridable(Order = 26)]
     public IReadOnlyList<string> BlacklistedPaths
     {
         get => Commit.BlacklistedPaths;
@@ -281,6 +303,7 @@ public sealed record PipelineConfiguration
     /// Configurable at global level and overridable per project via <see cref="ApplyProjectOverrides"/>.
     /// </summary>
     [Key(56)]
+    [ProjectOverridable(Order = 28)]
     public int AnalysisCommitThreshold { get; init; } = PipelineConstants.DefaultAnalysisCommitThreshold;
 
 
@@ -296,74 +319,152 @@ public sealed record PipelineConfiguration
     {
         if (project is null) return config;
 
+        // Clone once via the compiler-generated <Clone>$ method, then mutate via PropertyInfo.SetValue.
+        // This is equivalent to the previous per-property `config = config with { Prop = value }` pattern.
+        // Init setters are callable via reflection because they are regular setters at the IL level —
+        // the runtime does not enforce init-only semantics during reflection. This is a stable .NET
+        // contract relied upon by System.Text.Json and MessagePack serializers.
+        // TODO: Consider wrapping clone invocation in try block — if s_cloneMethod.Invoke throws
+        // (e.g., OOM), the exception propagates unhandled since the catch only handles TargetInvocationException
+        // wrapping ArgumentOutOfRangeException. Low probability but differs from original per-property `with` pattern.
+        var clone = (PipelineConfiguration)s_cloneMethod.Invoke(config, null)!;
+
         try
         {
-            if (project.MaxRetries.HasValue)
-                config = config with { MaxRetries = project.MaxRetries.Value };
-            if (project.MaxAnalysisRetries.HasValue)
-                config = config with { MaxAnalysisRetries = project.MaxAnalysisRetries.Value };
-            if (project.AgentTimeout.HasValue)
-                config = config with { AgentTimeout = project.AgentTimeout.Value };
-            if (project.AnalysisPrompt is not null)
-                config = config with { AnalysisPrompt = project.AnalysisPrompt };
-            if (project.ImplementationPrompt is not null)
-                config = config with { ImplementationPrompt = project.ImplementationPrompt };
-            if (project.AnalysisReviewEnabled.HasValue)
-                config = config with { AnalysisReviewEnabled = project.AnalysisReviewEnabled.Value };
-            if (project.AnalysisReviewPrompt is not null)
-                config = config with { AnalysisReviewPrompt = project.AnalysisReviewPrompt };
-            if (project.AnalysisRefinementPrompt is not null)
-                config = config with { AnalysisRefinementPrompt = project.AnalysisRefinementPrompt };
-            if (project.AcceptanceCriteriaEnabled.HasValue)
-                config = config with { AcceptanceCriteriaEnabled = project.AcceptanceCriteriaEnabled.Value };
-            if (project.CodeReview is not null)
-                config = config with { CodeReview = config.CodeReview.ApplyOverrides(project.CodeReview) };
-            if (project.BaselineHealthCheckEnabled.HasValue)
-                config = config with { BaselineHealthCheckEnabled = project.BaselineHealthCheckEnabled.Value };
-            if (project.ExternalCiTimeout.HasValue)
-                config = config with { ExternalCiTimeout = project.ExternalCiTimeout.Value };
-            if (project.ExternalCiPollInterval.HasValue)
-                config = config with { ExternalCiPollInterval = project.ExternalCiPollInterval.Value };
-            if (project.CiNotStartedTimeout.HasValue)
-                config = config with { CiNotStartedTimeout = project.CiNotStartedTimeout.Value };
-            if (project.CiNotStartedMaxRetries.HasValue)
-                config = config with { CiNotStartedMaxRetries = project.CiNotStartedMaxRetries.Value };
-            if (project.MaxInfrastructureRetries.HasValue)
-                config = config with { MaxInfrastructureRetries = project.MaxInfrastructureRetries.Value };
-            if (project.StallWarningInterval.HasValue)
-                config = config with { StallWarningInterval = project.StallWarningInterval.Value };
-            if (project.MaxDecompositionSubIssues.HasValue)
-                config = config with { MaxDecompositionSubIssues = project.MaxDecompositionSubIssues.Value };
-            if (project.MaxConcurrentDecompositions.HasValue)
-                config = config with { MaxConcurrentDecompositions = project.MaxConcurrentDecompositions.Value };
-            if (project.DecompositionTimeout.HasValue)
-                config = config with { DecompositionTimeout = project.DecompositionTimeout.Value };
-            if (project.MaxOpenIssuesForContext.HasValue)
-                config = config with { MaxOpenIssuesForContext = project.MaxOpenIssuesForContext.Value };
-            if (project.MaxRefactoringProposals.HasValue)
-                config = config with { MaxRefactoringProposals = project.MaxRefactoringProposals.Value };
-            if (project.RefactoringReviewEnabled.HasValue)
-                config = config with { RefactoringReviewEnabled = project.RefactoringReviewEnabled.Value };
-            if (project.BrainConsolidationReviewEnabled.HasValue)
-                config = config with { BrainConsolidationReviewEnabled = project.BrainConsolidationReviewEnabled.Value };
-            if (project.HarnessSuggestionsReviewEnabled.HasValue)
-                config = config with { HarnessSuggestionsReviewEnabled = project.HarnessSuggestionsReviewEnabled.Value };
-            if (project.BlacklistedPaths is not null)
-                config = config with { BlacklistedPaths = project.BlacklistedPaths };
-            if (project.BrainReadOnly.HasValue)
-                config = config with { BrainReadOnly = project.BrainReadOnly.Value };
-            if (project.AnalysisCommitThreshold.HasValue)
-                config = config with { AnalysisCommitThreshold = project.AnalysisCommitThreshold.Value };
+            foreach (var mapping in s_overrideMappings)
+            {
+                var projectValue = mapping.ProjectGetter(project);
+                if (projectValue is null) continue;
+
+                if (mapping.DeepMerge)
+                {
+                    // Deep-merge: read current config value, invoke ApplyOverrides, assign result
+                    // TODO: This assumes deep-merge properties are simple auto-properties (not delegating).
+                    // If a future deep-merge property delegates to a sub-config, GetValue after SetValue on
+                    // a shallow clone could read stale data. Currently safe (CodeReview is the only deep-merge property).
+                    var currentValue = mapping.ConfigProperty.GetValue(clone);
+                    // TODO: MethodInfo.Invoke wraps all exceptions in TargetInvocationException, changing
+                    // observable exception types for callers vs the original direct-call implementation.
+                    // Non-ArgumentOutOfRangeException failures from ApplyOverrides will propagate wrapped.
+                    var merged = mapping.ApplyOverridesMethod!.Invoke(currentValue, [projectValue]);
+                    mapping.ConfigProperty.SetValue(clone, merged);
+                }
+                else
+                {
+                    // Simple replacement: unwrap Nullable<T> if needed, then assign
+                    var unwrapped = mapping.UnwrapNullable(projectValue);
+                    mapping.ConfigProperty.SetValue(clone, unwrapped);
+                }
+            }
         }
-        catch (ArgumentOutOfRangeException ex)
+        catch (TargetInvocationException ex) when (ex.InnerException is ArgumentOutOfRangeException rangeEx)
         {
+            // INVARIANT: Partial-apply is safe because all validated init setters
+            // (CiNotStartedMaxRetries, MaxInfrastructureRetries, MaxDecompositionSubIssues) use
+            // fail-fast patterns (ternary throw or ThrowIf) that either fully assign or throw
+            // without leaving partial state. If a future setter mutates state before validation,
+            // add a per-property try/catch instead.
+            // TODO: Log message says "falling back to global defaults" but returns partially-mutated clone.
+            // This matches original behavior but is misleading — consider "retaining partially-applied overrides".
             Log.Warning(
                 "Project '{ProjectName}' (ID: {ProjectId}) has out-of-range override values — falling back to global defaults. {ErrorMessage}",
-                project.Name, project.Id, ex.Message);
-            return config;
+                project.Name, project.Id, rangeEx.Message);
+            return clone;
         }
 
-        return config;
+        return clone;
+    }
+
+    // ── Reflection-based override engine (cached at static init) ────────────────
+
+    private static readonly MethodInfo s_cloneMethod = typeof(PipelineConfiguration)
+        .GetMethod("<Clone>$", BindingFlags.Instance | BindingFlags.Public)!;
+
+    private static readonly IReadOnlyList<OverrideMapping> s_overrideMappings = BuildOverrideMappings();
+
+    private static IReadOnlyList<OverrideMapping> BuildOverrideMappings()
+    {
+        var configProperties = typeof(PipelineConfiguration)
+            .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+            .Select(p => (Property: p, Attribute: p.GetCustomAttribute<ProjectOverridableAttribute>()))
+            .Where(x => x.Attribute is not null)
+            .OrderBy(x => x.Attribute!.Order)
+            .ToList();
+
+        var projectProperties = typeof(PipelineProject)
+            .GetProperties(BindingFlags.Instance | BindingFlags.Public)
+            .ToDictionary(p => p.Name);
+
+        var mappings = new List<OverrideMapping>(configProperties.Count);
+
+        foreach (var (configProp, attr) in configProperties)
+        {
+            if (!projectProperties.TryGetValue(configProp.Name, out var projectProp))
+            {
+                throw new InvalidOperationException(
+                    $"[ProjectOverridable] property '{configProp.Name}' on PipelineConfiguration " +
+                    $"has no matching property on PipelineProject.");
+            }
+
+            MethodInfo? applyOverridesMethod = null;
+            if (attr!.DeepMerge)
+            {
+                // For deep-merge, find the ApplyOverrides method on the config property's type
+                // that accepts the project property's type as a parameter.
+                var configPropType = configProp.PropertyType;
+                var projectPropType = projectProp.PropertyType;
+                // The project type is nullable reference — the non-null value is passed directly
+                applyOverridesMethod = configPropType.GetMethod(
+                    "ApplyOverrides",
+                    BindingFlags.Instance | BindingFlags.Public,
+                    [projectPropType]);
+
+                if (applyOverridesMethod is null)
+                {
+                    throw new InvalidOperationException(
+                        $"[ProjectOverridable(DeepMerge = true)] property '{configProp.Name}': " +
+                        $"type '{configPropType.Name}' has no ApplyOverrides({projectPropType.Name}) method.");
+                }
+            }
+
+            // Build a fast getter delegate for the project property
+            var projectGetter = BuildProjectGetter(projectProp);
+
+            // Determine if the project property is Nullable<T> (value type)
+            var isNullableValueType = Nullable.GetUnderlyingType(projectProp.PropertyType) is not null;
+
+            mappings.Add(new OverrideMapping
+            {
+                ConfigProperty = configProp,
+                ProjectGetter = projectGetter,
+                DeepMerge = attr.DeepMerge,
+                ApplyOverridesMethod = applyOverridesMethod,
+                IsNullableValueType = isNullableValueType,
+            });
+        }
+
+        return mappings;
+    }
+
+    private static Func<PipelineProject, object?> BuildProjectGetter(PropertyInfo projectProp)
+    {
+        // Use the PropertyInfo getter — boxed for Nullable<T>, returns null for reference types
+        return project => projectProp.GetValue(project);
+    }
+
+    private sealed class OverrideMapping
+    {
+        public required PropertyInfo ConfigProperty { get; init; }
+        public required Func<PipelineProject, object?> ProjectGetter { get; init; }
+        public required bool DeepMerge { get; init; }
+        public MethodInfo? ApplyOverridesMethod { get; init; }
+        public required bool IsNullableValueType { get; init; }
+
+        /// <summary>
+        /// For Nullable&lt;T&gt; value types, the boxed value is already the unwrapped T.
+        /// For reference types, the value is used as-is.
+        /// </summary>
+        public object UnwrapNullable(object value) => value;
     }
 
     /// <summary>
@@ -440,6 +541,7 @@ public sealed record PipelineConfiguration
     /// entirely. Defaults to false.
     /// </summary>
     [Key(13)]
+    [ProjectOverridable(Order = 27)]
     public bool BrainReadOnly
     {
         get => Agent.BrainReadOnly;
@@ -670,6 +772,7 @@ public sealed record PipelineConfiguration
     /// Default: 3.
     /// </summary>
     [Key(40)]
+    [ProjectOverridable(Order = 22)]
     public int MaxRefactoringProposals { get; init; } = 3;
 
     /// <summary>
@@ -683,6 +786,7 @@ public sealed record PipelineConfiguration
     /// Maximum number of sub-issues per epic decomposition (range: 1–20). Default: 10.
     /// </summary>
     [Key(37)]
+    [ProjectOverridable(Order = 18)]
     public int MaxDecompositionSubIssues
     {
         get => field;
@@ -698,18 +802,21 @@ public sealed record PipelineConfiguration
     /// Maximum simultaneous decomposition runs. Default: 2.
     /// </summary>
     [Key(36)]
+    [ProjectOverridable(Order = 19)]
     public int MaxConcurrentDecompositions { get; init; } = 2;
 
     /// <summary>
     /// Timeout for each decomposition phase. Default: 15 minutes.
     /// </summary>
     [Key(23)]
+    [ProjectOverridable(Order = 20)]
     public TimeSpan DecompositionTimeout { get; init; } = TimeSpan.FromMinutes(15);
 
     /// <summary>
     /// Maximum open issues downloaded for deduplication context. Default: 50.
     /// </summary>
     [Key(39)]
+    [ProjectOverridable(Order = 21)]
     public int MaxOpenIssuesForContext { get; init; } = 50;
 
     /// <summary>
