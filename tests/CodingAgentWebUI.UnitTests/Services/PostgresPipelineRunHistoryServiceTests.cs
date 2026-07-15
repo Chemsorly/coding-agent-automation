@@ -2,6 +2,7 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -238,6 +239,191 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         var history = _sut.GetRunHistory();
 
         history.Should().HaveCount(maxHistory);
+    }
+
+    // ── Consolidation filtering tests ───────────────────────────────────
+
+    [Fact]
+    public void GetRunHistory_ExcludesConsolidationRuns()
+    {
+        // Arrange: persist a normal run and a consolidation ghost entry
+        var normalRun = CreateCompletedRun(Guid.NewGuid().ToString(), "org/repo#1", "Normal run");
+        var consolidationRun = PipelineRun.Create(
+            runId: Guid.NewGuid().ToString(),
+            issueIdentifier: Guid.NewGuid().ToString(),
+            issueTitle: Guid.NewGuid().ToString(),
+            issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
+            repoProviderConfigId: "rp-1",
+            initiatedBy: ConsolidationConstants.InitiatedBy);
+        consolidationRun.CurrentStep = PipelineStep.Completed;
+        consolidationRun.MarkCompleted();
+
+        // Persist both directly to DB (bypassing the guard to simulate pre-existing ghost entries)
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            var normalSummary = normalRun.ToSummary();
+            var consolSummary = consolidationRun.ToSummary();
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.Parse(normalRun.RunId),
+                IssueIdentifier = normalSummary.IssueIdentifier,
+                IssueTitle = normalSummary.IssueTitle,
+                FinalStep = normalSummary.FinalStep,
+                StartedAt = normalSummary.StartedAtOffset,
+                SummaryJson = System.Text.Json.JsonSerializer.Serialize(normalSummary, PipelineJsonOptions.Default)
+            });
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.Parse(consolidationRun.RunId),
+                IssueIdentifier = consolSummary.IssueIdentifier,
+                IssueTitle = consolSummary.IssueTitle,
+                FinalStep = consolSummary.FinalStep,
+                StartedAt = consolSummary.StartedAtOffset,
+                SummaryJson = System.Text.Json.JsonSerializer.Serialize(consolSummary, PipelineJsonOptions.Default)
+            });
+            db.SaveChanges();
+        }
+
+        // Act
+        var history = _sut.GetRunHistory();
+
+        // Assert: only the normal run should appear
+        history.Should().HaveCount(1);
+        history[0].IssueIdentifier.Should().Be("org/repo#1");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_ExcludesConsolidationRuns()
+    {
+        var normalRun = CreateCompletedRun(Guid.NewGuid().ToString(), "org/repo#2", "Async normal");
+        var consolidationRun = PipelineRun.Create(
+            runId: Guid.NewGuid().ToString(),
+            issueIdentifier: Guid.NewGuid().ToString(),
+            issueTitle: Guid.NewGuid().ToString(),
+            issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
+            repoProviderConfigId: "rp-1",
+            initiatedBy: ConsolidationConstants.InitiatedBy);
+        consolidationRun.CurrentStep = PipelineStep.Completed;
+        consolidationRun.MarkCompleted();
+
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            var normalSummary = normalRun.ToSummary();
+            var consolSummary = consolidationRun.ToSummary();
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.Parse(normalRun.RunId),
+                IssueIdentifier = normalSummary.IssueIdentifier,
+                IssueTitle = normalSummary.IssueTitle,
+                FinalStep = normalSummary.FinalStep,
+                StartedAt = normalSummary.StartedAtOffset,
+                SummaryJson = System.Text.Json.JsonSerializer.Serialize(normalSummary, PipelineJsonOptions.Default)
+            });
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.Parse(consolidationRun.RunId),
+                IssueIdentifier = consolSummary.IssueIdentifier,
+                IssueTitle = consolSummary.IssueTitle,
+                FinalStep = consolSummary.FinalStep,
+                StartedAt = consolSummary.StartedAtOffset,
+                SummaryJson = System.Text.Json.JsonSerializer.Serialize(consolSummary, PipelineJsonOptions.Default)
+            });
+            db.SaveChanges();
+        }
+
+        var history = await _sut.GetRunHistoryAsync();
+
+        history.Should().HaveCount(1);
+        history[0].IssueIdentifier.Should().Be("org/repo#2");
+    }
+
+    [Fact]
+    public void GetRunsByAgentId_ExcludesConsolidationRuns()
+    {
+        const string agentId = "agent-test";
+        var normalRun = CreateCompletedRun(Guid.NewGuid().ToString(), "org/repo#3", "Normal", agentId: agentId);
+        var consolidationRun = PipelineRun.Create(
+            runId: Guid.NewGuid().ToString(),
+            issueIdentifier: Guid.NewGuid().ToString(),
+            issueTitle: Guid.NewGuid().ToString(),
+            issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
+            repoProviderConfigId: "rp-1",
+            initiatedBy: ConsolidationConstants.InitiatedBy,
+            agentId: agentId);
+        consolidationRun.CurrentStep = PipelineStep.Completed;
+        consolidationRun.MarkCompleted();
+
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            var normalSummary = normalRun.ToSummary();
+            var consolSummary = consolidationRun.ToSummary();
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.Parse(normalRun.RunId),
+                IssueIdentifier = normalSummary.IssueIdentifier,
+                IssueTitle = normalSummary.IssueTitle,
+                FinalStep = normalSummary.FinalStep,
+                StartedAt = normalSummary.StartedAtOffset,
+                AgentId = agentId,
+                SummaryJson = System.Text.Json.JsonSerializer.Serialize(normalSummary, PipelineJsonOptions.Default)
+            });
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.Parse(consolidationRun.RunId),
+                IssueIdentifier = consolSummary.IssueIdentifier,
+                IssueTitle = consolSummary.IssueTitle,
+                FinalStep = consolSummary.FinalStep,
+                StartedAt = consolSummary.StartedAtOffset,
+                AgentId = agentId,
+                SummaryJson = System.Text.Json.JsonSerializer.Serialize(consolSummary, PipelineJsonOptions.Default)
+            });
+            db.SaveChanges();
+        }
+
+        var result = _sut.GetRunsByAgentId(agentId);
+
+        result.Should().HaveCount(1);
+        result[0].IssueIdentifier.Should().Be("org/repo#3");
+    }
+
+    [Fact]
+    public void AddRunToHistory_RejectsConsolidationRun_Silently()
+    {
+        var consolidationRun = PipelineRun.Create(
+            runId: Guid.NewGuid().ToString(),
+            issueIdentifier: Guid.NewGuid().ToString(),
+            issueTitle: "Consolidation",
+            issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
+            repoProviderConfigId: "rp-1",
+            initiatedBy: ConsolidationConstants.InitiatedBy);
+        consolidationRun.CurrentStep = PipelineStep.Completed;
+        consolidationRun.MarkCompleted();
+
+        // Should not throw
+        _sut.AddRunToHistory(consolidationRun);
+
+        // Should not persist to DB
+        using var db = new InMemoryPipelineDbContext(_dbOptions);
+        db.PipelineRuns.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task AddRunToHistoryAsync_RejectsConsolidationRun_Silently()
+    {
+        var consolidationRun = PipelineRun.Create(
+            runId: Guid.NewGuid().ToString(),
+            issueIdentifier: Guid.NewGuid().ToString(),
+            issueTitle: "Consolidation",
+            issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
+            repoProviderConfigId: "rp-1",
+            initiatedBy: ConsolidationConstants.InitiatedBy);
+        consolidationRun.CurrentStep = PipelineStep.Completed;
+        consolidationRun.MarkCompleted();
+
+        await _sut.AddRunToHistoryAsync(consolidationRun);
+
+        using var db = new InMemoryPipelineDbContext(_dbOptions);
+        db.PipelineRuns.Should().BeEmpty();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
