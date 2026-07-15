@@ -832,43 +832,43 @@ public sealed record PipelineConfiguration
     /// <summary>
     /// Maximum number of images to extract per issue/PR. Default: 10.
     /// </summary>
-    [Key(56)]
+    [Key(63)]
     public int MaxIssueImages { get; init; } = 10;
 
     /// <summary>
     /// Maximum size in bytes for a single downloaded image. Default: 5 MB.
     /// </summary>
-    [Key(57)]
+    [Key(64)]
     public long MaxImageSizeBytes { get; init; } = 5_242_880;
 
     /// <summary>
     /// Maximum total bytes for all downloaded images combined. Default: 20 MB.
     /// </summary>
-    [Key(58)]
+    [Key(65)]
     public long MaxTotalImageSizeBytes { get; init; } = 20_971_520;
 
     /// <summary>
     /// Total time budget in seconds for downloading all images. Default: 60.
     /// </summary>
-    [Key(59)]
+    [Key(66)]
     public int TotalImageDownloadTimeoutSeconds { get; init; } = 60;
 
     /// <summary>
     /// When true, issue/PR image extraction and download is enabled. Default: true.
     /// </summary>
-    [Key(60)]
+    [Key(67)]
     public bool EnableIssueImageExtraction { get; init; } = true;
 
     /// <summary>
     /// When true, downloaded images are sent as native image parts to the agent API. Default: true.
     /// </summary>
-    [Key(61)]
+    [Key(68)]
     public bool EnableNativeImageParts { get; init; } = true;
 
     /// <summary>
     /// Timeout in seconds for downloading a single image. Default: 30.
     /// </summary>
-    [Key(62)]
+    [Key(69)]
     public int ImageDownloadTimeoutSeconds { get; init; } = 30;
 
 }
