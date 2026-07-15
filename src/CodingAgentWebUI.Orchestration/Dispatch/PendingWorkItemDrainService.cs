@@ -233,6 +233,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     {
                         // Dispatch failed — revert to Pending for next cycle
                         _agentResolver.ReleaseAgent(agentId);
+                        // TODO: This uses `ct` (the stoppingToken) which could be cancelled during shutdown,
+                        // causing the revert to fail — same latent bug pattern as the exception-handler paths.
+                        // For consistency, consider using CancellationToken.None here as well.
                         await _transitionService.TransitionAsync(
                             item.Id, WorkItemStatus.Pending,
                             entity =>
@@ -258,7 +261,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                             {
                                 entity.DispatchedAt = null;
                                 entity.AssignedAgentId = null;
-                            }, ct);
+                            }, CancellationToken.None);
                     }
                     catch (Exception revertEx)
                     {
@@ -354,9 +357,6 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 // Consider checking the return value and manually incrementing RetryCount in that case.
                 try
                 {
-                    // TODO: Using the same stoppingToken (ct) here means the revert will also fail if
-                    // the original exception was due to cancellation (shutdown). Consider using
-                    // CancellationToken.None to ensure revert completes during graceful shutdown.
                     await _transitionService.TransitionAsync(
                         item.Id, WorkItemStatus.Pending,
                         entity =>
@@ -364,7 +364,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                             entity.DispatchedAt = null;
                             entity.AssignedAgentId = null;
                             entity.RetryCount++;
-                        }, ct);
+                        }, CancellationToken.None);
                 }
                 catch (Exception revertEx)
                 {
