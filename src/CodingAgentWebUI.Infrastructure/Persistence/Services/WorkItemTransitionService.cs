@@ -140,58 +140,94 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
     /// This is an explicit, auditable bypass of the terminal state machine rule that only
     /// activates when the FailureReason is InfrastructureFailure (e.g., SignalR delivery timeout).
     /// Does NOT modify IsValidTransition — the standard state machine remains strict.
+    /// Wraps DB operations in the Polly resilience pipeline for transient fault tolerance,
+    /// and retries up to 3 times on DbUpdateConcurrencyException (matching TransitionCoreAsync).
     /// </summary>
     /// <param name="workItemId">The work item to recover.</param>
     /// <param name="desiredStatus">The target status (Running, Succeeded, Failed, or Cancelled).</param>
     /// <param name="mutate">Optional action to set additional fields during recovery.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>True if recovery succeeded, false if not applicable (wrong state, wrong reason, or item not found).</returns>
-    // TODO: Add concurrency retry loop for DbUpdateConcurrencyException (like TransitionCoreAsync's 3-retry pattern).
-    // Without it, a concurrent write (e.g., ReconciliationService) causes silent recovery loss.
-    // TODO: Wrap DB operation in _resiliencePipeline (Polly) for transient failure retry, matching TransitionAsync behavior.
     public async Task<bool> TryRecoverFromInfrastructureFailureAsync(
         Guid workItemId, WorkItemStatus desiredStatus,
         Action<WorkItemEntity>? mutate = null,
         CancellationToken ct = default)
     {
-        // Only allow recovery to specific target states
+        if (_resiliencePipeline is not null)
+        {
+            return await _resiliencePipeline.ExecuteAsync(
+                async token => await TryRecoverFromInfrastructureFailureCoreAsync(workItemId, desiredStatus, mutate, token),
+                ct);
+        }
+
+        return await TryRecoverFromInfrastructureFailureCoreAsync(workItemId, desiredStatus, mutate, ct);
+    }
+
+    private async Task<bool> TryRecoverFromInfrastructureFailureCoreAsync(
+        Guid workItemId, WorkItemStatus desiredStatus,
+        Action<WorkItemEntity>? mutate,
+        CancellationToken ct)
+    {
+        const int MaxRetries = 3;
+
+        // Validate desiredStatus upfront (no retry needed for invalid input)
         if (desiredStatus is not (WorkItemStatus.Running or WorkItemStatus.Succeeded
             or WorkItemStatus.Failed or WorkItemStatus.Cancelled))
         {
             return false;
         }
 
-        await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var item = await db.WorkItems.FindAsync([workItemId], ct);
-        if (item is null)
+        for (int attempt = 0; attempt <= MaxRetries; attempt++)
         {
-            _logger.LogWarning("TryRecoverFromInfrastructureFailure: WorkItem {WorkItemId} not found", workItemId);
-            return false;
+            await using var db = await _dbFactory.CreateDbContextAsync(ct);
+            var item = await db.WorkItems.FindAsync([workItemId], ct);
+            if (item is null)
+            {
+                _logger.LogWarning("TryRecoverFromInfrastructureFailure: WorkItem {WorkItemId} not found", workItemId);
+                return false;
+            }
+
+            // Idempotent: already at target
+            if (item.Status == desiredStatus)
+                return true;
+
+            // Only recover from Failed state
+            if (item.Status != WorkItemStatus.Failed)
+                return false;
+
+            // Only recover infrastructure failures (delivery timeouts), not legitimate agent errors
+            if (item.FailureReason != FailureReason.InfrastructureFailure)
+                return false;
+
+            // Perform the recovery transition
+            item.Status = desiredStatus;
+            mutate?.Invoke(item);
+
+            try
+            {
+                await db.SaveChangesAsync(ct);
+                _logger.LogWarning(
+                    "Recovered WorkItem {WorkItemId} from infrastructure-failure-induced Failed to {DesiredStatus}",
+                    workItemId, desiredStatus);
+                return true;
+            }
+            catch (DbUpdateConcurrencyException) when (attempt < MaxRetries)
+            {
+                _logger.LogInformation(
+                    "Concurrency conflict on WorkItem {WorkItemId} recovery to {DesiredStatus}, retry {Attempt}/{MaxRetries}",
+                    workItemId, desiredStatus, attempt + 1, MaxRetries);
+                // Row modified by another writer — retry with fresh state
+            }
         }
 
-        // Already at target — idempotent success
-        if (item.Status == desiredStatus)
-            return true;
-
-        // Only recover from Failed state
-        if (item.Status != WorkItemStatus.Failed)
-            return false;
-
-        // Only recover infrastructure failures (delivery timeouts), not legitimate agent errors
-        if (item.FailureReason != FailureReason.InfrastructureFailure)
-            return false;
-
-        // Perform the recovery transition
-        item.Status = desiredStatus;
-        mutate?.Invoke(item);
-
-        await db.SaveChangesAsync(ct);
-
+        // Structurally unreachable for the "all-retries-throw" case (final attempt propagates unhandled).
+        // Exists for pattern symmetry with TransitionCoreAsync.
+        // TODO: Document in method XML doc that callers must handle DbUpdateConcurrencyException when
+        // all retries are exhausted under sustained concurrency pressure — the method is not purely true/false.
         _logger.LogWarning(
-            "Recovered WorkItem {WorkItemId} from infrastructure-failure-induced Failed to {DesiredStatus}",
+            "WorkItem {WorkItemId} recovery to {DesiredStatus} failed after exhausting all retries",
             workItemId, desiredStatus);
-
-        return true;
+        return false;
     }
 
     /// <summary>
