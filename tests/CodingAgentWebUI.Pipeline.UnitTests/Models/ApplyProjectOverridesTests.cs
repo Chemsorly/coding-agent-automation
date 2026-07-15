@@ -1,6 +1,7 @@
 // Feature: 029-pipeline-projects
 // Task 11.2: Unit tests for ApplyProjectOverrides
 // Validates: Requirements 3.2, 3.3, 3.7, 4.4
+using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using CodingAgentWebUI.Pipeline.Models;
@@ -13,6 +14,15 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 /// Covers null → inherit, non-null → override, REPLACE semantics for nested objects,
 /// and resolution order (Global → Project → ProviderConfig blacklist).
 /// </summary>
+// TODO: Add test for ArgumentOutOfRangeException handling via TargetInvocationException unwrapping
+// and partial-apply semantics (properties applied before the failing one are retained in the clone).
+// TODO: Add test validating that all [ProjectOverridable] Order values are unique — duplicate Order
+// values produce non-deterministic iteration which breaks partial-apply-on-exception semantics.
+// TODO: Add dedicated override tests for AcceptanceCriteriaEnabled, CiNotStartedTimeout,
+// CiNotStartedMaxRetries, and AnalysisCommitThreshold — drift-detection verifies mapping exists
+// but not that the override actually works at runtime for these properties.
+// TODO: Add test asserting ApplyProjectOverrides does not mutate the original config object —
+// the refactoring changed from immutable `with` expressions to clone-then-mutate-in-place.
 public class ApplyProjectOverridesTests
 {
     // ── Null project returns config unchanged ──────────────────────────────────
@@ -599,5 +609,96 @@ public class ApplyProjectOverridesTests
         result.ClosedLoopMaxPagesToFetch.Should().Be(config.ClosedLoopMaxPagesToFetch);
         result.IssuePageSize.Should().Be(config.IssuePageSize);
         result.FailedWorkspaceRetentionDays.Should().Be(config.FailedWorkspaceRetentionDays);
+    }
+
+    // ── Drift-detection tests ──────────────────────────────────────────────────
+
+    /// <summary>
+    /// Well-known PipelineProject fields that are NOT behavioral overrides.
+    /// These fields are structural/identity/metadata — never applied via ApplyProjectOverrides.
+    /// </summary>
+    private static readonly HashSet<string> NonOverrideProjectFields = new(StringComparer.Ordinal)
+    {
+        nameof(PipelineProject.Id),
+        nameof(PipelineProject.Name),
+        nameof(PipelineProject.Description),
+        nameof(PipelineProject.Enabled),
+        nameof(PipelineProject.TemplateIds),
+        nameof(PipelineProject.EpicIssueProviderId),
+        nameof(PipelineProject.SteeringContent),
+        nameof(PipelineProject.Secrets),
+    };
+
+    [Fact]
+    public void DriftDetection_AllProjectOverrideProperties_HaveMatchingProjectOverridableAttribute()
+    {
+        // Forward check: every nullable behavioral property on PipelineProject
+        // must have a corresponding [ProjectOverridable]-annotated property on PipelineConfiguration.
+        var configPropertiesWithAttribute = typeof(PipelineConfiguration)
+            .GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+            .Where(p => p.GetCustomAttribute<ProjectOverridableAttribute>() is not null)
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var projectOverrideProperties = typeof(PipelineProject)
+            .GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+            .Where(p => !NonOverrideProjectFields.Contains(p.Name))
+            .Select(p => p.Name)
+            .ToList();
+
+        var missingAnnotations = projectOverrideProperties
+            .Where(name => !configPropertiesWithAttribute.Contains(name))
+            .ToList();
+
+        missingAnnotations.Should().BeEmpty(
+            "every behavioral override property on PipelineProject should have a matching " +
+            "[ProjectOverridable]-annotated property on PipelineConfiguration. " +
+            $"Missing: [{string.Join(", ", missingAnnotations)}]");
+    }
+
+    [Fact]
+    public void DriftDetection_AllProjectOverridableProperties_HaveMatchingProjectProperty()
+    {
+        // Reverse check: every [ProjectOverridable] property on PipelineConfiguration
+        // must have a matching nullable property on PipelineProject.
+        var projectPropertyNames = typeof(PipelineProject)
+            .GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+            .Select(p => p.Name)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var annotatedConfigProperties = typeof(PipelineConfiguration)
+            .GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+            .Where(p => p.GetCustomAttribute<ProjectOverridableAttribute>() is not null)
+            .Select(p => p.Name)
+            .ToList();
+
+        var missingProjectProperties = annotatedConfigProperties
+            .Where(name => !projectPropertyNames.Contains(name))
+            .ToList();
+
+        missingProjectProperties.Should().BeEmpty(
+            "every [ProjectOverridable]-annotated property on PipelineConfiguration should have a " +
+            "matching property on PipelineProject. " +
+            $"Missing: [{string.Join(", ", missingProjectProperties)}]");
+    }
+
+    [Fact]
+    public void DriftDetection_NoInfrastructurePropertyIsAnnotatedAsOverridable()
+    {
+        // Guard: infrastructure fields must NOT be annotated with [ProjectOverridable]
+        var annotatedConfigProperties = typeof(PipelineConfiguration)
+            .GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+            .Where(p => p.GetCustomAttribute<ProjectOverridableAttribute>() is not null)
+            .Select(p => p.Name)
+            .ToList();
+
+        // These properties on PipelineProject are structural, not behavioral overrides
+        var accidentallyAnnotated = annotatedConfigProperties
+            .Where(name => NonOverrideProjectFields.Contains(name))
+            .ToList();
+
+        accidentallyAnnotated.Should().BeEmpty(
+            "infrastructure/identity fields should NOT be annotated with [ProjectOverridable]. " +
+            $"Incorrectly annotated: [{string.Join(", ", accidentallyAnnotated)}]");
     }
 }
