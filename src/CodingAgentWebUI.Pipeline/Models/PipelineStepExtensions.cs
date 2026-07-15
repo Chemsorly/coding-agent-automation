@@ -2,6 +2,14 @@ namespace CodingAgentWebUI.Pipeline.Models;
 
 public static class PipelineStepExtensions
 {
+    /// <summary>
+    /// Returns true if the step represents a terminal state (Completed, Failed, or Cancelled).
+    /// Terminal steps are the only valid values for <see cref="PipelineRunSummary.FinalStep"/>
+    /// when persisting to history.
+    /// </summary>
+    public static bool IsTerminal(this PipelineStep step)
+        => step is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled;
+
     public static string ToDisplayName(this PipelineStep step) => step switch
     {
         PipelineStep.Created => "Pipeline Created",
