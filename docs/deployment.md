@@ -291,8 +291,8 @@ In DB+Kubernetes mode, the orchestrator uses Kubernetes Lease-based leader elect
 
 | Service | Behavior When Leader | Behavior When Non-Leader |
 |---------|---------------------|--------------------------|
-| `DispatchService` | Polls for pending WorkItems and dispatches K8s Jobs | Waits (polls `IsLeader` every 2s) |
-| `ReconciliationService` | Runs startup reconciliation, watches K8s Jobs, enforces timeouts | Waits (polls `IsLeader` every 2s) |
+| `DispatchService` | Polls for pending WorkItems and dispatches K8s Jobs | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
+| `ReconciliationService` | Runs startup reconciliation, watches K8s Jobs, enforces timeouts | Waits (linked `LeaderToken` is cancelled, re-checks on leadership change) |
 
 Both services create a linked `CancellationTokenSource` combining the host `stoppingToken` and `LeaderToken`. This ensures immediate stop on either graceful shutdown OR leadership loss — no stale work continues after failover.
 
@@ -333,11 +333,34 @@ rules:
 
 #### Non-Kubernetes Environments
 
-When `IKubernetes` client is not available (local dev, Docker Compose):
-- `IsLeader` remains `false`
-- `LeaderToken` starts cancelled
-- Leader-dependent services (DispatchService, ReconciliationService) never enter their work loops
-- This is correct for non-K8s environments where `PipelineLoopService` handles dispatch via the legacy or DB+SignalR path instead
+The K8s Lease-based `LeaderElectionService` only activates in Kubernetes mode. Behavior in other modes:
+
+- **DB+SignalR mode** (Docker Compose with Postgres): Uses `PostgresLeaderElectionService` instead — see [Leader Election (DB+SignalR Mode)](#leader-election-dbsignalr-mode) below.
+- **Legacy mode** (no database): No leader election is needed. `PipelineLoopService` handles dispatch directly, and there is only one orchestrator instance.
+
+### Leader Election (DB+SignalR Mode)
+
+When running with PostgreSQL but without Kubernetes (e.g., Docker Compose with `docker-compose.postgres.yml`), multi-replica safety is provided by `PostgresLeaderElectionService` using PostgreSQL advisory locks (`pg_try_advisory_lock`).
+
+This ensures that only one orchestrator replica runs the `PendingWorkItemDrainService` loop at a time, preventing duplicate dispatches when scaling the orchestrator horizontally behind a load balancer.
+
+#### How It Works
+
+`PostgresLeaderElectionService` is a singleton `IHostedService` that:
+1. Attempts to acquire a Postgres advisory lock (configurable lock key)
+2. If acquired: sets `IsLeader = true`, creates a valid `LeaderToken`
+3. Periodically renews the lock (re-executes the lock query on the same connection)
+4. If the lock is lost (connection drop, explicit release): cancels `LeaderToken`, dependent services stop
+
+#### Configuration
+
+Bound from the `LeaderElection:Postgres` configuration section:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `LockKey` | `1` | Advisory lock key (bigint). All replicas must use the same key. |
+| `RenewalInterval` | 5s | How often to re-check/renew the advisory lock |
+| `RetryDelay` | 2s | Delay between acquisition attempts when not the leader |
 
 ### Credential Pool Initialization (Kubernetes Mode)
 

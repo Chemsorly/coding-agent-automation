@@ -111,11 +111,11 @@ Each step is represented by the `PipelineStep` enum. The pipeline tracks both th
 | **SyncingBrainRepoPreRun** | Brain repository synced into workspace (if configured). Non-fatal on failure |
 | **CreatingBranch** | Feature branch created from default branch (format: `feature/auto-{issueNumber}-{slug}-{runId}`) |
 | **VerifyingBaseline** | Baseline health check — runs build/tests on the default branch before the agent writes code. Catches broken base branches early. Skipped when `BaselineHealthCheckEnabled` is false |
-| **AnalyzingCode** | Agent analyzes the issue and codebase, writes `analysis.md` and `analysis-assessment.json` |
+| **AnalyzingCode** | Agent analyzes the issue and codebase, writes `analysis.md` and `analysis-assessment.json`. Before analysis begins, the pipeline downloads images from the issue/PR body (if `EnableIssueImageExtraction` is true and the agent model supports vision input) and checks for analysis staleness — if the issue body changed, the agent previously errored, or enough commits landed since the last analysis (`AnalysisCommitThreshold`), a fresh analysis is forced |
 | **ReviewingAnalysis** | Adversarial review of the analysis — validates completeness, flags gaps (when `AnalysisReviewEnabled` is true) |
 | **PostingAnalysis** | Analysis comment posted to the GitHub issue |
 | **GeneratingCode** | Agent implements the changes. Also used during quality gate retries |
-| **ReviewingCode** | Multi-agent code review: each review agent writes findings, then a fix agent addresses `[CRITICAL]` items |
+| **ReviewingCode** | Multi-agent code review: each review agent writes findings, then a fix agent addresses `[CRITICAL]` items. After all review iterations complete, an AI-generated review summary and verdict (approve/request-changes) is produced and included in the PR body |
 | **RunningQualityGates** | Build, tests, coverage, and external CI checks run |
 | **PreparingForPullRequest** | Agent cleans up the working directory (removes debug artifacts, unused code, formatting). Quality gates run one final time after cleanup |
 | **CreatingPullRequest** | PR created (normal or draft). Blacklisted file detection happens here |
