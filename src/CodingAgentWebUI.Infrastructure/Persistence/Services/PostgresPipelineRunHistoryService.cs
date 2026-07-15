@@ -63,6 +63,16 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             return;
         }
 
+        // Defense-in-depth: ensure terminal CurrentStep before persisting to history.
+        // Non-terminal steps indicate a mid-pipeline state that should never be the final persisted value.
+        if (!run.CurrentStep.IsTerminal())
+        {
+            _logger.Warning(
+                "AddRunToHistory: run {RunId} has non-terminal CurrentStep={Step}, forcing to Failed",
+                run.RunId, run.CurrentStep);
+            run.CurrentStep = PipelineStep.Failed;
+        }
+
         var summary = run.ToSummary();
 
         try
@@ -87,6 +97,19 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         {
             _logger.Debug("AddRunToHistoryAsync: skipping consolidation run {RunId}", run.RunId);
             return;
+        }
+
+        // Defense-in-depth: ensure terminal CurrentStep before persisting to history.
+        // Non-terminal steps indicate a mid-pipeline state that should never be the final persisted value.
+        // TODO: [BUG-12] This mutates run.CurrentStep on the caller's PipelineRun reference as a side effect.
+        // Document this mutation contract on IPipelineRunHistoryService.AddRunToHistoryAsync, or clone before mutating,
+        // so direct callers are aware their object may be modified.
+        if (!run.CurrentStep.IsTerminal())
+        {
+            _logger.Warning(
+                "AddRunToHistoryAsync: run {RunId} has non-terminal CurrentStep={Step}, forcing to Failed",
+                run.RunId, run.CurrentStep);
+            run.CurrentStep = PipelineStep.Failed;
         }
 
         var summary = run.ToSummary();

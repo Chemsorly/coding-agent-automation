@@ -116,6 +116,20 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             return null;
         }
 
+        // Ensure CurrentStep is terminal before persist (defense-in-depth).
+        // Normal flow: JobCompletionMapper.Apply already sets terminal step via payload.FinalStep.
+        // This guard catches edge cases where CurrentStep was not set (e.g., legacy heartbeat paths).
+        if (!run.CurrentStep.IsTerminal())
+        {
+            var mapped = terminalStatus == WorkItemStatus.Succeeded
+                ? PipelineStep.Completed
+                : PipelineStep.Failed;
+            _logger.Warning(
+                "CompleteRunAsync: run {RunId} has non-terminal CurrentStep={Step}, mapping to {Mapped}",
+                runId, run.CurrentStep, mapped);
+            run.CurrentStep = mapped;
+        }
+
         // 1. Transition WorkItem in DB
         await TransitionWorkItemAsync(runId, terminalStatus, ct);
 
