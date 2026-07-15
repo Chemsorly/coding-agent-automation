@@ -469,4 +469,89 @@ public class PipelineRunHistoryServiceTests : IDisposable
             if (Directory.Exists(workspaceBase)) Directory.Delete(workspaceBase, true);
         }
     }
+
+    // ── Consolidation filtering tests ───────────────────────────────────
+
+    [Fact]
+    public void GetRunHistory_ExcludesConsolidationRuns_LoadedFromDisk()
+    {
+        var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-consol-filter-{Guid.NewGuid()}");
+        Directory.CreateDirectory(runsDir);
+        try
+        {
+            // Write a normal run
+            var normalSummary = new PipelineRunSummary
+            {
+                RunId = Guid.NewGuid().ToString(),
+                IssueIdentifier = "org/repo#1",
+                IssueTitle = "Normal run",
+                FinalStep = PipelineStep.Completed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-5),
+                InitiatedBy = "manual"
+            };
+
+            // Write a consolidation ghost entry
+            var consolSummary = new PipelineRunSummary
+            {
+                RunId = Guid.NewGuid().ToString(),
+                IssueIdentifier = Guid.NewGuid().ToString(),
+                IssueTitle = Guid.NewGuid().ToString(),
+                FinalStep = PipelineStep.Completed,
+                StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-3),
+                InitiatedBy = ConsolidationConstants.InitiatedBy
+            };
+
+            File.WriteAllText(
+                Path.Combine(runsDir, $"{normalSummary.RunId}.json"),
+                JsonSerializer.Serialize(normalSummary, JsonOptions));
+            File.WriteAllText(
+                Path.Combine(runsDir, $"{consolSummary.RunId}.json"),
+                JsonSerializer.Serialize(consolSummary, JsonOptions));
+
+            var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+            var history = historyService.GetRunHistory();
+
+            history.Should().HaveCount(1);
+            history[0].IssueIdentifier.Should().Be("org/repo#1");
+        }
+        finally
+        {
+            if (Directory.Exists(runsDir)) Directory.Delete(runsDir, true);
+        }
+    }
+
+    [Fact]
+    public void AddRunToHistory_RejectsConsolidationRun_Silently()
+    {
+        var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-consol-guard-{Guid.NewGuid()}");
+        Directory.CreateDirectory(runsDir);
+        try
+        {
+            var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
+
+            var consolidationRun = PipelineRun.Create(
+                runId: Guid.NewGuid().ToString(),
+                issueIdentifier: Guid.NewGuid().ToString(),
+                issueTitle: "Consolidation",
+                issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
+                repoProviderConfigId: "rp-1",
+                initiatedBy: ConsolidationConstants.InitiatedBy);
+            consolidationRun.CurrentStep = PipelineStep.Completed;
+            consolidationRun.MarkCompleted();
+
+            // Should not throw
+            historyService.AddRunToHistory(consolidationRun);
+
+            // Should not appear in history
+            var history = historyService.GetRunHistory();
+            history.Should().BeEmpty();
+
+            // Should not persist to disk
+            Directory.GetFiles(runsDir, "*.json").Should().BeEmpty();
+        }
+        finally
+        {
+            if (Directory.Exists(runsDir)) Directory.Delete(runsDir, true);
+        }
+    }
 }
