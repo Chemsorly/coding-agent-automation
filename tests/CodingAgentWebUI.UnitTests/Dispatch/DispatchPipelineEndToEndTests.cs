@@ -360,7 +360,8 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         var dispatcher = new JobDispatcherService(registry, _mockLogger.Object);
         var monitor = new HeartbeatMonitorService(
             registry, _runService, mockHistoryService.Object, dispatcher,
-            _mockLabelSwapper.Object, _mockConfigStore.Object, _mockLogger.Object);
+            _mockLabelSwapper.Object, _mockConfigStore.Object, _mockLogger.Object,
+            lifecycleManager: new Mock<IRunLifecycleManager>().Object);
 
         await monitor.SweepAsync(CancellationToken.None);
 
