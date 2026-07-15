@@ -14,7 +14,7 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 public class ProviderConfigResolverLoggingTests
 {
     private readonly Mock<ILogger> _mockLogger;
-    private readonly Mock<IConfigurationStore> _mockStore;
+    private readonly Mock<IProviderConfigStore> _mockStore;
 
     public ProviderConfigResolverLoggingTests()
     {
@@ -22,7 +22,10 @@ public class ProviderConfigResolverLoggingTests
         _mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<bool>()))
             .Returns(_mockLogger.Object);
 
-        _mockStore = new Mock<IConfigurationStore>();
+        _mockStore = new Mock<IProviderConfigStore>();
+        // TODO: Add test coverage for cache invalidation path — use Mock<IProviderConfigStore>().As<IConfigurationStore>()
+        // to verify InvalidateCaches is called on successful DB backfill. Also add a negative test that confirms
+        // a pure IProviderConfigStore (without IConfigurationStore) succeeds gracefully on DB backfill without throwing.
         // Return null from DB fallback to trigger the throw
         _mockStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
