@@ -1,11 +1,9 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -20,7 +18,6 @@ public class HeartbeatMonitorServiceTests : IDisposable
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
-    private readonly Mock<IProviderFactory> _mockProviderFactory;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<ILabelSwapper> _mockLabelSwapper;
     private readonly Mock<IRunLifecycleManager> _mockLifecycleManager;
@@ -33,7 +30,6 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        _mockProviderFactory = new Mock<IProviderFactory>();
         _mockConfigStore = new Mock<IConfigurationStore>();
         _mockLabelSwapper = new Mock<ILabelSwapper>();
         _mockLifecycleManager = new Mock<IRunLifecycleManager>();
