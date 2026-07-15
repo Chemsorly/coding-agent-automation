@@ -615,8 +615,6 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _registry.TransitionStatus("agent-1", AgentStatus.Busy);
         entry.BusySince = DateTimeOffset.UtcNow.AddSeconds(-60); // Well past grace period
 
-        // TODO: Stale comment — agent has been Busy for 60s (not 30s). Update comment to reflect
-        // the actual -60s backdating used after the grace period was increased to 30s.
         // No run exists for this job — and agent has been Busy for 60s (well past 30s grace)
         await _monitor.SweepAsync(CancellationToken.None);
 
