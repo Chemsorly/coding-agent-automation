@@ -156,7 +156,7 @@ public class QualityGateExecutorBlacklistTests
         // Assert: no blacklist actions taken
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
         _mockIssueOps.Verify(o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>()), Times.Never);
-        _mockCallbacks.Verify(c => c.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
+        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(It.IsAny<PipelineRun>()), Times.Never);
         run.BlacklistedFilesDetected.Should().BeEmpty();
         run.FailureReason.Should().BeNull();
     }

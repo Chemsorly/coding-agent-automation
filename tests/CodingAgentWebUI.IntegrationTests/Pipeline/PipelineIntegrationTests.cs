@@ -192,7 +192,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
             "issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
-        service.GetRunHistory().Should().ContainSingle(s => s.RunId == run.RunId);
+        (await service.GetRunHistoryAsync()).Should().ContainSingle(s => s.RunId == run.RunId);
 
         // Allow fire-and-forget persist to flush to disk
         await Task.Delay(500);
@@ -208,7 +208,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
             brainUpdateService: new BrainUpdateService(MockLogger.Object),
             historyService: new PipelineRunHistoryService(MockLogger.Object, RunsDir));
 
-        var history = service2.GetRunHistory();
+        var history = await service2.GetRunHistoryAsync();
         var restored = history.Should().ContainSingle(s => s.RunId == run.RunId).Subject;
         restored.IssueIdentifier.Should().Be("42");
         restored.IssueTitle.Should().Be("Test Issue");

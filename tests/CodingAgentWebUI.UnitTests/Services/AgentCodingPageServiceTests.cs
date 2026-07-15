@@ -36,7 +36,7 @@ public class AgentCodingPageServiceTests
         // Create a minimal real instance with mocked dependencies.
         var mockValidator = new Mock<IQualityGateValidator>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        mockHistoryService.Setup(h => h.GetRunHistory()).Returns(Array.Empty<PipelineRunSummary>());
+        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineRunSummary>());
         var orchestration = TestOrchestrationFactory.CreateMinimal(
             configStore: _mockConfigStore.Object,
             providerFactory: _mockProviderFactory.Object,

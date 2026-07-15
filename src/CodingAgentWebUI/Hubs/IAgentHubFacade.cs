@@ -130,14 +130,9 @@ public interface IAgentHubFacade
     // ── History ─────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Persists a completed pipeline run to history.
+    /// Persists a completed pipeline run to history (async).
     /// </summary>
-    void AddRunToHistory(PipelineRun run);
-
-    /// <summary>
-    /// Returns all completed pipeline run summaries from history.
-    /// </summary>
-    IReadOnlyList<PipelineRunSummary> GetRunHistory();
+    Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default);
 
     /// <summary>
     /// Returns all completed pipeline run summaries from history (async).

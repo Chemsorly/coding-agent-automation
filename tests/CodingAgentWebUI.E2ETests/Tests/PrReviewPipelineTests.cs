@@ -97,7 +97,7 @@ public sealed class PrReviewPipelineTests : E2ETestBase, IClassFixture<E2EFixtur
         {
             var reg = Fixture.Factory.AgentRegistry;
             var agent = reg.GetByAgentId("fake-agent-1");
-            var history = Fixture.Factory.HistoryService.GetRunHistory();
+            var history = (await Fixture.Factory.HistoryService.GetRunHistoryAsync());
             Assert.Fail(
                 $"PrReview WaitForHistoryAsync timed out. " +
                 $"completionEx={completionEx?.GetType().Name}: {completionEx?.Message ?? "none"}, " +

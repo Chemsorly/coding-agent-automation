@@ -88,6 +88,72 @@ public sealed class PostgresPipelineRunHistoryServiceAsyncTests : IDisposable
         history.Should().HaveCount(1);
     }
 
+    // ── CancellationToken propagation tests ─────────────────────────────
+
+    [Fact]
+    public async Task GetRunHistoryAsync_CancelledToken_ThrowsOperationCanceled()
+    {
+        // Arrange: pre-cancel the token
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Act & Assert: the cancellation token is propagated to the DB layer,
+        // causing OperationCanceledException (or TaskCanceledException) to be thrown.
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => _sut.GetRunHistoryAsync(cts.Token));
+    }
+
+    [Fact]
+    public async Task AddRunToHistoryAsync_CancelledToken_PropagatesTokenToDbFactory()
+    {
+        // AddRunToHistoryAsync catches exceptions (by design — persistence failures are non-fatal).
+        // We verify token propagation by tracking what token the factory received.
+        var trackingFactory = new CancellationTrackingDbContextFactory(_dbOptions);
+        var sut = new PostgresPipelineRunHistoryService(trackingFactory, new Mock<ILogger>().Object);
+
+        var run = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-cancel", "Cancel test");
+        using var cts = new CancellationTokenSource();
+
+        // Act
+        await sut.AddRunToHistoryAsync(run, cts.Token);
+
+        // Assert: the CancellationToken was forwarded to CreateDbContextAsync
+        trackingFactory.LastCancellationToken.Should().Be(cts.Token);
+    }
+
+    [Fact]
+    public async Task GetRunHistoryAsync_TokenPassedToCreateDbContextAsync()
+    {
+        // Arrange: use a factory that tracks whether the token was forwarded
+        var trackingFactory = new CancellationTrackingDbContextFactory(_dbOptions);
+        var sut = new PostgresPipelineRunHistoryService(trackingFactory, new Mock<ILogger>().Object);
+
+        using var cts = new CancellationTokenSource();
+
+        // Act
+        await sut.GetRunHistoryAsync(cts.Token);
+
+        // Assert: the CancellationToken was forwarded to CreateDbContextAsync
+        trackingFactory.LastCancellationToken.Should().Be(cts.Token);
+    }
+
+    [Fact]
+    public async Task AddRunToHistoryAsync_TokenPassedToCreateDbContextAsync()
+    {
+        // Arrange: use a factory that tracks whether the token was forwarded
+        var trackingFactory = new CancellationTrackingDbContextFactory(_dbOptions);
+        var sut = new PostgresPipelineRunHistoryService(trackingFactory, new Mock<ILogger>().Object);
+
+        var run = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-track", "Track CT");
+        using var cts = new CancellationTokenSource();
+
+        // Act
+        await sut.AddRunToHistoryAsync(run, cts.Token);
+
+        // Assert: the CancellationToken was forwarded to CreateDbContextAsync
+        trackingFactory.LastCancellationToken.Should().Be(cts.Token);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static PipelineRun CreateCompletedRun(string runId, string issueIdentifier, string issueTitle)
@@ -137,5 +203,27 @@ public sealed class PostgresPipelineRunHistoryServiceAsyncTests : IDisposable
         public InMemoryDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
         public PipelineDbContext CreateDbContext() => new InMemoryPipelineDbContext(_options);
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(CreateDbContext());
+    }
+
+    /// <summary>
+    /// A factory that records whether CancellationToken was forwarded to CreateDbContextAsync.
+    /// Used to verify CancellationToken propagation without relying on cancellation-throwing behavior
+    /// (which may not be supported by the in-memory provider).
+    /// </summary>
+    private sealed class CancellationTrackingDbContextFactory : IDbContextFactory<PipelineDbContext>
+    {
+        private readonly DbContextOptions<PipelineDbContext> _options;
+
+        public CancellationToken LastCancellationToken { get; private set; }
+
+        public CancellationTrackingDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
+
+        public PipelineDbContext CreateDbContext() => new InMemoryPipelineDbContext(_options);
+
+        public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default)
+        {
+            LastCancellationToken = ct;
+            return Task.FromResult(CreateDbContext());
+        }
     }
 }
