@@ -27,8 +27,8 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly ModelFetchService _modelFetchService;
     private readonly IConsolidationService _consolidationService;
     private readonly ConsolidationBadgeService _badgeService;
-    private readonly ILabelSwapper _labelSwapper;
-    private readonly IRunLifecycleManager _lifecycleManager;
+    private readonly IHubIssueOperations _issueOps;
+    private readonly IAgentJobLifecycleService _lifecycleService;
     private readonly ILogger _logger;
 
     public AgentHub(
@@ -38,8 +38,8 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         ModelFetchService modelFetchService,
         IConsolidationService consolidationService,
         ConsolidationBadgeService badgeService,
-        ILabelSwapper labelSwapper,
-        IRunLifecycleManager lifecycleManager,
+        IHubIssueOperations issueOps,
+        IAgentJobLifecycleService lifecycleService,
         ILogger logger)
     {
         _facade = facade;
@@ -48,8 +48,8 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _modelFetchService = modelFetchService;
         _consolidationService = consolidationService;
         _badgeService = badgeService;
-        _labelSwapper = labelSwapper;
-        _lifecycleManager = lifecycleManager;
+        _issueOps = issueOps;
+        _lifecycleService = lifecycleService;
         _logger = logger;
     }
 
@@ -419,129 +419,21 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     // ── Shared private helpers ──────────────────────────────────────────
 
     /// <summary>
-    /// Swaps the agent label on the entity (issue or PR) using the appropriate provider.
+    /// Swaps the agent label on the entity (issue or PR) using the shared issue operations service.
     /// Routes based on <paramref name="targetKind"/>: Issue → IssueProviderConfigId, PullRequest → RepoProviderConfigId.
     /// </summary>
     private Task SwapLabelAsync(PipelineRun run, string newLabel, LabelTargetKind targetKind)
-    {
-        var providerConfigId = targetKind == LabelTargetKind.PullRequest
-            ? run.RepoProviderConfigId
-            : run.IssueProviderConfigId;
-
-        return _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, newLabel, targetKind, CancellationToken.None);
-    }
+        => _issueOps.SwapLabelAsync(run, newLabel, targetKind);
 
     /// <summary>
-    /// Posts a comment on the issue using the issue provider from the run's config.
+    /// Posts a comment on the issue using the shared issue operations service.
     /// Returns the comment URL if available.
     /// </summary>
-    private async Task<string?> PostCommentViaIssueProviderAsync(PipelineRun run, string body)
-    {
-        try
-        {
-            var issueConfig = await _facade.GetProviderConfigByIdAsync(run.IssueProviderConfigId, ProviderKind.Issue, CancellationToken.None);
-            if (issueConfig is null)
-            {
-                _logger.Warning("Issue provider config '{ConfigId}' not found for run {RunId}", run.IssueProviderConfigId, run.RunId);
-                return null;
-            }
-
-            await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
-            // Validate initializes provider state (e.g., GitLab PathWithNamespace) needed for URL construction
-            await issueProvider.ValidateAsync(CancellationToken.None);
-            return await issueProvider.PostCommentAsync(run.IssueIdentifier, body, CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Failed to post comment on issue {IssueIdentifier} for run {RunId}", run.IssueIdentifier, run.RunId);
-            return null;
-        }
-    }
+    private Task<string?> PostCommentViaIssueProviderAsync(PipelineRun run, string body)
+        => _issueOps.PostCommentViaIssueProviderAsync(run, body);
 
     /// <summary>
     /// Determines the correct <see cref="LabelTargetKind"/> based on the run's <see cref="PipelineRun.RunType"/>.
     /// </summary>
     private static LabelTargetKind GetLabelTargetKind(PipelineRun run) => run.LabelTargetKind;
-
-    /// <summary>
-    /// Posts issue-level feedback as a comment on the GitHub issue if present.
-    /// If a PR exists, appends a link to the feedback comment in the PR body.
-    /// Non-fatal: logs warning on failure and continues.
-    /// </summary>
-    private async Task PostIssueFeedbackCommentAsync(PipelineRun run)
-    {
-        try
-        {
-            var comment = FeedbackCommentFormatter.FormatComment(run.Feedback?.Issue);
-            if (comment is null)
-                return;
-
-            var commentUrl = await PostCommentViaIssueProviderAsync(run, comment);
-            _logger.Information("Posted issue feedback comment for run {RunId} on issue {IssueIdentifier}",
-                run.RunId, run.IssueIdentifier);
-
-            // Append feedback link to PR body if we have both a URL and a PR
-            if (commentUrl is not null && !string.IsNullOrEmpty(run.PullRequestNumber))
-            {
-                await AppendFeedbackLinkToPrBodyAsync(run, commentUrl);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to post issue feedback comment for run {RunId} on issue {IssueIdentifier}",
-                run.RunId, run.IssueIdentifier);
-        }
-    }
-
-    /// <summary>
-    /// Appends a feedback comment link section to the existing PR body.
-    /// Fetches current body from provider to avoid stale-state overwrites.
-    /// Idempotent: skips if feedback section already present.
-    /// Non-fatal: logs warning on failure.
-    /// </summary>
-    private async Task AppendFeedbackLinkToPrBodyAsync(PipelineRun run, string commentUrl)
-    {
-        try
-        {
-            // Idempotency guard: don't append twice if retried
-            if (run.PullRequestBody?.Contains("## Agent Feedback") == true)
-            {
-                _logger.Debug("Feedback link already present in PR body for run {RunId}, skipping", run.RunId);
-                return;
-            }
-
-            var repoConfig = await _facade.GetProviderConfigByIdAsync(run.RepoProviderConfigId, ProviderKind.Repository, CancellationToken.None);
-            if (repoConfig is null)
-            {
-                _logger.Warning("Repo provider config '{ConfigId}' not found for run {RunId}, skipping feedback link", run.RepoProviderConfigId, run.RunId);
-                return;
-            }
-
-            if (!int.TryParse(run.PullRequestNumber, out var prNumber))
-                return;
-
-            await using var repoProvider = _facade.CreateRepositoryProvider(repoConfig);
-
-            // Fetch current body from provider to avoid overwriting external edits
-            var currentBody = await repoProvider.GetPullRequestBodyAsync(prNumber, CancellationToken.None)
-                              ?? run.PullRequestBody
-                              ?? "";
-
-            // Double-check idempotency against remote body (may have been appended by a prior attempt)
-            if (currentBody.Contains("## Agent Feedback"))
-                return;
-
-            var feedbackSection = $"\n\n## Agent Feedback\n⚠️ Agent posted feedback on the issue [here]({commentUrl}). Read before merging.";
-            var newBody = currentBody + feedbackSection;
-
-            await repoProvider.UpdatePullRequestAsync(prNumber, newBody, false, CancellationToken.None);
-            run.PullRequestBody = newBody;
-
-            _logger.Information("Appended feedback link to PR #{PrNumber} for run {RunId}", run.PullRequestNumber, run.RunId);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to append feedback link to PR #{PrNumber} for run {RunId}", run.PullRequestNumber, run.RunId);
-        }
-    }
 }
