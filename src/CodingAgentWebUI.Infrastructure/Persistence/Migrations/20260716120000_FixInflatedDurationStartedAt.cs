@@ -22,19 +22,6 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
     ///   - DispatchedAt > StartedAt: confirms re-dispatch occurred
     ///   - Excludes Cancelled runs (their long duration is legitimate)
     ///   - Idempotent: condition is false after correction (DispatchedAt = StartedAt)
-    ///
-    /// TODO: [Review] The finalStep != 'Cancelled' filter uses SQL three-valued logic — rows with
-    ///   NULL SummaryJson or missing 'finalStep' key are silently skipped. Consider using
-    ///   IS DISTINCT FROM 'Cancelled' if NULL SummaryJson rows could be affected.
-    /// TODO: [Review] The entity column "StartedAt" is set directly from wi."DispatchedAt" without
-    ///   explicit UTC conversion. Safe in practice (DispatchedAt is always UTC), but if non-UTC
-    ///   offsets were ever stored, the entity column would retain the original offset while JSON
-    ///   fields are forced to UTC.
-    /// TODO: [Review] No integration test verifies this migration SQL produces correct results.
-    ///   A test seeding a PipelineRuns row with inflated StartedAt and matching WorkItems row,
-    ///   then applying the migration and asserting corrected values, would catch SQL/JSON errors.
-    /// TODO: [Review] No test verifies boundary/negative cases — e.g., that runs completed outside
-    ///   the Jul 15 04:00-12:00 window or Cancelled runs within the window are NOT modified.
     /// </summary>
     public partial class FixInflatedDurationStartedAt : Migration
     {
