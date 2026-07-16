@@ -164,7 +164,7 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
             var reg = Fixture.Factory.AgentRegistry;
             var a1 = reg.GetByAgentId("multi-agent-1");
             var a2 = reg.GetByAgentId("multi-agent-2");
-            var hist = Fixture.Factory.HistoryService.GetRunHistory();
+            var hist = (await Fixture.Factory.HistoryService.GetRunHistoryAsync());
             Assert.Fail(
                 $"MultiAgent WaitForHistoryAsync(43) timed out. " +
                 $"agent1={(a1 is null ? "NULL" : $"{a1.Status},job={a1.ActiveJobId ?? "null"}")}, " +
@@ -173,7 +173,7 @@ public sealed class MultiAgentDispatchTests : E2ETestBase, IClassFixture<E2EFixt
                 $"historyIssues=[{string.Join(",", hist.Select(r => r.IssueIdentifier))}]");
         }
         var history = Fixture.Factory.HistoryService;
-        var runs = history.GetRunHistory();
+        var runs = (await history.GetRunHistoryAsync());
         Assert.True(runs.Count >= 2, $"Expected at least 2 completed runs in history, got {runs.Count}");
 
         var run42 = runs.FirstOrDefault(r => r.IssueIdentifier == "42");

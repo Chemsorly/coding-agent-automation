@@ -23,7 +23,7 @@ public class PipelineRetryPropertyTests
     /// **Validates: Requirements 5.2, 5.4**
     /// </summary>
     [Property(MaxTest = 20)]
-    public void RetryLogic_EnforcesMaxCountAndAccumulatesErrors(PositiveInt retryCountRaw)
+    public async Task RetryLogic_EnforcesMaxCountAndAccumulatesErrors(PositiveInt retryCountRaw)
     {
         // Clamp to 1-5 for test speed
         var maxRetries = (retryCountRaw.Get % 5) + 1;
@@ -52,8 +52,8 @@ public class PipelineRetryPropertyTests
         }
 
         // Run history should contain the completed run
-        service.GetRunHistory().Should().HaveCount(1);
-        service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Failed);
+        (await service.GetRunHistoryAsync()).Should().HaveCount(1);
+        (await service.GetRunHistoryAsync())[0].FinalStep.Should().Be(PipelineStep.Failed);
     }
 
     private static TestPipelineRunner CreateServiceWithFailingQualityGates(
@@ -169,9 +169,9 @@ public class PipelineRetryPropertyTests
 
         var runHistory = new List<PipelineRunSummary>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        mockHistoryService.Setup(h => h.GetRunHistory()).Returns(() => runHistory.AsReadOnly());
-        mockHistoryService.Setup(h => h.AddRunToHistory(It.IsAny<PipelineRun>()))
-            .Callback<PipelineRun>(run => runHistory.Add(run.ToSummary()));
+        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => runHistory.AsReadOnly());
+        mockHistoryService.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((run, _) => runHistory.Add(run.ToSummary()));
 
         return new TestPipelineRunner(
             mockConfigStore.Object,

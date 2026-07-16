@@ -143,7 +143,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
 
         // Assert: exactly one history entry (no double-persist from racing paths)
         await Task.Delay(TimeSpan.FromSeconds(2)); // Allow any trailing async work to complete
-        var historyEntries = Fixture.HistoryService.GetRunHistory()
+        var historyEntries = (await Fixture.HistoryService.GetRunHistoryAsync())
             .Where(r => r.IssueIdentifier == "2001")
             .ToList();
         Assert.Single(historyEntries);
@@ -191,7 +191,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
 
         // Assert: history has exactly one entry
         await Task.Delay(TimeSpan.FromSeconds(1));
-        var history = Fixture.HistoryService.GetRunHistory()
+        var history = (await Fixture.HistoryService.GetRunHistoryAsync())
             .Where(r => r.IssueIdentifier == "2002")
             .ToList();
         Assert.Single(history);
@@ -370,7 +370,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         Assert.Equal(WorkItemStatus.Failed, item.Status);
 
         // Assert: history still has exactly one entry (no double-write)
-        var history = Fixture.HistoryService.GetRunHistory()
+        var history = (await Fixture.HistoryService.GetRunHistoryAsync())
             .Where(r => r.IssueIdentifier == "2030")
             .ToList();
         Assert.Single(history);
@@ -415,7 +415,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
             TimeSpan.FromSeconds(5));
 
         // Assert: all 5 runs in history
-        var history = Fixture.HistoryService.GetRunHistory()
+        var history = (await Fixture.HistoryService.GetRunHistoryAsync())
             .Where(r => r.IssueIdentifier.StartsWith("2100-"))
             .ToList();
         Assert.Equal(5, history.Count);
