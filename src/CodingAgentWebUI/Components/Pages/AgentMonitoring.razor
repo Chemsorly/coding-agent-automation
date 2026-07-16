@@ -469,7 +469,6 @@
                                         <span class="run-type-badge run-type-impl" title="Implementation"><Icon Name="hammer" Size="14" /> Impl</span>
                                     }
                                 </td>
-                                @* TODO: Consider using string.IsNullOrEmpty(job.Project?.Name) ? "—" : job.Project.Name for consistency with Active Runs table empty-string handling *@
                                 <td>@(job.Project?.Name ?? "—")</td>
                                 <td title="#@job.IssueIdentifier @job.IssueTitle">#@job.IssueIdentifier @job.IssueTitle</td>
                                 <td title="@job.InitiatedBy">@job.InitiatedBy</td>

@@ -207,7 +207,6 @@ public class AgentMonitoringComponentTests : BunitContext
 
         var cut = Render<AgentMonitoring>();
 
-        // TODO: Assertion is not scoped to the project column cell position — would pass if any td on the page contains "—". Consider finding the 3rd td in the active runs table body row instead.
         // The project cell should render an em dash
         var cells = cut.FindAll("td");
         Assert.Contains(cells, td => td.TextContent.Trim() == "—");
@@ -221,12 +220,10 @@ public class AgentMonitoringComponentTests : BunitContext
 
         var cut = Render<AgentMonitoring>();
 
-        // TODO: Assertion is not scoped to the project column cell position — would pass if any td on the page contains "—". Consider finding the 3rd td in the active runs table body row instead.
         var cells = cut.FindAll("td");
         Assert.Contains(cells, td => td.TextContent.Trim() == "—");
     }
 
-    // TODO: Missing test for Job Queue with Project = new PipelineProject { Name = "" } to verify empty-string handling matches Active Runs behavior.
     [Fact]
     public void JobQueue_ProjectColumn_RendersNameWhenSet()
     {
@@ -262,7 +259,6 @@ public class AgentMonitoringComponentTests : BunitContext
 
         var cut = Render<AgentMonitoring>();
 
-        // TODO: Assertion is not scoped to the project column cell position — would pass if any td on the page contains "—". Consider finding the 3rd td in the job queue table body row instead.
         // The job row should contain an em dash for the project cell
         Assert.Contains("org/repo#99", cut.Markup);
         var cells = cut.FindAll("td");
