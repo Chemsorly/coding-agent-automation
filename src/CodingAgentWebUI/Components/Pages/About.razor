@@ -133,6 +133,7 @@
             ?? "unknown";
         _runtimeVersion = RuntimeInformation.FrameworkDescription;
 
+        // TODO: [REVIEW] Wrap GetRunHistoryAsync in try-catch with fallback to empty list (see ProviderSelectionPanel.razor:221 for pattern). If the DB is unreachable, the entire About page fails to render.
         var history = await PipelineService.GetRunHistoryAsync();
         _totalRuns = history.Count;
         _successCount = history.Count(r => r.FinalStep == PipelineStep.Completed);

@@ -113,6 +113,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
+    // TODO: [REVIEW] CleanupExpiredWorkspaces uses synchronous _dbFactory.CreateDbContext() and .ToList()
+    // which block the calling thread during DB I/O. The interface declares this as void, so making it async
+    // requires an interface change. Consider adding an async overload (CleanupExpiredWorkspacesAsync) in future.
     public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null)
     {
         ArgumentNullException.ThrowIfNull(config);

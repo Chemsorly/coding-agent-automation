@@ -1074,7 +1074,7 @@
             run.MarkCompleted();
             run.CurrentStep = PipelineStep.Cancelled;
 
-            await HistoryService.AddRunToHistoryAsync(run); // TODO: Pass CancellationToken
+            await HistoryService.AddRunToHistoryAsync(run); // TODO: Pass CancellationToken // TODO: [REVIEW] Wrap in try-catch — if this throws, subsequent cleanup (RemoveRun, MarkIssueComplete, SwapLabel) is skipped, leaving run in inconsistent state
             RunService.RemoveRun(run.RunId);
             Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
@@ -1105,7 +1105,7 @@
             run.MarkCompleted();
             run.CurrentStep = PipelineStep.Cancelled;
 
-            await HistoryService.AddRunToHistoryAsync(run); // TODO: Pass CancellationToken
+            await HistoryService.AddRunToHistoryAsync(run); // TODO: Pass CancellationToken // TODO: [REVIEW] Wrap in try-catch — if this throws, subsequent cleanup (RemoveRun, MarkIssueComplete) is skipped
             RunService.RemoveRun(run.RunId);
             Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
