@@ -534,4 +534,66 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     }
 
     #endregion
+
+    #region DetermineFixPromptAction tests
+
+    // TODO: The test below (CriticalFindings) implicitly validates priority ordering by passing both
+    // iterationCriticalCount > 0 AND non-empty iterationFindingsText. Consider adding an explicitly
+    // named test (e.g., PrioritizesCriticalCountOverFindingsText) to make this coverage more discoverable.
+
+    [Fact]
+    public void DetermineFixPromptAction_CriticalFindings_ReturnsSendFixAndContinue()
+    {
+        var result = AgentPhaseExecutor.DetermineFixPromptAction(
+            skipFixPrompt: false, fixPrompt: "Fix it", iterationCriticalCount: 3, iterationFindingsText: "[CRITICAL] something");
+
+        result.Should().Be(AgentPhaseExecutor.FixPromptDecision.SendFixAndContinue);
+    }
+
+    [Fact]
+    public void DetermineFixPromptAction_WarningsOnly_ReturnsSendFixAndBreak()
+    {
+        var result = AgentPhaseExecutor.DetermineFixPromptAction(
+            skipFixPrompt: false, fixPrompt: "Fix it", iterationCriticalCount: 0, iterationFindingsText: "[WARNING] minor issue");
+
+        result.Should().Be(AgentPhaseExecutor.FixPromptDecision.SendFixAndBreak);
+    }
+
+    [Fact]
+    public void DetermineFixPromptAction_NoFindings_ReturnsNoFindingsBreak()
+    {
+        var result = AgentPhaseExecutor.DetermineFixPromptAction(
+            skipFixPrompt: false, fixPrompt: "Fix it", iterationCriticalCount: 0, iterationFindingsText: "");
+
+        result.Should().Be(AgentPhaseExecutor.FixPromptDecision.NoFindingsBreak);
+    }
+
+    [Fact]
+    public void DetermineFixPromptAction_SkipFixPromptTrue_ReturnsSkip()
+    {
+        var result = AgentPhaseExecutor.DetermineFixPromptAction(
+            skipFixPrompt: true, fixPrompt: "Fix it", iterationCriticalCount: 5, iterationFindingsText: "[CRITICAL] something");
+
+        result.Should().Be(AgentPhaseExecutor.FixPromptDecision.Skip);
+    }
+
+    [Fact]
+    public void DetermineFixPromptAction_NullFixPrompt_ReturnsSkip()
+    {
+        var result = AgentPhaseExecutor.DetermineFixPromptAction(
+            skipFixPrompt: false, fixPrompt: null, iterationCriticalCount: 5, iterationFindingsText: "[CRITICAL] something");
+
+        result.Should().Be(AgentPhaseExecutor.FixPromptDecision.Skip);
+    }
+
+    [Fact]
+    public void DetermineFixPromptAction_EmptyFixPrompt_ReturnsSkip()
+    {
+        var result = AgentPhaseExecutor.DetermineFixPromptAction(
+            skipFixPrompt: false, fixPrompt: "", iterationCriticalCount: 5, iterationFindingsText: "[CRITICAL] something");
+
+        result.Should().Be(AgentPhaseExecutor.FixPromptDecision.Skip);
+    }
+
+    #endregion
 }
