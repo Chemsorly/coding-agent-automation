@@ -1668,7 +1668,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-requeue-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Never);
         // Should NOT swap label to agent:error (item will be retried)
-        _mockLabelSwapper.Verify(s => s.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), AgentLabels.Error, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockLabelSwapper.Verify(s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.Error, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

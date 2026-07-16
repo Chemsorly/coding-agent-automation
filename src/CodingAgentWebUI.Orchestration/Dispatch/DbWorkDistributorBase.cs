@@ -189,16 +189,18 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     // ── Shared: Dedup ─────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public virtual async Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId, CancellationToken ct)
+    public virtual async Task<bool> IsIssueDistributedAsync(string issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
+
+        var issueProviderConfigIdValue = issueProviderConfigId.Value;
 
         // Check for active (non-terminal) WorkItems
         var hasActive = await db.WorkItems
             .AsNoTracking()
             .AnyAsync(w =>
                 w.IssueIdentifier == issueIdentifier &&
-                w.IssueProviderConfigId == issueProviderConfigId &&
+                w.IssueProviderConfigId == issueProviderConfigIdValue &&
                 ActiveStatuses.Contains(w.Status),
                 ct);
 
@@ -214,7 +216,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
             .AsNoTracking()
             .AnyAsync(w =>
                 w.IssueIdentifier == issueIdentifier &&
-                w.IssueProviderConfigId == issueProviderConfigId &&
+                w.IssueProviderConfigId == issueProviderConfigIdValue &&
                 !ActiveStatuses.Contains(w.Status) &&
                 w.CompletedAt != null &&
                 w.CompletedAt >= recentTerminalCutoff,
@@ -222,7 +224,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     }
 
     /// <inheritdoc />
-    public virtual async Task<HashSet<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
+    public virtual async Task<HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -247,7 +249,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
 
         var result = activePairs
             .Concat(recentTerminalPairs)
-            .Select(p => (p.IssueIdentifier, p.IssueProviderConfigId))
+            .Select(p => (p.IssueIdentifier, (ProviderConfigId)p.IssueProviderConfigId))
             .ToHashSet();
 
         return result;

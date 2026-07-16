@@ -93,7 +93,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// Checks whether the given issue is being processed by any active run (in-process or agent-dispatched).
     /// Delegates to lifecycle service.
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId) => _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId);
+    public bool IsIssueBeingProcessed(string issueIdentifier, ProviderConfigId issueProviderConfigId) => _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId.Value);
 
     public PipelineOrchestrationService(
         IPipelineConfigStore pipelineConfigStore,
@@ -138,18 +138,19 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// </summary>
     /// <returns>The created <see cref="PipelineRun"/> ready for dispatch, or <c>null</c> if the issue is already being processed.</returns>
     public async Task<PipelineRun?> CreateDispatchedRunAsync(
-        string issueProviderId, string repoProviderId, string issueIdentifier,
-        string agentProviderId, string? agentId, CancellationToken ct,
+        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
+        ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
         string? brainProviderId = null, string? pipelineProviderId = null,
         string initiatedBy = "dispatch",
         PipelineRunType runType = PipelineRunType.Implementation)
     {
-        ArgumentNullException.ThrowIfNull(issueProviderId);
-        ArgumentNullException.ThrowIfNull(repoProviderId);
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        ArgumentNullException.ThrowIfNull(agentProviderId);
+        // TODO: Validate that ProviderConfigId.Value is not null/empty for issueProviderId,
+        // repoProviderId, and agentProviderId. The previous string parameters had
+        // ArgumentNullException.ThrowIfNull guards that are now lost because structs can't be null,
+        // but default(ProviderConfigId) or implicit conversion from null still produces Value = null.
 
-        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId))
+        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
         {
             _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping dispatch", issueIdentifier);
             return null;
@@ -158,21 +159,21 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
 
         // Resolve repo provider config to get repository name
-        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId, ProviderKind.Repository, ct);
+        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
         await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
-        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId, ProviderKind.Agent, ct);
+        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
         var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
 
         var run = PipelineRun.Create(
             runId: Guid.NewGuid().ToString(),
             issueIdentifier: issueIdentifier,
             issueTitle: string.Empty,
-            issueProviderConfigId: issueProviderId,
-            repoProviderConfigId: repoProviderId,
+            issueProviderConfigId: issueProviderId.Value,
+            repoProviderConfigId: repoProviderId.Value,
             runType: runType,
             initiatedBy: initiatedBy,
             agentId: agentId,
-            agentProviderConfigId: agentProviderId,
+            agentProviderConfigId: agentProviderId.Value,
             brainProviderConfigId: brainProviderId);
         run.RepositoryName = tempRepoProvider.RepositoryFullName;
         run.ModelName = configuredModel;

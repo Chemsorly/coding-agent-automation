@@ -34,7 +34,7 @@ public class DrawerMultiPanelTests : BunitContext
         _mockRepoProvider = new Mock<IRepositoryProvider>();
         _mockWorkDistributor = new Mock<IWorkDistributor>();
         _mockWorkDistributor.Setup(w => w.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<(string IssueIdentifier, string IssueProviderConfigId)>());
+            .ReturnsAsync(new HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)>());
 
         var mockLogger = new Mock<Serilog.ILogger>();
 

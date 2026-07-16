@@ -1119,8 +1119,8 @@ public class AgentJobDispatcherTests : IDisposable
         // Mock IDispatchRunCreator to return null (simulates issue already being processed)
         var mockOrchestration = new Mock<IDispatchRunCreator>();
         mockOrchestration.Setup(o => o.CreateDispatchedRunAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(),
+            It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(), It.IsAny<string>(),
+            It.IsAny<ProviderConfigId>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
             It.IsAny<PipelineRunType>()))
             .ReturnsAsync((PipelineRun?)null);

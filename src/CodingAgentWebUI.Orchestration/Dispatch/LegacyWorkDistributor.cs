@@ -147,28 +147,28 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
         => Task.FromResult(JobDistributionStatus.Unknown);
 
     /// <inheritdoc />
-    public Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId, CancellationToken ct)
-        => Task.FromResult(_jobDispatcher.IsIssueBeingProcessedOrQueued(issueIdentifier, issueProviderConfigId));
+    public Task<bool> IsIssueDistributedAsync(string issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct)
+        => Task.FromResult(_jobDispatcher.IsIssueBeingProcessedOrQueued(issueIdentifier, issueProviderConfigId.Value));
 
     /// <inheritdoc />
     /// <remarks>
     /// Combines in-memory state from <see cref="JobDispatcherService"/> (queued issues)
     /// and <see cref="IOrchestratorRunService"/> (actively running issues).
     /// </remarks>
-    public Task<HashSet<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
+    public Task<HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
     {
-        var result = new HashSet<(string, string)>();
+        var result = new HashSet<(string, ProviderConfigId)>();
 
         // Add identifiers from queued jobs
         foreach (var job in _dispatcherService.GetQueuedJobs())
         {
-            result.Add((job.IssueIdentifier, job.IssueProviderId));
+            result.Add((job.IssueIdentifier, (ProviderConfigId)job.IssueProviderId));
         }
 
         // Add identifiers from active runs
         foreach (var run in _runService.GetActiveRuns())
         {
-            result.Add((run.IssueIdentifier, run.IssueProviderConfigId));
+            result.Add((run.IssueIdentifier, (ProviderConfigId)run.IssueProviderConfigId));
         }
 
         return Task.FromResult(result);
