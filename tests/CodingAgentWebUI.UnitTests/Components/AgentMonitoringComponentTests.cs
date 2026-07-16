@@ -505,14 +505,23 @@ public class AgentMonitoringComponentTests : BunitContext
         _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("connection lost"));
 
-        // TODO: Task.Delay in unit tests is non-deterministic and slow; consider a deterministic timer trigger mechanism
-        // Wait for real timer to fire (fires after 1s initially) — it will throw and set _lastRefreshFailed
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        // Wait for real timer to fire (fires after 1s initially) — it will throw and set _lastRefreshFailed.
+        // The timer callback is async void so we poll until the flag is set, with a generous timeout for CI.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(250));
+
+            // Check if the component has set _lastRefreshFailed via reflection
+            var failedField = cut.Instance.GetType()
+                .GetField("_lastRefreshFailed", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            if (failedField is not null && (bool)failedField.GetValue(cut.Instance)!)
+                break;
+        }
 
         // Force a re-render so the component re-evaluates the staleness expression
         await cut.InvokeAsync(() =>
         {
-            // TODO: Using reflection to call StateHasChanged is brittle; consider bUnit's cut.Render() if available in future versions
             var method = typeof(Microsoft.AspNetCore.Components.ComponentBase)
                 .GetMethod("StateHasChanged", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
             method.Invoke(cut.Instance, null);

@@ -339,11 +339,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         {
             var targetKind = run.LabelTargetKind;
 
-            var providerConfigId = targetKind == LabelTargetKind.PullRequest
-                ? run.RepoProviderConfigId
-                : run.IssueProviderConfigId;
-
-            await _labelSwapper.SwapLabelAsync(providerConfigId, run.IssueIdentifier, label, targetKind, ct);
+            await _labelSwapper.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, label, targetKind, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
