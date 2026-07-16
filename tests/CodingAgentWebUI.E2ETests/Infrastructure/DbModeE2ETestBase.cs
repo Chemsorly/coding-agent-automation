@@ -147,7 +147,7 @@ public abstract class DbModeE2ETestBase : IAsyncLifetime
 
         while (DateTime.UtcNow < deadline)
         {
-            var runs = Fixture.HistoryService.GetRunHistory();
+            var runs = (await Fixture.HistoryService.GetRunHistoryAsync());
             var match = runs.FirstOrDefault(predicate);
             if (match is not null) return match;
             await Task.Delay(interval);

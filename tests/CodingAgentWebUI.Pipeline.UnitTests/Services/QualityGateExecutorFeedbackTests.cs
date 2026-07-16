@@ -85,8 +85,8 @@ public class QualityGateExecutorFeedbackTests
             .Returns(Task.CompletedTask);
 
         // Default: history service returns empty list
-        _mockHistoryService.Setup(h => h.GetRunHistory())
-            .Returns(Array.Empty<PipelineRunSummary>());
+        _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
         // Default: agent health status
         _mockAgent.Setup(a => a.GetHealthStatus())

@@ -12,14 +12,13 @@ public sealed class InMemoryPipelineRunHistoryService : IPipelineRunHistoryServi
 
     public void Reset() => _history.Clear();
 
-    public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _history.ToList().AsReadOnly();
+    public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PipelineRunSummary>>(_history.ToList().AsReadOnly());
 
-    public IReadOnlyList<PipelineRunSummary> GetRunsByAgentId(string agentId, int limit = 10) =>
-        _history.Where(r => r.AgentId == agentId).Take(limit).ToList().AsReadOnly();
-
-    public void AddRunToHistory(PipelineRun run)
+    public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
     {
         _history.Insert(0, run.ToSummary());
+        return Task.CompletedTask;
     }
 
     public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory) { }

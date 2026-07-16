@@ -185,7 +185,7 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
                 new() { Id = "t1", Name = "T", IssueProviderId = "i", RepoProviderId = "r", Enabled = true }
             });
         var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(x => x.GetRunHistory()).Returns(new List<PipelineRunSummary>());
+        mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
 
         var sut = new ConsolidationService(
             new LoggerConfiguration().CreateLogger(),
@@ -218,7 +218,7 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
         mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate>());
         var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(x => x.GetRunHistory()).Returns(new List<PipelineRunSummary>());
+        mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
 
         var sut = new ConsolidationService(
             new LoggerConfiguration().CreateLogger(),
