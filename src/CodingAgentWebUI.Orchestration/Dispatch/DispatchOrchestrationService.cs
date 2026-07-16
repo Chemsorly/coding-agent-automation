@@ -361,27 +361,21 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         CancellationToken ct)
     {
         var configs = new List<ProviderConfig>();
-        // ProviderConfigResolver.ResolveAsync requires IConfigurationStore for InvalidateCaches().
-        // The DI-registered IProviderConfigStore instance always implements IConfigurationStore.
-        // TODO: Unsafe downcast — if DI ever registers a standalone IProviderConfigStore that doesn't implement
-        // IConfigurationStore, this will throw InvalidCastException at runtime. Consider injecting IConfigurationStore
-        // as an additional parameter for ProviderConfigResolver calls, or refactoring ProviderConfigResolver to accept a narrower interface.
-        var store = (IConfigurationStore)_providerConfigStore;
 
         var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
         var repoConfig = await ProviderConfigResolver.ResolveAsync(
-            store, repoProviderId, ProviderKind.Repository, repoConfigs, required: true, _logger, ct);
+            _providerConfigStore, repoProviderId, ProviderKind.Repository, repoConfigs, required: true, _logger, ct);
         configs.Add(repoConfig!);
 
         var agentConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
         var agentConfig = await ProviderConfigResolver.ResolveAsync(
-            store, agentProviderId, ProviderKind.Agent, agentConfigs, required: true, _logger, ct);
+            _providerConfigStore, agentProviderId, ProviderKind.Agent, agentConfigs, required: true, _logger, ct);
         configs.Add(agentConfig!);
 
         if (!string.IsNullOrEmpty(brainProviderId))
         {
             var brainConfig = await ProviderConfigResolver.ResolveAsync(
-                store, brainProviderId, ProviderKind.Repository, repoConfigs, required: false, _logger, ct);
+                _providerConfigStore, brainProviderId, ProviderKind.Repository, repoConfigs, required: false, _logger, ct);
             if (brainConfig is not null)
                 configs.Add(brainConfig);
         }
@@ -390,7 +384,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         {
             var pipelineConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
             var pipelineConfig = await ProviderConfigResolver.ResolveAsync(
-                store, pipelineProviderId, ProviderKind.Pipeline, pipelineConfigs, required: false, _logger, ct);
+                _providerConfigStore, pipelineProviderId, ProviderKind.Pipeline, pipelineConfigs, required: false, _logger, ct);
             if (pipelineConfig is not null)
                 configs.Add(pipelineConfig);
         }

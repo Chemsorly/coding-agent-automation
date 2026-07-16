@@ -17,7 +17,8 @@ internal static class ProviderConfigResolver
     /// When the DB fallback succeeds, invalidates the stale list cache so subsequent lookups
     /// within the same request don't re-trigger fallback.
     /// </summary>
-    /// <param name="store">Configuration store (singleton).</param>
+    /// <param name="store">Provider config store for DB fallback queries. If the instance also
+    /// implements <see cref="IConfigurationStore"/>, cache invalidation is performed on backfill.</param>
     /// <param name="id">Provider config ID to resolve.</param>
     /// <param name="kind">Provider kind for the lookup.</param>
     /// <param name="cachedList">Pre-loaded list from <see cref="IProviderConfigStore.LoadProviderConfigsAsync"/>.</param>
@@ -26,7 +27,7 @@ internal static class ProviderConfigResolver
     /// <param name="ct">Cancellation token.</param>
     /// <returns>The resolved config, or null if not found and not required.</returns>
     public static async Task<ProviderConfig?> ResolveAsync(
-        IConfigurationStore store,
+        IProviderConfigStore store,
         string id,
         ProviderKind kind,
         IReadOnlyList<ProviderConfig> cachedList,
@@ -49,7 +50,10 @@ internal static class ProviderConfigResolver
         {
             // Positive backfill: invalidate the stale list cache so subsequent lookups
             // in the same dispatch cycle will re-populate from DB with fresh data.
-            store.InvalidateCaches();
+            // TODO: Log a warning when the cast returns null so the skip is observable. If a future
+            // IProviderConfigStore registration lacks IConfigurationStore, the stale cached list is never
+            // invalidated, causing repeated DB fallback queries within the same dispatch cycle.
+            (store as IConfigurationStore)?.InvalidateCaches();
             return config;
         }
 

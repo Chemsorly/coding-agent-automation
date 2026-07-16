@@ -55,7 +55,7 @@ public class DispatchRunCreatorContractTests : IDisposable
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(_mockRepoProvider.Object);
 
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        mockHistoryService.Setup(h => h.GetRunHistory()).Returns(new List<PipelineRunSummary>().AsReadOnly());
+        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>().AsReadOnly());
 
         // Use a real OrchestratorRunService — lifecycle tests need actual state tracking
         // (mock can't track AddRun→IsIssueBeingProcessed correlation)

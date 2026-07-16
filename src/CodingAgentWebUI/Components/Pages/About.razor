@@ -125,7 +125,7 @@
     private string _avgDuration = "";
     private string _lastRun = "";
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
         _appVersion = Assembly.GetExecutingAssembly()
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
@@ -133,7 +133,7 @@
             ?? "unknown";
         _runtimeVersion = RuntimeInformation.FrameworkDescription;
 
-        var history = PipelineService.GetRunHistory();
+        var history = await PipelineService.GetRunHistoryAsync();
         _totalRuns = history.Count;
         _successCount = history.Count(r => r.FinalStep == PipelineStep.Completed);
         _failedCount = history.Count(r => r.FinalStep == PipelineStep.Failed);

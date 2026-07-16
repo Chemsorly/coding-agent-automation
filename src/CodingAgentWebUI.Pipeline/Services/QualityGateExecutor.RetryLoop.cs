@@ -111,7 +111,7 @@ public partial class QualityGateExecutor
                 await callbacks.SwapAgentLabel(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
                 callbacks.EmitOutputLine("🚫 Pipeline cancelled");
                 callbacks.TransitionTo(PipelineStep.Cancelled);
-                callbacks.AddRunToHistory(run);
+                await callbacks.AddRunToHistoryAsync(run);
             }
         }
         catch (Exception ex)
@@ -124,7 +124,7 @@ public partial class QualityGateExecutor
             await context.IssueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
             callbacks.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
             callbacks.TransitionTo(PipelineStep.Failed);
-            callbacks.AddRunToHistory(run);
+            await callbacks.AddRunToHistoryAsync(run);
         }
         finally
         {
@@ -177,7 +177,7 @@ public partial class QualityGateExecutor
             context.Callbacks.EmitOutputLine("📋 Collecting failure feedback...");
 
             // Load distinct categories from recent run summaries
-            var (harnessCategories, issueCategories) = _feedbackService.LoadPreviousCategories(_historyService);
+            var (harnessCategories, issueCategories) = await _feedbackService.LoadPreviousCategoriesAsync(_historyService).ConfigureAwait(false); // TODO: Propagate CancellationToken ct to LoadPreviousCategoriesAsync
 
             // Build the issue detail for the prompt (use context issue or create a minimal one from run data)
             var issue = context.Issue ?? new IssueDetail

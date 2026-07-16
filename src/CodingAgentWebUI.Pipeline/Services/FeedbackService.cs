@@ -24,15 +24,16 @@ public sealed class FeedbackService
     /// Loads distinct harness and issue category labels from the most recent run summaries.
     /// Returns empty lists if the history service is not available or an error occurs.
     /// </summary>
-    public (IReadOnlyList<string> HarnessCategories, IReadOnlyList<string> IssueCategories) LoadPreviousCategories(
-        IPipelineRunHistoryService? historyService)
+    public async Task<(IReadOnlyList<string> HarnessCategories, IReadOnlyList<string> IssueCategories)> LoadPreviousCategoriesAsync(
+        IPipelineRunHistoryService? historyService, CancellationToken ct = default)
     {
         if (historyService is null)
             return ([], []);
 
         try
         {
-            var recentSummaries = historyService.GetRunHistory()
+            var allSummaries = await historyService.GetRunHistoryAsync(ct).ConfigureAwait(false);
+            var recentSummaries = allSummaries
                 // TODO: Add fallback for legacy summaries where StartedAtOffset == default (consistent with PipelineRunHistoryService)
                 .OrderByDescending(s => s.StartedAtOffset)
                 .Take(FeedbackConstraints.MaxRecentRunsForCategories)

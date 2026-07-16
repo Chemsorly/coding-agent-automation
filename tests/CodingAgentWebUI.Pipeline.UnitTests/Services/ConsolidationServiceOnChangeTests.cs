@@ -36,7 +36,7 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
             });
 
         var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(x => x.GetRunHistory()).Returns(new List<PipelineRunSummary>());
+        mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
 
         _sut = new ConsolidationService(
             new LoggerConfiguration().CreateLogger(),

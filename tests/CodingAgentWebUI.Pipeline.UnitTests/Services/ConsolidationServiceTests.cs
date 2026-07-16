@@ -31,7 +31,6 @@ public sealed class ConsolidationServiceTests : IDisposable
 
         _logger = new LoggerConfiguration().CreateLogger();
         _mockRunHistory = new Mock<IPipelineRunHistoryService>();
-        _mockRunHistory.Setup(x => x.GetRunHistory()).Returns(new List<PipelineRunSummary>());
         // TODO: GetRunHistoryAsync always returns empty list — no test exercises PrepareFeedbackDataAsync with actual feedback entries. Add tests with non-empty run history to cover filtering logic after the async migration.
         _mockRunHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineRunSummary>());

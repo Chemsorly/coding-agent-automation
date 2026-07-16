@@ -97,7 +97,7 @@ public class ConsolidationServicePropertyTests : IDisposable
             WorkspaceBaseDirectory = _tempDir
         };
         var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistory()).Returns([]);
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         var mockProjectStore = new Mock<IProjectStore>();
         mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
@@ -174,7 +174,7 @@ public class ConsolidationServicePropertyTests : IDisposable
             WorkspaceBaseDirectory = _tempDir
         };
         var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistory()).Returns([]);
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
         var mockProjectStore = new Mock<IProjectStore>();
         mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
