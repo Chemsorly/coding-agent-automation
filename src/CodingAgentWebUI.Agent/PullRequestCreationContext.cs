@@ -23,4 +23,10 @@ internal sealed record PullRequestCreationContext
     public required JobAssignmentMessage Job { get; init; }
     public required PullRequestOrchestrator PrOrchestrator { get; init; }
     public required Action<string> EmitOutputLine { get; init; }
+
+    /// <summary>
+    /// Delegate for reporting step transitions during PR creation.
+    /// Uses the awaited <c>InvokeAsync</c> path (not the fire-and-forget serialized path).
+    /// </summary>
+    public Func<PipelineStep, CancellationToken, Task>? ReportStepTransition { get; init; }
 }

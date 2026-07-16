@@ -1496,113 +1496,136 @@ public class LocalPipelineExecutorTests : IDisposable
         CurrentStep = PipelineStep.Created
     };
 
-    // ── TransitionToInternalAsync ───────────────────────────────────────
+    // ── TransitionToInternalAsync (PipelineSignalRReporter) ────────────
+
+    // TODO: Add test for PipelineSignalRReporter.ReportStepTransitionAsync — verify it updates
+    // run.CurrentStep and swallows SignalR failures (awaited path used during PR creation).
+
+    // TODO: Add test for PipelineSignalRReporter.ReportBrainSyncResultAsync — verify it correctly
+    // forwards parameters and swallows exceptions on connection failure.
 
     [Fact]
     public async Task TransitionToInternalAsync_UpdatesCurrentStepAndHighWaterMark()
     {
-        var executor = CreateExecutor();
         var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
 
-        await executor.TransitionToInternalAsync(run, connection, "job-1", null, PipelineStep.AnalyzingCode, CancellationToken.None);
+        await reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.AnalyzingCode);
         run.HighWaterMark.Should().Be(PipelineStep.AnalyzingCode);
+        await reporter.DisposeAsync();
         await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task TransitionToInternalAsync_FailedStep_DoesNotUpdateHighWaterMark()
     {
-        var executor = CreateExecutor();
         var run = CreateMinimalRun();
         run.HighWaterMark = PipelineStep.AnalyzingCode;
         var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
 
-        await executor.TransitionToInternalAsync(run, connection, "job-1", null, PipelineStep.Failed, CancellationToken.None);
+        await reporter.TransitionToInternalAsync(PipelineStep.Failed, CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.HighWaterMark.Should().Be(PipelineStep.AnalyzingCode);
+        await reporter.DisposeAsync();
         await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task TransitionToInternalAsync_InvokesOnStepChanged()
     {
-        var executor = CreateExecutor();
         var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
         PipelineStep? received = null;
+        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, s => received = s, _mockLogger.Object);
 
-        await executor.TransitionToInternalAsync(run, connection, "job-1", s => received = s, PipelineStep.GeneratingCode, CancellationToken.None);
+        await reporter.TransitionToInternalAsync(PipelineStep.GeneratingCode, CancellationToken.None);
 
         received.Should().Be(PipelineStep.GeneratingCode);
+        await reporter.DisposeAsync();
         await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task TransitionToInternalAsync_SignalRFailure_DoesNotThrow()
     {
-        // Disconnected connection will fail InvokeAsync — should be swallowed
-        var executor = CreateExecutor();
+        // Disconnected connection will fail SendAsync — should be swallowed
         var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
 
-        var act = () => executor.TransitionToInternalAsync(run, connection, "job-1", null, PipelineStep.AnalyzingCode, CancellationToken.None);
+        var act = () => reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
 
         await act.Should().NotThrowAsync();
+        await reporter.DisposeAsync();
         await connection.DisposeAsync();
     }
 
-    // ── EmitOutputLineInternalAsync ─────────────────────────────────────
+    // ── EmitOutputLineInternalAsync (PipelineSignalRReporter) ────────────
 
     [Fact]
     public async Task EmitOutputLineInternalAsync_EnqueuesLineToRun()
     {
-        var executor = CreateExecutor();
         var run = CreateMinimalRun();
+        var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
+        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
 
-        await executor.EmitOutputLineInternalAsync(run, batcher, "hello", CancellationToken.None);
+        await reporter.EmitOutputLineInternalAsync("hello", CancellationToken.None);
 
         run.OutputLines.Should().Contain("hello");
+        await reporter.DisposeAsync();
+        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task EmitOutputLineInternalAsync_CancelledToken_DoesNotThrow()
     {
-        var executor = CreateExecutor();
         var run = CreateMinimalRun();
+        var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
+        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        var act = () => executor.EmitOutputLineInternalAsync(run, batcher, "line", cts.Token);
+        var act = () => reporter.EmitOutputLineInternalAsync("line", cts.Token);
 
         await act.Should().NotThrowAsync();
+        await reporter.DisposeAsync();
+        await connection.DisposeAsync();
     }
 
-    // ── ReportQualityGateResultInternalAsync ─────────────────────────────
+    // ── ReportQualityGateResultInternalAsync (PipelineSignalRReporter) ───
 
     [Fact]
     public async Task ReportQualityGateResultInternalAsync_SignalRFailure_DoesNotThrow()
     {
-        var executor = CreateExecutor();
+        var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "build", Passed = true },
             Tests = new GateResult { GateName = "test", Passed = true }
         };
 
-        var act = () => executor.ReportQualityGateResultInternalAsync(connection, "job-1", report, CancellationToken.None);
+        var act = () => reporter.ReportQualityGateResultInternalAsync(report, CancellationToken.None);
 
         await act.Should().NotThrowAsync();
+        await reporter.DisposeAsync();
         await connection.DisposeAsync();
     }
 
-    // ── SerializedSendAsync ordering ────────────────────────────────────
+    // ── SerializedSendAsync ordering (PipelineSignalRReporter) ──────────
 
     [Fact]
     public async Task TransitionToInternalAsync_SignalRFailure_IncrementsMetricCounter()
@@ -1618,14 +1641,16 @@ public class LocalPipelineExecutorTests : IDisposable
             measurements.Add(instrument.Name));
         listener.Start();
 
-        var executor = CreateExecutor();
         var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
         measurements.Clear();
 
-        await executor.TransitionToInternalAsync(run, connection, "job-1", null, PipelineStep.AnalyzingCode, CancellationToken.None);
+        await reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
 
         measurements.Should().Contain("agent.signalr.failures");
+        await reporter.DisposeAsync();
         await connection.DisposeAsync();
     }
 
@@ -1643,8 +1668,10 @@ public class LocalPipelineExecutorTests : IDisposable
             measurements.Add(instrument.Name));
         listener.Start();
 
-        var executor = CreateExecutor();
+        var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
+        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "build", Passed = true },
@@ -1652,9 +1679,10 @@ public class LocalPipelineExecutorTests : IDisposable
         };
         measurements.Clear();
 
-        await executor.ReportQualityGateResultInternalAsync(connection, "job-1", report, CancellationToken.None);
+        await reporter.ReportQualityGateResultInternalAsync(report, CancellationToken.None);
 
         measurements.Should().Contain("agent.signalr.failures");
+        await reporter.DisposeAsync();
         await connection.DisposeAsync();
     }
 
@@ -1695,7 +1723,7 @@ public class LocalPipelineExecutorTests : IDisposable
 
         // Fire 10 concurrent sends via the real production method
         var tasks = Enumerable.Range(0, 10).Select(i =>
-            LocalPipelineExecutor.SerializedSendAsync(
+            PipelineSignalRReporter.SerializedSendAsync(
                 signalrLock,
                 async () =>
                 {
@@ -1721,7 +1749,7 @@ public class LocalPipelineExecutorTests : IDisposable
         cts.Cancel();
 
         // Should complete without throwing — cancellation is swallowed
-        var task = LocalPipelineExecutor.SerializedSendAsync(
+        var task = PipelineSignalRReporter.SerializedSendAsync(
             signalrLock,
             () => Task.CompletedTask,
             cts.Token);
@@ -1737,7 +1765,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var signalrLock = new SemaphoreSlim(1, 1);
         signalrLock.Dispose();
 
-        await LocalPipelineExecutor.SerializedSendAsync(
+        await PipelineSignalRReporter.SerializedSendAsync(
             signalrLock,
             () => Task.CompletedTask,
             CancellationToken.None);
@@ -1751,7 +1779,7 @@ public class LocalPipelineExecutorTests : IDisposable
 
         signalrLock.Dispose();
 
-        await LocalPipelineExecutor.SerializedSendAsync(
+        await PipelineSignalRReporter.SerializedSendAsync(
             signalrLock,
             () => { sendExecuted = true; return Task.CompletedTask; },
             CancellationToken.None);
@@ -1764,7 +1792,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var signalrLock = new SemaphoreSlim(1, 1);
 
-        await LocalPipelineExecutor.SerializedSendAsync(
+        await PipelineSignalRReporter.SerializedSendAsync(
             signalrLock,
             () => { signalrLock.Dispose(); return Task.CompletedTask; },
             CancellationToken.None);
