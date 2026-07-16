@@ -320,12 +320,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         foreach (var run in allRuns)
         {
             var targetKind = run.LabelTargetKind;
-            var providerConfigId = targetKind == LabelTargetKind.PullRequest
-                ? run.RepoProviderConfigId
-                : run.IssueProviderConfigId;
 
             await _labelSwapper.SwapLabelAsync(
-                providerConfigId, run.IssueIdentifier, AgentLabels.Cancelled, targetKind, CancellationToken.None);
+                run.ProviderConfigIdForLabel, run.IssueIdentifier, AgentLabels.Cancelled, targetKind, CancellationToken.None);
         }
 
         // Delegate state changes to lifecycle â€” returns cancelled issue identifiers
@@ -507,11 +504,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         try
         {
             var targetKind = run.LabelTargetKind;
-            var providerConfigId = targetKind == LabelTargetKind.PullRequest
-                ? run.RepoProviderConfigId
-                : run.IssueProviderConfigId;
 
-            await _labelSwapper.SwapLabelAsync(providerConfigId, issueId, newLabel, targetKind, ct);
+            await _labelSwapper.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, newLabel, targetKind, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on {Identifier}", newLabel, issueId); }
     }
@@ -523,11 +517,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         try
         {
             var targetKind = run.LabelTargetKind;
-            var providerConfigId = targetKind == LabelTargetKind.PullRequest
-                ? run.RepoProviderConfigId
-                : run.IssueProviderConfigId;
 
-            await _labelSwapper.SwapLabelAsync(providerConfigId, issueId, string.Empty, targetKind, ct);
+            await _labelSwapper.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, string.Empty, targetKind, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from {Identifier}", issueId); }
     }
