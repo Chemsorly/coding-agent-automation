@@ -184,6 +184,8 @@ API endpoints:
 - `GET /api/config/export` — returns the bundle as `application/json`
 - `POST /api/config/import` — accepts multipart form upload of the bundle file
 
+For full request/response examples, authentication details, and query parameters, see the [HTTP API Reference](api-reference.md).
+
 ### Orchestrator
 
 | Variable | Description |
