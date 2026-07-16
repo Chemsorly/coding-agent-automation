@@ -369,6 +369,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             PullRequestUrl = entity.PullRequestUrl,
             ModelName = entity.ModelName,
             AgentId = entity.AgentId,
+            // TODO: Add ProjectId = entity.ProjectId here for consistency — fallback path loses ProjectId when SummaryJson is null/corrupt
             ProjectName = entity.ProjectName,
             RunType = entity.RunType
         };
