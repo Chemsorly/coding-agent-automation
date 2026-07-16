@@ -150,7 +150,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
         run.MarkCompleted();
         await issueOps.SwapLabelAsync(run.IssueIdentifier, label, ct);
         callbacks.TransitionTo(step);
-        callbacks.AddRunToHistory(run);
+        await callbacks.AddRunToHistoryAsync(run);
         return false;
     }
 

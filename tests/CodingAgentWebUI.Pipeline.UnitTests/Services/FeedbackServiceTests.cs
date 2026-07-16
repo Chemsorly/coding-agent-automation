@@ -220,31 +220,31 @@ public class FeedbackServiceTests
 
     #region LoadPreviousCategories
 
-    // TODO: Add test for exception-handling path — mock GetRunHistory() to throw and assert empty lists are returned (covers the catch block's graceful degradation).
+    // TODO: [WARNING] Add test for exception-handling path — mock GetRunHistoryAsync() to throw and assert empty lists are returned (covers the catch block's graceful degradation).
 
     [Fact]
-    public void LoadPreviousCategories_NullHistoryService_ReturnsEmptyLists()
+    public async Task LoadPreviousCategories_NullHistoryService_ReturnsEmptyLists()
     {
-        var (harness, issue) = _sut.LoadPreviousCategories(null);
+        var (harness, issue) = await _sut.LoadPreviousCategoriesAsync(null);
 
         harness.Should().BeEmpty();
         issue.Should().BeEmpty();
     }
 
     [Fact]
-    public void LoadPreviousCategories_EmptyHistory_ReturnsEmptyLists()
+    public async Task LoadPreviousCategories_EmptyHistory_ReturnsEmptyLists()
     {
         var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistory()).Returns([]);
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync([]);
 
-        var (harness, issue) = _sut.LoadPreviousCategories(mockHistory.Object);
+        var (harness, issue) = await _sut.LoadPreviousCategoriesAsync(mockHistory.Object);
 
         harness.Should().BeEmpty();
         issue.Should().BeEmpty();
     }
 
     [Fact]
-    public void LoadPreviousCategories_ExtractsDistinctCategories()
+    public async Task LoadPreviousCategories_ExtractsDistinctCategories()
     {
         var summaries = new[]
         {
@@ -253,16 +253,16 @@ public class FeedbackServiceTests
             CreateSummaryWithCategories(DateTimeOffset.UtcNow.AddMinutes(-2), "test-failure", "feature"),
         };
         var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistory()).Returns(summaries);
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(summaries);
 
-        var (harness, issue) = _sut.LoadPreviousCategories(mockHistory.Object);
+        var (harness, issue) = await _sut.LoadPreviousCategoriesAsync(mockHistory.Object);
 
         harness.Should().BeEquivalentTo(["build-failure", "test-failure"]);
         issue.Should().BeEquivalentTo(["feature", "bug"]);
     }
 
     [Fact]
-    public void LoadPreviousCategories_SkipsNullFeedbackEntries()
+    public async Task LoadPreviousCategories_SkipsNullFeedbackEntries()
     {
         var summaries = new[]
         {
@@ -275,16 +275,16 @@ public class FeedbackServiceTests
             },
         };
         var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistory()).Returns(summaries);
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(summaries);
 
-        var (harness, issue) = _sut.LoadPreviousCategories(mockHistory.Object);
+        var (harness, issue) = await _sut.LoadPreviousCategoriesAsync(mockHistory.Object);
 
         harness.Should().BeEquivalentTo(["build-failure"]);
         issue.Should().BeEquivalentTo(["feature"]);
     }
 
     [Fact]
-    public void LoadPreviousCategories_OrdersByStartedAtOffsetDescending_TakesNewest()
+    public async Task LoadPreviousCategories_OrdersByStartedAtOffsetDescending_TakesNewest()
     {
         // Create more than MaxRecentRunsForCategories summaries
         var summaries = Enumerable.Range(0, FeedbackConstraints.MaxRecentRunsForCategories + 10)
@@ -296,9 +296,9 @@ public class FeedbackServiceTests
         var shuffled = summaries.OrderBy(_ => Guid.NewGuid()).ToArray();
 
         var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistory()).Returns(shuffled);
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(shuffled);
 
-        var (harness, issue) = _sut.LoadPreviousCategories(mockHistory.Object);
+        var (harness, issue) = await _sut.LoadPreviousCategoriesAsync(mockHistory.Object);
 
         // Should only have categories from the top MaxRecentRunsForCategories entries (by StartedAtOffset desc)
         harness.Should().HaveCount(FeedbackConstraints.MaxRecentRunsForCategories);

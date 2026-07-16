@@ -71,18 +71,22 @@ public class PipelineRunLifecycleServiceTests
         act.Should().Throw<ArgumentNullException>().WithParameterName("historyService");
     }
 
-    // ── AddRunToHistory ─────────────────────────────────────────────────
+    // ── AddRunToHistoryAsync ─────────────────────────────────────────────────
 
     [Fact]
-    public void AddRunToHistory_DelegatesToHistoryService()
+    public async Task AddRunToHistoryAsync_DelegatesToHistoryService()
     {
         var service = CreateService();
         var run = CreateRun();
 
-        service.AddRunToHistory(run);
+        await service.AddRunToHistoryAsync(run);
 
-        _mockHistory.Verify(h => h.AddRunToHistory(run), Times.Once);
+        _mockHistory.Verify(h => h.AddRunToHistoryAsync(run, It.IsAny<CancellationToken>()), Times.Once);
     }
+
+    // TODO: [WARNING] Add test for exception propagation — verify that if AddRunToHistoryAsync throws,
+    // the exception propagates to callers (FailRunAsync, CancelPipelineAsync) and doesn't silently break
+    // pipeline finalization. This gap was introduced when the method became async.
 
     // ── RegisterDispatchedRun ────────────────────────────────────────────
 
@@ -221,7 +225,7 @@ public class PipelineRunLifecycleServiceTests
 
         await service.CancelPipelineAsync();
 
-        _mockHistory.Verify(h => h.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
+        _mockHistory.Verify(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -232,7 +236,7 @@ public class PipelineRunLifecycleServiceTests
 
         await service.CancelPipelineAsync();
 
-        _mockHistory.Verify(h => h.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
+        _mockHistory.Verify(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── MarkAgentRunsCancelled No-Op ────────────────────────────────────
@@ -248,7 +252,7 @@ public class PipelineRunLifecycleServiceTests
         var result = await service.MarkAgentRunsCancelled();
 
         result.Should().BeEmpty();
-        _mockHistory.Verify(h => h.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
+        _mockHistory.Verify(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     // ── MarkAgentRunsCancelled Run Removal ──────────────────────────────

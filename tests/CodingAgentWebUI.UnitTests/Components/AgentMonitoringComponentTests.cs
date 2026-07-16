@@ -36,7 +36,8 @@ public class AgentMonitoringComponentTests : BunitContext
         var mockFactory = new Mock<IProviderFactory>();
         var mockValidator = new Mock<IQualityGateValidator>();
         var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistory()).Returns(Array.Empty<PipelineRunSummary>());
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
         _pipelineService = TestOrchestrationFactory.CreateMinimal(
             configStore: mockStore.Object,

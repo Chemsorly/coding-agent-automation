@@ -277,7 +277,7 @@ public sealed class PullRequestFinalizationService
         try
         {
             var elapsed = DateTimeOffset.UtcNow - run.StartedAtOffset;
-            var (harnessCategories, issueCategories) = feedbackService.LoadPreviousCategories(historyService);
+            var (harnessCategories, issueCategories) = await feedbackService.LoadPreviousCategoriesAsync(historyService).ConfigureAwait(false); // TODO: Propagate CancellationToken ct to LoadPreviousCategoriesAsync
 
             var feedbackPrompt = FeedbackPromptBuilder.BuildStandaloneFeedbackPrompt(
                 run, elapsed, harnessCategories, issueCategories);

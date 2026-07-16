@@ -19,7 +19,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly ILogger _logger;
 
-    /// <summary>Maximum number of run summaries returned by <see cref="GetRunHistory"/>.</summary>
+    /// <summary>Maximum number of run summaries returned by <see cref="GetRunHistoryAsync"/>.</summary>
     internal const int MaxHistorySize = 1000;
 
     private static readonly JsonSerializerOptions JsonOptions = PipelineJsonOptions.Default;
@@ -33,60 +33,6 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
-    [Obsolete("Use async overload GetRunHistoryAsync. Will be removed in a future version.")]
-    public IReadOnlyList<PipelineRunSummary> GetRunHistory()
-    {
-        // Synchronous wrapper over async DB call — acceptable here because callers
-        // are already in synchronous context (HeartbeatMonitor, ConsolidationService).
-        // Uses GetAwaiter().GetResult() to avoid deadlocks in sync-over-async.
-        return GetRunHistoryInternalAsync().GetAwaiter().GetResult();
-    }
-
-    /// <inheritdoc />
-    public IReadOnlyList<PipelineRunSummary> GetRunsByAgentId(string agentId, int limit = 10)
-    {
-        ArgumentNullException.ThrowIfNull(agentId);
-        return GetRunsByAgentIdAsync(agentId, limit).GetAwaiter().GetResult();
-    }
-
-    /// <inheritdoc />
-    [Obsolete("Use async overload AddRunToHistoryAsync. Will be removed in a future version.")]
-    public void AddRunToHistory(PipelineRun run)
-    {
-        ArgumentNullException.ThrowIfNull(run);
-
-        // Defense-in-depth: reject consolidation runs from being persisted to pipeline history.
-        // Consolidation has its own history on the Consolidation page.
-        if (run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
-        {
-            _logger.Debug("AddRunToHistory: skipping consolidation run {RunId}", run.RunId);
-            return;
-        }
-
-        // Defense-in-depth: ensure terminal CurrentStep before persisting to history.
-        // Non-terminal steps indicate a mid-pipeline state that should never be the final persisted value.
-        if (!run.CurrentStep.IsTerminal())
-        {
-            _logger.Warning(
-                "AddRunToHistory: run {RunId} has non-terminal CurrentStep={Step}, forcing to Failed",
-                run.RunId, run.CurrentStep);
-            run.CurrentStep = PipelineStep.Failed;
-        }
-
-        var summary = run.ToSummary();
-
-        try
-        {
-            AddRunToHistoryInternalAsync(summary).GetAwaiter().GetResult();
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to persist run summary {RunId} to database", summary.RunId);
-        }
-    }
-
-    /// <inheritdoc />
-    // TODO: CancellationToken ct is accepted but never passed to AddRunToHistoryInternalAsync — callers cannot cancel the DB operation. Propagate ct to internal method (CreateDbContextAsync, FindAsync, SaveChangesAsync).
     public async Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(run);
@@ -116,7 +62,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
         try
         {
-            await AddRunToHistoryInternalAsync(summary).ConfigureAwait(false);
+            await AddRunToHistoryInternalAsync(summary, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -125,10 +71,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     }
 
     /// <inheritdoc />
-    // TODO: CancellationToken ct is accepted but never passed to GetRunHistoryInternalAsync — callers cannot cancel the DB query. Propagate ct to internal method (CreateDbContextAsync, ToListAsync).
     public async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
     {
-        return await GetRunHistoryInternalAsync().ConfigureAwait(false);
+        return await GetRunHistoryInternalAsync(ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -178,12 +123,23 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
         try
         {
-            var expiredRuns = GetExpiredFailedRunsAsync(cutoff, activeRunId).GetAwaiter().GetResult();
+            using var db = _dbFactory.CreateDbContext();
+            var query = db.PipelineRuns
+                .AsNoTracking()
+                .Where(r => r.FinalStep != PipelineStep.Completed)
+                .Where(r => r.CompletedAt != null && r.CompletedAt < cutoff);
 
-            foreach (var (runId, completedAt) in expiredRuns)
+            if (!string.IsNullOrEmpty(activeRunId) && Guid.TryParse(activeRunId, out var activeGuid))
+                query = query.Where(r => r.RunId != activeGuid);
+
+            var expiredRuns = query
+                .Select(r => new { RunId = r.RunId.ToString(), CompletedAt = r.CompletedAt!.Value })
+                .ToList();
+
+            foreach (var expired in expiredRuns)
             {
-                var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, runId);
-                TryDeleteWorkspace(workspacePath, runId, config.WorkspaceBaseDirectory);
+                var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, expired.RunId);
+                TryDeleteWorkspace(workspacePath, expired.RunId, config.WorkspaceBaseDirectory);
             }
         }
         catch (Exception ex)
@@ -194,14 +150,14 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
     // ── Async internals ─────────────────────────────────────────────────
 
-    private async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryInternalAsync()
+    private async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryInternalAsync(CancellationToken ct)
     {
-        await using var db = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
         var entities = await db.PipelineRuns
             .AsNoTracking()
             .OrderByDescending(r => r.StartedAt)
             .Take(MaxHistorySize)
-            .ToListAsync().ConfigureAwait(false);
+            .ToListAsync(ct).ConfigureAwait(false);
 
         // TODO: Write guard uses IssueProviderConfigId to reject consolidation runs, but read-time
         // filter uses InitiatedBy. If a consolidation run has the correct ProviderConfigId but
@@ -214,31 +170,15 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             .ToList()!;
     }
 
-    private async Task<IReadOnlyList<PipelineRunSummary>> GetRunsByAgentIdAsync(string agentId, int limit)
-    {
-        await using var db = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
-        var entities = await db.PipelineRuns
-            .AsNoTracking()
-            .Where(r => r.AgentId == agentId)
-            .OrderByDescending(r => r.StartedAt)
-            .Take(limit)
-            .ToListAsync().ConfigureAwait(false);
-
-        return entities
-            .Select(DeserializeSummary)
-            .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
-            .ToList()!;
-    }
-
-    private async Task AddRunToHistoryInternalAsync(PipelineRunSummary summary)
+    private async Task AddRunToHistoryInternalAsync(PipelineRunSummary summary, CancellationToken ct)
     {
         var entity = ToEntity(summary);
 
-        await using var db = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
 
         // Upsert: a PipelineRunEntity row may already exist (created at dispatch time
         // by DispatchOrchestrationService for active run tracking). Update it with final state.
-        var existing = await db.PipelineRuns.FindAsync(entity.RunId).ConfigureAwait(false);
+        var existing = await db.PipelineRuns.FindAsync([entity.RunId], ct).ConfigureAwait(false);
         if (existing is not null)
         {
             existing.IssueIdentifier = entity.IssueIdentifier;
@@ -261,7 +201,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
         try
         {
-            await db.SaveChangesAsync().ConfigureAwait(false);
+            await db.SaveChangesAsync(ct).ConfigureAwait(false);
         }
         catch (DbUpdateException ex) when (IsPrimaryKeyViolation(ex))
         {
@@ -269,7 +209,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             // FindAsync (miss) and SaveChangesAsync. Retry as update.
             _logger.Warning("Upsert race for run {RunId}, retrying as update", entity.RunId);
             db.ChangeTracker.Clear();
-            var retry = await db.PipelineRuns.FindAsync(entity.RunId).ConfigureAwait(false);
+            var retry = await db.PipelineRuns.FindAsync([entity.RunId], ct).ConfigureAwait(false);
             if (retry is not null)
             {
                 retry.IssueIdentifier = entity.IssueIdentifier;
@@ -284,28 +224,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
                 retry.ProjectName = entity.ProjectName;
                 retry.RunType = entity.RunType;
                 retry.SummaryJson = entity.SummaryJson;
-                await db.SaveChangesAsync().ConfigureAwait(false);
+                await db.SaveChangesAsync(ct).ConfigureAwait(false);
             }
         }
-    }
-
-    private async Task<IReadOnlyList<(string RunId, DateTimeOffset CompletedAt)>> GetExpiredFailedRunsAsync(
-        DateTimeOffset cutoff, string? activeRunId)
-    {
-        await using var db = await _dbFactory.CreateDbContextAsync().ConfigureAwait(false);
-        var query = db.PipelineRuns
-            .AsNoTracking()
-            .Where(r => r.FinalStep != PipelineStep.Completed)
-            .Where(r => r.CompletedAt != null && r.CompletedAt < cutoff);
-
-        if (!string.IsNullOrEmpty(activeRunId) && Guid.TryParse(activeRunId, out var activeGuid))
-            query = query.Where(r => r.RunId != activeGuid);
-
-        var results = await query
-            .Select(r => new { RunId = r.RunId.ToString(), CompletedAt = r.CompletedAt!.Value })
-            .ToListAsync().ConfigureAwait(false);
-
-        return results.Select(r => (r.RunId, r.CompletedAt)).ToList();
     }
 
     // ── Mapping ─────────────────────────────────────────────────────────

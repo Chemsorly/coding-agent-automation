@@ -119,18 +119,18 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// <summary>
     /// Marks the run as failed with the given reason, sets CompletedAt, emits output, transitions to Failed, and adds to history.
     /// </summary>
-    public Task FailRunAsync(PipelineRun run, string reason, CancellationToken ct = default)
+    public async Task FailRunAsync(PipelineRun run, string reason, CancellationToken ct = default)
     {
         run.FailureReason = reason;
         run.MarkCompleted();
         EmitOutputLine($"❌ Pipeline failed: {reason}");
         TransitionTo(run, PipelineStep.Failed);
-        AddRunToHistory(run);
-        return Task.CompletedTask;
+        // TODO: Pass ct to AddRunToHistoryAsync once the method signature accepts CancellationToken
+        await AddRunToHistoryAsync(run).ConfigureAwait(false);
     }
 
     /// <summary>Adds the run to persistent history.</summary>
-    public void AddRunToHistory(PipelineRun run) => _historyService.AddRunToHistory(run);
+    public Task AddRunToHistoryAsync(PipelineRun run) => _historyService.AddRunToHistoryAsync(run); // TODO: Accept and propagate CancellationToken from callers (FailRunAsync, CancelPipelineAsync, MarkAgentRunsCancelled)
 
     // ── Event Emission Methods ──────────────────────────────────────────
 
@@ -177,9 +177,9 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     }
 
     /// <summary>Cancels the active pipeline run if one is running.</summary>
-    public Task CancelPipelineAsync()
+    public async Task CancelPipelineAsync()
     {
-        if (ActiveRun == null || !IsRunning) return Task.CompletedTask;
+        if (ActiveRun == null || !IsRunning) return;
 
         var run = ActiveRun;
         _logger.Information("Pipeline {RunId} cancellation requested", run.RunId);
@@ -193,9 +193,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         run.MarkCompleted();
         EmitOutputLine("🚫 Pipeline cancelled");
         TransitionTo(run, PipelineStep.Cancelled);
-        AddRunToHistory(run);
-
-        return Task.CompletedTask;
+        await AddRunToHistoryAsync(run).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -203,25 +201,25 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// and removes runs from active tracking. Returns list of cancelled issue identifiers for caller to release dedup.
     /// No-op if no run service is configured.
     /// </summary>
-    public Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>> MarkAgentRunsCancelled()
+    public async Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>> MarkAgentRunsCancelled()
     {
-        if (_runService is null) return Task.FromResult<IReadOnlyList<(string, string)>>([]);
+        if (_runService is null) return [];
 
         var activeRuns = _runService.GetActiveRuns();
-        if (activeRuns.Count == 0) return Task.FromResult<IReadOnlyList<(string, string)>>([]);
+        if (activeRuns.Count == 0) return [];
 
         var cancelledIssues = new List<(string IssueIdentifier, string IssueProviderConfigId)>();
         foreach (var run in activeRuns)
         {
             run.MarkCompleted();
             run.CurrentStep = PipelineStep.Cancelled;
-            AddRunToHistory(run);
+            await AddRunToHistoryAsync(run).ConfigureAwait(false);
             _runService.RemoveRun(run.RunId);
             cancelledIssues.Add((run.IssueIdentifier, run.IssueProviderConfigId));
         }
 
         NotifyChange();
-        return Task.FromResult<IReadOnlyList<(string, string)>>(cancelledIssues);
+        return cancelledIssues;
     }
 
     // ── Dispatched Run Registration ─────────────────────────────────────

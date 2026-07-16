@@ -123,65 +123,6 @@ public class PipelineRunHistoryServiceTests : IDisposable
         finally { if (Directory.Exists(runsDir)) Directory.Delete(runsDir, true); if (Directory.Exists(workspaceBase)) Directory.Delete(workspaceBase, true); }
     }
 
-    [Fact]
-    public void GetRunsByAgentId_ReturnsEmpty_WhenNoRunsForAgent()
-    {
-        var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-agent-{Guid.NewGuid()}");
-        Directory.CreateDirectory(runsDir);
-        try
-        {
-            var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
-            var result = historyService.GetRunsByAgentId("agent-1");
-            result.Should().BeEmpty();
-        }
-        finally { if (Directory.Exists(runsDir)) Directory.Delete(runsDir, true); }
-    }
-
-    [Fact]
-    public void GetRunsByAgentId_FiltersAndLimitsCorrectly()
-    {
-        var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-agent-filter-{Guid.NewGuid()}");
-        Directory.CreateDirectory(runsDir);
-        try
-        {
-            var jsonOptions = new System.Text.Json.JsonSerializerOptions { WriteIndented = true, PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() } };
-
-            // Create 3 runs for agent-1 and 1 for agent-2
-            for (var i = 0; i < 3; i++)
-            {
-                var id = Guid.NewGuid().ToString();
-                File.WriteAllText(Path.Combine(runsDir, $"{id}.json"),
-                    System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary
-                    {
-                        RunId = id, IssueIdentifier = $"{i}", IssueTitle = $"Run {i}",
-                        FinalStep = PipelineStep.Completed, StartedAt = DateTime.UtcNow.AddHours(-i),
-                        CompletedAt = DateTime.UtcNow.AddHours(-i).AddMinutes(10), AgentId = "agent-1"
-                    }, jsonOptions));
-            }
-            var otherId = Guid.NewGuid().ToString();
-            File.WriteAllText(Path.Combine(runsDir, $"{otherId}.json"),
-                System.Text.Json.JsonSerializer.Serialize(new PipelineRunSummary
-                {
-                    RunId = otherId, IssueIdentifier = "99", IssueTitle = "Other",
-                    FinalStep = PipelineStep.Failed, StartedAt = DateTime.UtcNow, AgentId = "agent-2"
-                }, jsonOptions));
-
-            var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
-
-            var agent1Runs = historyService.GetRunsByAgentId("agent-1");
-            agent1Runs.Should().HaveCount(3);
-            agent1Runs.Should().OnlyContain(r => r.AgentId == "agent-1");
-
-            var agent2Runs = historyService.GetRunsByAgentId("agent-2");
-            agent2Runs.Should().ContainSingle();
-
-            // Test limit
-            var limited = historyService.GetRunsByAgentId("agent-1", 2);
-            limited.Should().HaveCount(2);
-        }
-        finally { if (Directory.Exists(runsDir)) Directory.Delete(runsDir, true); }
-    }
-
     [Theory]
     [InlineData(0, 0)]
     [InlineData(3, 100)]
@@ -211,18 +152,18 @@ public class PipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void AddRunToHistory_ThrowsOnNull()
+    public async Task AddRunToHistory_ThrowsOnNull()
     {
         var runsDir = Path.Combine(Path.GetTempPath(), $"runs-{Guid.NewGuid()}");
         var service = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
 
-        var act = () => service.AddRunToHistory(null!);
+        var act = () => service.AddRunToHistoryAsync(null!);
 
-        act.Should().Throw<ArgumentNullException>().WithParameterName("run");
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("run");
     }
 
     [Fact]
-    public void AddRunToHistory_CapsAtMaxHistorySize()
+    public async Task AddRunToHistory_CapsAtMaxHistorySize()
     {
         var runsDir = Path.Combine(Path.GetTempPath(), $"runs-cap-{Guid.NewGuid()}");
         var service = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
@@ -240,10 +181,10 @@ public class PipelineRunHistoryServiceTests : IDisposable
                 CurrentStep = PipelineStep.Completed,
                 StartedAt = DateTime.UtcNow
             };
-            service.AddRunToHistory(run);
+            await service.AddRunToHistoryAsync(run);
         }
 
-        var history = service.GetRunHistory();
+        var history = await service.GetRunHistoryAsync();
         history.Should().HaveCount(PipelineRunHistoryService.MaxHistorySize);
         // Most recent should be first
         history[0].RunId.Should().Be($"run-{PipelineRunHistoryService.MaxHistorySize + 4}");
@@ -278,7 +219,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
             CompletedAt = DateTime.UtcNow.AddMinutes(5)
         };
 
-        service.AddRunToHistory(run);
+        await service.AddRunToHistoryAsync(run);
 
         // Persist is now fire-and-forget async — wait briefly for write to complete
         var expectedFile = Path.Combine(_tempDir, "persist-test-run.json");
@@ -296,7 +237,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetRunHistory_ReturnsAllPersistedRunsInChronologicalOrder_NewestFirst()
+    public async Task GetRunHistory_ReturnsAllPersistedRunsInChronologicalOrder_NewestFirst()
     {
         Directory.CreateDirectory(_tempDir);
 
@@ -339,7 +280,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
 
         var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
 
-        var history = service.GetRunHistory();
+        var history = await service.GetRunHistoryAsync();
 
         history.Should().HaveCount(3);
         history[0].RunId.Should().Be("newest-run");
@@ -348,19 +289,19 @@ public class PipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetRunHistory_EmptyDirectory_ReturnsEmptyList()
+    public async Task GetRunHistory_EmptyDirectory_ReturnsEmptyList()
     {
         Directory.CreateDirectory(_tempDir);
 
         var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
 
-        var history = service.GetRunHistory();
+        var history = await service.GetRunHistoryAsync();
 
         history.Should().BeEmpty();
     }
 
     [Fact]
-    public void GetRunHistory_CorruptedJsonFileIsSkipped_RemainingFilesStillLoaded()
+    public async Task GetRunHistory_CorruptedJsonFileIsSkipped_RemainingFilesStillLoaded()
     {
         Directory.CreateDirectory(_tempDir);
 
@@ -381,7 +322,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
 
         var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
 
-        var history = service.GetRunHistory();
+        var history = await service.GetRunHistoryAsync();
 
         history.Should().ContainSingle();
         history[0].RunId.Should().Be("valid-run");
@@ -407,7 +348,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
             CompletedAt = DateTime.UtcNow.AddMinutes(1)
         };
 
-        service.AddRunToHistory(run);
+        await service.AddRunToHistoryAsync(run);
 
         // Persist is now fire-and-forget async — wait briefly for write to complete
         var expectedFile = Path.Combine(nonExistentDir, "dir-create-test.json");
@@ -473,7 +414,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
     // ── Consolidation filtering tests ───────────────────────────────────
 
     [Fact]
-    public void GetRunHistory_ExcludesConsolidationRuns_LoadedFromDisk()
+    public async Task GetRunHistory_ExcludesConsolidationRuns_LoadedFromDisk()
     {
         var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-consol-filter-{Guid.NewGuid()}");
         Directory.CreateDirectory(runsDir);
@@ -509,7 +450,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
                 JsonSerializer.Serialize(consolSummary, JsonOptions));
 
             var historyService = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
-            var history = historyService.GetRunHistory();
+            var history = await historyService.GetRunHistoryAsync();
 
             history.Should().HaveCount(1);
             history[0].IssueIdentifier.Should().Be("org/repo#1");
@@ -521,7 +462,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void AddRunToHistory_RejectsConsolidationRun_Silently()
+    public async Task AddRunToHistory_RejectsConsolidationRun_Silently()
     {
         var runsDir = Path.Combine(Path.GetTempPath(), $"test-runs-consol-guard-{Guid.NewGuid()}");
         Directory.CreateDirectory(runsDir);
@@ -540,10 +481,10 @@ public class PipelineRunHistoryServiceTests : IDisposable
             consolidationRun.MarkCompleted();
 
             // Should not throw
-            historyService.AddRunToHistory(consolidationRun);
+            await historyService.AddRunToHistoryAsync(consolidationRun);
 
             // Should not appear in history
-            var history = historyService.GetRunHistory();
+            var history = await historyService.GetRunHistoryAsync();
             history.Should().BeEmpty();
 
             // Should not persist to disk

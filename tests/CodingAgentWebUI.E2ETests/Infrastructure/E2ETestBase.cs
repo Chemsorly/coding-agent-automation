@@ -76,7 +76,7 @@ public abstract class E2ETestBase : IAsyncLifetime
 
         while (DateTime.UtcNow < deadline)
         {
-            var runs = Fixture.Factory.HistoryService.GetRunHistory();
+            var runs = (await Fixture.Factory.HistoryService.GetRunHistoryAsync());
             var match = runs.FirstOrDefault(predicate);
             if (match is not null) return match;
             await Task.Delay(interval);

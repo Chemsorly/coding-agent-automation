@@ -41,7 +41,7 @@ public class DispatchFeedbackComponentTests : BunitContext
         var mockValidator = new Mock<IQualityGateValidator>();
 
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        mockHistoryService.Setup(h => h.GetRunHistory()).Returns(Array.Empty<PipelineRunSummary>());
+        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
         var pipelineService = TestOrchestrationFactory.CreateMinimal(
             configStore: _mockStore.Object,

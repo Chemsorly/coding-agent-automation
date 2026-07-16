@@ -810,7 +810,7 @@ public class PipelineStepTests
         public void TransitionTo(PipelineStep step) => transitions.Add(step);
         public void EmitOutputLine(string line) => outputLines.Add(line);
         public void NotifyChange() { }
-        public void AddRunToHistory(PipelineRun run) { }
+        public Task AddRunToHistoryAsync(PipelineRun run) => Task.CompletedTask;
         public Task UpdateFileChangeStats(PipelineRun run) => Task.CompletedTask;
         public Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct) => Task.CompletedTask;
         public Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct) => Task.CompletedTask;
