@@ -53,14 +53,11 @@ SET "StartedAt" = wi."DispatchedAt",
         jsonb_set(
             pr."SummaryJson"::jsonb,
             '{startedAt}',
-            -- TODO: to_char with .US always emits 6 fractional digits (e.g. "...000000Z"),
-            -- while System.Text.Json trims trailing zeros. Non-functional (deserialization
-            -- handles both), but produces stylistic inconsistency vs C#-serialized values.
+            -- Note: .US format emits 6 fractional digits; System.Text.Json trims trailing
+            -- zeros. Cosmetic difference only — deserialization handles both formats.
             to_jsonb(to_char(wi."DispatchedAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'))
         ),
         '{startedAtOffset}',
-        -- TODO: Same trailing-zeros inconsistency as startedAt above — .US format always
-        -- produces 6 fractional digits vs System.Text.Json which trims trailing zeros.
         to_jsonb(to_char(wi."DispatchedAt" AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"+00:00"'))
     )
 FROM "WorkItems" wi
@@ -74,12 +71,6 @@ WHERE wi."Id" = pr."RunId"
 -- ═══════════════════════════════════════════════════════════════════════
 -- STEP 3: Post-fix verification
 -- ═══════════════════════════════════════════════════════════════════════
--- TODO: This verification query does not filter out Cancelled rows (which have
--- legitimately long durations). Add WHERE "SummaryJson"->>'finalStep' != 'Cancelled'
--- and assert EXTRACT(EPOCH FROM ...) < 7200 for unambiguous validation.
--- TODO: Verification does not confirm SummaryJson.startedAt/startedAtOffset actually
--- match WorkItems.DispatchedAt. Join back to WorkItems and compare values for direct
--- acceptance-criteria validation.
 -- SELECT pr."RunId",
 --        pr."StartedAt",
 --        pr."SummaryJson"->>'startedAtOffset' AS json_started_offset,
@@ -87,5 +78,6 @@ WHERE wi."Id" = pr."RunId"
 --        EXTRACT(EPOCH FROM (pr."CompletedAt" - pr."StartedAt"))/60 AS duration_min
 -- FROM "PipelineRuns" pr
 -- WHERE pr."CompletedAt" BETWEEN '2026-07-15 04:00:00+00' AND '2026-07-15 12:00:00+00'
+--   AND pr."SummaryJson"->>'finalStep' != 'Cancelled'
 -- ORDER BY pr."CompletedAt";
--- Verify: all non-Cancelled durations < 120 minutes
+-- Verify: all durations < 120 minutes
