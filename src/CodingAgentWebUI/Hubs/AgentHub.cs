@@ -29,6 +29,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly ConsolidationBadgeService _badgeService;
     private readonly IHubIssueOperations _issueOps;
     private readonly IAgentJobLifecycleService _lifecycleService;
+    private readonly IAgentOrphanRecoveryService _orphanRecoveryService;
     private readonly ILogger _logger;
 
     public AgentHub(
@@ -40,7 +41,8 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         ConsolidationBadgeService badgeService,
         IHubIssueOperations issueOps,
         IAgentJobLifecycleService lifecycleService,
-        ILogger logger)
+        ILogger logger,
+        IAgentOrphanRecoveryService? orphanRecoveryService = null)
     {
         _facade = facade;
         _tokenVending = tokenVending;
@@ -50,6 +52,10 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _badgeService = badgeService;
         _issueOps = issueOps;
         _lifecycleService = lifecycleService;
+        // TODO: Make IAgentOrphanRecoveryService a required (non-nullable) constructor parameter.
+        // The service is registered in DI as a singleton — the nullable fallback couples the Hub
+        // to the concrete type and creates an unmanaged instance if DI misconfiguration occurs.
+        _orphanRecoveryService = orphanRecoveryService ?? new AgentOrphanRecoveryService(facade, orchestration, logger);
         _logger = logger;
     }
 
@@ -139,190 +145,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         _facade.Register(message, Context.ConnectionId);
 
-        // Re-track active job from agent state (handles orchestrator restart scenario)
-        if (message.ActiveJob is not null)
-        {
-            var existingRun = _facade.GetRun(message.ActiveJob.RunId);
-            if (existingRun is null)
-            {
-                // Check history — don't re-register a completed run.
-                // Only treat runs with successful terminal states as stale.
-                // Cancelled/Failed runs may be legitimately re-dispatched with the same RunId.
-                var history = await _facade.GetRunHistoryAsync(CancellationToken.None);
-                var inHistory = history.Any(r => r.RunId == message.ActiveJob.RunId
-                    && r.FinalStep != PipelineStep.Cancelled
-                    && r.FinalStep != PipelineStep.Failed);
-
-                if (!inHistory)
-                {
-                    // Skip restoration for consolidation runs — they have their own
-                    // completion path (ReportConsolidationComplete) and should not
-                    // enter pipeline run tracking or history.
-                    if (message.ActiveJob.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
-                    {
-                        _logger.Information(
-                            "Agent {AgentId} reported active consolidation job {RunId} — skipping pipeline run restoration (handled by ReportConsolidationComplete)",
-                            message.AgentId, message.ActiveJob.RunId);
-
-                        // Still mark agent as busy with this job so it's tracked correctly
-                        var consolEntry = _facade.GetByAgentId(message.AgentId);
-                        if (consolEntry is not null)
-                        {
-                            consolEntry.ActiveJobId = message.ActiveJob.RunId;
-                            _facade.TransitionStatus(message.AgentId, AgentStatus.Busy);
-                        }
-
-                        _orchestration.NotifyChange();
-                    }
-                    else
-                    {
-                    var restoredRun = PipelineRun.Create(
-                        runId: message.ActiveJob.RunId,
-                        issueIdentifier: message.ActiveJob.IssueIdentifier,
-                        issueTitle: message.ActiveJob.IssueTitle,
-                        issueProviderConfigId: message.ActiveJob.IssueProviderConfigId,
-                        repoProviderConfigId: message.ActiveJob.RepoProviderConfigId,
-                        runType: message.ActiveJob.RunType,
-                        startedAt: message.ActiveJob.StartedAt,
-                        initiatedBy: message.ActiveJob.InitiatedBy,
-                        agentId: message.AgentId,
-                        agentProviderConfigId: message.ActiveJob.AgentProviderConfigId,
-                        brainProviderConfigId: message.ActiveJob.BrainProviderConfigId);
-                    restoredRun.CurrentStep = message.ActiveJob.CurrentStep;
-                    restoredRun.PipelineProviderConfigId = message.ActiveJob.PipelineProviderConfigId;
-                    restoredRun.ResolvedProfileId = message.ActiveJob.ResolvedProfileId;
-                    restoredRun.ProjectId = message.ActiveJob.ProjectId;
-                    restoredRun.ProjectName = message.ActiveJob.ProjectName;
-                    restoredRun.RepositoryName = message.ActiveJob.RepositoryName;
-                    restoredRun.ModelName = message.ActiveJob.ModelName;
-
-                    _facade.AddRun(restoredRun);
-
-                    // Set agent as busy with this job
-                    var restoredEntry = _facade.GetByAgentId(message.AgentId);
-                    if (restoredEntry is not null)
-                    {
-                        restoredEntry.ActiveJobId = message.ActiveJob.RunId;
-                        _facade.TransitionStatus(message.AgentId, AgentStatus.Busy);
-                    }
-
-                    _logger.Information(
-                        "Restored active run {RunId} for agent {AgentId} (issue {IssueIdentifier}, step {Step}) — orchestrator state recovery",
-                        message.ActiveJob.RunId, message.AgentId, message.ActiveJob.IssueIdentifier, message.ActiveJob.CurrentStep);
-
-                    _orchestration.NotifyChange();
-                    }
-                }
-                else
-                {
-                    _logger.Information(
-                        "Agent {AgentId} reported active job {RunId} but it's already in history — ignoring stale state",
-                        message.AgentId, message.ActiveJob.RunId);
-                }
-            }
-            else
-            {
-                // Run already exists in-memory (e.g., created by K8s DispatchService with AgentId=null).
-                // Ensure the agent is linked to it and transitioned to Busy.
-                // Guard: only link if the run is unowned OR already owned by this agent (idempotent re-registration).
-                if (existingRun.AgentId is null || existingRun.AgentId == message.AgentId)
-                {
-                    if (existingRun.AgentId is null)
-                        existingRun.AgentId = message.AgentId;
-
-                    var trackedEntry = _facade.GetByAgentId(message.AgentId);
-                    if (trackedEntry is not null)
-                    {
-                        lock (trackedEntry.SyncRoot)
-                        {
-                            if (trackedEntry.ActiveJobId is null)
-                            {
-                                trackedEntry.ActiveJobId = message.ActiveJob.RunId;
-                            }
-                        }
-                        if (trackedEntry.ActiveJobId == message.ActiveJob.RunId)
-                            _facade.TransitionStatus(message.AgentId, AgentStatus.Busy);
-                    }
-                }
-
-                _logger.Debug("Agent {AgentId} active job {RunId} already tracked — linked agent to run",
-                    message.AgentId, message.ActiveJob.RunId);
-            }
-        }
-
-        // Detect orphaned runs: if the orchestrator tracks active runs for this agent
-        // but the agent registered without an active job, restore the ActiveJobId on the
-        // registry entry so the HeartbeatMonitor grace period logic can handle cleanup.
-        // This avoids immediately failing runs when an agent has a brief network blip.
-        var entry = _facade.GetByAgentId(message.AgentId);
-        if (entry is { ActiveJobId: null })
-        {
-            var orphanedRuns = _facade.GetActiveRunsByAgent(message.AgentId);
-            if (orphanedRuns.Count > 0)
-            {
-                // Restore the most recent orphaned run as the active job so the
-                // disconnect grace period timer applies. If the agent truly lost the job,
-                // the HeartbeatMonitor will fail it after the grace period expires.
-                var mostRecent = orphanedRuns[^1];
-                lock (entry.SyncRoot)
-                {
-                    // Atomic check-and-set under lock: if DrainService assigned a job
-                    // between GetActiveRunsByAgent and this lock acquisition, don't overwrite.
-                    if (entry.ActiveJobId is not null)
-                    {
-                        _logger.Information(
-                            "Agent {AgentId} acquired job {ActiveJobId} between registration and orphan check, skipping orphan restoration",
-                            message.AgentId, entry.ActiveJobId);
-                    }
-                    else
-                    {
-                        entry.ActiveJobId = mostRecent.RunId;
-                        entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
-                    }
-                }
-
-                if (entry.ActiveJobId == mostRecent.RunId)
-                {
-                    _facade.TransitionStatus(message.AgentId, AgentStatus.Busy);
-
-                    _logger.Warning(
-                        "Agent {AgentId} re-registered without active job but orchestrator tracks {OrphanCount} orphaned run(s). " +
-                        "Restoring run {RunId} (issue {IssueIdentifier}) as active — HeartbeatMonitor will clean up if agent does not resume.",
-                        message.AgentId, orphanedRuns.Count, mostRecent.RunId, mostRecent.IssueIdentifier);
-                }
-            }
-            else
-            {
-                _logger.Information(
-                    "Agent {AgentId} registered with no active job and no orphaned runs (status={Status})",
-                    message.AgentId, entry.Status);
-            }
-        }
-        else if (entry is { ActiveJobId: not null })
-        {
-            // Crash recovery detection: agent registered without an active job but the
-            // registry already restored ActiveJobId (from its own prior state in the update factory).
-            // This means the agent lost its in-memory state (container restart) while the orchestrator
-            // still thinks it's working. Set OrphanRestoredAt so HeartbeatMonitor Phase 1.5 will
-            // fail the run after the grace period if the agent doesn't report progress.
-            if (message.ActiveJob is null && entry.OrphanRestoredAt is null)
-            {
-                lock (entry.SyncRoot)
-                {
-                    entry.OrphanRestoredAt = DateTimeOffset.UtcNow;
-                }
-                _logger.Warning(
-                    "Agent {AgentId} re-registered without active job but orchestrator has {JobId} assigned (crash recovery). " +
-                    "Setting OrphanRestoredAt — HeartbeatMonitor will fail run after grace period if agent does not resume.",
-                    message.AgentId, entry.ActiveJobId);
-            }
-            else
-            {
-                _logger.Information(
-                    "Agent {AgentId} registered with active job {ActiveJobId} (status={Status})",
-                    message.AgentId, entry.ActiveJobId, entry.Status);
-            }
-        }
+        await _orphanRecoveryService.RecoverOrphanedStateAsync(message, message.AgentId);
     }
 
     /// <summary>

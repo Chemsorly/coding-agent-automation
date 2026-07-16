@@ -323,25 +323,14 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.CreateIssueAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task<CreatedIssueResult> RequestCreateIssue(string jobId, string title, string body, IReadOnlyList<string> labels)
+    public Task<CreatedIssueResult> RequestCreateIssue(string jobId, string title, string body, IReadOnlyList<string> labels)
     {
         ArgumentNullException.ThrowIfNull(title);
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
 
-        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
-        await using (issueProvider)
-        {
-            try
-            {
-                return await issueProvider.CreateIssueAsync(title, body, labels, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "RequestCreateIssue failed for job {JobId}", jobId);
-                throw new HubException($"Failed to create issue for job {jobId}: {ex.Message}");
-            }
-        }
+        return ExecuteWithIssueProviderAsync<CreatedIssueResult>(jobId, "create issue",
+            (provider, ct) => provider.CreateIssueAsync(title, body, labels, ct));
     }
 
     /// <summary>
@@ -386,21 +375,10 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.ListOpenIssuesAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task<PagedResult<IssueSummary>> RequestListOpenIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels)
+    public Task<PagedResult<IssueSummary>> RequestListOpenIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels)
     {
-        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
-        await using (issueProvider)
-        {
-            try
-            {
-                return await issueProvider.ListOpenIssuesAsync(page, pageSize, labels, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "RequestListOpenIssues failed for job {JobId}", jobId);
-                throw new HubException($"Failed to list open issues for job {jobId}: {ex.Message}");
-            }
-        }
+        return ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId, "list open issues",
+            (provider, ct) => provider.ListOpenIssuesAsync(page, pageSize, labels, ct));
     }
 
     /// <summary>
@@ -409,24 +387,10 @@ public sealed partial class AgentHub
     /// to include recently-closed sibling issues in agent context.
     /// </summary>
     [RequiresActiveJob]
-    public async Task<PagedResult<IssueSummary>> RequestListClosedIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since)
+    public Task<PagedResult<IssueSummary>> RequestListClosedIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since)
     {
-        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
-        await using (issueProvider)
-        {
-            try
-            {
-                // TODO: CancellationToken.None is used here instead of propagating a cancellation token
-                // from the hub context. Consistent with RequestListOpenIssues but means the call cannot
-                // be cancelled if the SignalR connection drops mid-request.
-                return await issueProvider.ListClosedIssuesAsync(page, pageSize, labels, since, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "RequestListClosedIssues failed for job {JobId}", jobId);
-                throw new HubException($"Failed to list closed issues for job {jobId}: {ex.Message}");
-            }
-        }
+        return ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId, "list closed issues",
+            (provider, ct) => provider.ListClosedIssuesAsync(page, pageSize, labels, since, ct));
     }
 
     /// <summary>
@@ -434,23 +398,12 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.GetIssueAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task<IssueDetail> RequestGetIssue(string jobId, string identifier)
+    public Task<IssueDetail> RequestGetIssue(string jobId, string identifier)
     {
         ArgumentNullException.ThrowIfNull(identifier);
 
-        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
-        await using (issueProvider)
-        {
-            try
-            {
-                return await issueProvider.GetIssueAsync(identifier, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "RequestGetIssue failed for job {JobId}, identifier {Identifier}", jobId, identifier);
-                throw new HubException($"Failed to get issue '{identifier}' for job {jobId}: {ex.Message}");
-            }
-        }
+        return ExecuteWithIssueProviderAsync<IssueDetail>(jobId, $"get issue '{identifier}'",
+            (provider, ct) => provider.GetIssueAsync(identifier, ct));
     }
 
     /// <summary>
@@ -458,23 +411,12 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.ListCommentsAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task<IReadOnlyList<IssueComment>> RequestListComments(string jobId, string identifier)
+    public Task<IReadOnlyList<IssueComment>> RequestListComments(string jobId, string identifier)
     {
         ArgumentNullException.ThrowIfNull(identifier);
 
-        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
-        await using (issueProvider)
-        {
-            try
-            {
-                return await issueProvider.ListCommentsAsync(identifier, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex, "RequestListComments failed for job {JobId}, identifier {Identifier}", jobId, identifier);
-                throw new HubException($"Failed to list comments for issue '{identifier}' on job {jobId}: {ex.Message}");
-            }
-        }
+        return ExecuteWithIssueProviderAsync<IReadOnlyList<IssueComment>>(jobId, $"list comments for issue '{identifier}'",
+            (provider, ct) => provider.ListCommentsAsync(identifier, ct));
     }
 
     /// <summary>
@@ -482,28 +424,69 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.UpdateCommentAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task RequestUpdateComment(string jobId, string issueId, string commentId, string body)
+    public Task RequestUpdateComment(string jobId, string issueId, string commentId, string body)
     {
         ArgumentNullException.ThrowIfNull(issueId);
         ArgumentNullException.ThrowIfNull(commentId);
         ArgumentNullException.ThrowIfNull(body);
 
-        var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
+        return ExecuteWithIssueProviderAsync(jobId, $"update comment '{commentId}' on issue '{issueId}'",
+            (provider, ct) => provider.UpdateCommentAsync(issueId, commentId, body, ct));
+    }
+
+    // ── Pipeline-local private helpers ──────────────────────────────────
+
+    // TODO: Add unit tests for ExecuteWithIssueProviderAsync to verify error-handling behavior
+    // (wrapping exceptions as HubException), proper disposal of the provider on failure,
+    // and correct propagation of the cancellation token to the delegate.
+
+    /// <summary>
+    /// Executes an issue provider operation with standard resolve/dispose/error-handling boilerplate.
+    /// </summary>
+    private async Task<T> ExecuteWithIssueProviderAsync<T>(
+        string jobId,
+        string operationName,
+        Func<IIssueProvider, CancellationToken, Task<T>> operation,
+        CancellationToken ct = default)
+    {
+        var (_, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
         await using (issueProvider)
         {
             try
             {
-                await issueProvider.UpdateCommentAsync(issueId, commentId, body, CancellationToken.None);
+                return await operation(issueProvider, ct);
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "RequestUpdateComment failed for job {JobId}, issue {IssueId}, comment {CommentId}", jobId, issueId, commentId);
-                throw new HubException($"Failed to update comment '{commentId}' on issue '{issueId}' for job {jobId}: {ex.Message}");
+                _logger.Error(ex, "{Operation} failed for job {JobId}", operationName, jobId);
+                throw new HubException($"Failed to {operationName} for job {jobId}: {ex.Message}");
             }
         }
     }
 
-    // ── Pipeline-local private helpers ──────────────────────────────────
+    /// <summary>
+    /// Executes a void issue provider operation with standard resolve/dispose/error-handling boilerplate.
+    /// </summary>
+    private async Task ExecuteWithIssueProviderAsync(
+        string jobId,
+        string operationName,
+        Func<IIssueProvider, CancellationToken, Task> operation,
+        CancellationToken ct = default)
+    {
+        var (_, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
+        await using (issueProvider)
+        {
+            try
+            {
+                await operation(issueProvider, ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "{Operation} failed for job {JobId}", operationName, jobId);
+                throw new HubException($"Failed to {operationName} for job {jobId}: {ex.Message}");
+            }
+        }
+    }
 
     /// <summary>
     /// Resolves the <see cref="IIssueProvider"/> for the given job's run configuration.
