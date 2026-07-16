@@ -54,6 +54,7 @@ public class PipelineRunSummaryTests
     [Fact]
     public void AgentId_WhenSet_MapsToSummary()
     {
+        // TODO: Add equivalent test for ProjectId mapping (both set and null cases) to match AgentId coverage
         var run = new PipelineRun
         {
             RunId = "r1",
@@ -170,4 +171,6 @@ public class PipelineRunSummaryTests
 
     // TODO: Add backward-compatibility deserialization test — deserialize a JSON string representing
     // a pre-feature PipelineRunSummary (without PhaseBreakdown property) and assert PhaseBreakdown is null.
+    // TODO: Add backward-compatibility deserialization test for ProjectId — deserialize a JSON payload
+    // from before this fix (lacking ProjectId field) into PipelineRunSummary and assert ProjectId is null without errors.
 }

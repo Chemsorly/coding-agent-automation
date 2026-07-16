@@ -322,6 +322,7 @@ public sealed class ConfigExportService
         PullRequestUrl = entity.PullRequestUrl,
         ModelName = entity.ModelName,
         AgentId = entity.AgentId,
+        ProjectId = entity.ProjectId,
         ProjectName = entity.ProjectName,
         RunType = entity.RunType
     };
