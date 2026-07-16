@@ -474,4 +474,80 @@ public class PipelineRunTests
     }
 
     #endregion
+
+    #region LabelTargetKind — RunType-based routing
+
+    [Fact]
+    public void LabelTargetKind_ReviewRun_ReturnsPullRequest()
+    {
+        var run = PipelineRun.Create(
+            runId: "run-ltk-review",
+            issueIdentifier: "org/repo#1",
+            issueTitle: "Test",
+            issueProviderConfigId: "ip-1",
+            repoProviderConfigId: "rp-1",
+            runType: PipelineRunType.Review);
+
+        run.LabelTargetKind.Should().Be(LabelTargetKind.PullRequest);
+    }
+
+    [Theory]
+    [InlineData(PipelineRunType.Implementation)]
+    [InlineData(PipelineRunType.DecompositionAnalysis)]
+    [InlineData(PipelineRunType.Decomposition)]
+    public void LabelTargetKind_NonReviewRun_ReturnsIssue(PipelineRunType runType)
+    {
+        var run = PipelineRun.Create(
+            runId: "run-ltk-nonreview",
+            issueIdentifier: "org/repo#1",
+            issueTitle: "Test",
+            issueProviderConfigId: "ip-1",
+            repoProviderConfigId: "rp-1",
+            runType: runType);
+
+        run.LabelTargetKind.Should().Be(LabelTargetKind.Issue);
+    }
+
+    #endregion
+
+    // TODO: These tests verify ProviderConfigIdForLabel in isolation but no test exists to verify
+    // that passing a targetKind different from run.LabelTargetKind at the call-site level (e.g.,
+    // AgentIssueOperations.SwapLabelAsync) is either unsupported or produces consistent routing.
+    // Consider adding a call-site-level characterization test to document this contract.
+    #region ProviderConfigIdForLabel — Provider routing by RunType
+
+    // TODO: This test mirrors the implementation 1:1 (trivial ternary). Consider adding a reverting
+    // scenario or call-site-level behavioral test for stronger regression confidence.
+    [Fact]
+    public void ProviderConfigIdForLabel_ReviewRun_ReturnsRepoProviderConfigId()
+    {
+        var run = PipelineRun.Create(
+            runId: "run-pcid-review",
+            issueIdentifier: "org/repo#1",
+            issueTitle: "Test",
+            issueProviderConfigId: "ip-1",
+            repoProviderConfigId: "rp-1",
+            runType: PipelineRunType.Review);
+
+        run.ProviderConfigIdForLabel.Should().Be("rp-1");
+    }
+
+    [Theory]
+    [InlineData(PipelineRunType.Implementation)]
+    [InlineData(PipelineRunType.DecompositionAnalysis)]
+    [InlineData(PipelineRunType.Decomposition)]
+    public void ProviderConfigIdForLabel_NonReviewRun_ReturnsIssueProviderConfigId(PipelineRunType runType)
+    {
+        var run = PipelineRun.Create(
+            runId: "run-pcid-nonreview",
+            issueIdentifier: "org/repo#1",
+            issueTitle: "Test",
+            issueProviderConfigId: "ip-1",
+            repoProviderConfigId: "rp-1",
+            runType: runType);
+
+        run.ProviderConfigIdForLabel.Should().Be("ip-1");
+    }
+
+    #endregion
 }
