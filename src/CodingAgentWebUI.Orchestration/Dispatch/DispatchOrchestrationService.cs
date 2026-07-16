@@ -402,11 +402,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
-        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
-        config = PipelineConfiguration.ApplyProjectOverrides(config, project);
-        var templates = await _projectStore.LoadAllTemplatesAsync(ct);
-        return PipelineConfiguration.ApplyTemplateOverrides(
-            config, repoProviderId, brainProviderId, providerConfigs, templates);
+        return await PipelineConfiguration.ResolveAsync(
+            _pipelineConfigStore.LoadPipelineConfigAsync,
+            _projectStore.LoadAllTemplatesAsync,
+            project, repoProviderId, brainProviderId, providerConfigs, ct);
     }
 
     /// <summary>
