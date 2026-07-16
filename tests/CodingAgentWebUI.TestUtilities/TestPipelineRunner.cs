@@ -56,8 +56,9 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         remove => _lifecycle.OnOutputLine -= value;
     }
 
-    /// <summary>Returns run history.</summary>
-    public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _historyService.GetRunHistory();
+    /// <summary>Returns run history (async).</summary>
+    public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
+        => _historyService.GetRunHistoryAsync(ct);
 
     public TestPipelineRunner(
         IConfigurationStore configStore,
@@ -168,7 +169,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 run.CompletedAtOffset = DateTimeOffset.UtcNow;
                 _lifecycle.EmitOutputLine($"âŒ Pipeline failed: {ex.Message}");
                 _lifecycle.TransitionTo(run, PipelineStep.Failed);
-                _lifecycle.AddRunToHistory(run);
+                await _lifecycle.AddRunToHistoryAsync(run);
             }
             throw;
         }
@@ -241,7 +242,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 await callbacks.SwapAgentLabel(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
                 _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
                 _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
-                _lifecycle.AddRunToHistory(run);
+                await _lifecycle.AddRunToHistoryAsync(run);
             }
         }
     }
@@ -287,7 +288,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         public void TransitionTo(PipelineStep step) => lifecycle.TransitionTo(run, step);
         public void EmitOutputLine(string line) => lifecycle.EmitOutputLine(line);
         public void NotifyChange() => lifecycle.NotifyChange();
-        public void AddRunToHistory(PipelineRun r) => lifecycle.AddRunToHistory(r);
+        public Task AddRunToHistoryAsync(PipelineRun r) => lifecycle.AddRunToHistoryAsync(r);
 
         public Task UpdateFileChangeStats(PipelineRun r)
             => prOrchestrator.UpdateFileChangeStatsAsync(r, providerManager.ActiveRepoProvider!);
@@ -343,7 +344,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
                     lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                     lifecycle.TransitionTo(r, PipelineStep.Failed);
-                    lifecycle.AddRunToHistory(r);
+                    await lifecycle.AddRunToHistoryAsync(r);
                     return;
                 }
 
@@ -359,7 +360,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
                 lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                 lifecycle.TransitionTo(r, PipelineStep.Failed);
-                lifecycle.AddRunToHistory(r);
+                await lifecycle.AddRunToHistoryAsync(r);
             }
         }
 
@@ -393,7 +394,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
                     lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                     lifecycle.TransitionTo(r, PipelineStep.Failed);
-                    lifecycle.AddRunToHistory(r);
+                    await lifecycle.AddRunToHistoryAsync(r);
                     return;
                 }
 
@@ -411,7 +412,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
                 lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                 lifecycle.TransitionTo(r, PipelineStep.Failed);
-                lifecycle.AddRunToHistory(r);
+                await lifecycle.AddRunToHistoryAsync(r);
             }
         }
 
@@ -467,7 +468,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             r.CompletedAtOffset ??= DateTimeOffset.UtcNow;
 
             lifecycle.TransitionTo(r, finalStep);
-            lifecycle.AddRunToHistory(r);
+            await lifecycle.AddRunToHistoryAsync(r);
 
             var duration = r.CompletedAt!.Value - r.StartedAt;
             if (finalStep == PipelineStep.Completed)

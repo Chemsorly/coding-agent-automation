@@ -110,7 +110,7 @@ public sealed class ActiveRunRehydrationIntegrationTests : IDisposable
         // Assert — run should NOT be failed (Phase 3 skips null AgentId)
         _runService.GetRun(runId).Should().NotBeNull();
         _runService.GetActiveRuns().Should().HaveCount(1);
-        mockHistoryService.Verify(h => h.AddRunToHistory(It.IsAny<PipelineRun>()), Times.Never);
+        mockHistoryService.Verify(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

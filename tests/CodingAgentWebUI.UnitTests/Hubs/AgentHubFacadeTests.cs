@@ -202,7 +202,7 @@ public sealed class AgentHubFacadeTests
     #region History delegation
 
     [Fact]
-    public void AddRunToHistory_DelegatesToHistoryService()
+    public async Task AddRunToHistoryAsync_DelegatesToHistoryService()
     {
         var run = new PipelineRun
         {
@@ -213,9 +213,9 @@ public sealed class AgentHubFacadeTests
             RepoProviderConfigId = "rp-1"
         };
 
-        _facade.AddRunToHistory(run);
+        await _facade.AddRunToHistoryAsync(run);
 
-        _mockHistory.Verify(h => h.AddRunToHistory(run), Times.Once);
+        _mockHistory.Verify(h => h.AddRunToHistoryAsync(run, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     #endregion

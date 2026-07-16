@@ -93,8 +93,8 @@ public class QualityGateExecutorRetryTests
             .Returns(Task.CompletedTask);
 
         // Default history service
-        _mockHistoryService.Setup(h => h.GetRunHistory())
-            .Returns(Array.Empty<PipelineRunSummary>());
+        _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
         // Default agent health status (IsProcessAlive defaults to null — safe for stall monitor)
         _mockAgent.Setup(a => a.GetHealthStatus())

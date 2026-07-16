@@ -265,8 +265,8 @@ public class PipelineRunLifecyclePropertyTests
     {
         var historyMock = new Mock<IPipelineRunHistoryService>();
         var addedRuns = new List<PipelineRun>();
-        historyMock.Setup(h => h.AddRunToHistory(It.IsAny<PipelineRun>()))
-            .Callback<PipelineRun>(r => addedRuns.Add(r));
+        historyMock.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((r, _) => addedRuns.Add(r));
 
         var service = CreateService(historyMock: historyMock);
         var run = CreateRun(input.RunId, step: input.Step);
@@ -294,8 +294,8 @@ public class PipelineRunLifecyclePropertyTests
     {
         var historyMock = new Mock<IPipelineRunHistoryService>();
         var addedRuns = new List<PipelineRun>();
-        historyMock.Setup(h => h.AddRunToHistory(It.IsAny<PipelineRun>()))
-            .Callback<PipelineRun>(r => addedRuns.Add(r));
+        historyMock.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((r, _) => addedRuns.Add(r));
 
         var service = CreateService(historyMock: historyMock);
         var run = CreateRun(input.RunId, step: input.Step);
@@ -332,8 +332,8 @@ public class PipelineRunLifecyclePropertyTests
 
         var historyMock = new Mock<IPipelineRunHistoryService>();
         var addedRuns = new List<PipelineRun>();
-        historyMock.Setup(h => h.AddRunToHistory(It.IsAny<PipelineRun>()))
-            .Callback<PipelineRun>(r => addedRuns.Add(r));
+        historyMock.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((r, _) => addedRuns.Add(r));
 
         var runServiceMock = new Mock<IOrchestratorRunService>();
         runServiceMock.Setup(r => r.GetActiveRuns()).Returns(agentRuns.AsReadOnly());

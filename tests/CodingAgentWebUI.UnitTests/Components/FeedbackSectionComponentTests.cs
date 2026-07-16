@@ -27,8 +27,8 @@ public class FeedbackSectionComponentTests : BunitContext
 
     private void RegisterDefaults(IReadOnlyList<PipelineRunSummary>? history = null)
     {
-        _mockHistoryService.Setup(h => h.GetRunHistory())
-            .Returns(history ?? Array.Empty<PipelineRunSummary>());
+        _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(history ?? Array.Empty<PipelineRunSummary>());
 
         _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());

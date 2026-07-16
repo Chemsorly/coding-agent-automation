@@ -363,7 +363,7 @@ public sealed class FeedbackFlowTests : E2ETestBase, IClassFixture<E2EFixture>
         {
             // If the run isn't in the clickable history table, verify it's at least in the history service
             var history = Fixture.Factory.HistoryService;
-            var runs = history.GetRunHistory();
+            var runs = (await history.GetRunHistoryAsync());
             var completedRun = runs.FirstOrDefault(r => r.IssueIdentifier == "83");
             Assert.NotNull(completedRun);
             Assert.NotNull(completedRun.Feedback);

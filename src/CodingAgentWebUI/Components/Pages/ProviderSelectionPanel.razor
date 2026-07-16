@@ -134,21 +134,18 @@
         }
 
         <!-- Run History -->
-        @{
-            var history = PipelineService.GetRunHistory();
-        }
-        @if (history.Count > 0)
+        @if (_runHistory.Count > 0)
         {
             <div class="config-category" style="margin-top: 8px;">
                 <div class="config-category-title run-history-toggle-title" @onclick="() => _historyExpanded = !_historyExpanded" role="button" tabindex="0">
                     <span>Run History</span>
-                    <span class="run-history-count">@history.Count</span>
+                    <span class="run-history-count">@_runHistory.Count</span>
                     <span class="run-history-toggle">@(_historyExpanded ? "▾" : "▸")</span>
                 </div>
                 @if (_historyExpanded)
                 {
                     <div class="history-list">
-                        @foreach (var h in history)
+                        @foreach (var h in _runHistory)
                         {
                             <div class="history-card">
                                 <div class="history-info">
@@ -205,6 +202,7 @@
 
     private bool _historyExpanded;
     private bool _hasAgentProfiles = true;
+    private IReadOnlyList<PipelineRunSummary> _runHistory = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -216,6 +214,15 @@
         catch
         {
             _hasAgentProfiles = false;
+        }
+
+        try
+        {
+            _runHistory = await PipelineService.GetRunHistoryAsync();
+        }
+        catch
+        {
+            _runHistory = [];
         }
     }
 

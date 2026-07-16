@@ -910,7 +910,7 @@
             .Where(r => !string.IsNullOrEmpty(r.AgentId))
             .ToList();
         _agents = Registry.GetAllAgents();
-        _runHistory = PipelineService.GetRunHistory();
+        _runHistory = await PipelineService.GetRunHistoryAsync();
         var allQueuedJobs = await PendingWorkQuery.GetPendingJobsAsync();
         var consolidationJobs = allQueuedJobs.Where(j => j.IsConsolidation).ToList();
         _queuedJobs = allQueuedJobs.Where(j => !j.IsConsolidation).ToList();
@@ -1074,7 +1074,7 @@
             run.MarkCompleted();
             run.CurrentStep = PipelineStep.Cancelled;
 
-            HistoryService.AddRunToHistory(run);
+            await HistoryService.AddRunToHistoryAsync(run); // TODO: Pass CancellationToken
             RunService.RemoveRun(run.RunId);
             Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
@@ -1105,7 +1105,7 @@
             run.MarkCompleted();
             run.CurrentStep = PipelineStep.Cancelled;
 
-            HistoryService.AddRunToHistory(run);
+            await HistoryService.AddRunToHistoryAsync(run); // TODO: Pass CancellationToken
             RunService.RemoveRun(run.RunId);
             Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
