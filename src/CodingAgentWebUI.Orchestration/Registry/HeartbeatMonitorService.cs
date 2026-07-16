@@ -40,10 +40,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
         ILabelSwapper labelSwapper,
         IConfigurationStore configStore,
         ILogger logger,
-        IConsolidationService? consolidationService = null,
-        // TODO: lifecycleManager is declared nullable with default null but ThrowIfNull enforces non-null at runtime.
-        // Make parameter non-nullable (remove ? and = null) to express the contract at compile time.
-        IRunLifecycleManager? lifecycleManager = null)
+        IRunLifecycleManager lifecycleManager,
+        IConsolidationService? consolidationService = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(runService);

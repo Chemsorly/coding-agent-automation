@@ -389,7 +389,7 @@ public class PrReviewStatePropertyTests
 
         await context.FailRunAsync("Some failure");
 
-        callbacks.Verify(c => c.AddRunToHistory(run), Times.Once);
+        callbacks.Verify(c => c.AddRunToHistoryAsync(run), Times.Once);
 
         context.Cts.Dispose();
         logger.Dispose();

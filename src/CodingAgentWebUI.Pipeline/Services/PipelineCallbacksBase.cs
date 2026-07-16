@@ -44,7 +44,7 @@ public abstract class PipelineCallbacksBase : IPipelineCallbacks
     public abstract void NotifyChange();
 
     /// <inheritdoc />
-    public abstract void AddRunToHistory(PipelineRun run);
+    public abstract Task AddRunToHistoryAsync(PipelineRun run);
 
     /// <inheritdoc />
     public abstract Task UpdateFileChangeStats(PipelineRun run);

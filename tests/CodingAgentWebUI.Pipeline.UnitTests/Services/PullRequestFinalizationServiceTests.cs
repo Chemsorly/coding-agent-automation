@@ -113,7 +113,7 @@ public class PullRequestFinalizationServiceTests
         var historyService = new Mock<IPipelineRunHistoryService>();
         var emitted = new List<string>();
 
-        historyService.Setup(h => h.GetRunHistory()).Returns([]);
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"testing","comment":"good"},"issue":{"rating":5,"category":"feature","comment":"clear"}}"""] });
 
@@ -172,7 +172,7 @@ public class PullRequestFinalizationServiceTests
 
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
-        historyService.Setup(h => h.GetRunHistory()).Returns([]);
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
 
         await _sut.RunPostPrSequenceAsync(
             run, isDraft: false, agentProvider.Object, repoProvider.Object, config,
@@ -225,7 +225,7 @@ public class PullRequestFinalizationServiceTests
 
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
-        historyService.Setup(h => h.GetRunHistory()).Returns([]);
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
 
         await _sut.RunPostPrSequenceAsync(
             run, isDraft: false, agentProvider.Object, repoProvider.Object, config,
@@ -253,7 +253,7 @@ public class PullRequestFinalizationServiceTests
 
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
-        historyService.Setup(h => h.GetRunHistory()).Returns([]);
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
 
         await _sut.RunPostPrSequenceAsync(
             run, isDraft: false, agentProvider.Object, repoProvider.Object, config,
@@ -396,7 +396,7 @@ public class PullRequestFinalizationServiceTests
 
         agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
             .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["""{"harness":{"rating":4,"category":"test","comment":"ok"}}"""] });
-        historyService.Setup(h => h.GetRunHistory()).Returns([]);
+        historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
 
         var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
 

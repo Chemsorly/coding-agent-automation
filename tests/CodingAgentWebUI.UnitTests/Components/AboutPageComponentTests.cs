@@ -27,8 +27,8 @@ public class AboutPageComponentTests : BunitContext
 
         var factory = new Mock<IProviderFactory>();
         var mockHistory = new Mock<IPipelineRunHistoryService>();
-        mockHistory.Setup(h => h.GetRunHistory())
-            .Returns(history ?? Array.Empty<PipelineRunSummary>());
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(history ?? Array.Empty<PipelineRunSummary>());
 
         return TestOrchestrationFactory.CreateMinimal(
             configStore: store.Object,

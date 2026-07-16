@@ -63,7 +63,7 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
 
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        mockHistoryService.Setup(h => h.GetRunHistory()).Returns(new List<PipelineRunSummary>().AsReadOnly());
+        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>().AsReadOnly());
 
         var mockAgentProvider = new Mock<IAgentProvider>();
         _mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(mockAgentProvider.Object);

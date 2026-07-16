@@ -701,4 +701,29 @@ public class ApplyProjectOverridesTests
             "infrastructure/identity fields should NOT be annotated with [ProjectOverridable]. " +
             $"Incorrectly annotated: [{string.Join(", ", accidentallyAnnotated)}]");
     }
+
+    [Fact]
+    public void DriftDetection_DeepMergeProperties_OnlyCodeReviewCurrently()
+    {
+        // Guard: if this test fails, a second DeepMerge property has been added.
+        // Before incrementing the expected count, verify:
+        // 1. The new property is a simple auto-property (not delegating to a sub-config via get/init)
+        // 2. If it delegates (like MaxRetries delegates to Retry.MaxRetries), the reflection clone
+        //    in ApplyProjectOverrides calls GetValue AFTER SetValue on a shallow clone — but the
+        //    shallow clone shares the sub-config reference, so SetValue on the flat property creates
+        //    a NEW sub-config instance that the getter doesn't read from. This produces stale data.
+        // 3. Test manually: set a project override for the new property's nested value and verify
+        //    the merged result reflects the override (not the original global value).
+        var deepMergeProperties = typeof(PipelineConfiguration)
+            .GetProperties(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
+            .Where(p => p.GetCustomAttribute<ProjectOverridableAttribute>()?.DeepMerge == true)
+            .ToList();
+
+        deepMergeProperties.Should().ContainSingle(
+            "Only CodeReview currently uses DeepMerge. If you're adding a second DeepMerge property, " +
+            "verify it is a simple auto-property (not delegating to a sub-config). Delegating properties " +
+            "cause GetValue after SetValue on a shallow clone to read stale data — see the TODO in " +
+            "ApplyProjectOverrides. Test the override manually before changing this assertion.")
+            .Which.Name.Should().Be(nameof(PipelineConfiguration.CodeReview));
+    }
 }

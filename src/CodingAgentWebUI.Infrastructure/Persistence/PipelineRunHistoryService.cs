@@ -30,27 +30,13 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     }
 
     /// <summary>Returns the in-memory run history.</summary>
-    public IReadOnlyList<PipelineRunSummary> GetRunHistory()
+    public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
     {
-        lock (_lock) { return _runHistory.ToList().AsReadOnly(); }
-    }
-
-    /// <summary>Returns the most recent runs for a specific agent, limited to <paramref name="limit"/>.</summary>
-    public IReadOnlyList<PipelineRunSummary> GetRunsByAgentId(string agentId, int limit = 10)
-    {
-        ArgumentNullException.ThrowIfNull(agentId);
-        lock (_lock)
-        {
-            return _runHistory
-                .Where(r => string.Equals(r.AgentId, agentId, StringComparison.OrdinalIgnoreCase))
-                .Take(limit)
-                .ToList()
-                .AsReadOnly();
-        }
+        lock (_lock) { return Task.FromResult<IReadOnlyList<PipelineRunSummary>>(_runHistory.ToList().AsReadOnly()); }
     }
 
     /// <summary>Adds a completed run to history and persists the summary to disk.</summary>
-    public void AddRunToHistory(PipelineRun run)
+    public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(run);
 
@@ -59,7 +45,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
         if (run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
         {
             _logger.Debug("AddRunToHistory: skipping consolidation run {RunId}", run.RunId);
-            return;
+            return Task.CompletedTask;
         }
 
         // TODO: [BUG-12] Add terminal step guard (IsTerminal check) matching PostgresPipelineRunHistoryService
@@ -74,6 +60,7 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
         }
         // Fire-and-forget: existing behavior is non-blocking persist
         _ = PersistRunSummaryAsync(summary);
+        return Task.CompletedTask;
     }
 
     private async Task PersistRunSummaryAsync(PipelineRunSummary summary)

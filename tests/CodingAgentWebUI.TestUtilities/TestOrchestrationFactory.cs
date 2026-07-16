@@ -102,9 +102,13 @@ public static class TestOrchestrationFactory
     public sealed class NullHistoryService : IPipelineRunHistoryService
     {
         private readonly List<PipelineRunSummary> _runs = new();
-        public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _runs.AsReadOnly();
-        public IReadOnlyList<PipelineRunSummary> GetRunsByAgentId(string agentId, int limit = 10) => [];
-        public void AddRunToHistory(PipelineRun run) => _runs.Add(run.ToSummary());
+        public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<PipelineRunSummary>>(_runs.AsReadOnly());
+        public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
+        {
+            _runs.Add(run.ToSummary());
+            return Task.CompletedTask;
+        }
         public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory) { }
         public void CleanupExpiredWorkspaces(PipelineConfiguration config, string? activeRunId = null) { }
     }

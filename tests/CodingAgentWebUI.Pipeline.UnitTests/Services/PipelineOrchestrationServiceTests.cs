@@ -37,9 +37,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         var runHistory = new List<PipelineRunSummary>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        mockHistoryService.Setup(h => h.GetRunHistory()).Returns(() => runHistory.AsReadOnly());
-        mockHistoryService.Setup(h => h.AddRunToHistory(It.IsAny<PipelineRun>()))
-            .Callback<PipelineRun>(run => runHistory.Add(run.ToSummary()));
+        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => runHistory.AsReadOnly());
+        mockHistoryService.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((run, _) => runHistory.Add(run.ToSummary()));
         mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>()))
             .Callback<string?, string, string>((path, _, _) =>
             {
@@ -250,8 +250,8 @@ public class PipelineOrchestrationServiceTests : IDisposable
         run.CurrentStep.Should().Be(PipelineStep.Cancelled);
         run.CompletedAt.Should().NotBeNull();
         _service.IsRunning.Should().BeFalse();
-        _service.GetRunHistory().Should().HaveCount(1);
-        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Cancelled);
+        (await _service.GetRunHistoryAsync()).Should().HaveCount(1);
+        (await _service.GetRunHistoryAsync())[0].FinalStep.Should().Be(PipelineStep.Cancelled);
     }
 
     [Fact]
@@ -283,10 +283,10 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.PullRequestUrl.Should().NotBeNullOrEmpty();
-        _service.GetRunHistory().Should().HaveCount(1);
-        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Completed);
-        _service.GetRunHistory()[0].PullRequestUrl.Should().NotBeNullOrEmpty();
-        _service.GetRunHistory()[0].IssueIdentifier.Should().Be("42");
+        (await _service.GetRunHistoryAsync()).Should().HaveCount(1);
+        (await _service.GetRunHistoryAsync())[0].FinalStep.Should().Be(PipelineStep.Completed);
+        (await _service.GetRunHistoryAsync())[0].PullRequestUrl.Should().NotBeNullOrEmpty();
+        (await _service.GetRunHistoryAsync())[0].IssueIdentifier.Should().Be("42");
     }
 
     [Fact]
@@ -303,8 +303,8 @@ public class PipelineOrchestrationServiceTests : IDisposable
             });
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
-        _service.GetRunHistory().Should().HaveCount(1);
-        _service.GetRunHistory()[0].ModelName.Should().Be("claude-opus-4.6");
+        (await _service.GetRunHistoryAsync()).Should().HaveCount(1);
+        (await _service.GetRunHistoryAsync())[0].ModelName.Should().Be("claude-opus-4.6");
     }
 
     [Fact]
@@ -1622,9 +1622,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
         // History service
         var runHistory = new List<PipelineRunSummary>();
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        mockHistoryService.Setup(h => h.GetRunHistory()).Returns(() => runHistory.AsReadOnly());
-        mockHistoryService.Setup(h => h.AddRunToHistory(It.IsAny<PipelineRun>()))
-            .Callback<PipelineRun>(run => runHistory.Add(run.ToSummary()));
+        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(() => runHistory.AsReadOnly());
+        mockHistoryService.Setup(h => h.AddRunToHistoryAsync(It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask).Callback<PipelineRun, CancellationToken>((run, _) => runHistory.Add(run.ToSummary()));
         mockHistoryService.Setup(h => h.TryDeleteWorkspace(It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>()))
             .Callback<string?, string, string>((path, _, _) =>
             {
@@ -1793,7 +1793,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
 
         await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        var history = _service.GetRunHistory();
+        var history = (await _service.GetRunHistoryAsync());
         history.Should().HaveCount(1);
         history[0].FinalStep.Should().Be(PipelineStep.Completed);
         history[0].AnalysisRecommendation.Should().Be(AnalysisGateResult.WontDo);
@@ -2267,8 +2267,8 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
 
         // Verify run added to history with Failed status
-        _service.GetRunHistory().Should().HaveCount(1);
-        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Failed);
+        (await _service.GetRunHistoryAsync()).Should().HaveCount(1);
+        (await _service.GetRunHistoryAsync())[0].FinalStep.Should().Be(PipelineStep.Failed);
     }
 
     [Fact]
@@ -2563,8 +2563,8 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Verify(p => p.AddLabelAsync("42", "agent:error", It.IsAny<CancellationToken>()), Times.AtLeastOnce);
 
         // Verify run added to history with Failed status
-        _service.GetRunHistory().Should().HaveCount(1);
-        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Failed);
+        (await _service.GetRunHistoryAsync()).Should().HaveCount(1);
+        (await _service.GetRunHistoryAsync())[0].FinalStep.Should().Be(PipelineStep.Failed);
     }
 
     [Fact]
@@ -2676,8 +2676,8 @@ public class PipelineOrchestrationServiceTests : IDisposable
         _mockIssueProvider.Verify(p => p.RemoveLabelAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
 
         // Verify run added to history
-        _service.GetRunHistory().Should().HaveCount(1);
-        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Cancelled);
+        (await _service.GetRunHistoryAsync()).Should().HaveCount(1);
+        (await _service.GetRunHistoryAsync())[0].FinalStep.Should().Be(PipelineStep.Cancelled);
     }
 
     // --- REQ-12: HighWaterMark monotonicity during quality gate retries ---
@@ -3453,13 +3453,14 @@ public class PipelineOrchestrationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task OrchestratorCallbacks_AddRunToHistory_RoutesToLifecycleService()
+    public async Task OrchestratorCallbacks_AddRunToHistoryAsync_RoutesToLifecycleService()
     {
         await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
-        // AddRunToHistory is called when pipeline completes
-        _service.GetRunHistory().Should().HaveCount(1);
-        _service.GetRunHistory()[0].FinalStep.Should().Be(PipelineStep.Completed);
+        // AddRunToHistoryAsync is called when pipeline completes
+        var history = await _service.GetRunHistoryAsync();
+        history.Should().HaveCount(1);
+        history[0].FinalStep.Should().Be(PipelineStep.Completed);
     }
 
     [Fact]
@@ -3601,7 +3602,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         // Verify state changes happened via lifecycle
         agentRun.CurrentStep.Should().Be(PipelineStep.Cancelled);
         agentRun.CompletedAt.Should().NotBeNull();
-        mockHistoryService.Verify(h => h.AddRunToHistory(agentRun), Times.Once);
+        mockHistoryService.Verify(h => h.AddRunToHistoryAsync(agentRun, It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify label swap was attempted (RemoveLabelAsync + AddLabelAsync)
         _mockIssueProvider.Verify(
