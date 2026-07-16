@@ -92,6 +92,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     [Fact]
     public async Task AddRunToHistory_Upsert_UpdatesExistingRow()
     {
+        // TODO: Verify ProjectId is copied during upsert (both primary and retry paths) — currently only IssueTitle/FinalStep are asserted
         var runId = Guid.NewGuid();
 
         // Pre-insert a row (simulating dispatch-time creation)
@@ -126,6 +127,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     [Fact]
     public async Task GetRunHistory_DeserializesFullSummary_WithAllFields()
     {
+        // TODO: Set and assert ProjectId in this round-trip test to verify ToEntity mapping and deserialization
         var runId = Guid.NewGuid().ToString();
         var run = CreateCompletedRun(runId, "issue-full", "Full fields",
             agentId: "agent-full", modelName: "gpt-4o");
