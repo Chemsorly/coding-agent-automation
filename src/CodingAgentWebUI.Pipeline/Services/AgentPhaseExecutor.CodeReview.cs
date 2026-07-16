@@ -195,78 +195,51 @@ public partial class AgentPhaseExecutor
                 // Run acceptance criteria check on every iteration so the report reflects current code state
                 if (config.AcceptanceCriteriaEnabled)
                 {
-                    var acResult = await ExecuteAcceptanceCriteriaSafeAsync(context, ct);
-                    if (acResult is not null)
-                    {
-                        run.AccumulateTokenUsage(acResult, phase: "acceptance_criteria");
-                        // TODO: If ParseAsync returns null (e.g., corrupt JSON), this overwrites a valid report from iteration N-1.
-                        // Consider: run.AcceptanceCriteriaReport = parsedReport ?? run.AcceptanceCriteriaReport;
-                        run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
-                            run.WorkspacePath!, _logger, ct);
-
-                        // Inject non-compliant criteria as CRITICAL findings so the fix agent addresses them
-                        if (run.AcceptanceCriteriaReport is { Criteria.Count: > 0 })
-                        {
-                            var nonCompliant = run.AcceptanceCriteriaReport.Criteria
-                                .Where(c => c.Status == CriterionStatus.NonCompliant)
-                                .ToList();
-
-                            if (nonCompliant.Count > 0)
-                            {
-                                _logger.Information(
-                                    "Pipeline {RunId} injecting {Count} non-compliant acceptance criteria as CRITICAL findings",
-                                    run.RunId, nonCompliant.Count);
-                                context.Callbacks.EmitOutputLine($"📋 Acceptance criteria: {nonCompliant.Count} non-compliant → injected as CRITICAL");
-
-                                if (iterationFindings.Length > 0)
-                                    iterationFindings.AppendLine("--- Agent: AcceptanceCriteria ---");
-
-                                foreach (var criterion in nonCompliant)
-                                {
-                                    var reasoning = criterion.Reasoning ?? "No reasoning provided";
-                                    iterationFindings.AppendLine($"[CRITICAL] — Acceptance criterion not met: \"{criterion.Criterion}\". {reasoning}");
-                                    iterationCriticalCount++;
-                                }
-
-                                run.AddCodeReviewCounts(nonCompliant.Count, 0, 0);
-                                iterationFindingsText = iterationFindings.ToString();
-                            }
-                        }
-                    }
+                    iterationCriticalCount += await InjectAcceptanceCriteriaFindingsAsync(context, iterationFindings, ct);
+                    iterationFindingsText = iterationFindings.ToString();
                 }
 
                 // NOTE: [UX-16] CodeReview*Count fields are cumulative across iterations — per-iteration counters deferred to separate issue
                 context.Callbacks.EmitOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
 
-                if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && iterationCriticalCount > 0)
+                var decision = DetermineFixPromptAction(skipFixPrompt, config.CodeReview.FixPrompt, iterationCriticalCount, iterationFindingsText);
+                switch (decision)
                 {
-                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
-                        run.RunId, i + 1, iterationCriticalCount, agents.Count);
-                    context.Callbacks.EmitOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
+                    case FixPromptDecision.SendFixAndContinue:
+                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
+                            run.RunId, i + 1, iterationCriticalCount, agents.Count);
+                        context.Callbacks.EmitOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
 
-                    await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
-                        $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes", ct);
-                }
-                else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt) && !string.IsNullOrEmpty(iterationFindingsText))
-                {
-                    // No critical findings but warnings/suggestions exist — send fix prompt then exit.
-                    // Warnings are actionable (TODO comments per fixPrompt instructions) but don't
-                    // warrant another full review cycle since no code logic changes.
-                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings but warnings present, sending fix prompt then exiting review loop",
-                        run.RunId, i + 1);
-                    context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
+                        await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
+                            $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes", ct);
+                        break;
 
-                    await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
-                        $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", ct);
-                    break;
-                }
-                else if (!skipFixPrompt && !string.IsNullOrEmpty(config.CodeReview.FixPrompt))
-                {
-                    _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no findings, exiting review loop",
-                        run.RunId, i + 1);
+                    case FixPromptDecision.SendFixAndBreak:
+                        // No critical findings but warnings/suggestions exist — send fix prompt then exit.
+                        // Warnings are actionable (TODO comments per fixPrompt instructions) but don't
+                        // warrant another full review cycle since no code logic changes.
+                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings but warnings present, sending fix prompt then exiting review loop",
+                            run.RunId, i + 1);
+                        context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
 
-                    // Early exit: no findings at all — re-reviewing won't produce different results.
-                    break;
+                        await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
+                            $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", ct);
+                        // TODO: goto is used instead of break because break would only exit the switch, not the for-loop.
+                        // If future cleanup adds logic after the switch (before catch), goto will skip it — keep this in mind.
+                        goto exitLoop;
+
+                    case FixPromptDecision.NoFindingsBreak:
+                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no findings, exiting review loop",
+                            run.RunId, i + 1);
+
+                        // Early exit: no findings at all — re-reviewing won't produce different results.
+                        // TODO: goto is used instead of break because break would only exit the switch, not the for-loop.
+                        // If future cleanup adds logic after the switch (before catch), goto will skip it — keep this in mind.
+                        goto exitLoop;
+
+                    case FixPromptDecision.Skip:
+                        // skipFixPrompt=true or no FixPrompt configured — continue to next iteration
+                        break;
                 }
             }
             catch (OperationCanceledException) when (context.OrchestratorCts?.IsCancellationRequested == true)
@@ -289,10 +262,101 @@ public partial class AgentPhaseExecutor
             }
         }
 
+        exitLoop:
         run.CodeReviewIterationInProgress = 0;
 
         // Generate review summary (non-fatal — failures are logged and skipped)
         await GenerateReviewSummarySafeAsync(context, ct);
+    }
+
+    /// <summary>
+    /// Runs acceptance criteria check and injects non-compliant criteria as CRITICAL findings.
+    /// Returns the number of additional critical findings injected.
+    /// </summary>
+    // TODO: Add targeted unit tests for InjectAcceptanceCriteriaFindingsAsync branching logic
+    // (acResult null, no criteria, no non-compliant criteria). Currently only covered at integration level.
+    private async Task<int> InjectAcceptanceCriteriaFindingsAsync(
+        AgentPhaseContext context,
+        System.Text.StringBuilder iterationFindings,
+        CancellationToken ct)
+    {
+        var run = context.Run;
+
+        var acResult = await ExecuteAcceptanceCriteriaSafeAsync(context, ct);
+        if (acResult is null)
+            return 0;
+
+        run.AccumulateTokenUsage(acResult, phase: "acceptance_criteria");
+        // TODO: If ParseAsync returns null (e.g., corrupt JSON), this overwrites a valid report from iteration N-1.
+        // Consider: run.AcceptanceCriteriaReport = parsedReport ?? run.AcceptanceCriteriaReport;
+        run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
+            run.WorkspacePath!, _logger, ct);
+
+        // Inject non-compliant criteria as CRITICAL findings so the fix agent addresses them
+        if (run.AcceptanceCriteriaReport is not { Criteria.Count: > 0 })
+            return 0;
+
+        var nonCompliant = run.AcceptanceCriteriaReport.Criteria
+            .Where(c => c.Status == CriterionStatus.NonCompliant)
+            .ToList();
+
+        if (nonCompliant.Count == 0)
+            return 0;
+
+        _logger.Information(
+            "Pipeline {RunId} injecting {Count} non-compliant acceptance criteria as CRITICAL findings",
+            run.RunId, nonCompliant.Count);
+        context.Callbacks.EmitOutputLine($"📋 Acceptance criteria: {nonCompliant.Count} non-compliant → injected as CRITICAL");
+
+        if (iterationFindings.Length > 0)
+            iterationFindings.AppendLine("--- Agent: AcceptanceCriteria ---");
+
+        foreach (var criterion in nonCompliant)
+        {
+            var reasoning = criterion.Reasoning ?? "No reasoning provided";
+            iterationFindings.AppendLine($"[CRITICAL] — Acceptance criterion not met: \"{criterion.Criterion}\". {reasoning}");
+        }
+
+        run.AddCodeReviewCounts(nonCompliant.Count, 0, 0);
+        return nonCompliant.Count;
+    }
+
+    /// <summary>
+    /// Determines the fix-prompt action based on skip flag, prompt configuration, and finding counts.
+    /// Pure logic — no I/O, no async.
+    /// </summary>
+    internal static FixPromptDecision DetermineFixPromptAction(
+        bool skipFixPrompt,
+        string? fixPrompt,
+        int iterationCriticalCount,
+        string iterationFindingsText)
+    {
+        if (skipFixPrompt || string.IsNullOrEmpty(fixPrompt))
+            return FixPromptDecision.Skip;
+
+        if (iterationCriticalCount > 0)
+            return FixPromptDecision.SendFixAndContinue;
+
+        if (!string.IsNullOrEmpty(iterationFindingsText))
+            return FixPromptDecision.SendFixAndBreak;
+
+        return FixPromptDecision.NoFindingsBreak;
+    }
+
+    /// <summary>Outcome of the fix-prompt decision tree in the code review loop.</summary>
+    internal enum FixPromptDecision
+    {
+        /// <summary>CRITICAL findings exist — send fix prompt and continue to next iteration.</summary>
+        SendFixAndContinue,
+
+        /// <summary>Warnings/suggestions only — send fix prompt then exit the review loop.</summary>
+        SendFixAndBreak,
+
+        /// <summary>No findings at all — exit the review loop immediately.</summary>
+        NoFindingsBreak,
+
+        /// <summary>Fix prompt is skipped (review run) or not configured — continue to next iteration.</summary>
+        Skip
     }
 
     /// <summary>
