@@ -8,7 +8,7 @@
 # Stage 1: Build (compiles the .NET Agent Worker)
 # --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
 # Cross-compiles to the target platform via -a $TARGETARCH.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.301 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.302 AS build
 ARG TARGETARCH
 WORKDIR /src
 
@@ -30,7 +30,7 @@ COPY . .
 RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c Release -a $TARGETARCH --self-contained false -o /app/publish
 
 # Stage 2: Runtime (Python 3.12 for Python quality gates)
-FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS runtime
+FROM mcr.microsoft.com/dotnet/sdk:10.0.302 AS runtime
 ARG TARGETARCH
 
 # Only install what this agent type needs: Python 3.12, git, and curl/unzip for Kiro CLI
