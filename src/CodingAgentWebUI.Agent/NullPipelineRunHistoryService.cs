@@ -10,11 +10,11 @@ namespace CodingAgentWebUI.Agent;
 /// </summary>
 public sealed class NullPipelineRunHistoryService : IPipelineRunHistoryService
 {
-    public IReadOnlyList<PipelineRunSummary> GetRunHistory() => [];
+    public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyList<PipelineRunSummary>>([]);
 
-    public IReadOnlyList<PipelineRunSummary> GetRunsByAgentId(string agentId, int limit = 10) => [];
-
-    public void AddRunToHistory(PipelineRun run) { }
+    public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
+        => Task.CompletedTask;
 
     public void TryDeleteWorkspace(string? workspacePath, string runId, string workspaceBaseDirectory) { }
 

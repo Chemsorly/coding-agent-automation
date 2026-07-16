@@ -241,9 +241,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
                 _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
                 run.MarkCompleted();
                 await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
-                _lifecycle.EmitOutputLine("ðŸš« Pipeline cancelled");
+                _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
                 _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
-                _lifecycle.AddRunToHistory(run);
+                await _lifecycle.AddRunToHistoryAsync(run).ConfigureAwait(false);
             }
         }
         catch (Exception ex)
@@ -341,8 +341,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         }
     }
 
-    /// <summary>Returns the in-memory run history.</summary>
-    public IReadOnlyList<PipelineRunSummary> GetRunHistory() => _completionFacade.HistoryService.GetRunHistory();
+    /// <summary>Returns the run history.</summary>
+    public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
+        => _completionFacade.HistoryService.GetRunHistoryAsync(ct);
 
     // --- Private helpers ---
     private async Task CreatePullRequestAsync(
@@ -464,7 +465,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             ct);
 
         _lifecycle.TransitionTo(run, finalStep);
-        _lifecycle.AddRunToHistory(run);
+        await _lifecycle.AddRunToHistoryAsync(run).ConfigureAwait(false);
 
         var duration = run.CompletedAtOffset!.Value - run.StartedAtOffset;
         if (finalStep == PipelineStep.Completed)
@@ -547,7 +548,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
         _lifecycle.EmitOutputLine($"❌ Pipeline failed: {reason}");
         _lifecycle.TransitionTo(run, PipelineStep.Failed);
-        _lifecycle.AddRunToHistory(run);
+        await _lifecycle.AddRunToHistoryAsync(run).ConfigureAwait(false);
     }
     public async ValueTask DisposeAsync()
     {
@@ -592,7 +593,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         public override void TransitionTo(PipelineStep step) => svc._lifecycle.TransitionTo(run, step);
         public override void EmitOutputLine(string line) => svc._lifecycle.EmitOutputLine(line);
         public override void NotifyChange() => svc._lifecycle.NotifyChange();
-        public override void AddRunToHistory(PipelineRun r) => svc._lifecycle.AddRunToHistory(r);
+        public override Task AddRunToHistoryAsync(PipelineRun r) => svc._lifecycle.AddRunToHistoryAsync(r);
         public override Task UpdateFileChangeStats(PipelineRun r) => svc.UpdateFileChangeStatsAsync(r);
         public override Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
             => svc.SwapAgentLabelAsync(run, issueIdentifier, label, ct);
