@@ -314,6 +314,15 @@ public sealed class PipelineRun
         ? LabelTargetKind.PullRequest
         : LabelTargetKind.Issue;
 
+    /// <summary>
+    /// Resolves the provider config ID for label operations based on <see cref="LabelTargetKind"/>.
+    /// Review runs target pull requests via <see cref="RepoProviderConfigId"/>;
+    /// all other run types target issues via <see cref="IssueProviderConfigId"/>.
+    /// </summary>
+    public string ProviderConfigIdForLabel => LabelTargetKind == LabelTargetKind.PullRequest
+        ? RepoProviderConfigId
+        : IssueProviderConfigId;
+
     /// <summary>PR branch name for review runs.</summary>
     public string? ReviewPrBranchName { get; init; }
 
