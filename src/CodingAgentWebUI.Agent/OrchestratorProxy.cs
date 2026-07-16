@@ -17,13 +17,12 @@ namespace CodingAgentWebUI.Agent;
 public sealed class OrchestratorProxy : IAgentIssueOperations
 {
     private readonly HubConnection _connection;
-    private readonly string _jobId;
+    private readonly JobId _jobId;
     private readonly ResiliencePipeline _signalRPipeline;
 
-    public OrchestratorProxy(HubConnection connection, string jobId)
+    public OrchestratorProxy(HubConnection connection, JobId jobId)
     {
         ArgumentNullException.ThrowIfNull(connection);
-        ArgumentNullException.ThrowIfNull(jobId);
 
         _connection = connection;
         _jobId = jobId;

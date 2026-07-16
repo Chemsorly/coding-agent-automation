@@ -355,7 +355,7 @@ public class AgentMonitoringComponentTests : BunitContext
 
         mockHubContext.Setup(h => h.Clients).Returns(mockClients.Object);
         mockClients.Setup(c => c.Client("conn-agent-1")).Returns(mockClient.Object);
-        mockClient.Setup(c => c.CancelJob("run-connected-1")).Returns(Task.CompletedTask);
+        mockClient.Setup(c => c.CancelJob(new JobId("run-connected-1"))).Returns(Task.CompletedTask);
 
         mockLifecycleManager
             .Setup(l => l.CancelRunAsync("run-connected-1", It.IsAny<CancellationToken>()))
@@ -432,7 +432,7 @@ public class AgentMonitoringComponentTests : BunitContext
         await cut.InvokeAsync(() => cancelBtn.Click());
 
         // Assert: CancelJob signal was sent to the agent
-        mockClient.Verify(c => c.CancelJob("run-connected-1"), Times.Once,
+        mockClient.Verify(c => c.CancelJob(new JobId("run-connected-1")), Times.Once,
             "CancelJob signal must be sent to the connected agent");
 
         // Assert: CancelRunAsync was called to immediately persist the cancelled state

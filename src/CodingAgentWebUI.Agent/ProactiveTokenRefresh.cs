@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Agent;
 public sealed class ProactiveTokenRefresh
 {
     private readonly HubConnection _connection;
-    private readonly string _jobId;
+    private readonly JobId _jobId;
     private readonly WorkItemHttpClient? _workItemClient;
     private readonly string? _workItemId;
     private readonly string? _agentId;
@@ -25,14 +25,13 @@ public sealed class ProactiveTokenRefresh
 
     public ProactiveTokenRefresh(
         HubConnection connection,
-        string jobId,
+        JobId jobId,
         WorkItemHttpClient? workItemClient,
         string? workItemId,
         string? agentId,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(connection);
-        ArgumentNullException.ThrowIfNull(jobId);
         ArgumentNullException.ThrowIfNull(logger);
 
         _connection = connection;

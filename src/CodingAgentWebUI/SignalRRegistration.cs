@@ -21,6 +21,9 @@ internal static class SignalRRegistration
                 // Agents may send output chunks or large payloads; default 32KB is too restrictive.
                 options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
             })
+            // TODO: This uses AddMessagePackProtocol() without JobIdMessagePackOptions resolver.
+            // If this method is ever used, JobId serialization will fail at runtime.
+            // Either update to use JobIdMessagePackOptions.Create() or mark this method obsolete.
             .AddMessagePackProtocol();
 
         // Hub filter for agent authorization

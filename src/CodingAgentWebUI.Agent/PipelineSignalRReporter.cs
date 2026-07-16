@@ -33,7 +33,7 @@ internal sealed class PipelineSignalRReporter : IAsyncDisposable
     private readonly SemaphoreSlim _signalrLock = new(1, 1);
     private readonly HubConnection _connection;
     private readonly OutputBatcher _outputBatcher;
-    private readonly string _jobId;
+    private readonly JobId _jobId;
     private readonly PipelineRun _run;
     private readonly Action<PipelineStep?>? _onStepChanged;
     private readonly Serilog.ILogger _logger;
@@ -41,14 +41,13 @@ internal sealed class PipelineSignalRReporter : IAsyncDisposable
     public PipelineSignalRReporter(
         HubConnection connection,
         OutputBatcher outputBatcher,
-        string jobId,
+        JobId jobId,
         PipelineRun run,
         Action<PipelineStep?>? onStepChanged,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(outputBatcher);
-        ArgumentNullException.ThrowIfNull(jobId);
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(logger);
 

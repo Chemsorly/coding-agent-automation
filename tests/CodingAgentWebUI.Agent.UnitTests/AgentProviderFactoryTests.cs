@@ -35,7 +35,7 @@ public class AgentProviderFactoryTests
                 options.HttpMessageHandlerFactory = _ => new NoOpHandler();
             })
             .Build();
-        return new OrchestratorProxy(connection, "test-job");
+        return new OrchestratorProxy(connection, new JobId("test-job"));
     }
 
     [Fact]

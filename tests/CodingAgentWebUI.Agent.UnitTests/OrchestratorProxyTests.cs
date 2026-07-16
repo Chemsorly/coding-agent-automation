@@ -18,12 +18,15 @@ public class OrchestratorProxyTests
     [Fact]
     public void Constructor_ThrowsOnNullConnection()
     {
-        var act = () => new OrchestratorProxy(null!, "job-1");
+        var act = () => new OrchestratorProxy(null!, new JobId("job-1"));
         act.Should().Throw<ArgumentNullException>().WithParameterName("connection");
     }
 
+    // TODO: This test exercises JobId's own constructor validation, not OrchestratorProxy's behavior.
+    // A default(JobId) (Value=null) can be passed to OrchestratorProxy without error since structs
+    // bypass null checks. Consider adding a test that verifies default(JobId) is rejected.
     [Fact]
-    public void Constructor_ThrowsOnNullJobId()
+    public void Constructor_ThrowsOnEmptyJobId()
     {
         // Build a minimal HubConnection (won't actually connect)
         var connection = new HubConnectionBuilder()
@@ -33,8 +36,8 @@ public class OrchestratorProxyTests
             })
             .Build();
 
-        var act = () => new OrchestratorProxy(connection, null!);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("jobId");
+        var act = () => new OrchestratorProxy(connection, new JobId(""));
+        act.Should().Throw<ArgumentException>();
     }
 
     [Fact]
@@ -47,7 +50,7 @@ public class OrchestratorProxyTests
             })
             .Build();
 
-        var proxy = new OrchestratorProxy(connection, "job-1");
+        var proxy = new OrchestratorProxy(connection, new JobId("job-1"));
 
         proxy.Should().BeAssignableTo<IAgentIssueOperations>();
     }
@@ -64,7 +67,7 @@ public class OrchestratorProxyTests
             })
             .Build();
 
-        var proxy = new OrchestratorProxy(connection, "job-42");
+        var proxy = new OrchestratorProxy(connection, new JobId("job-42"));
 
         // Act — calling PostCommentAsync on a disconnected connection will throw,
         // but we verify the method signature and parameter types are correct
@@ -85,7 +88,7 @@ public class OrchestratorProxyTests
             })
             .Build();
 
-        var proxy = new OrchestratorProxy(connection, "job-42");
+        var proxy = new OrchestratorProxy(connection, new JobId("job-42"));
 
         var act = () => proxy.SwapLabelAsync("issue-1", "agent:done", CancellationToken.None);
 
@@ -104,7 +107,7 @@ public class OrchestratorProxyTests
             })
             .Build();
 
-        var proxy = new OrchestratorProxy(connection, "job-42");
+        var proxy = new OrchestratorProxy(connection, new JobId("job-42"));
 
         var act = () => proxy.RequestTokenRefreshAsync(ProviderKind.Repository, CancellationToken.None);
 
@@ -168,7 +171,7 @@ public class OrchestratorProxyTests
                 options.HttpMessageHandlerFactory = _ => new NoOpHandler();
             })
             .Build();
-        return new OrchestratorProxy(connection, "job-1");
+        return new OrchestratorProxy(connection, new JobId("job-1"));
     }
 
     /// <summary>

@@ -109,7 +109,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         instrumentation.Activity?.SetTag("pipeline.agent_id", _agentIdentity.Id);
 
         var config = job.PipelineConfiguration;
-        var issueOps = new OrchestratorProxy(connection, job.JobId);
+        var jobId = new JobId(job.JobId);
+        var issueOps = new OrchestratorProxy(connection, jobId);
 
         // Construct a per-job provider factory with the OrchestratorProxy for token refresh
         // TODO: Factory captures config before blacklist override below. Move construction after
@@ -248,7 +249,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         // await reporter.DisposeAsync() in the finally block, which drains in-flight sends
         // before releasing the semaphore.
         // TODO: Consider using `await using` declaration to make the dispose pattern clearer.
-        var reporter = new PipelineSignalRReporter(connection, outputBatcher, job.JobId, run, onStepChanged, _logger);
+        var reporter = new PipelineSignalRReporter(connection, outputBatcher, new JobId(job.JobId), run, onStepChanged, _logger);
 
         CancellationTokenSource? localCts = null;
         PipelineStepContext? context = null;

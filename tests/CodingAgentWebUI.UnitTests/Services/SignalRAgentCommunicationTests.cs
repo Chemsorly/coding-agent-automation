@@ -71,7 +71,7 @@ public class SignalRAgentCommunicationTests
         await _comm.CancelJobAsync("conn-1", "job-1", CancellationToken.None);
 
         _mockClients.Verify(c => c.Client("conn-1"), Times.Once);
-        _mockClient.Verify(c => c.CancelJob("job-1"), Times.Once);
+        _mockClient.Verify(c => c.CancelJob(new JobId("job-1")), Times.Once);
     }
 
     [Fact]

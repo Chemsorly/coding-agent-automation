@@ -15,7 +15,7 @@ public sealed partial class AgentHub
     /// Agent acknowledges job acceptance. Transitions agent to Busy and WorkItem to Running.
     /// </summary>
     [RequiresActiveJob]
-    public async Task JobAccepted(string jobId)
+    public async Task JobAccepted(JobId jobId)
     {
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         await _lifecycleService.HandleJobAcceptedAsync(jobId, agent, CancellationToken.None);
@@ -27,7 +27,7 @@ public sealed partial class AgentHub
     /// This should be rare after the atomic agent reservation fix in SelectAgent.
     /// </summary>
     [RequiresActiveJob]
-    public async Task JobRejected(string jobId, string reason)
+    public async Task JobRejected(JobId jobId, string reason)
     {
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         await _lifecycleService.HandleJobRejectedAsync(jobId, agent, reason, CancellationToken.None);
@@ -38,7 +38,7 @@ public sealed partial class AgentHub
     /// transitions agent to Idle, and signals the drain service for next dispatch.
     /// </summary>
     [RequiresActiveJob]
-    public async Task ReportJobCompleted(string jobId, JobCompletionPayload payload)
+    public async Task ReportJobCompleted(JobId jobId, JobCompletionPayload payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
@@ -52,7 +52,7 @@ public sealed partial class AgentHub
     /// Updates the PipelineRun's CurrentStep and HighWaterMark, applies optional step metadata, notifies UI.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportStepTransition(string jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata = null)
+    public Task ReportStepTransition(JobId jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata = null)
     {
         _lifecycleService.HandleStepTransition(jobId, step, timestamp, metadata);
 
@@ -73,7 +73,7 @@ public sealed partial class AgentHub
     /// Reports the result of brain repository synchronization so the UI can display context status.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportBrainSyncResult(string jobId, bool contextLoaded, int knowledgeFileCount)
+    public Task ReportBrainSyncResult(JobId jobId, bool contextLoaded, int knowledgeFileCount)
     {
         var run = _facade.GetRun(jobId);
         if (run is not null)
@@ -92,7 +92,7 @@ public sealed partial class AgentHub
     /// Enqueues output lines into the run's OutputRingBuffer and the run's OutputLines queue.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportOutputLines(string jobId, IReadOnlyList<string> lines)
+    public Task ReportOutputLines(JobId jobId, IReadOnlyList<string> lines)
     {
         ArgumentNullException.ThrowIfNull(lines);
 
@@ -116,7 +116,7 @@ public sealed partial class AgentHub
     /// Adds a chat entry to the run's chat history.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportChatEntry(string jobId, ChatRole role, string content)
+    public Task ReportChatEntry(JobId jobId, ChatRole role, string content)
     {
         ArgumentNullException.ThrowIfNull(content);
 
@@ -130,7 +130,7 @@ public sealed partial class AgentHub
     /// Updates the run's quality gate report and history.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportQualityGateResult(string jobId, QualityGateReport report)
+    public Task ReportQualityGateResult(JobId jobId, QualityGateReport report)
     {
         ArgumentNullException.ThrowIfNull(report);
 
@@ -152,7 +152,7 @@ public sealed partial class AgentHub
     /// Uses existing comment formatters based on <paramref name="commentType"/>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task RequestPostComment(string jobId, CommentType commentType, CommentPayload payload)
+    public async Task RequestPostComment(JobId jobId, CommentType commentType, CommentPayload payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
@@ -191,7 +191,7 @@ public sealed partial class AgentHub
     /// Routes to the correct provider based on <paramref name="targetKind"/>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task RequestLabelChange(string jobId, string newLabel, int targetKind = 0)
+    public async Task RequestLabelChange(JobId jobId, string newLabel, int targetKind = 0)
     {
         ArgumentNullException.ThrowIfNull(newLabel);
 
@@ -226,7 +226,7 @@ public sealed partial class AgentHub
     /// Supports both SignalR mode (PipelineRun in memory) and K8s mode (WorkItem payload in DB).
     /// </summary>
     [RequiresActiveJob]
-    public async Task<TokenRefreshResponse> RequestTokenRefresh(string jobId, ProviderKind providerKind)
+    public async Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind)
     {
         // Resolve provider config IDs — from PipelineRun (SignalR mode) or WorkItem payload (K8s mode)
         string? repoProviderConfigId;
@@ -323,7 +323,7 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.CreateIssueAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task<CreatedIssueResult> RequestCreateIssue(string jobId, string title, string body, IReadOnlyList<string> labels)
+    public async Task<CreatedIssueResult> RequestCreateIssue(JobId jobId, string title, string body, IReadOnlyList<string> labels)
     {
         ArgumentNullException.ThrowIfNull(title);
         ArgumentNullException.ThrowIfNull(body);
@@ -351,9 +351,8 @@ public sealed partial class AgentHub
     /// </summary>
     [RequiresActiveJob]
     public async Task<CreatedIssueResult> RequestCreateIssueForProvider(
-        string jobId, string issueProviderConfigId, string title, string body, IReadOnlyList<string> labels)
+        JobId jobId, string issueProviderConfigId, string title, string body, IReadOnlyList<string> labels)
     {
-        ArgumentNullException.ThrowIfNull(jobId);
         ArgumentNullException.ThrowIfNull(issueProviderConfigId);
         ArgumentNullException.ThrowIfNull(title);
         ArgumentNullException.ThrowIfNull(body);
@@ -386,7 +385,7 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.ListOpenIssuesAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task<PagedResult<IssueSummary>> RequestListOpenIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels)
+    public async Task<PagedResult<IssueSummary>> RequestListOpenIssues(JobId jobId, int page, int pageSize, IReadOnlyList<string>? labels)
     {
         var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
         await using (issueProvider)
@@ -409,7 +408,7 @@ public sealed partial class AgentHub
     /// to include recently-closed sibling issues in agent context.
     /// </summary>
     [RequiresActiveJob]
-    public async Task<PagedResult<IssueSummary>> RequestListClosedIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since)
+    public async Task<PagedResult<IssueSummary>> RequestListClosedIssues(JobId jobId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since)
     {
         var (run, issueProvider) = await ResolveIssueProviderForRunAsync(jobId);
         await using (issueProvider)
@@ -434,7 +433,7 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.GetIssueAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task<IssueDetail> RequestGetIssue(string jobId, string identifier)
+    public async Task<IssueDetail> RequestGetIssue(JobId jobId, string identifier)
     {
         ArgumentNullException.ThrowIfNull(identifier);
 
@@ -458,7 +457,7 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.ListCommentsAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task<IReadOnlyList<IssueComment>> RequestListComments(string jobId, string identifier)
+    public async Task<IReadOnlyList<IssueComment>> RequestListComments(JobId jobId, string identifier)
     {
         ArgumentNullException.ThrowIfNull(identifier);
 
@@ -482,7 +481,7 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.UpdateCommentAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task RequestUpdateComment(string jobId, string issueId, string commentId, string body)
+    public async Task RequestUpdateComment(JobId jobId, string issueId, string commentId, string body)
     {
         ArgumentNullException.ThrowIfNull(issueId);
         ArgumentNullException.ThrowIfNull(commentId);
@@ -510,10 +509,8 @@ public sealed partial class AgentHub
     /// Validates the job ID, finds the run, loads the issue provider config, and creates the provider.
     /// </summary>
     /// <exception cref="HubException">Thrown when the job ID is invalid or the provider config is not found.</exception>
-    private async Task<(PipelineRun Run, IIssueProvider Provider)> ResolveIssueProviderForRunAsync(string jobId)
+    private async Task<(PipelineRun Run, IIssueProvider Provider)> ResolveIssueProviderForRunAsync(JobId jobId)
     {
-        ArgumentNullException.ThrowIfNull(jobId);
-
         var run = _facade.GetRun(jobId);
         if (run is null)
             throw new HubException($"No active run found for job {jobId}");

@@ -40,23 +40,26 @@ public class ProactiveTokenRefreshTests : IAsyncDisposable
     [Fact]
     public void Constructor_NullConnection_Throws()
     {
-        var act = () => new ProactiveTokenRefresh(null!, "job-1", null, null, null, _mockLogger.Object);
+        var act = () => new ProactiveTokenRefresh(null!, new JobId("job-1"), null, null, null, _mockLogger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
 
+    // TODO: This test exercises JobId's own constructor validation, not ProactiveTokenRefresh's guard.
+    // A default(JobId) can be passed to the ProactiveTokenRefresh constructor without error since
+    // its ArgumentNullException.ThrowIfNull(jobId) guard was removed (structs cannot be null).
     [Fact]
-    public void Constructor_NullJobId_Throws()
+    public void Constructor_EmptyJobId_Throws()
     {
         var conn = CreateDisconnectedConnection();
-        var act = () => new ProactiveTokenRefresh(conn, null!, null, null, null, _mockLogger.Object);
-        act.Should().Throw<ArgumentNullException>();
+        var act = () => new ProactiveTokenRefresh(conn, new JobId(""), null, null, null, _mockLogger.Object);
+        act.Should().Throw<ArgumentException>();
     }
 
     [Fact]
     public void Constructor_NullLogger_Throws()
     {
         var conn = CreateDisconnectedConnection();
-        var act = () => new ProactiveTokenRefresh(conn, "job-1", null, null, null, null!);
+        var act = () => new ProactiveTokenRefresh(conn, new JobId("job-1"), null, null, null, null!);
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -66,7 +69,7 @@ public class ProactiveTokenRefreshTests : IAsyncDisposable
     public async Task EnsureFreshToken_WhenTokenIsFresh_ReturnsNull()
     {
         var conn = CreateDisconnectedConnection();
-        var refresh = new ProactiveTokenRefresh(conn, "job-1", null, null, null, _mockLogger.Object);
+        var refresh = new ProactiveTokenRefresh(conn, new JobId("job-1"), null, null, null, _mockLogger.Object);
 
         // Token was just created (in constructor) — should be fresh
         var result = await refresh.EnsureFreshTokenAsync(ProviderKind.Repository, CancellationToken.None);
@@ -78,7 +81,7 @@ public class ProactiveTokenRefreshTests : IAsyncDisposable
     public async Task EnsureFreshToken_AfterMarkTokenRefreshed_ReturnsNull()
     {
         var conn = CreateDisconnectedConnection();
-        var refresh = new ProactiveTokenRefresh(conn, "job-1", null, null, null, _mockLogger.Object);
+        var refresh = new ProactiveTokenRefresh(conn, new JobId("job-1"), null, null, null, _mockLogger.Object);
 
         refresh.MarkTokenRefreshed();
 
@@ -93,7 +96,7 @@ public class ProactiveTokenRefreshTests : IAsyncDisposable
     public async Task EnsureFreshToken_WhenTokenIsStale_AttemptsHubInvoke()
     {
         var conn = CreateDisconnectedConnection();
-        var refresh = new ProactiveTokenRefresh(conn, "job-1", null, null, null, _mockLogger.Object);
+        var refresh = new ProactiveTokenRefresh(conn, new JobId("job-1"), null, null, null, _mockLogger.Object);
 
         // Force token to appear stale by using reflection to set old timestamp
         ForceTokenStale(refresh);
@@ -113,7 +116,7 @@ public class ProactiveTokenRefreshTests : IAsyncDisposable
     public async Task EnsureFreshToken_WhenStaleAndRetriesFail_ThrowsTokenRefreshFailureException()
     {
         var conn = CreateDisconnectedConnection();
-        var refresh = new ProactiveTokenRefresh(conn, "job-1", null, null, null, _mockLogger.Object);
+        var refresh = new ProactiveTokenRefresh(conn, new JobId("job-1"), null, null, null, _mockLogger.Object);
 
         ForceTokenStale(refresh);
 
@@ -133,7 +136,7 @@ public class ProactiveTokenRefreshTests : IAsyncDisposable
     {
         var conn = CreateDisconnectedConnection();
         // No WorkItemHttpClient — should still throw TokenRefreshFailureException without NPE
-        var refresh = new ProactiveTokenRefresh(conn, "job-1", null, null, null, _mockLogger.Object);
+        var refresh = new ProactiveTokenRefresh(conn, new JobId("job-1"), null, null, null, _mockLogger.Object);
 
         ForceTokenStale(refresh);
 
@@ -151,7 +154,7 @@ public class ProactiveTokenRefreshTests : IAsyncDisposable
     public async Task MarkTokenRefreshed_ResetsTimer_SubsequentCheckReturnsFresh()
     {
         var conn = CreateDisconnectedConnection();
-        var refresh = new ProactiveTokenRefresh(conn, "job-1", null, null, null, _mockLogger.Object);
+        var refresh = new ProactiveTokenRefresh(conn, new JobId("job-1"), null, null, null, _mockLogger.Object);
 
         // Force stale
         ForceTokenStale(refresh);
@@ -168,7 +171,7 @@ public class ProactiveTokenRefreshTests : IAsyncDisposable
     public async Task EnsureFreshToken_MultipleProviderKinds_FreshForAll()
     {
         var conn = CreateDisconnectedConnection();
-        var refresh = new ProactiveTokenRefresh(conn, "job-1", null, null, null, _mockLogger.Object);
+        var refresh = new ProactiveTokenRefresh(conn, new JobId("job-1"), null, null, null, _mockLogger.Object);
 
         // Fresh token should return null for any ProviderKind
         (await refresh.EnsureFreshTokenAsync(ProviderKind.Repository, CancellationToken.None)).Should().BeNull();

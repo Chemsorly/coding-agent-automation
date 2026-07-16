@@ -92,7 +92,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         // Use a hub with a real PipelineOrchestrationService mock to avoid NRE on NotifyChange
         var hub = CreateHubWithOrchestration();
 
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.CompletedAt.Should().Be(now.UtcDateTime);
@@ -114,7 +114,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         // History + removal now delegated to lifecycle manager's CompleteRunAsync
         _mockLifecycleManager.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once);
@@ -131,7 +131,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -147,7 +147,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.Done, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -168,7 +168,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.NeedsRefinement, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -189,7 +189,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         _mockLabelSwapper.Verify(s => s.SwapLabelAsync("issue-cfg-1", "org/repo#42", AgentLabels.WontDo, LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -206,7 +206,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         // Signal is NOT called — agent sends AgentReady after clearing its local slot
@@ -225,7 +225,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         // Signal is NOT called — agent sends AgentReady after clearing its local slot
@@ -254,7 +254,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null); // Run already removed by CancelRunAsync
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         // CompleteRunAsync never called (run not in memory)
         _mockLifecycleManager.Verify(l => l.CompleteRunAsync(
@@ -284,7 +284,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         _mockLifecycleManager.Verify(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Once);
     }
@@ -300,7 +300,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         // TODO: Use specific matchers for errorMsg and failureReason instead of It.IsAny<>().
         // Current test would not detect a regression where error message or failure reason is
@@ -320,7 +320,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
 
         var hub = CreateHubWithOrchestration();
-        await hub.JobRejected("job-1", "workspace full");
+        await hub.JobRejected(new JobId("job-1"), "workspace full");
 
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
         _mockFacade.Verify(f => f.Signal(), Times.Once);
@@ -338,7 +338,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHub();
-        await hub.RequestLabelChange("job-1", "agent:error");
+        await hub.RequestLabelChange(new JobId("job-1"), "agent:error");
 
         _mockIssueOps.Verify(s => s.SwapLabelAsync(run, "agent:error", LabelTargetKind.Issue), Times.Once);
     }
@@ -349,7 +349,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
 
         var hub = CreateHub();
-        await hub.RequestLabelChange("job-1", "agent:error");
+        await hub.RequestLabelChange(new JobId("job-1"), "agent:error");
 
         _mockIssueOps.Verify(s => s.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>()), Times.Never);
     }
@@ -369,7 +369,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var hub = CreateHub();
         var payload = new CommentPayload { AnalysisMarkdown = "## Analysis\nLooks good." };
-        await hub.RequestPostComment("job-1", CommentType.Analysis, payload);
+        await hub.RequestPostComment(new JobId("job-1"), CommentType.Analysis, payload);
 
         _mockIssueOps.Verify(o => o.PostCommentViaIssueProviderAsync(run, "## Analysis\nLooks good."), Times.Once);
     }
@@ -381,7 +381,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var hub = CreateHub();
         var payload = new CommentPayload { AnalysisMarkdown = "test" };
-        await hub.RequestPostComment("job-1", CommentType.Analysis, payload);
+        await hub.RequestPostComment(new JobId("job-1"), CommentType.Analysis, payload);
 
         _mockFacade.Verify(f => f.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -394,7 +394,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var hub = CreateHub();
         var payload = new CommentPayload { AnalysisMarkdown = "test" };
-        await hub.RequestPostComment("job-1", (CommentType)99, payload);
+        await hub.RequestPostComment(new JobId("job-1"), (CommentType)99, payload);
 
         _mockFacade.Verify(f => f.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -508,7 +508,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             .ReturnsAsync(("fresh-token", DateTimeOffset.UtcNow.AddHours(1)));
 
         var hub = CreateHub();
-        var result = await hub.RequestTokenRefresh("job-1", ProviderKind.Repository);
+        var result = await hub.RequestTokenRefresh(new JobId("job-1"), ProviderKind.Repository);
 
         result.Token.Should().Be("fresh-token");
         _mockTokenVending.Verify(t => t.GenerateAgentTokenAsync(repoConfig, It.IsAny<CancellationToken>(), false), Times.Once);
@@ -534,7 +534,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             .ReturnsAsync(("k8s-token", DateTimeOffset.UtcNow.AddHours(1)));
 
         var hub = CreateHub();
-        var result = await hub.RequestTokenRefresh("wi-k8s-1", ProviderKind.Repository);
+        var result = await hub.RequestTokenRefresh(new JobId("wi-k8s-1"), ProviderKind.Repository);
 
         result.Token.Should().Be("k8s-token");
         _mockFacade.Verify(f => f.GetWorkItemProviderConfigIdsAsync("wi-k8s-1", It.IsAny<CancellationToken>()), Times.Once);
@@ -549,7 +549,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             .ReturnsAsync(((string?, string?)?)null);
 
         var hub = CreateHub();
-        var act = () => hub.RequestTokenRefresh("nonexistent", ProviderKind.Repository);
+        var act = () => hub.RequestTokenRefresh(new JobId("nonexistent"), ProviderKind.Repository);
 
         await act.Should().ThrowAsync<HubException>().WithMessage("*No active run or work item*");
     }
@@ -573,7 +573,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             .ReturnsAsync(("brain-token", DateTimeOffset.UtcNow.AddHours(1)));
 
         var hub = CreateHub();
-        var result = await hub.RequestTokenRefresh("wi-brain-1", ProviderKind.Brain);
+        var result = await hub.RequestTokenRefresh(new JobId("wi-brain-1"), ProviderKind.Brain);
 
         result.Token.Should().Be("brain-token");
         _mockFacade.Verify(f => f.GetProviderConfigByIdAsync("brain-cfg", ProviderKind.Repository, It.IsAny<CancellationToken>()), Times.Once);
@@ -988,7 +988,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHubWithOrchestration();
 
         // Act: should not throw despite CompleteRunAsync failure
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         // Assert: defensive cleanup must release the dedup guard and remove the orphaned run
         _mockFacade.Verify(f => f.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId), Times.Once);
@@ -1009,7 +1009,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.GeneratingCode, DateTimeOffset.UtcNow);
 
         run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
         run.HighWaterMark.Should().Be(PipelineStep.GeneratingCode);
@@ -1024,7 +1024,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var metadata = new Dictionary<string, string> { ["BranchName"] = "feature/test-123" };
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.VerifyingBaseline, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.VerifyingBaseline, DateTimeOffset.UtcNow, metadata);
 
         run.BranchName.Should().Be("feature/test-123");
     }
@@ -1038,7 +1038,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var metadata = new Dictionary<string, string> { ["BaselineHealthPassed"] = "True" };
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow, metadata);
 
         run.BaselineHealthPassed.Should().BeTrue();
     }
@@ -1057,7 +1057,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             ["LinesRemoved"] = "30"
         };
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.ReviewingCode, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.ReviewingCode, DateTimeOffset.UtcNow, metadata);
 
         run.FilesChangedCount.Should().Be(7);
         run.LinesAdded.Should().Be(120);
@@ -1077,7 +1077,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             ["CodeReviewIterationsTotal"] = "3"
         };
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
 
         run.CodeReviewIterationsCompleted.Should().Be(2);
         run.CodeReviewIterationsTotal.Should().Be(3);
@@ -1091,7 +1091,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, null);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, null);
 
         run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
     }
@@ -1104,7 +1104,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, new Dictionary<string, string>());
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, new Dictionary<string, string>());
 
         run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
     }
@@ -1122,7 +1122,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             ["AnotherFakeKey"] = "123"
         };
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
 
         // Run state should be unchanged (only CurrentStep updated by the transition itself)
         run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
@@ -1140,7 +1140,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var metadata = new Dictionary<string, string> { ["BaselineHealthPassed"] = "not-a-bool" };
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow, metadata);
 
         // Malformed bool should result in null (TryParse fails)
         run.BaselineHealthPassed.Should().BeNull();
@@ -1160,7 +1160,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             ["LinesRemoved"] = "not-a-number"
         };
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.ReviewingCode, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.ReviewingCode, DateTimeOffset.UtcNow, metadata);
 
         // Malformed ints should leave values at default (0)
         run.FilesChangedCount.Should().Be(0);
@@ -1178,7 +1178,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHubWithOrchestration();
 
         // Should not throw even when run is not found
-        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
     }
 
     [Fact]
@@ -1192,7 +1192,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var hub = CreateHubWithOrchestration();
         // Transition backward (retry scenario)
-        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.GeneratingCode, DateTimeOffset.UtcNow);
 
         run.CurrentStep.Should().Be(PipelineStep.GeneratingCode);
         run.HighWaterMark.Should().Be(PipelineStep.RunningQualityGates); // Should NOT go backward
@@ -1211,7 +1211,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             ["InfrastructureRetryCount"] = "1"
         };
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
 
         run.RetryCount.Should().Be(2);
         run.InfrastructureRetryCount.Should().Be(1);
@@ -1230,7 +1230,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             ["TotalCost"] = "4.56"
         };
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
 
         run.TotalTokens.Should().Be(150000);
         run.TotalCost.Should().Be(4.56m);
@@ -1251,7 +1251,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             ["CodeReviewAgentsRun"] = "security-agent\x1Fstyle-agent"
         };
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
 
         run.CodeReviewCriticalCount.Should().Be(3);
         run.CodeReviewWarningCount.Should().Be(5);
@@ -1274,7 +1274,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             ["CodeReviewCriticalCount"] = "5"
         };
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.RunningQualityGates, DateTimeOffset.UtcNow, metadata);
 
         run.CodeReviewCriticalCount.Should().Be(5);
         run.CodeReviewWarningCount.Should().Be(20); // Preserved
@@ -1292,7 +1292,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow.AddHours(24));
+        await hub.ReportStepTransition(new JobId("job-1"), PipelineStep.GeneratingCode, DateTimeOffset.UtcNow.AddHours(24));
 
         run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
     }
@@ -1573,7 +1573,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
                 Issue = new IssueFeedback { Description = "AC contradicts stakeholder comment" }
             }
         };
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         // Assert — PR body was updated with feedback link
         mockRepoProvider.Verify(r => r.UpdatePullRequestAsync(99,
@@ -1615,7 +1615,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
                 Issue = new IssueFeedback { Description = "Some feedback" }
             }
         };
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         // Assert — repo provider never called (idempotency guard triggered)
         _mockFacade.Verify(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()), Times.Never);
@@ -1635,7 +1635,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var hub = CreateHubWithOrchestration();
         var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         // Assert — no issue provider created (no comment to post)
         _mockFacade.Verify(f => f.GetProviderConfigByIdAsync("issue-cfg-1", ProviderKind.Issue, It.IsAny<CancellationToken>()), Times.Never);
@@ -1660,7 +1660,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             .ReturnsAsync(0);
 
         var hub = CreateHubWithOrchestration();
-        await hub.JobRejected("job-requeue-1", "Agent is busy");
+        await hub.JobRejected(new JobId("job-requeue-1"), "Agent is busy");
 
         // Should re-queue (transition to Pending with incremented retry), NOT fail
         _mockFacade.Verify(f => f.RequeueWorkItemAsync("job-requeue-1", It.IsAny<CancellationToken>()), Times.Once);
@@ -1685,7 +1685,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             .ReturnsAsync(3);
 
         var hub = CreateHubWithOrchestration();
-        await hub.JobRejected("job-maxretry-1", "Agent is busy");
+        await hub.JobRejected(new JobId("job-maxretry-1"), "Agent is busy");
 
         // Should permanently fail (not re-queue)
         _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-maxretry-1", WorkItemStatus.Failed, It.IsAny<CancellationToken>(),
@@ -1710,7 +1710,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             .ReturnsAsync(0);
 
         var hub = CreateHubWithOrchestration();
-        await hub.JobRejected("job-requeue-dedup", "Agent is busy");
+        await hub.JobRejected(new JobId("job-requeue-dedup"), "Agent is busy");
 
         // MarkIssueComplete MUST be called to clear dedup tracker
         _mockFacade.Verify(f => f.MarkIssueComplete("org/repo#42", "issue-cfg-1"), Times.Once);
@@ -1739,7 +1739,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
         var hub = CreateHubWithOrchestration();
-        await hub.ReportJobCompleted("job-1", payload);
+        await hub.ReportJobCompleted(new JobId("job-1"), payload);
 
         // Agent should still transition to Idle (orchestrator-side registry)
         _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);

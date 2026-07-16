@@ -52,7 +52,7 @@ public sealed class SignalRAgentCommunication : IAgentCommunication
     {
         ArgumentNullException.ThrowIfNull(connectionId);
         ArgumentNullException.ThrowIfNull(jobId);
-        return _hubContext.Clients.Client(connectionId).CancelJob(jobId);
+        return _hubContext.Clients.Client(connectionId).CancelJob(new JobId(jobId));
     }
 
     /// <inheritdoc />

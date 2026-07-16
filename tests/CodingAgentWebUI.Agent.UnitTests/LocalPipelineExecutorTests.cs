@@ -1241,7 +1241,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
@@ -1255,7 +1255,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
@@ -1270,7 +1270,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
@@ -1284,7 +1284,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
@@ -1510,7 +1510,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        var reporter = new PipelineSignalRReporter(connection, batcher, new JobId("job-1"), run, null, _mockLogger.Object);
 
         await reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
 
@@ -1527,7 +1527,7 @@ public class LocalPipelineExecutorTests : IDisposable
         run.HighWaterMark = PipelineStep.AnalyzingCode;
         var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        var reporter = new PipelineSignalRReporter(connection, batcher, new JobId("job-1"), run, null, _mockLogger.Object);
 
         await reporter.TransitionToInternalAsync(PipelineStep.Failed, CancellationToken.None);
 
@@ -1544,7 +1544,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
         PipelineStep? received = null;
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, s => received = s, _mockLogger.Object);
+        var reporter = new PipelineSignalRReporter(connection, batcher, new JobId("job-1"), run, s => received = s, _mockLogger.Object);
 
         await reporter.TransitionToInternalAsync(PipelineStep.GeneratingCode, CancellationToken.None);
 
@@ -1560,7 +1560,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        var reporter = new PipelineSignalRReporter(connection, batcher, new JobId("job-1"), run, null, _mockLogger.Object);
 
         var act = () => reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
 
@@ -1577,7 +1577,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        var reporter = new PipelineSignalRReporter(connection, batcher, new JobId("job-1"), run, null, _mockLogger.Object);
 
         await reporter.EmitOutputLineInternalAsync("hello", CancellationToken.None);
 
@@ -1592,7 +1592,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        var reporter = new PipelineSignalRReporter(connection, batcher, new JobId("job-1"), run, null, _mockLogger.Object);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
@@ -1611,7 +1611,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        var reporter = new PipelineSignalRReporter(connection, batcher, new JobId("job-1"), run, null, _mockLogger.Object);
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "build", Passed = true },
@@ -1644,7 +1644,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        var reporter = new PipelineSignalRReporter(connection, batcher, new JobId("job-1"), run, null, _mockLogger.Object);
         measurements.Clear();
 
         await reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
@@ -1671,7 +1671,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var run = CreateMinimalRun();
         var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        var reporter = new PipelineSignalRReporter(connection, batcher, new JobId("job-1"), run, null, _mockLogger.Object);
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "build", Passed = true },
@@ -1808,7 +1808,7 @@ public class LocalPipelineExecutorTests : IDisposable
             RepoProvider = Mock.Of<IRepositoryProvider>(),
             AgentProvider = Mock.Of<IAgentProvider>(),
             Config = new PipelineConfiguration(),
-            IssueOps = new OrchestratorProxy(CreateDisconnectedHubConnection(), "job-1"),
+            IssueOps = new OrchestratorProxy(CreateDisconnectedHubConnection(), new JobId("job-1")),
             Connection = CreateDisconnectedHubConnection(),
             Job = CreateMinimalJobAssignment(),
             PrOrchestrator = new PullRequestOrchestrator(Mock.Of<Serilog.ILogger>()),
@@ -1831,7 +1831,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
@@ -1845,7 +1845,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
@@ -1863,7 +1863,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
@@ -1877,7 +1877,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
@@ -1891,7 +1891,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
@@ -1914,7 +1914,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
@@ -1928,7 +1928,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
@@ -1948,7 +1948,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
@@ -1962,7 +1962,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var job = CreateMinimalJobAssignment();
         var connection = CreateDisconnectedHubConnection();
-        var proxy = new OrchestratorProxy(connection, "test-job");
+        var proxy = new OrchestratorProxy(connection, new JobId("test-job"));
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = LocalPipelineExecutor.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);

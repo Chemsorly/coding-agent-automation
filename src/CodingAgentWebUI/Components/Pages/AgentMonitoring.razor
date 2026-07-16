@@ -1132,7 +1132,7 @@
 
         try
         {
-            await HubContext.Clients.Client(agent.ConnectionId).CancelJob(run.RunId);
+            await HubContext.Clients.Client(agent.ConnectionId).CancelJob(new JobId(run.RunId));
         }
         catch (Exception ex) { Log.Warning(ex, "Failed to send CancelJob to agent {AgentId}", run.AgentId); }
 

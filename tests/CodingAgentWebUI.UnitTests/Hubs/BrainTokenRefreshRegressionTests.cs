@@ -117,7 +117,7 @@ public class BrainTokenRefreshRegressionTests
         var hub = CreateHub();
 
         // Act
-        var response = await hub.RequestTokenRefresh("job-1", ProviderKind.Brain);
+        var response = await hub.RequestTokenRefresh(new JobId("job-1"), ProviderKind.Brain);
 
         // Assert: Token was generated from the BRAIN config, not the work config
         capturedConfig.Should().NotBeNull();
@@ -174,7 +174,7 @@ public class BrainTokenRefreshRegressionTests
         var hub = CreateHub();
 
         // Act
-        var response = await hub.RequestTokenRefresh("job-1", ProviderKind.Repository);
+        var response = await hub.RequestTokenRefresh(new JobId("job-1"), ProviderKind.Repository);
 
         // Assert: Token was generated from the WORK config
         capturedConfig.Should().NotBeNull();
@@ -232,7 +232,7 @@ public class BrainTokenRefreshRegressionTests
         var hub = CreateHub();
 
         // Act: Should not throw, falls back to work config
-        var response = await hub.RequestTokenRefresh("job-1", ProviderKind.Brain);
+        var response = await hub.RequestTokenRefresh(new JobId("job-1"), ProviderKind.Brain);
 
         // Assert: Fell back to work config
         capturedConfig.Should().NotBeNull();
@@ -286,7 +286,7 @@ public class BrainTokenRefreshRegressionTests
         var hub = CreateHub();
 
         // Act
-        var response = await hub.RequestTokenRefresh("job-1", ProviderKind.Brain);
+        var response = await hub.RequestTokenRefresh(new JobId("job-1"), ProviderKind.Brain);
 
         // Assert: Falls back to work config since no brain is configured
         capturedConfig.Should().NotBeNull();

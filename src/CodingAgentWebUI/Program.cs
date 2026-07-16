@@ -12,6 +12,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Serialization;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -147,7 +148,10 @@ builder.Services.AddSignalR(options =>
         // Agents may send output chunks or large payloads; default 32KB is too restrictive.
         options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
     })
-    .AddMessagePackProtocol();
+    .AddMessagePackProtocol(options =>
+    {
+        options.SerializerOptions = JobIdMessagePackOptions.Create();
+    });
 
 // SignalR — hub filter for agent authorization
 builder.Services.AddSingleton<IHubFilter>(sp => new AgentAuthorizationFilter(
