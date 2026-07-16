@@ -189,6 +189,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             existing.PullRequestUrl = entity.PullRequestUrl;
             existing.ModelName = entity.ModelName;
             existing.AgentId = entity.AgentId;
+            existing.ProjectId = entity.ProjectId;
             existing.ProjectName = entity.ProjectName;
             existing.RunType = entity.RunType;
             existing.SummaryJson = entity.SummaryJson;
@@ -219,6 +220,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
                 retry.PullRequestUrl = entity.PullRequestUrl;
                 retry.ModelName = entity.ModelName;
                 retry.AgentId = entity.AgentId;
+                retry.ProjectId = entity.ProjectId;
                 retry.ProjectName = entity.ProjectName;
                 retry.RunType = entity.RunType;
                 retry.SummaryJson = entity.SummaryJson;
@@ -248,6 +250,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             PullRequestUrl = summary.PullRequestUrl,
             ModelName = summary.ModelName,
             AgentId = summary.AgentId,
+            ProjectId = summary.ProjectId,
             ProjectName = summary.ProjectName,
             RunType = summary.RunType,
             SummaryJson = JsonSerializer.Serialize(summary, JsonOptions)
@@ -287,6 +290,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             PullRequestUrl = entity.PullRequestUrl,
             ModelName = entity.ModelName,
             AgentId = entity.AgentId,
+            // TODO: Add ProjectId = entity.ProjectId here for consistency — fallback path loses ProjectId when SummaryJson is null/corrupt
             ProjectName = entity.ProjectName,
             RunType = entity.RunType
         };

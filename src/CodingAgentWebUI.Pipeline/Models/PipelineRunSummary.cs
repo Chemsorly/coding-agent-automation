@@ -79,6 +79,9 @@ public sealed class PipelineRunSummary
     /// <summary>Total number of sub-issues attempted during the Decomposition phase.</summary>
     public int DecompositionSubIssuesAttempted { get; init; }
 
+    /// <summary>Project identifier for filtering/grouping. Null for legacy runs without project data.</summary>
+    public string? ProjectId { get; init; }
+
     /// <summary>Project display name for run history table column.</summary>
     public string? ProjectName { get; init; }
 
