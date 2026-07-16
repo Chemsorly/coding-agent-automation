@@ -960,9 +960,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             MemoryUsageMb = Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024)
         };
 
-        // TODO: Race condition — if HandleTerminalClosedAsync swaps _hubManager while this read is in flight,
-        // we may invoke on a disposed connection. Consider capturing a local reference at loop start.
-        await _hubManager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
+        var manager = _hubManager;
+        await manager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
     }
 
     internal static TimeSpan CalculateReconnectionDelay(int attempt)
