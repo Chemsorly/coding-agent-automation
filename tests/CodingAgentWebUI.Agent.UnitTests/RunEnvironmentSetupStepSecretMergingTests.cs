@@ -392,74 +392,49 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
     [Fact]
     public void MaskSecretsInOutput_NullContext_ReturnsOutputUnchanged()
     {
-        // The private static method is tested indirectly. Since LocalPipelineExecutor
-        // uses it from EmitOutputLine, we test the behavior via reflection.
-        // Given InternalsVisibleTo is set, we can test by invoking the private method.
-        var method = typeof(LocalPipelineExecutor).GetMethod(
-            "MaskSecretsInOutput",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-
-        method.Should().NotBeNull("MaskSecretsInOutput should exist as private static");
-
-        var result = (string)method!.Invoke(null, ["Hello world with secret", null])!;
+        var result = PipelineSignalRReporter.MaskSecretsInOutput("Hello world with secret", null);
         result.Should().Be("Hello world with secret");
     }
 
     [Fact]
     public void MaskSecretsInOutput_EmptyInjectedSecrets_ReturnsOutputUnchanged()
     {
-        var method = typeof(LocalPipelineExecutor).GetMethod(
-            "MaskSecretsInOutput",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-
         var context = CreateTestContext();
         context.InjectedSecrets = new Dictionary<string, string>();
 
-        var result = (string)method!.Invoke(null, ["output with token12345", context])!;
+        var result = PipelineSignalRReporter.MaskSecretsInOutput("output with token12345", context);
         result.Should().Be("output with token12345");
     }
 
     [Fact]
     public void MaskSecretsInOutput_LongSecretValue_IsMasked()
     {
-        var method = typeof(LocalPipelineExecutor).GetMethod(
-            "MaskSecretsInOutput",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-
         var context = CreateTestContext();
         context.InjectedSecrets = new Dictionary<string, string>
         {
             ["TOKEN"] = "my-secret-token-1234"
         };
 
-        var result = (string)method!.Invoke(null, ["Fetched from https://api.com?token=my-secret-token-1234", context])!;
+        var result = PipelineSignalRReporter.MaskSecretsInOutput("Fetched from https://api.com?token=my-secret-token-1234", context);
         result.Should().Be("Fetched from https://api.com?token=***");
     }
 
     [Fact]
     public void MaskSecretsInOutput_ShortSecretValue_NotMasked()
     {
-        var method = typeof(LocalPipelineExecutor).GetMethod(
-            "MaskSecretsInOutput",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-
         var context = CreateTestContext();
         context.InjectedSecrets = new Dictionary<string, string>
         {
             ["PIN"] = "123" // 3 chars — should NOT be masked
         };
 
-        var result = (string)method!.Invoke(null, ["The pin is 123 and code is 456", context])!;
+        var result = PipelineSignalRReporter.MaskSecretsInOutput("The pin is 123 and code is 456", context);
         result.Should().Be("The pin is 123 and code is 456");
     }
 
     [Fact]
     public void MaskSecretsInOutput_MultipleSecrets_AllLongOnesMasked()
     {
-        var method = typeof(LocalPipelineExecutor).GetMethod(
-            "MaskSecretsInOutput",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-
         var context = CreateTestContext();
         context.InjectedSecrets = new Dictionary<string, string>
         {
@@ -468,24 +443,20 @@ public class RunEnvironmentSetupStepSecretMergingTests : IDisposable
             ["SHORT"] = "ab" // 2 chars — not masked
         };
 
-        var result = (string)method!.Invoke(null, ["Values: secret-alpha-1234 and secret-beta-5678 and ab", context])!;
+        var result = PipelineSignalRReporter.MaskSecretsInOutput("Values: secret-alpha-1234 and secret-beta-5678 and ab", context);
         result.Should().Be("Values: *** and *** and ab");
     }
 
     [Fact]
     public void MaskSecretsInOutput_ExactlyFourChars_IsMasked()
     {
-        var method = typeof(LocalPipelineExecutor).GetMethod(
-            "MaskSecretsInOutput",
-            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-
         var context = CreateTestContext();
         context.InjectedSecrets = new Dictionary<string, string>
         {
             ["KEY4"] = "abcd" // exactly 4 — should be masked
         };
 
-        var result = (string)method!.Invoke(null, ["Value is abcd here", context])!;
+        var result = PipelineSignalRReporter.MaskSecretsInOutput("Value is abcd here", context);
         result.Should().Be("Value is *** here");
     }
 

@@ -9,7 +9,7 @@
 # Stage 1: Build (.NET compilation)
 # --platform=$BUILDPLATFORM: SDK runs natively on the build host (ARM64 in CI, x64 locally).
 # Cross-compiles to the target platform via -a $TARGETARCH.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.301 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0.302 AS build
 ARG TARGETARCH
 WORKDIR /src
 
@@ -33,7 +33,7 @@ RUN dotnet publish src/CodingAgentWebUI.Agent/CodingAgentWebUI.Agent.csproj -c R
 
 # Stage 2: Runtime
 # Uses ASP.NET runtime + .NET SDK for quality gate compilation/testing in workspaces
-FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS runtime
+FROM mcr.microsoft.com/dotnet/sdk:10.0.302 AS runtime
 ARG TARGETARCH
 
 # Pin OpenCode version via build ARG for reproducible builds
