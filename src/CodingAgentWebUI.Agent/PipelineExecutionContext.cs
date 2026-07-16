@@ -3,7 +3,6 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using Microsoft.AspNetCore.SignalR.Client;
 
 namespace CodingAgentWebUI.Agent;
 
@@ -22,7 +21,6 @@ internal sealed record PipelineExecutionContext
     public BrainSyncService? BrainSync { get; init; }
     public IPipelineProvider? PipelineProvider { get; init; }
     public required OrchestratorProxy IssueOps { get; init; }
-    public required HubConnection Connection { get; init; }
     public required PullRequestOrchestrator PrOrchestrator { get; init; }
     public required AgentPhaseExecutor AgentExecution { get; init; }
     public required QualityGateExecutor QualityGates { get; init; }

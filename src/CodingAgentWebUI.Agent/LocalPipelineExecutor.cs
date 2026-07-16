@@ -51,6 +51,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     private readonly PullRequestFinalizationService _finalization;
     private readonly AgentIdentity _agentIdentity;
     private readonly AgentProviderResolver _providerResolver;
+    private readonly IPipelineReporterFactory _reporterFactory;
     private readonly Serilog.ILogger _logger;
 
     public LocalPipelineExecutor(
@@ -62,7 +63,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null,
         IOpenIssueContextWriter? openIssueContextWriter = null,
-        AgentIdentity? agentIdentity = null)
+        AgentIdentity? agentIdentity = null,
+        IPipelineReporterFactory? reporterFactory = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
@@ -81,6 +83,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         _finalization = new PullRequestFinalizationService(logger);
         _agentIdentity = agentIdentity ?? new AgentIdentity(Environment.MachineName);
         _providerResolver = new AgentProviderResolver(logger);
+        _reporterFactory = reporterFactory ?? new PipelineReporterFactory(logger);
         _logger = logger;
     }
 
@@ -248,7 +251,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         // await reporter.DisposeAsync() in the finally block, which drains in-flight sends
         // before releasing the semaphore.
         // TODO: Consider using `await using` declaration to make the dispose pattern clearer.
-        var reporter = new PipelineSignalRReporter(connection, outputBatcher, job.JobId, run, onStepChanged, _logger);
+        var reporter = _reporterFactory.Create(connection, outputBatcher, job.JobId, run, onStepChanged);
 
         CancellationTokenSource? localCts = null;
         PipelineStepContext? context = null;
@@ -276,7 +279,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 BrainSync = brainSync,
                 Config = config,
                 IssueOps = issueOps,
-                Connection = connection,
                 Job = job,
                 PrOrchestrator = prOrchestrator,
                 EmitOutputLine = EmitOutputLine,
@@ -295,7 +297,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 BrainSync = brainSync,
                 PipelineProvider = pipelineProvider,
                 IssueOps = issueOps,
-                Connection = connection,
                 PrOrchestrator = prOrchestrator,
                 AgentExecution = agentExecution,
                 QualityGates = qualityGates,
@@ -318,7 +319,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 PipelineRunType.Review => BuildReviewStepPipeline(job, issueOps, repoConfig),
                 PipelineRunType.DecompositionAnalysis => BuildDecompositionAnalysisStepPipeline(job, _openIssueContextWriter, issueOps, repoConfig),
                 PipelineRunType.Decomposition => BuildDecompositionStepPipeline(job, _openIssueContextWriter, issueOps, repoConfig),
-                _ => BuildAgentStepPipeline(job, connection, issueOps, repoConfig)
+                _ => BuildAgentStepPipeline(job, issueOps, repoConfig)
             };
 
             await PipelineStepRunner.ExecuteAsync(steps, context, linkedCt);
@@ -432,7 +433,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     /// Skips FetchIssueStep (issue data comes from job assignment) and adds MCP config step.
     /// </summary>
     internal static IReadOnlyList<IPipelineStep> BuildAgentStepPipeline(
-        JobAssignmentMessage job, HubConnection connection, OrchestratorProxy proxy, ProviderConfig repoConfig)
+        JobAssignmentMessage job, OrchestratorProxy proxy, ProviderConfig repoConfig)
     {
         var steps = BuildFullPrefix(job, proxy, repoConfig);
         steps.AddRange(PipelineStepFactory.CreateCoreImplementationSteps());
@@ -569,13 +570,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             step => context.ReportStepTransition!(step, ct), // TODO: Null-forgiving on nullable Func — consider making ReportStepTransition required or adding a null guard
             ct);
     }
-
-    /// <summary>
-    /// Builds metadata dictionary from the current run state to send with step transitions.
-    /// Includes data from the just-completed step so the UI can display it in real-time.
-    /// </summary>
-    internal static Dictionary<string, string>? BuildStepMetadata(PipelineRun run, PipelineStep newStep)
-        => PipelineSignalRReporter.BuildStepMetadata(run, newStep);
 
     internal static JobCompletionPayload BuildCompletionPayload(PipelineRun run) => BuildPayloadBase(run) with
     {
