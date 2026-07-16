@@ -44,12 +44,12 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void AddRunToHistory_PersistsToDatabase()
+    public async Task AddRunToHistory_PersistsToDatabase()
     {
         var runId = Guid.NewGuid().ToString();
         var run = CreateCompletedRun(runId, "owner/repo#1", "Fix bug");
 
-        _sut.AddRunToHistory(run);
+        await _sut.AddRunToHistoryAsync(run);
 
         using var db = new InMemoryPipelineDbContext(_dbOptions);
         var entities = db.PipelineRuns.ToList();
@@ -61,7 +61,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetRunHistory_ReturnsPersistedRuns_OrderedByStartedAtDesc()
+    public async Task GetRunHistory_ReturnsPersistedRuns_OrderedByStartedAtDesc()
     {
         var run1 = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-1", "First",
             startedAt: DateTimeOffset.UtcNow.AddHours(-2));
@@ -70,11 +70,11 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         var run3 = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-3", "Third",
             startedAt: DateTimeOffset.UtcNow);
 
-        _sut.AddRunToHistory(run1);
-        _sut.AddRunToHistory(run2);
-        _sut.AddRunToHistory(run3);
+        await _sut.AddRunToHistoryAsync(run1);
+        await _sut.AddRunToHistoryAsync(run2);
+        await _sut.AddRunToHistoryAsync(run3);
 
-        var history = _sut.GetRunHistory();
+        var history = await _sut.GetRunHistoryAsync();
 
         history.Should().HaveCount(3);
         history[0].IssueIdentifier.Should().Be("issue-3"); // newest first
@@ -83,46 +83,14 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetRunHistory_EmptyDatabase_ReturnsEmptyList()
+    public async Task GetRunHistory_EmptyDatabase_ReturnsEmptyList()
     {
-        var history = _sut.GetRunHistory();
+        var history = await _sut.GetRunHistoryAsync();
         history.Should().BeEmpty();
     }
 
     [Fact]
-    public void GetRunsByAgentId_FiltersCorrectly()
-    {
-        var run1 = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-1", "A", agentId: "agent-1");
-        var run2 = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-2", "B", agentId: "agent-2");
-        var run3 = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-3", "C", agentId: "agent-1");
-
-        _sut.AddRunToHistory(run1);
-        _sut.AddRunToHistory(run2);
-        _sut.AddRunToHistory(run3);
-
-        var result = _sut.GetRunsByAgentId("agent-1");
-
-        result.Should().HaveCount(2);
-        result.Should().OnlyContain(r => r.AgentId == "agent-1");
-    }
-
-    [Fact]
-    public void GetRunsByAgentId_RespectsLimit()
-    {
-        for (var i = 0; i < 5; i++)
-        {
-            var run = CreateCompletedRun(Guid.NewGuid().ToString(), $"issue-{i}", $"Run {i}",
-                agentId: "agent-x", startedAt: DateTimeOffset.UtcNow.AddMinutes(-i));
-            _sut.AddRunToHistory(run);
-        }
-
-        var result = _sut.GetRunsByAgentId("agent-x", limit: 3);
-
-        result.Should().HaveCount(3);
-    }
-
-    [Fact]
-    public void AddRunToHistory_Upsert_UpdatesExistingRow()
+    public async Task AddRunToHistory_Upsert_UpdatesExistingRow()
     {
         var runId = Guid.NewGuid();
 
@@ -141,9 +109,9 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
             db.SaveChanges();
         }
 
-        // Complete the run — AddRunToHistory should upsert
+        // Complete the run — AddRunToHistoryAsync should upsert
         var run = CreateCompletedRun(runId.ToString(), "owner/repo#5", "Updated title");
-        _sut.AddRunToHistory(run);
+        await _sut.AddRunToHistoryAsync(run);
 
         using (var db = new InMemoryPipelineDbContext(_dbOptions))
         {
@@ -156,7 +124,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetRunHistory_DeserializesFullSummary_WithAllFields()
+    public async Task GetRunHistory_DeserializesFullSummary_WithAllFields()
     {
         var runId = Guid.NewGuid().ToString();
         var run = CreateCompletedRun(runId, "issue-full", "Full fields",
@@ -164,9 +132,9 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         run.PullRequestUrl = "https://github.com/org/repo/pull/42";
         run.TotalTokens = 50000;
 
-        _sut.AddRunToHistory(run);
+        await _sut.AddRunToHistoryAsync(run);
 
-        var history = _sut.GetRunHistory();
+        var history = await _sut.GetRunHistoryAsync();
         history.Should().HaveCount(1);
 
         var restored = history[0];
@@ -181,7 +149,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetRunHistory_FallsBackToColumns_WhenSummaryJsonIsNull()
+    public async Task GetRunHistory_FallsBackToColumns_WhenSummaryJsonIsNull()
     {
         // Insert a row without SummaryJson (legacy data)
         var runId = Guid.NewGuid();
@@ -202,7 +170,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
             db.SaveChanges();
         }
 
-        var history = _sut.GetRunHistory();
+        var history = await _sut.GetRunHistoryAsync();
 
         history.Should().HaveCount(1);
         var restored = history[0];
@@ -215,7 +183,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetRunHistory_LimitedToMaxHistorySize()
+    public async Task GetRunHistory_LimitedToMaxHistorySize()
     {
         // Insert more than the max (1000) rows
         const int maxHistory = 1000;
@@ -236,7 +204,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
             db.SaveChanges();
         }
 
-        var history = _sut.GetRunHistory();
+        var history = await _sut.GetRunHistoryAsync();
 
         history.Should().HaveCount(maxHistory);
     }
@@ -244,7 +212,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     // ── Consolidation filtering tests ───────────────────────────────────
 
     [Fact]
-    public void GetRunHistory_ExcludesConsolidationRuns()
+    public async Task GetRunHistory_ExcludesConsolidationRuns()
     {
         // Arrange: persist a normal run and a consolidation ghost entry
         var normalRun = CreateCompletedRun(Guid.NewGuid().ToString(), "org/repo#1", "Normal run");
@@ -285,7 +253,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         }
 
         // Act
-        var history = _sut.GetRunHistory();
+        var history = await _sut.GetRunHistoryAsync();
 
         // Assert: only the normal run should appear
         history.Should().HaveCount(1);
@@ -338,56 +306,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void GetRunsByAgentId_ExcludesConsolidationRuns()
-    {
-        const string agentId = "agent-test";
-        var normalRun = CreateCompletedRun(Guid.NewGuid().ToString(), "org/repo#3", "Normal", agentId: agentId);
-        var consolidationRun = PipelineRun.Create(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: Guid.NewGuid().ToString(),
-            issueTitle: Guid.NewGuid().ToString(),
-            issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
-            repoProviderConfigId: "rp-1",
-            initiatedBy: ConsolidationConstants.InitiatedBy,
-            agentId: agentId);
-        consolidationRun.CurrentStep = PipelineStep.Completed;
-        consolidationRun.MarkCompleted();
-
-        using (var db = new InMemoryPipelineDbContext(_dbOptions))
-        {
-            var normalSummary = normalRun.ToSummary();
-            var consolSummary = consolidationRun.ToSummary();
-            db.PipelineRuns.Add(new PipelineRunEntity
-            {
-                RunId = Guid.Parse(normalRun.RunId),
-                IssueIdentifier = normalSummary.IssueIdentifier,
-                IssueTitle = normalSummary.IssueTitle,
-                FinalStep = normalSummary.FinalStep,
-                StartedAt = normalSummary.StartedAtOffset,
-                AgentId = agentId,
-                SummaryJson = System.Text.Json.JsonSerializer.Serialize(normalSummary, PipelineJsonOptions.Default)
-            });
-            db.PipelineRuns.Add(new PipelineRunEntity
-            {
-                RunId = Guid.Parse(consolidationRun.RunId),
-                IssueIdentifier = consolSummary.IssueIdentifier,
-                IssueTitle = consolSummary.IssueTitle,
-                FinalStep = consolSummary.FinalStep,
-                StartedAt = consolSummary.StartedAtOffset,
-                AgentId = agentId,
-                SummaryJson = System.Text.Json.JsonSerializer.Serialize(consolSummary, PipelineJsonOptions.Default)
-            });
-            db.SaveChanges();
-        }
-
-        var result = _sut.GetRunsByAgentId(agentId);
-
-        result.Should().HaveCount(1);
-        result[0].IssueIdentifier.Should().Be("org/repo#3");
-    }
-
-    [Fact]
-    public void AddRunToHistory_RejectsConsolidationRun_Silently()
+    public async Task AddRunToHistory_RejectsConsolidationRun_Silently()
     {
         var consolidationRun = PipelineRun.Create(
             runId: Guid.NewGuid().ToString(),
@@ -400,7 +319,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         consolidationRun.MarkCompleted();
 
         // Should not throw
-        _sut.AddRunToHistory(consolidationRun);
+        await _sut.AddRunToHistoryAsync(consolidationRun);
 
         // Should not persist to DB
         using var db = new InMemoryPipelineDbContext(_dbOptions);
@@ -469,7 +388,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     }
 
     [Fact]
-    public void AddRunToHistory_NonTerminalStep_ForcedToFailed()
+    public async Task AddRunToHistory_NonTerminalStep_ForcedToFailed()
     {
         // Arrange: non-terminal step via sync (obsolete) method
         // TODO: [BUG-12] Verify that the warning log is emitted (same gap as async variant above).
@@ -480,7 +399,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         run.MarkCompleted();
 
         // Act
-        _sut.AddRunToHistory(run);
+        await _sut.AddRunToHistoryAsync(run);
 
         // Assert: persisted with FinalStep corrected to Failed
         using var db = new InMemoryPipelineDbContext(_dbOptions);

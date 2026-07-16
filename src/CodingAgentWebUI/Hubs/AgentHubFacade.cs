@@ -303,12 +303,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
     // ── History ─────────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public void AddRunToHistory(PipelineRun run)
-        => _historyService.AddRunToHistory(run);
-
-    /// <inheritdoc />
-    public IReadOnlyList<PipelineRunSummary> GetRunHistory()
-        => _historyService.GetRunHistory();
+    public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
+        => _historyService.AddRunToHistoryAsync(run, ct);
 
     /// <inheritdoc />
     public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)

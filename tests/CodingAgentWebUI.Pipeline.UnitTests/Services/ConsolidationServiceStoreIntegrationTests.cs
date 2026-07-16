@@ -32,7 +32,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
 
         _config = new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir };
         _mockRunHistory = new Mock<IPipelineRunHistoryService>();
-        _mockRunHistory.Setup(x => x.GetRunHistory()).Returns(new List<PipelineRunSummary>());
+        _mockRunHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
 
         _mockProjectStore = new Mock<IProjectStore>();
         _mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))

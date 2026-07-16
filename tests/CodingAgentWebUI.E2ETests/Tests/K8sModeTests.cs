@@ -1138,7 +1138,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
     {
         // Arrange: simulate a completed run in history
         var completedRunId = Guid.NewGuid().ToString();
-        Fixture.HistoryService.AddRunToHistory(new PipelineRun
+        await Fixture.HistoryService.AddRunToHistoryAsync(new PipelineRun
         {
             RunId = completedRunId,
             IssueIdentifier = "completed-issue",
