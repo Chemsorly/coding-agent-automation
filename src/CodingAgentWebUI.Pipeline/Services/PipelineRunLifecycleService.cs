@@ -209,10 +209,6 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         if (activeRuns.Count == 0) return [];
 
         var cancelledIssues = new List<(string IssueIdentifier, string IssueProviderConfigId)>();
-        // TODO: [REVIEW] Wrap per-iteration AddRunToHistoryAsync in try-catch. If the history service throws
-        // for one run, subsequent runs are never processed — they remain orphaned in active tracking and
-        // their dedup guards are never released. The Postgres implementation swallows exceptions, but the
-        // IPipelineRunHistoryService contract does not guarantee non-throwing behavior.
         foreach (var run in activeRuns)
         {
             run.MarkCompleted();

@@ -74,9 +74,6 @@ public class PipelineRunLifecycleServiceTests
     // ── AddRunToHistoryAsync ─────────────────────────────────────────────────
 
     [Fact]
-    // TODO: [REVIEW] This test only verifies delegation but not CancellationToken forwarding.
-    // The mock uses It.IsAny<CancellationToken>() which accepts any token — the test passes even if
-    // the implementation passes CancellationToken.None. Add a test that verifies the specific token is forwarded.
     public async Task AddRunToHistoryAsync_DelegatesToHistoryService()
     {
         var service = CreateService();

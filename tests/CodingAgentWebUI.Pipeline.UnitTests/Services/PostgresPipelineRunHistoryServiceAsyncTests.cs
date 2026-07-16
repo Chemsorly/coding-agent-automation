@@ -90,11 +90,6 @@ public sealed class PostgresPipelineRunHistoryServiceAsyncTests : IDisposable
 
     // ── CancellationToken propagation tests ─────────────────────────────
 
-    // TODO: [REVIEW] Missing test coverage: no test verifies CancellationToken propagation to ToListAsync
-    // or SaveChangesAsync — only CreateDbContextAsync is verified via CancellationTrackingDbContextFactory.
-    // The acceptance criteria require "CancellationToken is propagated to CreateDbContextAsync, ToListAsync,
-    // SaveChangesAsync". Consider adding a custom DbSet wrapper or interceptor to verify propagation further.
-
     [Fact]
     public async Task GetRunHistoryAsync_CancelledToken_ThrowsOperationCanceled()
     {
@@ -109,10 +104,6 @@ public sealed class PostgresPipelineRunHistoryServiceAsyncTests : IDisposable
     }
 
     [Fact]
-    // TODO: [REVIEW] Misleading test name — this test does NOT use a cancelled token. The CancellationTokenSource
-    // is created but never cancelled. Either rename to AddRunToHistoryAsync_LiveToken_PropagatesTokenToDbFactory,
-    // or actually cancel the token to test exception-swallowing behavior. This test is functionally identical to
-    // AddRunToHistoryAsync_TokenPassedToCreateDbContextAsync below — consider removing one.
     public async Task AddRunToHistoryAsync_CancelledToken_PropagatesTokenToDbFactory()
     {
         // AddRunToHistoryAsync catches exceptions (by design — persistence failures are non-fatal).
