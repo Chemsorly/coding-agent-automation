@@ -243,24 +243,22 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             ? new BrainSyncService(_brainUpdateService, _logger)
             : null;
 
-        // Fire-and-forget wrappers — delegate to class-level async methods for testability.
-        // Serialized via signalrLock to guarantee ordering at the orchestrator.
-        // Not using 'using' — disposed manually after draining in-flight sends.
-        var signalrLock = new SemaphoreSlim(1, 1);
-        void TransitionTo(PipelineStep step) => _ = SerializedSendAsync(signalrLock, () => TransitionToInternalAsync(run, connection, job.JobId, onStepChanged, step, ct), ct);
-        void ReportQualityGateResult(QualityGateReport report) => _ = SerializedSendAsync(signalrLock, () => ReportQualityGateResultInternalAsync(connection, job.JobId, report, ct), ct);
+        // SignalR communication is encapsulated in PipelineSignalRReporter which owns the
+        // serialization semaphore and all *InternalAsync methods. Manually disposed via
+        // await reporter.DisposeAsync() in the finally block, which drains in-flight sends
+        // before releasing the semaphore.
+        // TODO: Consider using `await using` declaration to make the dispose pattern clearer.
+        var reporter = new PipelineSignalRReporter(connection, outputBatcher, job.JobId, run, onStepChanged, _logger);
 
         CancellationTokenSource? localCts = null;
         PipelineStepContext? context = null;
 
-        // Wrap EmitOutputLine so ALL output is masked once secrets are populated.
+        // Fire-and-forget wrappers delegating to the reporter.
         // context.InjectedSecrets is null until RunEnvironmentSetupStep populates it,
         // so output before that step passes through unmasked (no secrets exist yet).
-        void EmitOutputLine(string line)
-        {
-            var masked = MaskSecretsInOutput(line, context);
-            _ = EmitOutputLineInternalAsync(run, outputBatcher, masked, ct);
-        }
+        void TransitionTo(PipelineStep step) => reporter.TransitionTo(step, ct);
+        void ReportQualityGateResult(QualityGateReport report) => reporter.ReportQualityGateResult(report, ct);
+        void EmitOutputLine(string line) => reporter.EmitOutputLine(line, context, ct);
 
         using var _runIdCtx = LogContext.PushProperty("PipelineRunId", run.RunId);
         using var _issueCtx = LogContext.PushProperty("IssueIdentifier", run.IssueIdentifier);
@@ -281,7 +279,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 Connection = connection,
                 Job = job,
                 PrOrchestrator = prOrchestrator,
-                EmitOutputLine = EmitOutputLine
+                EmitOutputLine = EmitOutputLine,
+                ReportStepTransition = (step, token) => reporter.ReportStepTransitionAsync(step, token)
             };
 
             // Build step context
@@ -307,7 +306,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 ReportQualityGateResult = ReportQualityGateResult
             };
 
-            context = CreateStepContext(executionContext, ct);
+            context = CreateStepContext(executionContext, reporter, ct);
 
             // Inject additional repo providers for cross-repo decomposition cloning
             if (additionalRepoProviders is { Count: > 0 })
@@ -340,9 +339,10 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         {
             run.MarkCompleted();
 
-            // Await directly with CancellationToken.None — ct is already cancelled so the
-            // fire-and-forget wrapper would fail to acquire the semaphore.
-            await SerializedSendAsync(signalrLock, () => TransitionToInternalAsync(run, connection, job.JobId, onStepChanged, PipelineStep.Cancelled, CancellationToken.None), CancellationToken.None);
+            // TODO: Stale comment — reporter.TransitionTo is fire-and-forget (not awaited).
+            // The Cancelled transition and subsequent EmitOutputLine may race; DisposeAsync
+            // in the finally block drains both, but orchestrator may observe non-deterministic order.
+            reporter.TransitionTo(PipelineStep.Cancelled, CancellationToken.None);
             EmitOutputLine("🚫 Pipeline cancelled");
 
             run.FinalLabel = AgentLabels.Cancelled;
@@ -389,108 +389,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             }
 
             // Drain in-flight serialized sends before disposing the semaphore.
-            // SerializedSendAsync catches ObjectDisposedException, so tasks arriving after
-            // disposal are handled gracefully without unobserved exceptions.
-            try { await signalrLock.WaitAsync(CancellationToken.None); signalrLock.Release(); }
-            catch { /* best-effort drain */ }
-            signalrLock.Dispose();
-        }
-    }
-
-    /// <summary>
-    /// Masks known secret values in pipeline output. If no secrets are populated on the context
-    /// (i.e., before <see cref="RunEnvironmentSetupStep"/> runs), the output passes through unchanged.
-    /// Values shorter than 4 characters are not masked to avoid excessive false-positive redaction.
-    /// </summary>
-    private static string MaskSecretsInOutput(string output, PipelineStepContext? context)
-    {
-        if (context?.InjectedSecrets is not { Count: > 0 })
-            return output;
-
-        foreach (var (_, value) in context.InjectedSecrets)
-        {
-            if (value.Length >= 4)
-                output = output.Replace(value, "***");
-        }
-        return output;
-    }
-
-    /// <summary>
-    /// Reports a pipeline step transition with metadata. Updates run state, notifies the callback,
-    /// and sends the transition to the orchestrator via SignalR. Failures are logged as warnings.
-    /// </summary>
-    internal async Task TransitionToInternalAsync(
-        PipelineRun run, HubConnection connection, string jobId,
-        Action<PipelineStep?>? onStepChanged, PipelineStep step, CancellationToken ct)
-    {
-        try
-        {
-            run.CurrentStep = step;
-            if (step is not (PipelineStep.Failed or PipelineStep.Cancelled)
-                && (int)step > (int)run.HighWaterMark)
-                run.HighWaterMark = step;
-
-            onStepChanged?.Invoke(step);
-
-            var metadata = BuildStepMetadata(run, step);
-            await connection.SendAsync(HubMethodNames.ReportStepTransition, jobId, step, DateTimeOffset.UtcNow, metadata, ct);
-        }
-        catch (Exception ex)
-        {
-            PipelineTelemetry.AgentSignalRFailures.Add(1);
-            _logger.Warning(ex, "Failed to report step transition to {Step}", step);
-        }
-    }
-
-    /// <summary>
-    /// Enqueues an output line to the run and batches it for delivery.
-    /// Failures are logged as warnings.
-    /// </summary>
-    internal async Task EmitOutputLineInternalAsync(
-        PipelineRun run, OutputBatcher outputBatcher, string line, CancellationToken ct)
-    {
-        try
-        {
-            run.OutputLines.Enqueue(line);
-            await outputBatcher.AddLineAsync(line, ct);
-        }
-        catch (Exception ex) { _logger.Warning(ex, "Failed to batch output line"); }
-    }
-
-    /// <summary>
-    /// Reports a quality gate result to the orchestrator via SignalR.
-    /// Failures are logged as warnings.
-    /// </summary>
-    internal async Task ReportQualityGateResultInternalAsync(
-        HubConnection connection, string jobId, QualityGateReport report, CancellationToken ct)
-    {
-        try { await connection.SendAsync(HubMethodNames.ReportQualityGateResult, jobId, report, ct); }
-        catch (Exception ex)
-        {
-            PipelineTelemetry.AgentSignalRFailures.Add(1);
-            _logger.Warning(ex, "Failed to report quality gate result");
-        }
-    }
-
-    /// <summary>
-    /// Serializes a fire-and-forget SignalR send behind a semaphore to guarantee ordering.
-    /// Catches <see cref="OperationCanceledException"/> and <see cref="ObjectDisposedException"/>
-    /// from the semaphore wait since callers discard the task — these are expected during shutdown.
-    /// </summary>
-    internal static async Task SerializedSendAsync(SemaphoreSlim signalrLock, Func<Task> send, CancellationToken ct)
-    {
-        try
-        {
-            await signalrLock.WaitAsync(ct);
-        }
-        catch (ObjectDisposedException) { return; }
-        catch (OperationCanceledException) { return; }
-
-        try { await send(); }
-        finally
-        {
-            try { signalrLock.Release(); }
-            catch (ObjectDisposedException) { }
+            // PipelineSignalRReporter.DisposeAsync drains and disposes the SemaphoreSlim.
+            await reporter.DisposeAsync();
         }
     }
 
@@ -608,6 +508,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
     private PipelineStepContext CreateStepContext(
         PipelineExecutionContext inputs,
+        PipelineSignalRReporter reporter,
         CancellationToken ct)
     {
         var callbacks = new AgentCallbacks(
@@ -619,11 +520,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             inputs.RepoProvider,
             inputs.ReportQualityGateResult,
             (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, inputs.PrContext, token),
-            async (contextLoaded, fileCount) =>
-            {
-                try { await inputs.Connection.InvokeAsync(HubMethodNames.ReportBrainSyncResult, inputs.Job.JobId, contextLoaded, fileCount, ct); }
-                catch (Exception ex) { _logger.Warning(ex, "Failed to report brain sync result"); }
-            });
+            async (contextLoaded, fileCount) => await reporter.ReportBrainSyncResultAsync(contextLoaded, fileCount, ct));
 
         var ctx = PipelineStepContext.ForAgent(
             run: inputs.Run,
@@ -669,26 +566,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             context.Job.IssueDetail, context.Job.IssueComments,
             _feedbackService, _historyService,
             context.EmitOutputLine,
-            step => ReportStepTransitionAsync(context.Connection, context.Job.JobId, run, step, ct),
+            step => context.ReportStepTransition!(step, ct), // TODO: Null-forgiving on nullable Func — consider making ReportStepTransition required or adding a null guard
             ct);
-    }
-
-    /// <summary>
-    /// Reports a step transition to the orchestrator via SignalR, updating the run's current step.
-    /// Failures are logged as warnings and do not propagate — step transitions are best-effort.
-    /// </summary>
-    private async Task ReportStepTransitionAsync(
-        HubConnection connection, string jobId, PipelineRun run, PipelineStep step, CancellationToken ct)
-    {
-        run.CurrentStep = step;
-        try
-        {
-            await connection.InvokeAsync(HubMethodNames.ReportStepTransition, jobId, step, DateTimeOffset.UtcNow, (Dictionary<string, string>?)null, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to report step transition to {Step}", step);
-        }
     }
 
     /// <summary>
@@ -696,84 +575,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     /// Includes data from the just-completed step so the UI can display it in real-time.
     /// </summary>
     internal static Dictionary<string, string>? BuildStepMetadata(PipelineRun run, PipelineStep newStep)
-    {
-        // When transitioning TO a new step, the previous step just completed.
-        // Include data that the previous step produced.
-        Dictionary<string, string>? metadata = null;
-
-        void Add(string key, string? value)
-        {
-            if (value is null) return;
-            metadata ??= new Dictionary<string, string>();
-            metadata[key] = value;
-        }
-
-        // CreatingBranch completed → include branch name
-        if (newStep > PipelineStep.CreatingBranch && !string.IsNullOrEmpty(run.BranchName))
-            Add("BranchName", run.BranchName);
-
-        // VerifyingBaseline completed → include result
-        if (newStep > PipelineStep.VerifyingBaseline && run.BaselineHealthPassed.HasValue)
-            Add("BaselineHealthPassed", run.BaselineHealthPassed.Value.ToString());
-
-        // AnalyzingCode completed → include skip status
-        if (newStep > PipelineStep.AnalyzingCode && run.AnalysisSkipped)
-            Add("AnalysisSkipped", "true");
-
-        // GeneratingCode completed → include file change stats
-        if (newStep > PipelineStep.GeneratingCode && run.FilesChangedCount > 0)
-        {
-            Add("FilesChangedCount", run.FilesChangedCount.ToString());
-            Add("LinesAdded", run.LinesAdded.ToString());
-            Add("LinesRemoved", run.LinesRemoved.ToString());
-        }
-
-        // ReviewingCode progress/completion
-        if (newStep >= PipelineStep.ReviewingCode)
-        {
-            if (run.CodeReviewIterationsTotal > 0)
-                Add("CodeReviewIterationsTotal", run.CodeReviewIterationsTotal.ToString());
-            if (run.CodeReviewIterationsCompleted > 0)
-                Add("CodeReviewIterationsCompleted", run.CodeReviewIterationsCompleted.ToString());
-            if (run.CodeReviewIterationInProgress > 0)
-                Add("CodeReviewIterationInProgress", run.CodeReviewIterationInProgress.ToString());
-        }
-
-        // Decomposition: open issues downloaded
-        if (newStep > PipelineStep.DownloadingOpenIssues && run.OpenIssuesDownloaded > 0)
-            Add("OpenIssuesDownloaded", run.OpenIssuesDownloaded.ToString());
-
-        // Decomposition: sub-issue creation results
-        if (newStep > PipelineStep.CreatingIssues && run.DecompositionSubIssuesAttempted > 0)
-        {
-            Add("DecompositionSubIssuesCreated", run.DecompositionSubIssuesCreated.ToString());
-            Add("DecompositionSubIssuesAttempted", run.DecompositionSubIssuesAttempted.ToString());
-        }
-
-        // Quality gate retry count — report whenever retries have occurred
-        if (run.RetryCount > 0)
-            Add("RetryCount", run.RetryCount.ToString());
-        if (run.InfrastructureRetryCount > 0)
-            Add("InfrastructureRetryCount", run.InfrastructureRetryCount.ToString());
-
-        // Token/cost accumulation — allows UI to show running totals
-        if (run.TotalTokens > 0)
-            Add("TotalTokens", run.TotalTokens.ToString());
-        if (run.TotalCost is > 0m)
-            Add("TotalCost", run.TotalCost.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
-
-        // Code review findings — populated during ReviewingCode step
-        if (run.CodeReviewCriticalCount > 0)
-            Add("CodeReviewCriticalCount", run.CodeReviewCriticalCount.ToString());
-        if (run.CodeReviewWarningCount > 0)
-            Add("CodeReviewWarningCount", run.CodeReviewWarningCount.ToString());
-        if (run.CodeReviewSuggestionCount > 0)
-            Add("CodeReviewSuggestionCount", run.CodeReviewSuggestionCount.ToString());
-        if (run.CodeReviewAgentsRun.Count > 0)
-            Add("CodeReviewAgentsRun", string.Join("\x1F", run.CodeReviewAgentsRun));
-
-        return metadata;
-    }
+        => PipelineSignalRReporter.BuildStepMetadata(run, newStep);
 
     internal static JobCompletionPayload BuildCompletionPayload(PipelineRun run) => BuildPayloadBase(run) with
     {
