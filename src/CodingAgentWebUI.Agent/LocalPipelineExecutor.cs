@@ -339,9 +339,9 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         {
             run.MarkCompleted();
 
-            // TODO: Stale comment — reporter.TransitionTo is fire-and-forget (not awaited).
-            // The Cancelled transition and subsequent EmitOutputLine may race; DisposeAsync
-            // in the finally block drains both, but orchestrator may observe non-deterministic order.
+            // Note: reporter.TransitionTo is fire-and-forget (not awaited), so the Cancelled
+            // transition and subsequent EmitOutputLine may race. DisposeAsync in the finally
+            // block drains both, but orchestrator may observe non-deterministic order.
             reporter.TransitionTo(PipelineStep.Cancelled, CancellationToken.None);
             EmitOutputLine("🚫 Pipeline cancelled");
 
