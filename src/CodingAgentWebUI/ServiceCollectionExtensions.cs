@@ -306,6 +306,11 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ILabelSwapper>(),
             Log.Logger));
 
+        services.AddSingleton<IAgentOrphanRecoveryService>(sp => new AgentOrphanRecoveryService(
+            sp.GetRequiredService<IAgentHubFacade>(),
+            sp.GetRequiredService<PipelineOrchestrationService>(),
+            Log.Logger));
+
         services.AddSingleton<IAgentJobLifecycleService>(sp => new AgentJobLifecycleService(
             sp.GetRequiredService<IAgentHubFacade>(),
             sp.GetRequiredService<IRunLifecycleManager>(),
