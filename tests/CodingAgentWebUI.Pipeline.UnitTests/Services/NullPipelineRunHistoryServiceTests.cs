@@ -15,27 +15,17 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 public class NullPipelineRunHistoryServiceTests
 {
     [Fact]
-    public void GetRunHistory_ReturnsEmptyList()
+    public async Task GetRunHistory_ReturnsEmptyList()
     {
         var sut = new NullPipelineRunHistoryService();
 
-        var result = sut.GetRunHistory();
+        var result = await sut.GetRunHistoryAsync();
 
         result.Should().BeEmpty();
     }
 
     [Fact]
-    public void GetRunsByAgentId_ReturnsEmptyList()
-    {
-        var sut = new NullPipelineRunHistoryService();
-
-        var result = sut.GetRunsByAgentId("agent-1", 10);
-
-        result.Should().BeEmpty();
-    }
-
-    [Fact]
-    public void AddRunToHistory_DoesNotThrow()
+    public async Task AddRunToHistory_DoesNotThrow()
     {
         var sut = new NullPipelineRunHistoryService();
         var run = new PipelineRun
@@ -48,9 +38,9 @@ public class NullPipelineRunHistoryServiceTests
             WorkspacePath = "/tmp/ws"
         };
 
-        var act = () => sut.AddRunToHistory(run);
+        var act = () => sut.AddRunToHistoryAsync(run);
 
-        act.Should().NotThrow();
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]

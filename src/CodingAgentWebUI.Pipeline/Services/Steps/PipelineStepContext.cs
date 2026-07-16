@@ -304,7 +304,7 @@ public sealed class PipelineStepContext
         await Callbacks.SwapAgentLabel(Run.IssueIdentifier, AgentLabels.Error, ct);
         Callbacks.EmitOutputLine($"❌ Pipeline failed: {reason}");
         Callbacks.TransitionTo(PipelineStep.Failed);
-        Callbacks.AddRunToHistory(Run);
+        await Callbacks.AddRunToHistoryAsync(Run);
     }
 
     /// <summary>

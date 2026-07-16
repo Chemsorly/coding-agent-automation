@@ -77,12 +77,23 @@ var logger = new LoggerConfiguration()
 var config = new Configuration { KiroCliPath = "/usr/local/bin/kiro-cli" };
 var orchestrator = new KiroCliOrchestrator(config, logger);
 
-// First prompt — starts a new conversation
+// First prompt — starts a new conversation with output monitoring
 var exitCode = await orchestrator.ExecutePromptAsync(
     prompt: "Analyze this repository and describe the architecture",
     workspaceDirectory: "/workspace/my-project",
     useResume: false,
-    cancellationToken: CancellationToken.None);
+    cancellationToken: CancellationToken.None,
+    onOutputLine: line =>
+    {
+        // Detect execution phases from agent output
+        if (line.Contains("research", StringComparison.OrdinalIgnoreCase))
+            logger.Information("Phase: Research");
+        else if (line.Contains("plan", StringComparison.OrdinalIgnoreCase))
+            logger.Information("Phase: Planning");
+        else
+            Console.WriteLine($"[agent] {line}");
+        return Task.CompletedTask;
+    });
 
 // Second prompt — resumes the conversation (Kiro remembers context)
 exitCode = await orchestrator.ExecutePromptAsync(
@@ -90,6 +101,11 @@ exitCode = await orchestrator.ExecutePromptAsync(
     workspaceDirectory: "/workspace/my-project",
     useResume: true,
     cancellationToken: CancellationToken.None);
+
+if (exitCode == ExitCodes.Success)
+    logger.Information("Agent completed successfully");
+else
+    logger.Warning("Agent exited with code {ExitCode}", exitCode);
 ```
 
 ## The `--resume` Pattern

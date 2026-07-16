@@ -156,7 +156,7 @@ public class FailPhaseAsyncTests
         await _orchestrator.ExecuteCodeGenerationAsync(context, CancellationToken.None);
 
         // Assert: FailPhaseAsync calls AddRunToHistory
-        _mockCallbacks.Verify(c => c.AddRunToHistory(_run), Times.Once);
+        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.Once);
     }
 
     [Fact]
@@ -197,7 +197,7 @@ public class FailPhaseAsyncTests
             o => o.SwapLabelAsync(_run.IssueIdentifier, AgentLabels.Error, It.IsAny<CancellationToken>()),
             Times.Once);
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
-        _mockCallbacks.Verify(c => c.AddRunToHistory(_run), Times.Once);
+        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.Once);
     }
 
     [Fact]
@@ -221,7 +221,7 @@ public class FailPhaseAsyncTests
             o => o.SwapLabelAsync(_run.IssueIdentifier, AgentLabels.Error, It.IsAny<CancellationToken>()),
             Times.Once);
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
-        _mockCallbacks.Verify(c => c.AddRunToHistory(_run), Times.Once);
+        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.Once);
     }
 
     [Fact]
