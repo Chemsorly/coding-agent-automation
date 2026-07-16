@@ -514,6 +514,47 @@ public sealed record PipelineConfiguration
     }
 
     /// <summary>
+    /// Loads the pipeline configuration and applies the full resolution chain:
+    /// Global → Project overrides → Template overrides (blacklist from ProviderConfig).
+    /// Callers provide delegates to decouple from any specific store interface shape.
+    /// </summary>
+    public static async Task<PipelineConfiguration> ResolveAsync(
+        Func<CancellationToken, Task<PipelineConfiguration>> loadConfig,
+        Func<CancellationToken, Task<IReadOnlyList<PipelineJobTemplate>>> loadTemplates,
+        PipelineProject project,
+        string repoProviderId,
+        string? brainProviderId,
+        IReadOnlyList<ProviderConfig> providerConfigs,
+        CancellationToken ct)
+    {
+        // TODO: Add ArgumentNullException.ThrowIfNull for loadConfig, loadTemplates parameters to produce clear validation errors instead of NRE
+        var config = await loadConfig(ct);
+        config = ApplyProjectOverrides(config, project);
+        var templates = await loadTemplates(ct);
+        return ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
+    }
+
+    /// <summary>
+    /// Applies the resolution chain to a pre-loaded configuration:
+    /// Project overrides → Template overrides (blacklist from ProviderConfig).
+    /// Used when the caller needs the raw config before overrides (e.g., for WorkspaceBaseDirectory).
+    /// </summary>
+    public static async Task<PipelineConfiguration> ResolveAsync(
+        PipelineConfiguration preLoaded,
+        Func<CancellationToken, Task<IReadOnlyList<PipelineJobTemplate>>> loadTemplates,
+        PipelineProject project,
+        string repoProviderId,
+        string? brainProviderId,
+        IReadOnlyList<ProviderConfig> providerConfigs,
+        CancellationToken ct)
+    {
+        // TODO: Add ArgumentNullException.ThrowIfNull for preLoaded, loadTemplates parameters to produce clear validation errors instead of NRE
+        var config = ApplyProjectOverrides(preLoaded, project);
+        var templates = await loadTemplates(ct);
+        return ApplyTemplateOverrides(config, repoProviderId, brainProviderId, providerConfigs, templates);
+    }
+
+    /// <summary>
     /// Number of days to retain workspace folders for failed or cancelled runs.
     /// Set to 0 to delete immediately. Set to -1 to retain indefinitely.
     /// </summary>
