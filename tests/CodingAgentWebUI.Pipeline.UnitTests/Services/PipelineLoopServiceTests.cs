@@ -587,7 +587,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(true, null, null));
         mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<(string, string)>());
+            .ReturnsAsync(new HashSet<(string, ProviderConfigId)>());
 
         var svc = CreateService(mockDistributor.Object);
         using var cts = new CancellationTokenSource();
@@ -635,7 +635,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         // "already-active" is in the active set — should be SKIPPED
         mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<(string, string)> { ("already-active", "ip-1") });
+            .ReturnsAsync(new HashSet<(string, ProviderConfigId)> { ("already-active", "ip-1") });
 
         var svc = CreateService(mockDistributor.Object);
         using var cts = new CancellationTokenSource();
@@ -686,7 +686,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         // Empty active set — no dedup, all issues should proceed
         mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<(string, string)>());
+            .ReturnsAsync(new HashSet<(string, ProviderConfigId)>());
 
         var svc = CreateService(mockDistributor.Object);
         using var cts = new CancellationTokenSource();

@@ -316,7 +316,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         // Assert
         selectedAgent.Should().BeNull();
         _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
-            It.IsAny<string>(), It.IsAny<string>(), AgentLabels.InProgress,
+            It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress,
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
 
         await using (var db = await _dbFactory.CreateDbContextAsync())

@@ -12,6 +12,11 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// Unit tests for PipelineOrchestrationService.CreateDispatchedRunAsync.
 /// </summary>
 // TODO: Implement IAsyncLifetime (or IDisposable) to dispose PipelineOrchestrationService instances — they implement IDisposable/IAsyncDisposable for provider cleanup.
+// TODO: Add characterization tests for IDispatchRunCreator implementations (prerequisite from issue).
+// Verify that CreateDispatchedRunAsync correctly rejects duplicate issues, creates valid runs,
+// and resolves providers. Also add tests validating the transposition-prevention guarantee —
+// e.g., that passing a repo provider ID where an issue provider ID is expected produces
+// distinguishable runtime behavior.
 public class PipelineOrchestrationServiceDispatchTests : IDisposable
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore;

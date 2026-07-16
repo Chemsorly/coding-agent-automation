@@ -12,7 +12,7 @@ public interface ILabelSwapper
     /// Swaps the agent label on an entity: removes all existing agent labels, then adds <paramref name="newLabel"/>.
     /// Routes to the correct provider based on <paramref name="targetKind"/>.
     /// </summary>
-    Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel,
+    Task SwapLabelAsync(ProviderConfigId providerConfigId, string identifier, string newLabel,
         LabelTargetKind targetKind, CancellationToken ct);
 
     /// <summary>
@@ -20,7 +20,7 @@ public interface ILabelSwapper
     /// If <paramref name="expectedCurrentLabel"/> is provided, validates the transition via
     /// <see cref="LabelStateMachine"/> and logs a warning on invalid transitions (fail-open).
     /// </summary>
-    Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel,
+    Task SwapLabelAsync(ProviderConfigId providerConfigId, string identifier, string newLabel,
         LabelTargetKind targetKind, string? expectedCurrentLabel, CancellationToken ct)
         => SwapLabelAsync(providerConfigId, identifier, newLabel, targetKind, ct);
 
@@ -30,12 +30,12 @@ public interface ILabelSwapper
     /// or IRepositoryProvider.EnsureAgentLabelsForPullRequestsAsync for PRs.
     /// Idempotent — safe to call multiple times.
     /// </summary>
-    Task<bool> EnsureAgentLabelsAsync(string providerConfigId,
+    Task<bool> EnsureAgentLabelsAsync(ProviderConfigId providerConfigId,
         LabelTargetKind targetKind, CancellationToken ct);
 
     /// <summary>
     /// Backward-compatible overload for existing call sites (routes to Issue).
     /// </summary>
-    Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel, CancellationToken ct)
+    Task SwapLabelAsync(ProviderConfigId providerConfigId, string identifier, string newLabel, CancellationToken ct)
         => SwapLabelAsync(providerConfigId, identifier, newLabel, LabelTargetKind.Issue, ct);
 }
