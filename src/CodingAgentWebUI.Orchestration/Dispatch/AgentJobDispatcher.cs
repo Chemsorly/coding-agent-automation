@@ -21,17 +21,6 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </remarks>
 public sealed partial class AgentJobDispatcher : IJobDispatcher
 {
-    /// <summary>
-    /// Holds the pre-fetched issue context needed to build a <see cref="JobAssignmentMessage"/>.
-    /// </summary>
-    private sealed record IssueContext(
-        IssueDetail IssueDetail,
-        ParsedIssue ParsedIssue,
-        IReadOnlyList<IssueComment> IssueComments,
-        string? ExistingAnalysis,
-        bool ForceRefreshAnalysis,
-        string? StalenessSignal = null,
-        int RefreshCount = 0);
     private readonly JobDispatcherService _dispatcher;
     private readonly IAgentRegistryService _registry;
     private readonly IOrchestratorRunService _runService;
@@ -40,6 +29,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
     private readonly IAgentCommunication _agentComm;
     private readonly IShutdownSignal _shutdownSignal;
     private readonly IRunLifecycleManager? _lifecycleManager;
+    private readonly IssueContextBuilder _issueContextBuilder;
     private readonly ILogger _logger;
 
     public AgentJobDispatcher(
@@ -70,6 +60,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
         _agentComm = agentComm;
         _shutdownSignal = shutdownSignal;
         _lifecycleManager = lifecycleManager;
+        _issueContextBuilder = new IssueContextBuilder(infra.ProviderFactory, infra.Resolution.ConfigStore);
         _logger = logger;
     }
 

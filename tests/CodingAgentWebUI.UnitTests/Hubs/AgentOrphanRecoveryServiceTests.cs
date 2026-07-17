@@ -2,8 +2,6 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.TestUtilities;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -13,28 +11,22 @@ namespace CodingAgentWebUI.UnitTests.Hubs;
 /// Characterization tests for <see cref="AgentOrphanRecoveryService"/> extracted from
 /// <c>AgentHub.RegisterAgent</c>. Each test covers a specific branch of the recovery logic.
 /// </summary>
-public sealed class AgentOrphanRecoveryServiceTests : IDisposable
+public sealed class AgentOrphanRecoveryServiceTests
 {
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
     private readonly Mock<ILogger> _mockLogger = new();
-    private readonly PipelineOrchestrationService _orchestration;
+    // TODO: Add verification that _mockChangeNotifier.NotifyChange() is called in tests covering
+    // the restore-active-job and detect-orphan branches. Currently no tests assert this side effect,
+    // so accidental removal of NotifyChange() calls in production code would go undetected.
+    private readonly Mock<IChangeNotifier> _mockChangeNotifier = new();
     private readonly AgentOrphanRecoveryService _service;
 
     public AgentOrphanRecoveryServiceTests()
     {
-        _orchestration = TestOrchestrationFactory.CreateMinimal(
-            configStore: Mock.Of<IConfigurationStore>(),
-            providerFactory: Mock.Of<IProviderFactory>());
-
         _service = new AgentOrphanRecoveryService(
             _mockFacade.Object,
-            _orchestration,
+            _mockChangeNotifier.Object,
             _mockLogger.Object);
-    }
-
-    public void Dispose()
-    {
-        _orchestration.Dispose();
     }
 
     // ── Active job restoration: run NOT in memory or history ─────────────
