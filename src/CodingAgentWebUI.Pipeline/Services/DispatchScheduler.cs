@@ -271,6 +271,7 @@ internal sealed class DispatchScheduler
                     reportStatus($"🔄 Dispatching PR #{pr.Identifier} review from '{template.Name}'");
                     notifyChange();
 
+                    var reviewProject = templateProjectLookup.GetValueOrDefault(template.Id);
                     var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
                         async ct =>
                         {
@@ -292,12 +293,12 @@ internal sealed class DispatchScheduler
                             // to guard against regression (KeyNotFoundException) and validate the fallback behavior.
                             return await _dispatchOrchestration!.PrepareReviewDistributionRequestAsync(
                                 reviewDispatchReq,
-                                templateProjectLookup.GetValueOrDefault(template.Id)
-                                    ?? new PipelineProject { Id = "", Name = "Unknown" },
+                                reviewProject ?? new PipelineProject { Id = "", Name = "Unknown" },
                                 ct);
                         },
                         () => JobDistributionRequest.FromTemplate(
-                            template, pr, initiatedBy: "loop", useFullPrMetadata: false),
+                            template, pr, initiatedBy: "loop", useFullPrMetadata: false,
+                            projectId: reviewProject?.Id, projectName: reviewProject?.Name),
                         stopToken);
 
                     if (dispatched)
@@ -364,6 +365,7 @@ internal sealed class DispatchScheduler
                     reportStatus($"🧩 Dispatching epic #{epicItem.Issue.Identifier} {phaseLabel} from '{template.Name}'");
                     notifyChange();
 
+                    var decompProject = templateProjectLookup.GetValueOrDefault(template.Id);
                     var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
                         async ct => await _dispatchOrchestration!.PrepareDecompositionDistributionRequestAsync(
                             epicItem.Issue.Identifier,
@@ -375,11 +377,11 @@ internal sealed class DispatchScheduler
                             "loop",
                             // TODO: Add a test where templateProjectLookup is missing an entry for a pollable template
                             // to guard against regression and validate fallback PipelineProject behavior downstream.
-                            templateProjectLookup.GetValueOrDefault(template.Id)
-                                ?? new PipelineProject { Id = "", Name = "Unknown" },
+                            decompProject ?? new PipelineProject { Id = "", Name = "Unknown" },
                             ct: ct),
                         () => JobDistributionRequest.FromTemplate(
-                            template, epicItem.Issue, epicItem.Phase, initiatedBy: "loop"),
+                            template, epicItem.Issue, epicItem.Phase, initiatedBy: "loop",
+                            projectId: decompProject?.Id, projectName: decompProject?.Name),
                         stopToken);
 
                     if (dispatched)
@@ -437,6 +439,7 @@ internal sealed class DispatchScheduler
 
                         try
                         {
+                            var projLevelProject = templateProjectLookup.GetValueOrDefault(candidate.Template.Id);
                             var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
                                 async ct => await _dispatchOrchestration!.PrepareDecompositionDistributionRequestAsync(
                                     candidate.Issue.Identifier,
@@ -446,13 +449,13 @@ internal sealed class DispatchScheduler
                                     candidate.Template.RepoProviderId,
                                     candidate.Template.BrainProviderId,
                                     "loop",
-                                    templateProjectLookup.GetValueOrDefault(candidate.Template.Id)
-                                        ?? new PipelineProject { Id = "", Name = "Unknown" },
+                                    projLevelProject ?? new PipelineProject { Id = "", Name = "Unknown" },
                                     decompositionSource: "project-level",
                                     ct: ct),
                                 () => JobDistributionRequest.FromTemplate(
                                     candidate.Template, candidate.Issue, candidate.Phase,
-                                    initiatedBy: "loop", decompositionSource: "project-level"),
+                                    initiatedBy: "loop", decompositionSource: "project-level",
+                                    projectId: projLevelProject?.Id, projectName: projLevelProject?.Name),
                                 stoppingToken);
 
                             if (dispatched)

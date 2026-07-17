@@ -608,11 +608,19 @@ public sealed class ReconciliationService : BackgroundService
         if (jobList?.Items is null) return;
 
         // Build lookup: JobName → V1Job (only Complete Jobs)
-        // TODO: ToDictionary could throw ArgumentException if K8s API returns duplicate job names (unlikely but possible due to client pagination bugs). Consider using GroupBy or TryAdd for defensive handling.
-        var completedJobs = jobList.Items
+        var completedJobCandidates = jobList.Items
             .Where(j => j.Metadata?.Name is not null &&
                         j.Status?.Conditions?.Any(c => c.Type == "Complete" && c.Status == "True") == true)
+            .ToList();
+
+        var completedJobs = completedJobCandidates
+            .DistinctBy(j => j.Metadata!.Name)
             .ToDictionary(j => j.Metadata!.Name, StringComparer.Ordinal);
+
+        if (completedJobs.Count != completedJobCandidates.Count)
+            Log.Warning(
+                "ReconciliationService: K8s API returned duplicate job names ({Total} jobs, {Unique} unique) — using first occurrence",
+                completedJobCandidates.Count, completedJobs.Count);
 
         if (completedJobs.Count == 0) return;
 

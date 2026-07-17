@@ -515,6 +515,76 @@ public class K8sEdgeCaseTests : IDisposable
         ReconciliationService.CompleteJobGracePeriodSeconds.Should().Be(30);
     }
 
+    [Fact]
+    public async Task DetectCompletedJobsWithStuckWorkItems_DuplicateJobNames_DoesNotCrash()
+    {
+        // Scenario: K8s API returns duplicate job names (pagination edge case).
+        // Before the fix, this would throw ArgumentException from ToDictionary.
+        var workItemId = Guid.NewGuid();
+        var k8sJobName = $"caa-{workItemId.ToString("N")[..8]}";
+        await InsertWorkItem(workItemId, "owner/repo#poll-dup", "kiro,dotnet", WorkItemStatus.Dispatched,
+            k8sJobName: k8sJobName);
+
+        var completionTime = DateTime.UtcNow.AddSeconds(-60); // Past grace period
+
+        // Setup K8s mock: two jobs with the SAME name (duplicate)
+        SetupListJobsReturning(
+            new V1Job
+            {
+                Metadata = new V1ObjectMeta
+                {
+                    Name = k8sJobName,
+                    Labels = new Dictionary<string, string>
+                    {
+                        ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                        ["caa/work-item-id"] = workItemId.ToString()
+                    }
+                },
+                Status = new V1JobStatus
+                {
+                    CompletionTime = completionTime,
+                    Conditions =
+                    [
+                        new V1JobCondition { Type = "Complete", Status = "True" }
+                    ]
+                }
+            },
+            new V1Job
+            {
+                Metadata = new V1ObjectMeta
+                {
+                    Name = k8sJobName, // Same name — duplicate
+                    Labels = new Dictionary<string, string>
+                    {
+                        ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+                        ["caa/work-item-id"] = workItemId.ToString()
+                    }
+                },
+                Status = new V1JobStatus
+                {
+                    CompletionTime = completionTime,
+                    Conditions =
+                    [
+                        new V1JobCondition { Type = "Complete", Status = "True" }
+                    ]
+                }
+            });
+
+        var reconciliationService = CreateReconciliationService();
+
+        // Act — should NOT throw ArgumentException
+        // TODO: Use `Func<Task> act = () => Invoke...; await act.Should().NotThrowAsync()` to explicitly
+        // assert no-crash behavior. Currently, a revert would surface as ArgumentException propagating
+        // through the test runner rather than a deliberate assertion failure.
+        await InvokeDetectCompletedJobsWithStuckWorkItemsAsync(reconciliationService);
+
+        // Assert: first occurrence is used, WorkItem transitions to Failed
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Failed);
+        item.FailureReason.Should().Be(FailureReason.InfrastructureFailure);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════
     // Non-kiro items dispatch even when PVC pool is exhausted
     // ═══════════════════════════════════════════════════════════════════════
