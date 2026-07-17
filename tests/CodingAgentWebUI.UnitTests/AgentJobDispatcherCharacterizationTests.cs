@@ -479,6 +479,11 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
 
     #endregion
 
+    // TODO: Add failure path characterization tests for BuildAndSendAsync and PrepareAndResolveConfigAsync.
+    // Verify that exceptions from PrepareProviderConfigsAsync and PipelineConfigurationResolver.ResolveAsync
+    // propagate correctly through the shared helpers and are caught by the try/catch in each dispatch method.
+    // The issue prerequisites require "characterization tests covering dispatch success and failure paths".
+
     public void Dispose()
     {
         _httpClient.Dispose();
