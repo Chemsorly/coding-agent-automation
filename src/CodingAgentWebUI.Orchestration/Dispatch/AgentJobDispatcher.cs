@@ -29,6 +29,8 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
     private readonly IAgentCommunication _agentComm;
     private readonly IShutdownSignal _shutdownSignal;
     private readonly IRunLifecycleManager? _lifecycleManager;
+    // TODO: Dead field — _issueContextBuilder is no longer used after inlining PrepareIssueContextAsync.
+    // Remove this field and consider delegating back to IssueContextBuilder.BuildAsync (see #1339 merge conflict).
     private readonly IssueContextBuilder _issueContextBuilder;
     private readonly ILogger _logger;
 

@@ -142,6 +142,9 @@ public class ProviderConfigPreparationServiceTests
     {
         SetupRepoConfigs(TestRepoConfig); // brain-1 not in list
         SetupAgentConfigs(TestAgentConfig);
+        // TODO: This GetProviderConfigByIdAsync mock is dead code — the implementation uses
+        // LoadProviderConfigsAsync + ProviderConfigResolver.ResolveAsync (list-based), not GetByIdAsync.
+        // The test passes only because brain-1 is absent from SetupRepoConfigs, not because of this mock.
         _mockStore.Setup(s => s.GetProviderConfigByIdAsync("brain-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
 

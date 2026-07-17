@@ -275,6 +275,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// Pre-fetches issue details, comments, swaps labels to in-progress,
     /// and detects existing analysis. Returns null if issue provider config not found.
     /// </summary>
+    // TODO: This method duplicates logic already in IssueContextBuilder.BuildAsync (introduced by #1339).
+    // Both this class and AgentJobDispatcher inline the same issue-preparation logic.
+    // Delegate to IssueContextBuilder.BuildAsync to restore single-source-of-truth.
     private async Task<IssueContext?> PrepareIssueContextAsync(
         string issueIdentifier, string issueProviderId, CancellationToken ct)
     {
@@ -342,7 +345,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
-        return await PipelineConfiguration.ResolveAsync(
+        return await PipelineConfigurationResolver.ResolveAsync(
             _pipelineConfigStore.LoadPipelineConfigAsync,
             _projectStore.LoadAllTemplatesAsync,
             project, repoProviderId, brainProviderId, providerConfigs, ct);
@@ -351,6 +354,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// <summary>
     /// Internal DTO for pre-fetched issue context.
     /// </summary>
+    // TODO: This private nested IssueContext record shadows the namespace-level IssueContext (IssueContext.cs).
+    // Both have identical shape. Reuse the namespace-level record to avoid silent divergence if it evolves.
     private sealed record IssueContext(
         IssueDetail IssueDetail,
         ParsedIssue ParsedIssue,

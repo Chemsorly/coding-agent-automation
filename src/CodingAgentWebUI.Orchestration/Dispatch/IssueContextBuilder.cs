@@ -16,6 +16,9 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// in <see cref="DispatchOrchestrationService.PrepareCoreAsync"/> because it depends
 /// on the pipeline configuration threshold which is resolved after issue context is built.
 /// </remarks>
+// TODO: This class is currently unused — both AgentJobDispatcher and DispatchOrchestrationService
+// inline PrepareIssueContextAsync instead of delegating to BuildAsync. This appears to be a
+// stale-branch merge conflict with #1339. Either restore usage or remove the class and its tests.
 internal sealed class IssueContextBuilder
 {
     private readonly IProviderFactory _providerFactory;

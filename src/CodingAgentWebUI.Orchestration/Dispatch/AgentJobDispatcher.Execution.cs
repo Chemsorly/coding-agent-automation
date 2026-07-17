@@ -143,7 +143,7 @@ public sealed partial class AgentJobDispatcher
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
 
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
-            var config = await PipelineConfiguration.ResolveAsync(
+            var config = await PipelineConfigurationResolver.ResolveAsync(
                 _infra.Resolution.ConfigStore.LoadPipelineConfigAsync,
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
                 project, repoProviderId, brainProviderId, providerConfigs, ct);
@@ -290,7 +290,7 @@ public sealed partial class AgentJobDispatcher
                 request.RepoProviderId, agentProviderId, request.BrainProviderId, pipelineProviderId: null, ct);
 
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
-            var config = await PipelineConfiguration.ResolveAsync(
+            var config = await PipelineConfigurationResolver.ResolveAsync(
                 _infra.Resolution.ConfigStore.LoadPipelineConfigAsync,
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
                 project, request.RepoProviderId, request.BrainProviderId, providerConfigs, ct);
@@ -491,7 +491,7 @@ public sealed partial class AgentJobDispatcher
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, ct, additionalRepoProviderIds);
 
             // Settings resolution: apply Project → Template overrides to the pre-loaded config
-            config = await PipelineConfiguration.ResolveAsync(
+            config = await PipelineConfigurationResolver.ResolveAsync(
                 config,
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
                 project, repoProviderId, brainProviderId, providerConfigs, ct);
@@ -701,6 +701,9 @@ public sealed partial class AgentJobDispatcher
     /// Pre-fetches issue details, comments, swaps labels, and detects existing analysis.
     /// Returns null if the issue provider config is not found.
     /// </summary>
+    // TODO: This method duplicates logic already in IssueContextBuilder.BuildAsync (introduced by #1339).
+    // Both this class and DispatchOrchestrationService inline the same issue-preparation logic.
+    // Delegate to IssueContextBuilder.BuildAsync to restore single-source-of-truth.
     private async Task<IssueContext?> PrepareIssueContextAsync(
         string issueIdentifier,
         string issueProviderId,
@@ -757,7 +760,7 @@ public sealed partial class AgentJobDispatcher
             }
         }
 
-        return new IssueContext(issueDetail, parsedIssue, issueComments, existingAnalysis, forceRefreshAnalysis, stalenessSignal);
+        return new IssueContext(issueDetail, parsedIssue, issueComments, existingAnalysis, forceRefreshAnalysis, stalenessSignal, 0);
     }
 
     internal static Dictionary<string, string>? CaptureTraceContext() =>
