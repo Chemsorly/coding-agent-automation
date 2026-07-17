@@ -567,7 +567,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             context.Job.IssueDetail, context.Job.IssueComments,
             _feedbackService, _historyService,
             context.EmitOutputLine,
-            step => context.ReportStepTransition!(step, ct), // TODO: Null-forgiving on nullable Func — consider making ReportStepTransition required or adding a null guard
+            step => context.ReportStepTransition?.Invoke(step, ct) ?? Task.CompletedTask,
             ct);
     }
 
