@@ -1800,6 +1800,9 @@ public class LocalPipelineExecutorTests : IDisposable
 
     // ── PullRequestCreationContext ──────────────────────────────────────
 
+    // TODO: Add test that exercises CreatePullRequestAsync with ReportStepTransition set to null,
+    // verifying it completes without NullReferenceException (validates the ?.Invoke ?? Task.CompletedTask fix).
+
     [Fact]
     public void PullRequestCreationContext_CanBeConstructed()
     {
