@@ -3,6 +3,7 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.SignalR;
 using ILogger = Serilog.ILogger;
@@ -11,7 +12,7 @@ namespace CodingAgentWebUI.Hubs;
 
 /// <summary>
 /// Marker attribute for hub methods that require the calling agent to have an active job.
-/// Convention: the first parameter of methods decorated with this attribute is always <c>jobId</c> (string).
+/// Convention: the first parameter of methods decorated with this attribute is always <c>jobId</c> (<see cref="JobId"/>).
 /// </summary>
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class RequiresActiveJobAttribute : Attribute;
@@ -68,7 +69,7 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             var requiresActiveJob = context.HubMethod.GetCustomAttribute<RequiresActiveJobAttribute>() is not null;
             if (requiresActiveJob)
             {
-                if (context.HubMethodArguments.Count == 0 || context.HubMethodArguments[0] is not string jobId)
+                if (context.HubMethodArguments.Count == 0 || context.HubMethodArguments[0] is not JobId jobId)
                 {
                     _logger.Warning(
                         "Hub method {Method} rejected — missing or invalid jobId parameter from agent {AgentId}",
@@ -76,12 +77,12 @@ public sealed class AgentAuthorizationFilter : IHubFilter
                     throw new HubException($"Method {methodName} requires a jobId as the first parameter");
                 }
 
-                if (!string.Equals(agent.ActiveJobId, jobId, StringComparison.Ordinal))
+                if (!string.Equals(agent.ActiveJobId, jobId.Value, StringComparison.Ordinal))
                 {
                     _logger.Warning(
                         "Hub method {Method} rejected — job {JobId} not assigned to agent {AgentId} (active job: {ActiveJobId})",
-                        methodName, jobId, agent.AgentId, agent.ActiveJobId ?? "none");
-                    throw new HubException($"Job {jobId} is not assigned to agent {agent.AgentId}");
+                        methodName, jobId.Value, agent.AgentId, agent.ActiveJobId ?? "none");
+                    throw new HubException($"Job {jobId.Value} is not assigned to agent {agent.AgentId}");
                 }
             }
         }

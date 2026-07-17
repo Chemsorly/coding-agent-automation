@@ -2,6 +2,9 @@ using System.Security.Cryptography;
 using System.Text;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
+using MessagePack;
+using MessagePack.Formatters;
+using MessagePack.Resolvers;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 namespace CodingAgentWebUI.Agent;
@@ -111,7 +114,13 @@ public sealed class HubConnectionManager : IAsyncDisposable
             {
                 options.AccessTokenProvider = () => Task.FromResult<string?>(derivedKey);
             })
-            .AddMessagePackProtocol()
+            .AddMessagePackProtocol(options =>
+            {
+                options.SerializerOptions = MessagePackSerializerOptions.Standard
+                    .WithResolver(CompositeResolver.Create(
+                        new IMessagePackFormatter[] { new JobIdFormatter() },
+                        new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
+            })
             .WithAutomaticReconnect(new InfiniteRetryPolicy())
             .WithServerTimeout(TimeSpan.FromSeconds(60))
             .WithKeepAliveInterval(TimeSpan.FromSeconds(15))
@@ -169,11 +178,11 @@ public sealed class HubConnectionManager : IAsyncDisposable
                 await OnAssignJob(message);
         });
 
-        _connection.On<string>("CancelJob", async jobId =>
+        _connection.On<JobId>("CancelJob", async jobId =>
         {
-            _logger.Information("Received cancellation request for job {JobId}", jobId);
+            _logger.Information("Received cancellation request for job {JobId}", jobId.Value);
             if (OnCancelJob is not null)
-                await OnCancelJob(jobId);
+                await OnCancelJob(jobId.Value);
         });
 
         _connection.On<ChatPromptMessage>("AssignChatPrompt", async message =>
