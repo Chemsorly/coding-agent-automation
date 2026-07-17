@@ -86,10 +86,10 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
         _serviceCts?.Dispose();
         Interlocked.Exchange(ref _leaderCts, null)?.Dispose();
 
-        // TODO: Consider adding Volatile.Write(ref _leaderState, 0) here as a defensive reset.
-        // If StartAsync is called without a preceding StopAsync (e.g., crash recovery), stale
-        // _leaderState=1 would cause the acquired && !IsLeader check to be false, skipping
-        // the acquisition event.
+        // Defensive reset: if StartAsync is called without a preceding StopAsync (e.g., crash
+        // recovery or host restart), stale _leaderState=1 would skip leadership acquisition.
+        Volatile.Write(ref _leaderState, 0);
+
         _serviceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _leaderCts = new CancellationTokenSource();
 
@@ -153,13 +153,16 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
 
                 if (acquired && !IsLeader)
                 {
-                    // Transition to leader
-                    // TODO: Should use Interlocked.CompareExchange(ref _leaderState, 1, 0) instead of
-                    // Volatile.Write to prevent re-setting state to 1 if StopAsync has already
-                    // transitioned it to 0 via _serviceCts.CancelAsync() racing with an in-flight acquire.
-                    Volatile.Write(ref _leaderState, 1);
-                    Log.Information("PostgresLeaderElectionService: Leadership ACQUIRED via advisory lock");
-                    SafeInvokeStartedLeading();
+                    // Transition to leader — CAS ensures we don't overwrite if StopAsync raced ahead
+                    if (Interlocked.CompareExchange(ref _leaderState, 1, 0) == 0)
+                    {
+                        Log.Information("PostgresLeaderElectionService: Leadership ACQUIRED via advisory lock");
+                        SafeInvokeStartedLeading();
+                    }
+                    else
+                    {
+                        Log.Debug("PostgresLeaderElectionService: Lock acquired but state transition blocked (concurrent stop)");
+                    }
                 }
                 else if (!acquired && IsLeader)
                 {

@@ -82,13 +82,13 @@ public sealed class PipelineRun
     public PipelineStep HighWaterMark { get; set; }
 
     [Obsolete("Use StartedAtOffset for timezone-safe comparisons")]
-    public DateTime StartedAt { get; init; }
+    public DateTime StartedAt { get; internal set; }
 
     [Obsolete("Use CompletedAtOffset for timezone-safe comparisons")]
     public DateTime? CompletedAt { get; set; }
 
     /// <summary>Timezone-safe shadow of <see cref="StartedAt"/>. Set alongside the original property.</summary>
-    public DateTimeOffset StartedAtOffset { get; init; }
+    public DateTimeOffset StartedAtOffset { get; internal set; }
 
     /// <summary>Timezone-safe shadow of <see cref="CompletedAt"/>. Set alongside the original property.</summary>
     public DateTimeOffset? CompletedAtOffset { get; set; }
@@ -110,6 +110,19 @@ public sealed class PipelineRun
         CompletedAt = timestamp.UtcDateTime;
 #pragma warning restore CS0618
         CompletedAtOffset = timestamp;
+    }
+
+    /// <summary>
+    /// Resets StartedAt to the actual agent dispatch time. Called when a queued
+    /// WorkItem transitions Pending→Dispatched, replacing the preparation-time
+    /// timestamp with the true agent start time.
+    /// </summary>
+    public void ResetStartedAt(DateTimeOffset actualStart)
+    {
+#pragma warning disable CS0618
+        StartedAt = actualStart.UtcDateTime;
+#pragma warning restore CS0618
+        StartedAtOffset = actualStart;
     }
 
     /// <summary>
