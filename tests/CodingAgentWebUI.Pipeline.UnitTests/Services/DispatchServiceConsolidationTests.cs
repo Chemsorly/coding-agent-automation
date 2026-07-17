@@ -149,7 +149,7 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         // Label swapper should never be called for consolidation items
         mockLabelSwapper.Verify(
-            s => s.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
