@@ -192,7 +192,6 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         run.MarkCompleted();
         EmitOutputLine("🚫 Pipeline cancelled");
         TransitionTo(run, PipelineStep.Cancelled);
-        // TODO: [WARNING] CancelPipelineAsync does not accept a CancellationToken parameter, so it cannot propagate one to AddRunToHistoryAsync. Consider adding CancellationToken to the method signature to allow cancellable DB operations during shutdown.
         await AddRunToHistoryAsync(run).ConfigureAwait(false);
     }
 
@@ -213,7 +212,6 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         {
             run.MarkCompleted();
             run.CurrentStep = PipelineStep.Cancelled;
-            // TODO: [WARNING] MarkAgentRunsCancelled does not accept a CancellationToken parameter, so it cannot propagate one to AddRunToHistoryAsync. Consider adding CancellationToken to allow cancellable DB operations during shutdown.
             await AddRunToHistoryAsync(run).ConfigureAwait(false);
             _runService.RemoveRun(run.RunId);
             cancelledIssues.Add((run.IssueIdentifier, run.IssueProviderConfigId));
