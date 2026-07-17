@@ -449,6 +449,10 @@ public sealed class DispatchService : BackgroundService
             {
                 workItem.ClaimedPvcName = null;
                 availablePvcs.Add(claimedPvc);
+                // TODO: SaveChangesAsync can throw DbUpdateConcurrencyException if another process modified
+                // the work item concurrently, which would bypass FailWorkItem. Window is narrow and this is
+                // strictly better than the prior behavior (permanent PVC orphan), but consider wrapping in try-catch.
+                await db.SaveChangesAsync(ct);
             }
             await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
@@ -691,11 +695,12 @@ public sealed class DispatchService : BackgroundService
             Log.Error(ex, "DispatchService: failed to create K8s Job {JobName} for consolidation WorkItem {WorkItemId}", jobName, item.Id);
             if (claimedPvc is not null)
             {
-                // TODO: ClaimedPvcName = null is set on tracked entity but never persisted via SaveChangesAsync
-                // before FailWorkItem (which uses its own DbContext). This leaves an orphaned PVC claim in the DB.
-                // Same inherited issue as pipeline dispatch path (~line 415).
                 workItem.ClaimedPvcName = null;
                 availablePvcs.Add(claimedPvc);
+                // TODO: SaveChangesAsync can throw DbUpdateConcurrencyException if another process modified
+                // the work item concurrently, which would bypass FailWorkItem. Window is narrow and this is
+                // strictly better than the prior behavior (permanent PVC orphan), but consider wrapping in try-catch.
+                await db.SaveChangesAsync(ct);
             }
             await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
