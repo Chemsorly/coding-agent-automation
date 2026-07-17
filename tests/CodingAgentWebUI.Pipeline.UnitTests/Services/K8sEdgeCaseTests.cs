@@ -605,16 +605,8 @@ public class K8sEdgeCaseTests : IDisposable
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.ErrorMessage.Should().Contain("K8s Job creation failed");
 
-        // BUG: PVC claim is NOT reverted in DB after K8s API failure.
-        // DispatchService.DispatchSingleItemAsync nulls workItem.ClaimedPvcName in memory
-        // but FailWorkItem uses a NEW DbContext — the original context's changes are lost.
-        // The PVC stays claimed on the Failed WorkItem until ReconciliationService's
-        // ReconcilePvcsFromPollAsync detects it (which checks Job existence).
-        //
-        // When this bug is fixed, change this assertion to:
-        //   item.ClaimedPvcName.Should().BeNull("PVC claim must be reverted on K8s API failure");
-        item.ClaimedPvcName.Should().Be("pvc-leak-test",
-            "BUG: PVC claim persists in DB after K8s failure — DispatchService doesn't save the revert");
+        // Assert: PVC claim is reverted in DB after K8s API failure
+        item.ClaimedPvcName.Should().BeNull("PVC claim must be reverted on K8s API failure");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
