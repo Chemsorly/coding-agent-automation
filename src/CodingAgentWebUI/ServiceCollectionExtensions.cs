@@ -125,6 +125,8 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<PipelineOrchestrationService>());
         services.AddSingleton<Pipeline.Interfaces.IDispatchRunCreator>(sp =>
             sp.GetRequiredService<PipelineOrchestrationService>());
+        services.AddSingleton<Pipeline.Interfaces.IChangeNotifier>(sp =>
+            sp.GetRequiredService<PipelineOrchestrationService>());
 
         // Shutdown signal: cooperative flag to prevent dispatch-during-shutdown races
         services.AddSingleton<Pipeline.Interfaces.IShutdownSignal>(new Pipeline.Services.ShutdownSignal());
@@ -308,7 +310,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IAgentOrphanRecoveryService>(sp => new AgentOrphanRecoveryService(
             sp.GetRequiredService<IAgentHubFacade>(),
-            sp.GetRequiredService<PipelineOrchestrationService>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IChangeNotifier>(),
             Log.Logger));
 
         services.AddSingleton<IAgentJobLifecycleService>(sp => new AgentJobLifecycleService(
@@ -316,7 +318,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IRunLifecycleManager>(),
             sp.GetRequiredService<ILabelSwapper>(),
             sp.GetRequiredService<IHubIssueOperations>(),
-            sp.GetRequiredService<PipelineOrchestrationService>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IChangeNotifier>(),
             Log.Logger));
 
         return services;

@@ -4,7 +4,6 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using ILogger = Serilog.ILogger;
 
@@ -21,7 +20,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     private readonly IRunLifecycleManager _lifecycleManager;
     private readonly ILabelSwapper _labelSwapper;
     private readonly IHubIssueOperations _issueOps;
-    private readonly PipelineOrchestrationService _orchestration;
+    private readonly IChangeNotifier _changeNotifier;
     private readonly ILogger _logger;
 
     public AgentJobLifecycleService(
@@ -29,14 +28,14 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         IRunLifecycleManager lifecycleManager,
         ILabelSwapper labelSwapper,
         IHubIssueOperations issueOps,
-        PipelineOrchestrationService orchestration,
+        IChangeNotifier changeNotifier,
         ILogger logger)
     {
         _facade = facade;
         _lifecycleManager = lifecycleManager;
         _labelSwapper = labelSwapper;
         _issueOps = issueOps;
-        _orchestration = orchestration;
+        _changeNotifier = changeNotifier;
         _logger = logger;
     }
 
@@ -47,7 +46,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         {
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Busy);
             _logger.Information("Agent {AgentId} accepted job {JobId}", agent.AgentId, jobId.Value);
-            _orchestration.NotifyChange();
+            _changeNotifier.NotifyChange();
         }
 
         // Transition WorkItem from Dispatched → Running (DB+SignalR mode).
@@ -132,7 +131,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 "This indicates a dispatch race condition — investigate if recurring.",
                 jobId.Value, run.IssueIdentifier, run.CurrentStep, run.AgentId, retryCount);
 
-            _orchestration.NotifyChange();
+            _changeNotifier.NotifyChange();
         }
         else
         {
@@ -208,7 +207,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                     _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
                 }
 
-                _orchestration.NotifyChange();
+                _changeNotifier.NotifyChange();
                 return;
             }
 
@@ -279,7 +278,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 "Job {JobId} completed: step={FinalStep}, PR={PullRequestUrl}",
                 jobId.Value, payload.FinalStep, payload.PullRequestUrl ?? "none");
 
-            _orchestration.NotifyChange();
+            _changeNotifier.NotifyChange();
         }
         else
         {
@@ -413,7 +412,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 ApplyStepMetadata(run, metadata);
 
             _logger.Debug("Job {JobId} step transition → {Step}", jobId.Value, step);
-            _orchestration.NotifyChange();
+            _changeNotifier.NotifyChange();
         }
     }
 
