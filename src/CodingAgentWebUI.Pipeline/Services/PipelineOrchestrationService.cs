@@ -27,7 +27,12 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IProviderFactory _providerFactory;
     private readonly ILabelSwapper _labelSwapper;
+#pragma warning disable CS0414 // Field assigned but never used — constructor parameter retained for backward compatibility
+    // TODO: Consider removing _issueParser field entirely — it is dead code after ExecutePipelineStepsAsync was removed.
+    // The constructor signature stability concern only applies to sealed/derived classes; this class is non-sealed but
+    // no known subclass (except tests) depends on this parameter. Removing it would also trim IssueDescriptionParser from the DI graph.
     private readonly IssueDescriptionParser _issueParser;
+#pragma warning restore CS0414
     private readonly IPipelineExecutionFacade _executionFacade;
     private readonly IPipelineCompletionFacade _completionFacade;
     private readonly IPipelineCancellationFacade _cancellationFacade;
@@ -188,89 +193,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             run.RunId, issueIdentifier, agentId);
 
         return run;
-    }
-
-    private async Task ExecutePipelineStepsAsync(
-        PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
-    {
-        using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
-        using var instrumentation = PipelineRunInstrumentation.Start(
-            run.RunId, run.IssueIdentifier, run.RunType, run.ProjectId, run.ProjectName);
-
-        IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
-        Steps.PipelineStepContext? ctx = null;
-
-        var callbacks = new OrchestratorCallbacks(this, run, () => ctx);
-        ctx = Steps.PipelineStepContext.ForOrchestrator(
-            run: run,
-            config: _activeConfig!,
-            repoProvider: _providerManager.ActiveRepoProvider!,
-            agentProvider: _providerManager.ActiveAgentProvider!,
-            brainProvider: _providerManager.ActiveBrainProvider,
-            pipelineProvider: _providerManager.ActivePipelineProvider,
-            cts: _lifecycle.CancellationTokenSource,
-            // TODO: Unsafe downcast — if DI ever registers a standalone IProviderConfigStore that doesn't implement
-            // IConfigurationStore, this will throw InvalidCastException at runtime. Consider injecting IConfigurationStore
-            // directly for PipelineStepContext, or narrowing the configStore parameter type in ForOrchestrator.
-            configStore: (IConfigurationStore)_providerConfigStore,
-            callbacks: callbacks,
-            issueOps: issueOps,
-            agentExecution: _executionFacade.AgentExecution,
-            qualityGates: _executionFacade.QualityGates,
-            brainSync: _executionFacade.BrainSync,
-            prOrchestrator: _completionFacade.PrOrchestrator,
-            logger: _logger,
-            qualityGateValidator: _executionFacade.QualityGateValidator,
-            issueProvider: issueProvider);
-
-        try
-        {
-            await Steps.PipelineStepRunner.ExecuteAsync(BuildStepPipeline(), ctx, ct);
-
-            if (run.CurrentStep == PipelineStep.Completed)
-                instrumentation.MarkCompleted();
-
-            instrumentation.Activity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
-        }
-        catch (OperationCanceledException)
-        {
-            instrumentation.Activity?.SetTag("pipeline.cancelled", true);
-            instrumentation.Activity?.SetTag("pipeline.final_step", "Cancelled");
-
-            if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
-            {
-                _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
-                run.MarkCompleted();
-                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
-                _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
-                _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
-                await _lifecycle.AddRunToHistoryAsync(run).ConfigureAwait(false);
-            }
-        }
-        catch (Exception ex)
-        {
-            instrumentation.Activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            instrumentation.Activity?.AddException(ex);
-            throw;
-        }
-    }
-
-    /// <summary>
-    /// Builds the ordered list of pipeline steps. Step ordering is explicit and configurable.
-    /// Orchestrator prefix (FetchIssue â†’ Clone â†’ RunEnvironmentSetup â†’ SyncBrainPreRun) followed
-    /// by the shared core implementation steps from <see cref="Steps.PipelineStepFactory"/>.
-    /// </summary>
-    private IReadOnlyList<Steps.IPipelineStep> BuildStepPipeline()
-    {
-        var steps = new List<Steps.IPipelineStep>
-        {
-            new Steps.FetchIssueStep(_issueParser, new IssueImageExtractor()),
-            new Steps.CloneRepositoryStep(),
-            new Steps.RunEnvironmentSetupStep(),
-            new Steps.SyncBrainPreRunStep(),
-        };
-        steps.AddRange(Steps.PipelineStepFactory.CreateCoreImplementationSteps());
-        return steps;
     }
 
     /// <summary>Cancels the active pipeline run. Delegates state transitions to lifecycle service.</summary>
@@ -576,6 +498,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// that need the latest state. The <c>Func</c> ensures the current context snapshot is always accessed.
     /// </para>
     /// </remarks>
+    // TODO: OrchestratorCallbacks and its delegate methods (CreatePullRequestAsync, FinalizePullRequestAsync,
+    // HandlePrCreationResultAsync, PostPullRequestCompletionAsync, CreateDraftPrIfNotExistsAsync, UpdateFileChangeStatsAsync,
+    // HandlePipelineErrorAsync, FailRunAsync) appear to be dead code after ExecutePipelineStepsAsync was removed.
+    // Evaluate whether they can be safely deleted or if they are still referenced via other paths.
     private sealed class OrchestratorCallbacks(
         PipelineOrchestrationService svc,
         PipelineRun run,

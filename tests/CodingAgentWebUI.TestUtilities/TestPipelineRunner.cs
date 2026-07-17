@@ -228,14 +228,11 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
 
         var steps = BuildStepPipeline();
 
-        try
+        var outcome = await PipelineRunExecutionHost.ExecuteStepsAsync(steps, ctx, ct);
+
+        switch (outcome)
         {
-            await PipelineStepRunner.ExecuteAsync(steps, ctx, ct);
-        }
-        catch (OperationCanceledException)
-        {
-            if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
-            {
+            case PipelineExecutionOutcome.CancelledOutcome when run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed):
                 run.CompletedAt = DateTime.UtcNow;
                 run.CompletedAtOffset = DateTimeOffset.UtcNow;
                 run.FinalLabel = AgentLabels.Cancelled;
@@ -243,7 +240,20 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
                 _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
                 await _lifecycle.AddRunToHistoryAsync(run);
-            }
+                break;
+
+            case PipelineExecutionOutcome.CancelledOutcome:
+                // Already cancelled/failed — no additional transitions needed
+                break;
+
+            case PipelineExecutionOutcome.FailedOutcome { Exception: var ex }:
+                // Preserve existing behavior: generic exceptions propagate to RunAsync's outer catch
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw();
+                break;
+
+            case PipelineExecutionOutcome.CompletedOutcome:
+                // Steps completed normally — no action needed at this level
+                break;
         }
     }
 
