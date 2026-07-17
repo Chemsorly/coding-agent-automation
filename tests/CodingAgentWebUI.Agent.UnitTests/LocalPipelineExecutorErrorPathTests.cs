@@ -200,7 +200,7 @@ public class LocalPipelineExecutorErrorPathTests
         var run = CreateRunAtStep(PipelineStep.AnalyzingCode);
         run.BranchName = "feature/auto-123-fix-bug";
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.AnalyzingCode);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.AnalyzingCode);
 
         metadata.Should().NotBeNull();
         metadata!["BranchName"].Should().Be("feature/auto-123-fix-bug");
@@ -212,7 +212,7 @@ public class LocalPipelineExecutorErrorPathTests
         var run = CreateRunAtStep(PipelineStep.GeneratingCode);
         run.RetryCount = 3;
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
 
         metadata.Should().NotBeNull();
         metadata!["RetryCount"].Should().Be("3");
@@ -226,7 +226,7 @@ public class LocalPipelineExecutorErrorPathTests
         run.LinesAdded = 200;
         run.LinesRemoved = 45;
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
 
         metadata.Should().NotBeNull();
         metadata!["FilesChangedCount"].Should().Be("7");
@@ -239,7 +239,7 @@ public class LocalPipelineExecutorErrorPathTests
     {
         var run = CreateRunAtStep(PipelineStep.Created);
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.CloningRepository);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.CloningRepository);
 
         metadata.Should().BeNull();
     }
@@ -251,7 +251,7 @@ public class LocalPipelineExecutorErrorPathTests
         run.TotalTokens = 50000;
         run.TotalCost = 0.95m;
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
 
         metadata.Should().NotBeNull();
         metadata!["TotalTokens"].Should().Be("50000");
@@ -267,7 +267,7 @@ public class LocalPipelineExecutorErrorPathTests
         run.SetCodeReviewCounts(critical: 3, warning: 0, suggestion: 0);
         run.CodeReviewAgentsRun = new List<string> { "Security" };
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.ReviewingCode);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.ReviewingCode);
 
         metadata.Should().NotBeNull();
         metadata!["CodeReviewIterationsTotal"].Should().Be("2");
@@ -282,7 +282,7 @@ public class LocalPipelineExecutorErrorPathTests
         run.DecompositionSubIssuesCreated = 4;
         run.DecompositionSubIssuesAttempted = 5;
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.PostingSummary);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.PostingSummary);
 
         metadata.Should().NotBeNull();
         metadata!["DecompositionSubIssuesCreated"].Should().Be("4");

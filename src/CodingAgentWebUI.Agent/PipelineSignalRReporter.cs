@@ -28,7 +28,7 @@ namespace CodingAgentWebUI.Agent;
 ///     no semaphore, no metadata. Used during PR creation only.</item>
 /// </list>
 /// </remarks>
-internal sealed class PipelineSignalRReporter : IAsyncDisposable
+public sealed class PipelineSignalRReporter : IAsyncDisposable
 {
     private readonly SemaphoreSlim _signalrLock = new(1, 1);
     private readonly HubConnection _connection;

@@ -165,6 +165,7 @@ try
 
     // ── Pipeline executor ──
     builder.Services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
+    builder.Services.AddSingleton<IPipelineReporterFactory>(sp => new PipelineReporterFactory(Log.Logger));
     builder.Services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(
         sp.GetRequiredService<IKiroCliOrchestrator>(),
         sp.GetRequiredService<IHttpClientFactory>(),
@@ -173,7 +174,8 @@ try
         Log.Logger,
         sp.GetRequiredService<IBrainUpdateService>(),
         openIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
-        agentIdentity: sp.GetRequiredService<AgentIdentity>()));
+        agentIdentity: sp.GetRequiredService<AgentIdentity>(),
+        reporterFactory: sp.GetRequiredService<IPipelineReporterFactory>()));
 
     // ── Consolidation executor ──
     builder.Services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
