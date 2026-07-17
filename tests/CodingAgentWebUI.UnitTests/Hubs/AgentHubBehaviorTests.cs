@@ -883,6 +883,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     #region Helpers
 
+    // TODO: Once AgentHub is decoupled from concrete PipelineOrchestrationService, replace
+    // CreateMinimalOrchestrationService() with a Mock<IChangeNotifier> to avoid constructing the
+    // heavy orchestration service just to satisfy the constructor. The lifecycle service already
+    // accepts IChangeNotifier — only AgentHub's concrete dependency forces the real instance here.
     private AgentHub CreateHubWithOrchestration(string connectionId = "conn-1")
     {
         var orchestration = CreateMinimalOrchestrationService();
@@ -954,7 +958,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         return service;
     }
 
-    private IAgentJobLifecycleService CreateRealLifecycleService(PipelineOrchestrationService orchestration)
+    private IAgentJobLifecycleService CreateRealLifecycleService(IChangeNotifier changeNotifier)
     {
         var issueOps = new AgentIssueOperations(
             _mockFacade.Object,
@@ -965,7 +969,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockLifecycleManager.Object,
             _mockLabelSwapper.Object,
             issueOps,
-            orchestration,
+            changeNotifier,
             _mockLogger.Object);
     }
 

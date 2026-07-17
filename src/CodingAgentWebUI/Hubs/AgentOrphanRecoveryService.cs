@@ -1,5 +1,5 @@
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Hubs;
@@ -11,16 +11,16 @@ namespace CodingAgentWebUI.Hubs;
 public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
 {
     private readonly IAgentHubFacade _facade;
-    private readonly PipelineOrchestrationService _orchestration;
+    private readonly IChangeNotifier _changeNotifier;
     private readonly ILogger _logger;
 
     public AgentOrphanRecoveryService(
         IAgentHubFacade facade,
-        PipelineOrchestrationService orchestration,
+        IChangeNotifier changeNotifier,
         ILogger logger)
     {
         _facade = facade;
-        _orchestration = orchestration;
+        _changeNotifier = changeNotifier;
         _logger = logger;
     }
 
@@ -99,7 +99,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
                     _facade.TransitionStatus(agentId, AgentStatus.Busy);
                 }
 
-                _orchestration.NotifyChange();
+                _changeNotifier.NotifyChange();
             }
             else
             {
@@ -137,7 +137,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
                     "Restored active run {RunId} for agent {AgentId} (issue {IssueIdentifier}, step {Step}) — orchestrator state recovery",
                     activeJob.RunId, agentId, activeJob.IssueIdentifier, activeJob.CurrentStep);
 
-                _orchestration.NotifyChange();
+                _changeNotifier.NotifyChange();
             }
         }
         else
