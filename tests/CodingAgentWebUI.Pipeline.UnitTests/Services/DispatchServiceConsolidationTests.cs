@@ -335,6 +335,9 @@ public class DispatchServiceConsolidationTests : IDisposable
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Failed);
         item.ErrorMessage.Should().Contain("K8s Job creation failed");
+        // TODO: Add assertion that item.ClaimedPvcName is null after K8s failure in consolidation path.
+        // Currently this test does not claim a PVC (no PVC setup), so the SaveChangesAsync fix at line ~697
+        // is not regression-protected. Add a variant with PVC claiming to validate the fix.
 
         // Verify cascade fires for K8s creation failure path too (not just template resolution)
         _mockConsolidationService.Verify(
