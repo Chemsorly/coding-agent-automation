@@ -75,6 +75,10 @@ public class EpicDeduplicationPropertyTests
                     new QualityGateResolver(),
                     new ReviewerResolver(),
                     mockConfigStore.Object,
+                    mockLogger.Object),
+                new ProviderConfigPreparationService(
+                    mockConfigStore.Object,
+                    tokenVending,
                     mockLogger.Object)),
             mockAgentComm.Object,
             new ShutdownSignal(),

@@ -262,7 +262,11 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<ITokenVendingService>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelSwapper>(),
-            sp.GetRequiredService<DispatchResolutionService>()));
+            sp.GetRequiredService<DispatchResolutionService>(),
+            new ProviderConfigPreparationService(
+                sp.GetRequiredService<IProviderConfigStore>(),
+                sp.GetRequiredService<ITokenVendingService>(),
+                Log.Logger)));
 
         services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
             sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));

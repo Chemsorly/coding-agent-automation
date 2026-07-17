@@ -17,21 +17,25 @@ public sealed class DispatchInfrastructure
     public IProviderFactory ProviderFactory { get; }
     public ILabelSwapper LabelSwapper { get; }
     public DispatchResolutionService Resolution { get; }
+    public ProviderConfigPreparationService ProviderConfigPreparation { get; }
 
     public DispatchInfrastructure(
         ITokenVendingService tokenVending,
         IProviderFactory providerFactory,
         ILabelSwapper labelSwapper,
-        DispatchResolutionService resolution)
+        DispatchResolutionService resolution,
+        ProviderConfigPreparationService providerConfigPreparation)
     {
         ArgumentNullException.ThrowIfNull(tokenVending);
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(labelSwapper);
         ArgumentNullException.ThrowIfNull(resolution);
+        ArgumentNullException.ThrowIfNull(providerConfigPreparation);
 
         TokenVending = tokenVending;
         ProviderFactory = providerFactory;
         LabelSwapper = labelSwapper;
         Resolution = resolution;
+        ProviderConfigPreparation = providerConfigPreparation;
     }
 }

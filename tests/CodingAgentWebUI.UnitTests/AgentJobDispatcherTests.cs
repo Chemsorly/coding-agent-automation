@@ -91,6 +91,10 @@ public class AgentJobDispatcherTests : IDisposable
                     new QualityGateResolver(),
                     new ReviewerResolver(),
                     _mockConfigStore.Object,
+                    _mockLogger.Object),
+                new ProviderConfigPreparationService(
+                    _mockConfigStore.Object,
+                    tokenVendingOverride ?? _tokenVending,
                     _mockLogger.Object)),
             _mockAgentComm.Object,
             shutdownOverride ?? new ShutdownSignal(),

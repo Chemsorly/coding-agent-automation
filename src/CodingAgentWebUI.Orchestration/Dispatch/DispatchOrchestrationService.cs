@@ -28,7 +28,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IProjectStore _projectStore;
     private readonly AnalysisStalenessDetector? _stalenessDetector;
-    private readonly IssueContextBuilder _issueContextBuilder;
     private readonly ILogger _logger;
 
     public DispatchOrchestrationService(
@@ -65,7 +64,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         _stalenessDetector = workItemQuery is not null
             ? new AnalysisStalenessDetector(workItemQuery, logger)
             : null;
-        _issueContextBuilder = new IssueContextBuilder(infra.ProviderFactory, providerConfigStore);
     }
 
     /// <summary>
@@ -165,7 +163,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             .Select(r => r.Id).ToList().AsReadOnly();
 
         // Pre-fetch issue details, comments, and swap labels
-        var issueContext = await _issueContextBuilder.BuildAsync(
+        var issueContext = await PrepareIssueContextAsync(
             issueIdentifier, issueProviderId, ct);
         if (issueContext is null)
         {
@@ -178,7 +176,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         run.IssueTitle = issueContext.IssueDetail.Title;
 
         // Build and prepare provider configs for the agent
-        var providerConfigs = await PrepareProviderConfigsAsync(
+        var providerConfigs = await _infra.ProviderConfigPreparation.PrepareProviderConfigsAsync(
             repoProviderId, agentProviderId, brainProviderId,
             pipelineProviderId, ct);
 
@@ -274,63 +272,64 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     }
 
     /// <summary>
-    /// Builds provider configs list and vends tokens via the token vending service.
+    /// Pre-fetches issue details, comments, swaps labels to in-progress,
+    /// and detects existing analysis. Returns null if issue provider config not found.
     /// </summary>
-    private async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
-        string repoProviderId,
-        string agentProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        CancellationToken ct)
+    private async Task<IssueContext?> PrepareIssueContextAsync(
+        string issueIdentifier, string issueProviderId, CancellationToken ct)
     {
-        var rawConfigs = await BuildAgentProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId,
-            pipelineProviderId, ct);
-        return await _infra.TokenVending.PrepareAgentConfigsAsync(
-            rawConfigs, repoProviderId, ct);
-    }
+        var issueConfig = await _providerConfigStore
+            .GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
+        if (issueConfig is null)
+            return null;
 
-    /// <summary>
-    /// Builds the list of provider configs to send to the agent.
-    /// Excludes issue provider configs (agents don't get issue access).
-    /// </summary>
-    private async Task<IReadOnlyList<ProviderConfig>> BuildAgentProviderConfigsAsync(
-        string repoProviderId,
-        string agentProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        CancellationToken ct)
-    {
-        var configs = new List<ProviderConfig>();
-
-        var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = await ProviderConfigResolver.ResolveAsync(
-            _providerConfigStore, repoProviderId, ProviderKind.Repository, repoConfigs, required: true, _logger, ct);
-        configs.Add(repoConfig!);
-
-        var agentConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-        var agentConfig = await ProviderConfigResolver.ResolveAsync(
-            _providerConfigStore, agentProviderId, ProviderKind.Agent, agentConfigs, required: true, _logger, ct);
-        configs.Add(agentConfig!);
-
-        if (!string.IsNullOrEmpty(brainProviderId))
+        IssueDetail issueDetail;
+        ParsedIssue parsedIssue;
+        IReadOnlyList<IssueComment> issueComments;
+        await using (var issueProvider = _infra.ProviderFactory.CreateIssueProvider(issueConfig))
         {
-            var brainConfig = await ProviderConfigResolver.ResolveAsync(
-                _providerConfigStore, brainProviderId, ProviderKind.Repository, repoConfigs, required: false, _logger, ct);
-            if (brainConfig is not null)
-                configs.Add(brainConfig);
+            issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
+            parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
+            var allComments = await issueProvider.ListCommentsAsync(issueIdentifier, ct);
+            issueComments = allComments.Count > 50
+                ? allComments.Take(50).ToList().AsReadOnly()
+                : allComments;
         }
 
-        if (!string.IsNullOrEmpty(pipelineProviderId))
+        // NOTE: Label swap to agent:in-progress is intentionally NOT done here.
+        // It is deferred to ConfirmDistributionLabelAsync, called only after an agent
+        // actually accepts the job (fixes #997 — stale labels on Pending items).
+
+        // Detect existing analysis and rework state from comments
+        string? existingAnalysis = null;
+        bool forceRefreshAnalysis = false;
+        string? stalenessSignal = null;
+        var analysisComment = issueComments
+            .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefault();
+        if (analysisComment is not null)
         {
-            var pipelineConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
-            var pipelineConfig = await ProviderConfigResolver.ResolveAsync(
-                _providerConfigStore, pipelineProviderId, ProviderKind.Pipeline, pipelineConfigs, required: false, _logger, ct);
-            if (pipelineConfig is not null)
-                configs.Add(pipelineConfig);
+            existingAnalysis = analysisComment.Body;
+            var gateRejection = issueComments
+                .FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateRejection));
+            var gateWontDo = issueComments
+                .FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateWontDo));
+            if (gateRejection?.CreatedAt > analysisComment.CreatedAt)
+            {
+                forceRefreshAnalysis = true;
+                stalenessSignal = "gate_rejection";
+            }
+            else if (gateWontDo?.CreatedAt > analysisComment.CreatedAt)
+            {
+                forceRefreshAnalysis = true;
+                stalenessSignal = "gate_wont_do";
+            }
         }
 
-        return configs.AsReadOnly();
+        return new IssueContext(
+            issueDetail, parsedIssue, issueComments,
+            existingAnalysis, forceRefreshAnalysis, stalenessSignal, 0);
     }
 
     /// <summary>
@@ -343,11 +342,23 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
-        return await PipelineConfigurationResolver.ResolveAsync(
+        return await PipelineConfiguration.ResolveAsync(
             _pipelineConfigStore.LoadPipelineConfigAsync,
             _projectStore.LoadAllTemplatesAsync,
             project, repoProviderId, brainProviderId, providerConfigs, ct);
     }
+
+    /// <summary>
+    /// Internal DTO for pre-fetched issue context.
+    /// </summary>
+    private sealed record IssueContext(
+        IssueDetail IssueDetail,
+        ParsedIssue ParsedIssue,
+        IReadOnlyList<IssueComment> IssueComments,
+        string? ExistingAnalysis,
+        bool ForceRefreshAnalysis,
+        string? StalenessSignal,
+        int RefreshCount);
 
     // ── IDispatchOrchestrationService implementation ─────────────────────
 

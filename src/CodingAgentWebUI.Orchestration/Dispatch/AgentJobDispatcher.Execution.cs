@@ -127,7 +127,7 @@ public sealed partial class AgentJobDispatcher
             run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
 
             // Pre-fetch issue details and comments
-            var issueContext = await _issueContextBuilder.BuildAsync(issueIdentifier, issueProviderId, ct);
+            var issueContext = await PrepareIssueContextAsync(issueIdentifier, issueProviderId, ct);
             if (issueContext is null)
             {
                 _logger.Error("Issue provider config '{ConfigId}' not found", issueProviderId);
@@ -139,11 +139,11 @@ public sealed partial class AgentJobDispatcher
             run.IssueTitle = issueContext.IssueDetail.Title;
 
             // Build and prepare provider configs for the agent
-            var providerConfigs = await PrepareProviderConfigsAsync(
+            var providerConfigs = await _infra.ProviderConfigPreparation.PrepareProviderConfigsAsync(
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
 
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
-            var config = await PipelineConfigurationResolver.ResolveAsync(
+            var config = await PipelineConfiguration.ResolveAsync(
                 _infra.Resolution.ConfigStore.LoadPipelineConfigAsync,
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
                 project, repoProviderId, brainProviderId, providerConfigs, ct);
@@ -286,11 +286,11 @@ public sealed partial class AgentJobDispatcher
             run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
 
             // Build and prepare provider configs for the agent
-            var providerConfigs = await PrepareProviderConfigsAsync(
+            var providerConfigs = await _infra.ProviderConfigPreparation.PrepareProviderConfigsAsync(
                 request.RepoProviderId, agentProviderId, request.BrainProviderId, pipelineProviderId: null, ct);
 
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
-            var config = await PipelineConfigurationResolver.ResolveAsync(
+            var config = await PipelineConfiguration.ResolveAsync(
                 _infra.Resolution.ConfigStore.LoadPipelineConfigAsync,
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
                 project, request.RepoProviderId, request.BrainProviderId, providerConfigs, ct);
@@ -487,11 +487,11 @@ public sealed partial class AgentJobDispatcher
                 .Select(r => r.RepoProviderId)
                 .Where(id => !string.IsNullOrEmpty(id))
                 .Cast<string>();
-            var providerConfigs = await PrepareProviderConfigsAsync(
+            var providerConfigs = await _infra.ProviderConfigPreparation.PrepareProviderConfigsAsync(
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, ct, additionalRepoProviderIds);
 
             // Settings resolution: apply Project → Template overrides to the pre-loaded config
-            config = await PipelineConfigurationResolver.ResolveAsync(
+            config = await PipelineConfiguration.ResolveAsync(
                 config,
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
                 project, repoProviderId, brainProviderId, providerConfigs, ct);
@@ -698,79 +698,66 @@ public sealed partial class AgentJobDispatcher
     }
 
     /// <summary>
-    /// Builds the provider configs list and prepares tokens via the token vending service.
+    /// Pre-fetches issue details, comments, swaps labels, and detects existing analysis.
+    /// Returns null if the issue provider config is not found.
     /// </summary>
-    private async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
-        string repoProviderId,
-        string agentProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        CancellationToken ct,
-        IEnumerable<string>? additionalRepoProviderIds = null)
+    private async Task<IssueContext?> PrepareIssueContextAsync(
+        string issueIdentifier,
+        string issueProviderId,
+        CancellationToken ct)
     {
-        var rawConfigs = await BuildAgentProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct, additionalRepoProviderIds);
-        return await _infra.TokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
-    }
+        var issueConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
+        if (issueConfig == null)
+            return null;
 
-    /// <summary>
-    /// Builds the list of provider configs to send to the agent.
-    /// Excludes issue provider configs (agents don't get issue access).
-    /// </summary>
-    private async Task<IReadOnlyList<ProviderConfig>> BuildAgentProviderConfigsAsync(
-        string repoProviderId, string agentProviderId,
-        string? brainProviderId, string? pipelineProviderId,
-        CancellationToken ct,
-        IEnumerable<string>? additionalRepoProviderIds = null)
-    {
-        var configs = new List<ProviderConfig>();
-        var store = _infra.Resolution.ConfigStore;
-
-        var repoConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = await ProviderConfigResolver.ResolveAsync(
-            store, repoProviderId, ProviderKind.Repository, repoConfigs, required: true, _logger, ct);
-        configs.Add(repoConfig!);
-
-        // Include additional repo provider configs for cross-repo decomposition.
-        // These are needed so the agent can clone secondary repos for code exploration.
-        if (additionalRepoProviderIds is not null)
+        IssueDetail issueDetail;
+        ParsedIssue parsedIssue;
+        IReadOnlyList<IssueComment> issueComments;
+        await using (var issueProvider = _infra.ProviderFactory.CreateIssueProvider(issueConfig))
         {
-            var addedIds = new HashSet<string> { repoProviderId }; // primary already added
-            foreach (var additionalId in additionalRepoProviderIds)
-            {
-                if (string.IsNullOrEmpty(additionalId) || !addedIds.Add(additionalId))
-                    continue; // skip null/empty or duplicates
+            issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
+            parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
+            var allComments = await issueProvider.ListCommentsAsync(issueIdentifier, ct);
+            // Cap at 50 comments per REQ-4.4
+            issueComments = allComments.Count > 50
+                ? allComments.Take(50).ToList().AsReadOnly()
+                : allComments;
+        }
 
-                var additionalConfig = await ProviderConfigResolver.ResolveAsync(
-                    store, additionalId, ProviderKind.Repository, repoConfigs, required: false, _logger, ct);
-                if (additionalConfig is not null)
-                    configs.Add(additionalConfig);
+        // NOTE: Label swap to agent:in-progress is NOT done here.
+        // It's handled by IRunLifecycleManager.AgentAcceptedRunAsync after the agent accepts the job,
+        // ensuring label state is consistent across all three modes (Legacy, SignalR, K8s).
+
+        // Detect existing analysis and rework state from comments
+        // TODO: Legacy mode (AgentJobDispatcher) does not invoke AnalysisStalenessDetector for the
+        // three new signals (body_changed, agent_error, commit_threshold). Only gate_rejection and
+        // gate_wont_do are detected here. If legacy mode still processes issues, staleness detection
+        // silently does not apply. Consider wiring AnalysisStalenessDetector here as well.
+        string? existingAnalysis = null;
+        bool forceRefreshAnalysis = false;
+        string? stalenessSignal = null;
+        var analysisComment = issueComments
+            .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+            .OrderByDescending(c => c.CreatedAt)
+            .FirstOrDefault();
+        if (analysisComment is not null)
+        {
+            existingAnalysis = analysisComment.Body;
+            var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateRejection));
+            var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateWontDo));
+            if (gateRejection?.CreatedAt > analysisComment.CreatedAt)
+            {
+                forceRefreshAnalysis = true;
+                stalenessSignal = "gate_rejection";
+            }
+            else if (gateWontDo?.CreatedAt > analysisComment.CreatedAt)
+            {
+                forceRefreshAnalysis = true;
+                stalenessSignal = "gate_wont_do";
             }
         }
 
-        var agentConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-        var agentConfig = await ProviderConfigResolver.ResolveAsync(
-            store, agentProviderId, ProviderKind.Agent, agentConfigs, required: true, _logger, ct);
-        configs.Add(agentConfig!);
-
-        if (!string.IsNullOrEmpty(brainProviderId))
-        {
-            var brainConfig = await ProviderConfigResolver.ResolveAsync(
-                store, brainProviderId, ProviderKind.Repository, repoConfigs, required: false, _logger, ct);
-            if (brainConfig is not null)
-                configs.Add(brainConfig);
-        }
-
-        if (!string.IsNullOrEmpty(pipelineProviderId))
-        {
-            var pipelineConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
-            var pipelineConfig = await ProviderConfigResolver.ResolveAsync(
-                store, pipelineProviderId, ProviderKind.Pipeline, pipelineConfigs, required: false, _logger, ct);
-            if (pipelineConfig is not null)
-                configs.Add(pipelineConfig);
-        }
-
-        return configs.AsReadOnly();
+        return new IssueContext(issueDetail, parsedIssue, issueComments, existingAnalysis, forceRefreshAnalysis, stalenessSignal);
     }
 
     internal static Dictionary<string, string>? CaptureTraceContext() =>
