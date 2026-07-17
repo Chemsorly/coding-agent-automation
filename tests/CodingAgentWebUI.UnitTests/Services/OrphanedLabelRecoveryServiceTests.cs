@@ -117,7 +117,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         // Assert: SwapLabelAsync was NOT called
         _mockLabelSwapper.Verify(
-            l => l.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
@@ -269,7 +269,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         var swapCount = 0;
         var allSwapsDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockLabelSwapper
-            .Setup(l => l.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask)
             .Callback(() =>
             {

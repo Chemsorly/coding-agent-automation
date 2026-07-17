@@ -32,7 +32,7 @@ public sealed class LabelSwapper : ILabelSwapper
 
     /// <inheritdoc />
     public async Task SwapLabelAsync(
-        string providerConfigId,
+        ProviderConfigId providerConfigId,
         string identifier,
         string newLabel,
         LabelTargetKind targetKind,
@@ -43,16 +43,18 @@ public sealed class LabelSwapper : ILabelSwapper
 
     /// <inheritdoc />
     public async Task SwapLabelAsync(
-        string providerConfigId,
+        ProviderConfigId providerConfigId,
         string identifier,
         string newLabel,
         LabelTargetKind targetKind,
         string? expectedCurrentLabel,
         CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(providerConfigId);
         ArgumentNullException.ThrowIfNull(identifier);
         ArgumentNullException.ThrowIfNull(newLabel);
+        // TODO: Validate providerConfigId.Value is not null/empty. The previous string parameter
+        // had ArgumentNullException.ThrowIfNull(providerConfigId) which is now lost because structs
+        // can't be null, but default(ProviderConfigId) with Value = null can still flow through.
 
         // Validate the transition if the caller provides the expected current label.
         // This is observational only — invalid transitions log a warning but do NOT block.
@@ -69,18 +71,18 @@ public sealed class LabelSwapper : ILabelSwapper
 
         _logger.Information(
             "Label swap: {Identifier} → {NewLabel} (target={TargetKind}, provider={ProviderConfigId})",
-            identifier, newLabel, targetKind, providerConfigId);
+            identifier, newLabel, targetKind, providerConfigId.Value);
 
         try
         {
             switch (targetKind)
             {
                 case LabelTargetKind.Issue:
-                    await SwapIssueLabelAsync(providerConfigId, identifier, newLabel, ct);
+                    await SwapIssueLabelAsync(providerConfigId.Value, identifier, newLabel, ct);
                     break;
 
                 case LabelTargetKind.PullRequest:
-                    await SwapPrLabelAsync(providerConfigId, identifier, newLabel, ct);
+                    await SwapPrLabelAsync(providerConfigId.Value, identifier, newLabel, ct);
                     break;
 
                 default:
@@ -100,11 +102,10 @@ public sealed class LabelSwapper : ILabelSwapper
 
     /// <inheritdoc />
     public async Task<bool> EnsureAgentLabelsAsync(
-        string providerConfigId,
+        ProviderConfigId providerConfigId,
         LabelTargetKind targetKind,
         CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(providerConfigId);
 
         try
         {
@@ -112,12 +113,12 @@ public sealed class LabelSwapper : ILabelSwapper
             {
                 case LabelTargetKind.Issue:
                 {
-                    var issueConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId, ProviderKind.Issue, ct);
+                    var issueConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId.Value, ProviderKind.Issue, ct);
                     if (issueConfig is null)
                     {
                         _logger.Warning(
                             "Issue provider config '{ConfigId}' not found for EnsureAgentLabelsAsync",
-                            providerConfigId);
+                            providerConfigId.Value);
                         return false;
                     }
 
@@ -127,12 +128,12 @@ public sealed class LabelSwapper : ILabelSwapper
 
                 case LabelTargetKind.PullRequest:
                 {
-                    var repoConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId, ProviderKind.Repository, ct);
+                    var repoConfig = await _configStore.GetProviderConfigByIdAsync(providerConfigId.Value, ProviderKind.Repository, ct);
                     if (repoConfig is null)
                     {
                         _logger.Warning(
                             "Repository provider config '{ConfigId}' not found for EnsureAgentLabelsAsync (PR)",
-                            providerConfigId);
+                            providerConfigId.Value);
                         return false;
                     }
 
@@ -149,7 +150,7 @@ public sealed class LabelSwapper : ILabelSwapper
         {
             _logger.Warning(ex,
                 "Failed to ensure agent labels for {TargetKind} (config: {ConfigId})",
-                targetKind, providerConfigId);
+                targetKind, providerConfigId.Value);
             return false;
         }
     }

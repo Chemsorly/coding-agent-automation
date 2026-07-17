@@ -95,7 +95,7 @@ public class AgentCodingPageService : IDisposable
     public bool IssueDrawerDispatching { get; set; }
     public bool PrDrawerDispatching { get; set; }
     public bool EpicDrawerDispatching { get; set; }
-    public HashSet<(string IssueIdentifier, string IssueProviderConfigId)> ActiveIssues { get; private set; } = new();
+    public HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssues { get; private set; } = new();
 
     public string ActiveDrawerTab => IsIssueDrawerOpen ? "issue" : IsPrDrawerOpen ? "pr" : IsEpicDrawerOpen ? "epic" : "";
 

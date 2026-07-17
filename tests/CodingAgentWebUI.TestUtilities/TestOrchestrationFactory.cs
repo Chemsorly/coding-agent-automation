@@ -78,9 +78,9 @@ public static class TestOrchestrationFactory
     public sealed class NoOpLabelSwapper : ILabelSwapper
     {
         public static readonly NoOpLabelSwapper Instance = new();
-        public Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct) => Task.CompletedTask;
-        public Task SwapLabelAsync(string providerConfigId, string identifier, string newLabel, LabelTargetKind targetKind, string? expectedCurrentLabel, CancellationToken ct) => Task.CompletedTask;
-        public Task<bool> EnsureAgentLabelsAsync(string providerConfigId, LabelTargetKind targetKind, CancellationToken ct) => Task.FromResult(true);
+        public Task SwapLabelAsync(ProviderConfigId providerConfigId, string identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct) => Task.CompletedTask;
+        public Task SwapLabelAsync(ProviderConfigId providerConfigId, string identifier, string newLabel, LabelTargetKind targetKind, string? expectedCurrentLabel, CancellationToken ct) => Task.CompletedTask;
+        public Task<bool> EnsureAgentLabelsAsync(ProviderConfigId providerConfigId, LabelTargetKind targetKind, CancellationToken ct) => Task.FromResult(true);
     }
 
     /// <summary>No-op quality gate validator for tests.</summary>

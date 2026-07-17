@@ -215,7 +215,7 @@ public class PipelineLoopFairDispatchPropertyTests
                 lock (dispatchedProviderIds) { dispatchedProviderIds.Add(request.IssueProviderConfigId); }
                 return Task.FromResult(new DistributionResult(true, null, null));
             });
-        mockDispatcher.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new HashSet<(string, string)>());
+        mockDispatcher.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new HashSet<(string, ProviderConfigId)>());
 
         var svc = CreateService(mockStore, mockFactory, mockDispatcher.Object);
         using var cts = new CancellationTokenSource();

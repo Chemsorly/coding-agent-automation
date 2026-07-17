@@ -50,7 +50,7 @@ public interface IWorkDistributor
     /// <param name="issueProviderConfigId">The issue provider config ID.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns><c>true</c> if the issue has an active (non-terminal) work item.</returns>
-    Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId, CancellationToken ct);
+    Task<bool> IsIssueDistributedAsync(string issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct);
 
     /// <summary>
     /// Returns all currently active (non-terminal) issue identifiers as a set.
@@ -61,7 +61,7 @@ public interface IWorkDistributor
     /// </summary>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>A set of (IssueIdentifier, IssueProviderConfigId) tuples for all active work items.</returns>
-    Task<HashSet<(string IssueIdentifier, string IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct);
+    Task<HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct);
 
     /// <summary>
     /// Whether this distributor requires at least one connected agent before dispatch can proceed.
