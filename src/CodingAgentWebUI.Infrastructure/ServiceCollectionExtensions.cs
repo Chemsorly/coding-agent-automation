@@ -37,13 +37,12 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAgentPhaseExecutor>(sp => new AgentPhaseExecutor(logger));
 
         services.AddSingleton<FeedbackService>(sp => new FeedbackService(logger));
-        services.AddSingleton<PullRequestOrchestrator>(sp => new PullRequestOrchestrator(logger));
         services.AddSingleton<PullRequestFinalizationService>(sp => new PullRequestFinalizationService(logger));
         services.AddSingleton<CiLogWriter>(sp => new CiLogWriter(logger));
 
         services.AddSingleton<IQualityGateExecutor>(sp => new QualityGateExecutor(
             sp.GetRequiredService<IQualityGateValidator>(),
-            sp.GetRequiredService<PullRequestOrchestrator>(),
+            new PullRequestOrchestrator(logger),
             sp.GetRequiredService<CiLogWriter>(),
             sp.GetRequiredService<FeedbackService>(),
             logger,
