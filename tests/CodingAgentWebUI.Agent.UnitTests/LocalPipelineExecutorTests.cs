@@ -1244,7 +1244,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
+        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps.Should().HaveCount(16);
         await connection.DisposeAsync();
@@ -1258,7 +1258,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
+        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps[0].Should().BeOfType<CloneRepositoryStep>();
         steps[^1].Should().BeOfType<RunQualityGatesStep>();
@@ -1273,7 +1273,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
+        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps[2].Should().BeOfType<WriteMcpConfigStep>();
         await connection.DisposeAsync();
@@ -1287,7 +1287,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, connection, proxy, repoConfig);
+        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps.Should().ContainItemsAssignableTo<DownloadIssueImagesStep>();
         await connection.DisposeAsync();
@@ -1354,7 +1354,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var run = CreateMinimalRun();
         run.BranchName = "feature/auto-42-fix-bug";
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.VerifyingBaseline);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.VerifyingBaseline);
 
         metadata.Should().NotBeNull();
         metadata!["BranchName"].Should().Be("feature/auto-42-fix-bug");
@@ -1367,7 +1367,7 @@ public class LocalPipelineExecutorTests : IDisposable
         run.BranchName = "feature/test";
         run.BaselineHealthPassed = true;
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.AnalyzingCode);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.AnalyzingCode);
 
         metadata.Should().NotBeNull();
         metadata!["BaselineHealthPassed"].Should().Be("True");
@@ -1383,7 +1383,7 @@ public class LocalPipelineExecutorTests : IDisposable
         run.LinesAdded = 100;
         run.LinesRemoved = 20;
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.ReviewingCode);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.ReviewingCode);
 
         metadata.Should().NotBeNull();
         metadata!["FilesChangedCount"].Should().Be("5");
@@ -1400,7 +1400,7 @@ public class LocalPipelineExecutorTests : IDisposable
         run.CodeReviewIterationsTotal = 3;
         run.CodeReviewIterationsCompleted = 2;
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
 
         metadata.Should().NotBeNull();
         metadata!["CodeReviewIterationsTotal"].Should().Be("3");
@@ -1412,7 +1412,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var run = CreateMinimalRun();
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.CloningRepository);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.CloningRepository);
 
         metadata.Should().BeNull();
     }
@@ -1422,7 +1422,7 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var run = CreateMinimalRun();
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.AnalyzingCode);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.AnalyzingCode);
 
         metadata.Should().BeNull();
     }
@@ -1434,7 +1434,7 @@ public class LocalPipelineExecutorTests : IDisposable
         run.RetryCount = 2;
         run.InfrastructureRetryCount = 1;
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.GeneratingCode);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.GeneratingCode);
 
         metadata.Should().NotBeNull();
         metadata!["RetryCount"].Should().Be("2");
@@ -1448,7 +1448,7 @@ public class LocalPipelineExecutorTests : IDisposable
         run.TotalTokens = 75000;
         run.TotalCost = 1.23m;
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.GeneratingCode);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.GeneratingCode);
 
         metadata.Should().NotBeNull();
         metadata!["TotalTokens"].Should().Be("75000");
@@ -1462,7 +1462,7 @@ public class LocalPipelineExecutorTests : IDisposable
         run.AddCodeReviewCounts(3, 5, 7);
         run.CodeReviewAgentsRun = new[] { "security-agent", "style-agent" };
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.RunningQualityGates);
 
         metadata.Should().NotBeNull();
         metadata!["CodeReviewCriticalCount"].Should().Be("3");
@@ -1478,7 +1478,7 @@ public class LocalPipelineExecutorTests : IDisposable
         run.RetryCount = 0;
         run.TotalTokens = 0;
 
-        var metadata = LocalPipelineExecutor.BuildStepMetadata(run, PipelineStep.GeneratingCode);
+        var metadata = PipelineSignalRReporter.BuildStepMetadata(run, PipelineStep.GeneratingCode);
 
         // No data to report → null or missing keys
         metadata?.ContainsKey("RetryCount").Should().NotBe(true);
@@ -1809,7 +1809,6 @@ public class LocalPipelineExecutorTests : IDisposable
             AgentProvider = Mock.Of<IAgentProvider>(),
             Config = new PipelineConfiguration(),
             IssueOps = new OrchestratorProxy(CreateDisconnectedHubConnection(), "job-1"),
-            Connection = CreateDisconnectedHubConnection(),
             Job = CreateMinimalJobAssignment(),
             PrOrchestrator = new PullRequestOrchestrator(Mock.Of<Serilog.ILogger>()),
             EmitOutputLine = _ => { }
