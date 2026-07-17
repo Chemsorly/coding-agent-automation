@@ -1,9 +1,11 @@
+using CodingAgentWebUI.Pipeline.Services;
+
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
 /// Marks a property on <see cref="PipelineConfiguration"/> as overridable by
 /// <see cref="PipelineProject"/>. Used by the reflection-based override engine in
-/// <see cref="PipelineConfiguration.ApplyProjectOverrides"/> to iterate overridable
+/// <see cref="PipelineConfigurationResolver.ApplyProjectOverrides"/> to iterate overridable
 /// properties without manual if-not-null boilerplate.
 /// </summary>
 [AttributeUsage(AttributeTargets.Property)]

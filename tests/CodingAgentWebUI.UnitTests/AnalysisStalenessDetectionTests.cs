@@ -3,6 +3,7 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -358,7 +359,7 @@ public class AnalysisStalenessDetectorTests
             AnalysisCommitThreshold = 50
         };
 
-        var overridden = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var overridden = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
         overridden.AnalysisCommitThreshold.Should().Be(50);
     }
 
@@ -373,7 +374,7 @@ public class AnalysisStalenessDetectorTests
             AnalysisCommitThreshold = null
         };
 
-        var overridden = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var overridden = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
         overridden.AnalysisCommitThreshold.Should().Be(30);
     }
 }

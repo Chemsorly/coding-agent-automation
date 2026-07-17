@@ -4,6 +4,7 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.TestUtilities;
 using MessagePack;
 
@@ -236,7 +237,7 @@ public class PipelineConfigurationTests
             BrainReadOnly = true,
         };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxRetries.Should().Be(10);
         result.AgentTimeout.Should().Be(TimeSpan.FromMinutes(60));
@@ -258,7 +259,7 @@ public class PipelineConfigurationTests
         // Project with all-null behavioral fields
         var project = TestPipelineConfig.DefaultProject();
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxRetries.Should().Be(5);
         result.AgentTimeout.Should().Be(TimeSpan.FromMinutes(45));
@@ -297,7 +298,7 @@ public class PipelineConfigurationTests
             CodeReview = new CodeReviewOverrides { MaxIterations = 3 },
         };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         // Overridden property
         result.CodeReview.MaxIterations.Should().Be(3);
@@ -381,7 +382,7 @@ public class PipelineConfigurationTests
             },
         };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         // Result should have the overrides applied
         result.MaxRetries.Should().Be(10);
@@ -416,7 +417,7 @@ public class PipelineConfigurationTests
         };
 
         // Should NOT throw — the catch clause handles TargetInvocationException
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         // MaxRetries (Order=1) was applied before the failing property (Order=18).
         // TODO: This comment describes clone-mutation persistence, not a transactional partial-apply
@@ -440,7 +441,7 @@ public class PipelineConfigurationTests
         var config = TestPipelineConfig.Default() with { AcceptanceCriteriaEnabled = true };
         var project = TestPipelineConfig.WithProject() with { AcceptanceCriteriaEnabled = false };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.AcceptanceCriteriaEnabled.Should().BeFalse();
     }
@@ -451,7 +452,7 @@ public class PipelineConfigurationTests
         var config = TestPipelineConfig.Default() with { AnalysisCommitThreshold = 30 };
         var project = TestPipelineConfig.WithProject() with { AnalysisCommitThreshold = 50 };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.AnalysisCommitThreshold.Should().Be(50);
     }

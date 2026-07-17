@@ -134,7 +134,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         }
 
         // Override blacklist settings from repo provider config (per-repo takes precedence)
-        config = PipelineConfiguration.ApplyBlacklistOverride(config, repoConfig);
+        config = PipelineConfigurationResolver.ApplyBlacklistOverride(config, repoConfig);
 
         IRepositoryProvider? repoProvider = null;
         IAgentProvider? agentProvider = null;
@@ -153,7 +153,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             additionalRepoProviders = resolved.AdditionalRepoProviders;
 
             // Merge provider-specific paths into configurable blacklist AND store for hardcoded enforcement
-            config = PipelineConfiguration.ApplyProviderBlacklist(config, agentProvider.PipelineInjectedPaths);
+            config = PipelineConfigurationResolver.ApplyProviderBlacklist(config, agentProvider.PipelineInjectedPaths);
             config = config with { PipelineInjectedPaths = agentProvider.PipelineInjectedPaths };
 
             result = await ExecutePipelineStepsAsync(

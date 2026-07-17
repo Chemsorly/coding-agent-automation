@@ -1,10 +1,11 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 
 /// <summary>
-/// Tests for <see cref="PipelineConfiguration.ResolveAsync"/> static methods.
+/// Tests for <see cref="PipelineConfigurationResolver.ResolveAsync"/> static methods.
 /// Verifies the resolution chain: Global → Project overrides → Template overrides.
 /// </summary>
 public class PipelineConfigurationResolveAsyncTests
@@ -51,7 +52,7 @@ public class PipelineConfigurationResolveAsyncTests
         };
 
         // Act
-        var result = await PipelineConfiguration.ResolveAsync(
+        var result = await PipelineConfigurationResolver.ResolveAsync(
             ct => Task.FromResult(globalConfig),
             ct => Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(templates),
             project,
@@ -83,7 +84,7 @@ public class PipelineConfigurationResolveAsyncTests
         var providerConfigs = new List<ProviderConfig>();
 
         // Act: use the pre-loaded overload
-        var result = await PipelineConfiguration.ResolveAsync(
+        var result = await PipelineConfigurationResolver.ResolveAsync(
             preLoadedConfig,
             ct => Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(templates),
             project,
@@ -125,7 +126,7 @@ public class PipelineConfigurationResolveAsyncTests
             }
         };
 
-        var result = await PipelineConfiguration.ResolveAsync(
+        var result = await PipelineConfigurationResolver.ResolveAsync(
             ct => Task.FromResult(globalConfig),
             ct => Task.FromResult<IReadOnlyList<PipelineJobTemplate>>(templates),
             null!, // TODO: null! bypasses non-nullable parameter — this relies on ApplyProjectOverrides being defensive. Consider making the parameter nullable or adding a dedicated null-handling test.

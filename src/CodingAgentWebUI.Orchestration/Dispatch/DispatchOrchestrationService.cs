@@ -343,7 +343,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IReadOnlyList<ProviderConfig> providerConfigs,
         CancellationToken ct)
     {
-        return await PipelineConfiguration.ResolveAsync(
+        return await PipelineConfigurationResolver.ResolveAsync(
             _pipelineConfigStore.LoadPipelineConfigAsync,
             _projectStore.LoadAllTemplatesAsync,
             project, repoProviderId, brainProviderId, providerConfigs, ct);
