@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.UnitTests.Hubs;
 /// Characterization tests for <see cref="AgentOrphanRecoveryService"/> extracted from
 /// <c>AgentHub.RegisterAgent</c>. Each test covers a specific branch of the recovery logic.
 /// </summary>
-public sealed class AgentOrphanRecoveryServiceTests : IDisposable
+public sealed class AgentOrphanRecoveryServiceTests
 {
     private readonly Mock<IAgentHubFacade> _mockFacade = new();
     private readonly Mock<ILogger> _mockLogger = new();
@@ -27,10 +27,6 @@ public sealed class AgentOrphanRecoveryServiceTests : IDisposable
             _mockFacade.Object,
             _mockChangeNotifier.Object,
             _mockLogger.Object);
-    }
-
-    public void Dispose()
-    {
     }
 
     // ── Active job restoration: run NOT in memory or history ─────────────
