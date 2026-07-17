@@ -120,7 +120,11 @@ public class LoopStatePersistenceServiceTests : IDisposable
         // Cancel during delay
         cts.Cancel();
         await sut.StopAsync(CancellationToken.None);
-        await Task.Delay(200);
+
+        // Wait for fire-and-forget resume task to observe cancellation
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (sut.IsResuming && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
 
         Assert.False(sut.IsResuming);
         Assert.Equal(0, sut.ResumeCountdownSeconds);
