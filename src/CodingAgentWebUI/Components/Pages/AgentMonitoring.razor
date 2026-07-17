@@ -75,6 +75,7 @@
                         <tr>
                             <th>Run ID</th>
                             <th>Type</th>
+                            <th>Project</th>
                             <th>Issue</th>
                             <th>Agent</th>
                             <th>Step</th>
@@ -108,6 +109,7 @@
                                         <span class="run-type-badge run-type-impl" title="Implementation"><Icon Name="hammer" Size="14" /> Impl</span>
                                     }
                                 </td>
+                                <td>@(string.IsNullOrEmpty(run.ProjectName) ? "—" : run.ProjectName)</td>
                                 <td title="#@run.IssueIdentifier @run.IssueTitle">
                                     @if (run.RunType == PipelineRunType.Review)
                                     {
@@ -145,6 +147,7 @@
                                         <Icon Name="@GetConsolidationTypeIconName(cRun.Type)" Size="14" /> @FormatConsolidationRunTypeShort(cRun.Type)
                                     </span>
                                 </td>
+                                <td>—</td>
                                 <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
                                 <td title="@(cAgent?.AgentId ?? "—")">@(cAgent?.AgentId ?? "—")</td>
                                 <td>
@@ -426,6 +429,7 @@
                         <tr>
                             <th>#</th>
                             <th>Type</th>
+                            <th>Project</th>
                             <th>Issue</th>
                             <th>Initiated By</th>
                             <th>Enqueued At</th>
@@ -465,6 +469,7 @@
                                         <span class="run-type-badge run-type-impl" title="Implementation"><Icon Name="hammer" Size="14" /> Impl</span>
                                     }
                                 </td>
+                                <td>@(job.Project?.Name ?? "—")</td>
                                 <td title="#@job.IssueIdentifier @job.IssueTitle">#@job.IssueIdentifier @job.IssueTitle</td>
                                 <td title="@job.InitiatedBy">@job.InitiatedBy</td>
                                 <td>@job.EnqueuedAt.ToLocalTime().ToString("HH:mm:ss")</td>
@@ -500,6 +505,7 @@
                                         <Icon Name="@GetConsolidationTypeIconName(cRun.Type)" Size="14" /> @FormatConsolidationRunTypeShort(cRun.Type)
                                     </span>
                                 </td>
+                                <td>—</td>
                                 <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
                                 <td>consolidation</td>
                                 <td>@cRun.StartedAtUtc.ToLocalTime().ToString("HH:mm:ss")</td>
