@@ -5,12 +5,13 @@ using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.CodeReview.Models;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.TestUtilities;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 
 /// <summary>
-/// Unit tests for <see cref="PipelineConfiguration.ApplyProjectOverrides"/>.
+/// Unit tests for <see cref="PipelineConfigurationResolver.ApplyProjectOverrides"/>.
 /// Covers null → inherit, non-null → override, REPLACE semantics for nested objects,
 /// and resolution order (Global → Project → ProviderConfig blacklist).
 /// </summary>
@@ -32,7 +33,7 @@ public class ApplyProjectOverridesTests
     {
         var config = TestPipelineConfig.Default();
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, null);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, null);
 
         result.Should().BeSameAs(config);
     }
@@ -45,7 +46,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.DefaultProject();
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxRetries.Should().Be(config.MaxRetries);
         result.MaxAnalysisRetries.Should().Be(config.MaxAnalysisRetries);
@@ -81,7 +82,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { MaxRetries = 7 };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxRetries.Should().Be(7);
     }
@@ -92,7 +93,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { MaxAnalysisRetries = 4 };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxAnalysisRetries.Should().Be(4);
     }
@@ -103,7 +104,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { AgentTimeout = TimeSpan.FromMinutes(60) };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.AgentTimeout.Should().Be(TimeSpan.FromMinutes(60));
     }
@@ -114,7 +115,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { AnalysisPrompt = "Custom analysis prompt" };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.AnalysisPrompt.Should().Be("Custom analysis prompt");
     }
@@ -125,7 +126,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { ImplementationPrompt = "Custom impl prompt" };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.ImplementationPrompt.Should().Be("Custom impl prompt");
     }
@@ -136,7 +137,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default(); // false by default
         var project = TestPipelineConfig.WithProject() with { AnalysisReviewEnabled = true };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.AnalysisReviewEnabled.Should().BeTrue();
     }
@@ -147,7 +148,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { AnalysisReviewPrompt = "Project review prompt" };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.AnalysisReviewPrompt.Should().Be("Project review prompt");
     }
@@ -158,7 +159,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { AnalysisRefinementPrompt = "Refine it" };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.AnalysisRefinementPrompt.Should().Be("Refine it");
     }
@@ -169,7 +170,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { BaselineHealthCheckEnabled = true };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.BaselineHealthCheckEnabled.Should().BeTrue();
     }
@@ -180,7 +181,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { ExternalCiTimeout = TimeSpan.FromMinutes(45) };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.ExternalCiTimeout.Should().Be(TimeSpan.FromMinutes(45));
     }
@@ -191,7 +192,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { ExternalCiPollInterval = TimeSpan.FromSeconds(60) };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.ExternalCiPollInterval.Should().Be(TimeSpan.FromSeconds(60));
     }
@@ -202,7 +203,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { MaxInfrastructureRetries = 5 };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxInfrastructureRetries.Should().Be(5);
     }
@@ -213,7 +214,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { StallWarningInterval = TimeSpan.FromMinutes(5) };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.StallWarningInterval.Should().Be(TimeSpan.FromMinutes(5));
     }
@@ -224,7 +225,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { MaxDecompositionSubIssues = 10 };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxDecompositionSubIssues.Should().Be(10);
     }
@@ -235,7 +236,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { MaxConcurrentDecompositions = 4 };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxConcurrentDecompositions.Should().Be(4);
     }
@@ -246,7 +247,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { DecompositionTimeout = TimeSpan.FromMinutes(25) };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.DecompositionTimeout.Should().Be(TimeSpan.FromMinutes(25));
     }
@@ -257,7 +258,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { MaxOpenIssuesForContext = 75 };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxOpenIssuesForContext.Should().Be(75);
     }
@@ -268,7 +269,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { MaxRefactoringProposals = 8 };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxRefactoringProposals.Should().Be(8);
     }
@@ -279,7 +280,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default(); // false by default
         var project = TestPipelineConfig.WithProject() with { RefactoringReviewEnabled = true };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.RefactoringReviewEnabled.Should().BeTrue();
     }
@@ -290,7 +291,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default(); // false by default
         var project = TestPipelineConfig.WithProject() with { BrainConsolidationReviewEnabled = true };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.BrainConsolidationReviewEnabled.Should().BeTrue();
     }
@@ -301,7 +302,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default(); // false by default
         var project = TestPipelineConfig.WithProject() with { HarnessSuggestionsReviewEnabled = true };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.HarnessSuggestionsReviewEnabled.Should().BeTrue();
     }
@@ -313,7 +314,7 @@ public class ApplyProjectOverridesTests
         var projectPaths = new List<string> { "vendor", "dist", "coverage" };
         var project = TestPipelineConfig.WithProject() with { BlacklistedPaths = projectPaths };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.BlacklistedPaths.Should().BeEquivalentTo(projectPaths);
     }
@@ -324,7 +325,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject() with { BrainReadOnly = true };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.BrainReadOnly.Should().BeTrue();
     }
@@ -352,7 +353,7 @@ public class ApplyProjectOverridesTests
         };
         var project = TestPipelineConfig.WithProject() with { CodeReview = projectCodeReview };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         // All specified override values are applied
         result.CodeReview.MaxIterations.Should().Be(5);
@@ -393,7 +394,7 @@ public class ApplyProjectOverridesTests
         };
         var project = TestPipelineConfig.WithProject() with { CodeReview = projectCodeReview };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         // Deep-merge: only MaxIterations is overridden, everything else preserved from global
         result.CodeReview.MaxIterations.Should().Be(1);
@@ -434,7 +435,7 @@ public class ApplyProjectOverridesTests
         };
         var project = TestPipelineConfig.WithProject() with { CodeReview = projectCodeReview };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         // MaxInlineComments overridden, everything else preserved
         result.CodeReview.MaxIterations.Should().Be(3);
@@ -470,7 +471,7 @@ public class ApplyProjectOverridesTests
         };
         var project = TestPipelineConfig.WithProject() with { CodeReview = projectCodeReview };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.CodeReview.MaxIterations.Should().Be(4);
         result.CodeReview.InlineComments.Should().Be(globalInlineComments);
@@ -482,7 +483,7 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
         var project = TestPipelineConfig.WithProject(); // CodeReview is null
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.CodeReview.Should().BeSameAs(config.CodeReview);
     }
@@ -513,8 +514,8 @@ public class ApplyProjectOverridesTests
         };
 
         // Apply in correct resolution order: Global → Project → ProviderConfig
-        var afterProject = PipelineConfiguration.ApplyProjectOverrides(globalConfig, project);
-        var afterProvider = PipelineConfiguration.ApplyBlacklistOverride(afterProject, providerConfig);
+        var afterProject = PipelineConfigurationResolver.ApplyProjectOverrides(globalConfig, project);
+        var afterProvider = PipelineConfigurationResolver.ApplyBlacklistOverride(afterProject, providerConfig);
 
         // Project overrides should have applied over global
         afterProject.BlacklistedPaths.Should().BeEquivalentTo(projectPaths);
@@ -530,8 +531,8 @@ public class ApplyProjectOverridesTests
         var projectPaths = new List<string> { "vendor" };
         var project = TestPipelineConfig.WithProject() with { BlacklistedPaths = projectPaths };
 
-        var afterProject = PipelineConfiguration.ApplyProjectOverrides(globalConfig, project);
-        var afterProvider = PipelineConfiguration.ApplyBlacklistOverride(afterProject, null);
+        var afterProject = PipelineConfigurationResolver.ApplyProjectOverrides(globalConfig, project);
+        var afterProvider = PipelineConfigurationResolver.ApplyBlacklistOverride(afterProject, null);
 
         // No provider override → project-level blacklist preserved
         afterProvider.BlacklistedPaths.Should().BeEquivalentTo(projectPaths);
@@ -552,8 +553,8 @@ public class ApplyProjectOverridesTests
             BlacklistedPaths = [], // empty — does NOT override
         };
 
-        var afterProject = PipelineConfiguration.ApplyProjectOverrides(globalConfig, project);
-        var afterProvider = PipelineConfiguration.ApplyBlacklistOverride(afterProject, providerConfig);
+        var afterProject = PipelineConfigurationResolver.ApplyProjectOverrides(globalConfig, project);
+        var afterProvider = PipelineConfigurationResolver.ApplyBlacklistOverride(afterProject, providerConfig);
 
         // Empty blacklist list does not override (Count > 0 check)
         afterProvider.BlacklistedPaths.Should().BeEquivalentTo(projectPaths);
@@ -574,7 +575,7 @@ public class ApplyProjectOverridesTests
             BrainReadOnly = true,
         };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.MaxRetries.Should().Be(10);
         result.AgentTimeout.Should().Be(TimeSpan.FromMinutes(90));
@@ -598,7 +599,7 @@ public class ApplyProjectOverridesTests
             AgentTimeout = TimeSpan.FromHours(2),
         };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         // Infrastructure-level settings remain unchanged
         result.WorkspaceBaseDirectory.Should().Be(config.WorkspaceBaseDirectory);

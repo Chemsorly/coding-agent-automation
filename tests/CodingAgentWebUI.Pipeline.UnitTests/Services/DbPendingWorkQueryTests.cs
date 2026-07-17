@@ -179,7 +179,7 @@ public sealed class DbPendingWorkQueryTests : IDisposable
         };
 
         var json = JsonSerializer.Serialize(payload, PipelineJsonOptions.Default);
-        var (title, repoId, _) = DbPendingWorkQuery.ExtractFromPayload(json);
+        var (title, repoId, _, _, _) = DbPendingWorkQuery.ExtractFromPayload(json);
 
         title.Should().Be("My Title");
         repoId.Should().Be("rp-abc");
@@ -230,21 +230,129 @@ public sealed class DbPendingWorkQueryTests : IDisposable
     }
 
     [Fact]
+    public async Task GetPendingJobsAsync_ExtractsProjectFromPayload()
+    {
+        // Arrange
+        var payload = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#55",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 600,
+            ProjectId = "proj-abc",
+            ProjectName = "Default"
+        };
+
+        await InsertPendingWorkItem("owner/repo#55", "ip-1", payload);
+
+        // Act
+        var result = await _sut.GetPendingJobsAsync();
+
+        // Assert
+        result.Should().HaveCount(1);
+        result[0].Project.Should().NotBeNull();
+        result[0].Project!.Id.Should().Be("proj-abc");
+        result[0].Project!.Name.Should().Be("Default");
+    }
+
+    [Fact]
+    public async Task GetPendingJobsAsync_NullProjectInPayload_LeavesProjectNull()
+    {
+        // Arrange — payload without ProjectId/ProjectName
+        var payload = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#56",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 600
+        };
+
+        await InsertPendingWorkItem("owner/repo#56", "ip-1", payload);
+
+        // Act
+        var result = await _sut.GetPendingJobsAsync();
+
+        // Assert
+        result.Should().HaveCount(1);
+        result[0].Project.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task GetPendingJobsAsync_PartialProjectData_LeavesProjectNull()
+    {
+        // Arrange — payload with ProjectId set but ProjectName null (partial data)
+        var payload = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#57",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 600,
+            ProjectId = "proj-orphan",
+            ProjectName = null
+        };
+
+        await InsertPendingWorkItem("owner/repo#57", "ip-1", payload);
+
+        // Act
+        var result = await _sut.GetPendingJobsAsync();
+
+        // Assert — partial project data should not construct a PipelineProject
+        result.Should().HaveCount(1);
+        result[0].Project.Should().BeNull();
+    }
+
+    [Fact]
+    public void ExtractFromPayload_WithProject_ReturnsProjectIdAndName()
+    {
+        var payload = new JobDistributionRequest
+        {
+            IssueIdentifier = "x",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            InitiatedBy = "test",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 60,
+            ProjectId = "p-123",
+            ProjectName = "MyProject"
+        };
+
+        var json = JsonSerializer.Serialize(payload, PipelineJsonOptions.Default);
+        var (_, _, _, projectId, projectName) = DbPendingWorkQuery.ExtractFromPayload(json);
+
+        projectId.Should().Be("p-123");
+        projectName.Should().Be("MyProject");
+    }
+
+    [Fact]
     public void ExtractFromPayload_NullPayload_ReturnsEmptyStrings()
     {
-        var (title, repoId, consolidationType) = DbPendingWorkQuery.ExtractFromPayload(null);
+        var (title, repoId, consolidationType, projectId, projectName) = DbPendingWorkQuery.ExtractFromPayload(null);
         title.Should().BeEmpty();
         repoId.Should().BeEmpty();
         consolidationType.Should().BeNull();
+        projectId.Should().BeNull();
+        projectName.Should().BeNull();
     }
 
     [Fact]
     public void ExtractFromPayload_InvalidJson_ReturnsEmptyStrings()
     {
-        var (title, repoId, consolidationType) = DbPendingWorkQuery.ExtractFromPayload("not valid json{{{");
+        var (title, repoId, consolidationType, projectId, projectName) = DbPendingWorkQuery.ExtractFromPayload("not valid json{{{");
         title.Should().BeEmpty();
         repoId.Should().BeEmpty();
         consolidationType.Should().BeNull();
+        projectId.Should().BeNull();
+        projectName.Should().BeNull();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

@@ -77,6 +77,50 @@ public class PipelineRunCreateFactoryTests
     }
 
     [Fact]
+    public void ResetStartedAt_UpdatesBothProperties()
+    {
+        var run = PipelineRun.Create(
+            runId: "r1",
+            issueIdentifier: "i",
+            issueTitle: "t",
+            issueProviderConfigId: "ip",
+            repoProviderConfigId: "rp");
+
+        var dispatchTime = new DateTimeOffset(2026, 7, 17, 14, 58, 38, TimeSpan.Zero);
+        run.ResetStartedAt(dispatchTime);
+
+        run.StartedAtOffset.Should().Be(dispatchTime);
+#pragma warning disable CS0618
+        run.StartedAt.Should().Be(dispatchTime.UtcDateTime);
+#pragma warning restore CS0618
+    }
+
+    [Fact]
+    public void ResetStartedAt_DurationReflectsActualWorkTime()
+    {
+        // Simulate: run created (enqueued) at 06:45, dispatched at 14:58, completed at 16:29
+        var enqueueTime = new DateTimeOffset(2026, 7, 17, 6, 45, 0, TimeSpan.Zero);
+        var dispatchTime = new DateTimeOffset(2026, 7, 17, 14, 58, 0, TimeSpan.Zero);
+        var completeTime = new DateTimeOffset(2026, 7, 17, 16, 29, 0, TimeSpan.Zero);
+
+        var run = PipelineRun.Create(
+            runId: "r1",
+            issueIdentifier: "i",
+            issueTitle: "t",
+            issueProviderConfigId: "ip",
+            repoProviderConfigId: "rp",
+            startedAt: enqueueTime);
+
+        // After dispatch, reset StartedAt to actual dispatch time
+        run.ResetStartedAt(dispatchTime);
+        run.MarkCompleted(completeTime);
+
+        // Duration should be ~91 minutes (actual work), not ~584 minutes (queue-inclusive)
+        var duration = run.CompletedAtOffset!.Value - run.StartedAtOffset;
+        duration.TotalMinutes.Should().BeApproximately(91, 1);
+    }
+
+    [Fact]
     public void Create_PassesThroughInitOnlyProperties()
     {
         var contexts = new List<LinkedIssueContext>

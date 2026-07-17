@@ -1,13 +1,14 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.TestUtilities;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 
 /// <summary>
-/// Unit tests for <see cref="PipelineConfiguration.ApplyTemplateOverrides"/>.
+/// Unit tests for <see cref="PipelineConfigurationResolver.ApplyTemplateOverrides"/>.
 /// Verifies template matching by repo+brain provider IDs, BrainReadOnly one-directional
-/// override, and blacklist delegation to <see cref="PipelineConfiguration.ApplyBlacklistOverride"/>.
+/// override, and blacklist delegation to <see cref="PipelineConfigurationResolver.ApplyBlacklistOverride"/>.
 /// </summary>
 public class ApplyTemplateOverridesTests
 {
@@ -38,7 +39,7 @@ public class ApplyTemplateOverridesTests
             }
         };
 
-        var result = PipelineConfiguration.ApplyTemplateOverrides(
+        var result = PipelineConfigurationResolver.ApplyTemplateOverrides(
             config, "repo-1", "brain-1", providerConfigs, templates);
 
         result.BrainReadOnly.Should().BeTrue();
@@ -73,7 +74,7 @@ public class ApplyTemplateOverridesTests
             }
         };
 
-        var result = PipelineConfiguration.ApplyTemplateOverrides(
+        var result = PipelineConfigurationResolver.ApplyTemplateOverrides(
             config, "repo-1", "brain-1", providerConfigs, templates);
 
         result.BrainReadOnly.Should().BeFalse();
@@ -106,7 +107,7 @@ public class ApplyTemplateOverridesTests
             }
         };
 
-        var result = PipelineConfiguration.ApplyTemplateOverrides(
+        var result = PipelineConfigurationResolver.ApplyTemplateOverrides(
             config, "repo-1", "brain-1", providerConfigs, templates);
 
         result.BrainReadOnly.Should().BeFalse();
@@ -140,7 +141,7 @@ public class ApplyTemplateOverridesTests
             }
         };
 
-        var result = PipelineConfiguration.ApplyTemplateOverrides(
+        var result = PipelineConfigurationResolver.ApplyTemplateOverrides(
             config, "repo-1", "brain-1", providerConfigs, templates);
 
         result.BlacklistedPaths.Should().BeEquivalentTo(new[] { "vendor", "dist" });
@@ -162,7 +163,7 @@ public class ApplyTemplateOverridesTests
             }
         };
 
-        var result = PipelineConfiguration.ApplyTemplateOverrides(
+        var result = PipelineConfigurationResolver.ApplyTemplateOverrides(
             config, "repo-1", "brain-1", providerConfigs, templates);
 
         result.BrainReadOnly.Should().BeFalse();
@@ -196,7 +197,7 @@ public class ApplyTemplateOverridesTests
             }
         };
 
-        var result = PipelineConfiguration.ApplyTemplateOverrides(
+        var result = PipelineConfigurationResolver.ApplyTemplateOverrides(
             config, "repo-1", null, providerConfigs, templates);
 
         result.BrainReadOnly.Should().BeTrue();
@@ -232,7 +233,7 @@ public class ApplyTemplateOverridesTests
             }
         };
 
-        var result = PipelineConfiguration.ApplyTemplateOverrides(
+        var result = PipelineConfigurationResolver.ApplyTemplateOverrides(
             config, "repo-1", "brain-1", providerConfigs, templates);
 
         // BrainReadOnly applied (template matched)
