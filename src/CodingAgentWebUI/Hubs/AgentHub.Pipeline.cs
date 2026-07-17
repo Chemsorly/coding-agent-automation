@@ -15,7 +15,7 @@ public sealed partial class AgentHub
     /// Agent acknowledges job acceptance. Transitions agent to Busy and WorkItem to Running.
     /// </summary>
     [RequiresActiveJob]
-    public async Task JobAccepted(string jobId)
+    public async Task JobAccepted(JobId jobId)
     {
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         await _lifecycleService.HandleJobAcceptedAsync(jobId, agent, CancellationToken.None);
@@ -27,7 +27,7 @@ public sealed partial class AgentHub
     /// This should be rare after the atomic agent reservation fix in SelectAgent.
     /// </summary>
     [RequiresActiveJob]
-    public async Task JobRejected(string jobId, string reason)
+    public async Task JobRejected(JobId jobId, string reason)
     {
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         await _lifecycleService.HandleJobRejectedAsync(jobId, agent, reason, CancellationToken.None);
@@ -38,7 +38,7 @@ public sealed partial class AgentHub
     /// transitions agent to Idle, and signals the drain service for next dispatch.
     /// </summary>
     [RequiresActiveJob]
-    public async Task ReportJobCompleted(string jobId, JobCompletionPayload payload)
+    public async Task ReportJobCompleted(JobId jobId, JobCompletionPayload payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
@@ -52,7 +52,7 @@ public sealed partial class AgentHub
     /// Updates the PipelineRun's CurrentStep and HighWaterMark, applies optional step metadata, notifies UI.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportStepTransition(string jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata = null)
+    public Task ReportStepTransition(JobId jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata = null)
     {
         _lifecycleService.HandleStepTransition(jobId, step, timestamp, metadata);
 
@@ -62,7 +62,7 @@ public sealed partial class AgentHub
         {
             _logger.Information(
                 "Agent {AgentId} reported progress on job {JobId}, clearing orphan-restored state",
-                agent.AgentId, jobId);
+                agent.AgentId, jobId.Value);
             agent.OrphanRestoredAt = null;
         }
 
@@ -73,15 +73,15 @@ public sealed partial class AgentHub
     /// Reports the result of brain repository synchronization so the UI can display context status.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportBrainSyncResult(string jobId, bool contextLoaded, int knowledgeFileCount)
+    public Task ReportBrainSyncResult(JobId jobId, bool contextLoaded, int knowledgeFileCount)
     {
-        var run = _facade.GetRun(jobId);
+        var run = _facade.GetRun(jobId.Value);
         if (run is not null)
         {
             run.BrainContextLoaded = contextLoaded;
             run.BrainKnowledgeFileCount = knowledgeFileCount;
             _logger.Debug("Job {JobId} brain sync result: loaded={Loaded}, files={FileCount}",
-                jobId, contextLoaded, knowledgeFileCount);
+                jobId.Value, contextLoaded, knowledgeFileCount);
             _orchestration.NotifyChange();
         }
 
@@ -92,15 +92,15 @@ public sealed partial class AgentHub
     /// Enqueues output lines into the run's OutputRingBuffer and the run's OutputLines queue.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportOutputLines(string jobId, IReadOnlyList<string> lines)
+    public Task ReportOutputLines(JobId jobId, IReadOnlyList<string> lines)
     {
         ArgumentNullException.ThrowIfNull(lines);
 
-        var buffer = _facade.GetOutputBuffer(jobId);
+        var buffer = _facade.GetOutputBuffer(jobId.Value);
         buffer.AddRange(lines);
 
         // Also add to the run's OutputLines for UI streaming
-        var run = _facade.GetRun(jobId);
+        var run = _facade.GetRun(jobId.Value);
         if (run is not null)
         {
             foreach (var line in lines)
@@ -116,11 +116,11 @@ public sealed partial class AgentHub
     /// Adds a chat entry to the run's chat history.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportChatEntry(string jobId, ChatRole role, string content)
+    public Task ReportChatEntry(JobId jobId, ChatRole role, string content)
     {
         ArgumentNullException.ThrowIfNull(content);
 
-        var run = _facade.GetRun(jobId);
+        var run = _facade.GetRun(jobId.Value);
         run?.ChatHistory.Enqueue(new ChatEntry { Role = role, Content = content, Timestamp = DateTime.UtcNow });
 
         return Task.CompletedTask;
@@ -130,16 +130,16 @@ public sealed partial class AgentHub
     /// Updates the run's quality gate report and history.
     /// </summary>
     [RequiresActiveJob]
-    public Task ReportQualityGateResult(string jobId, QualityGateReport report)
+    public Task ReportQualityGateResult(JobId jobId, QualityGateReport report)
     {
         ArgumentNullException.ThrowIfNull(report);
 
-        var run = _facade.GetRun(jobId);
+        var run = _facade.GetRun(jobId.Value);
         if (run is not null)
         {
             run.LatestQualityReport = report;
             run.QualityGateHistory.Enqueue(report);
-            _logger.Information("Job {JobId} quality gate result received", jobId);
+            _logger.Information("Job {JobId} quality gate result received", jobId.Value);
         }
 
         return Task.CompletedTask;
@@ -152,14 +152,14 @@ public sealed partial class AgentHub
     /// Uses existing comment formatters based on <paramref name="commentType"/>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task RequestPostComment(string jobId, CommentType commentType, CommentPayload payload)
+    public async Task RequestPostComment(JobId jobId, CommentType commentType, CommentPayload payload)
     {
         ArgumentNullException.ThrowIfNull(payload);
 
-        var run = _facade.GetRun(jobId);
+        var run = _facade.GetRun(jobId.Value);
         if (run is null)
         {
-            _logger.Warning("RequestPostComment for unknown run {JobId}", jobId);
+            _logger.Warning("RequestPostComment for unknown run {JobId}", jobId.Value);
             return;
         }
 
@@ -191,20 +191,20 @@ public sealed partial class AgentHub
     /// Routes to the correct provider based on <paramref name="targetKind"/>.
     /// </summary>
     [RequiresActiveJob]
-    public async Task RequestLabelChange(string jobId, string newLabel, int targetKind = 0)
+    public async Task RequestLabelChange(JobId jobId, string newLabel, int targetKind = 0)
     {
         ArgumentNullException.ThrowIfNull(newLabel);
 
-        var run = _facade.GetRun(jobId);
+        var run = _facade.GetRun(jobId.Value);
         if (run is null)
         {
-            _logger.Warning("RequestLabelChange for unknown run {JobId}", jobId);
+            _logger.Warning("RequestLabelChange for unknown run {JobId}", jobId.Value);
             return;
         }
 
         if (!string.IsNullOrEmpty(newLabel) && !AgentLabels.All.Contains(newLabel))
         {
-            _logger.Warning("Agent requested invalid label '{Label}' for job {JobId}, ignoring", newLabel, jobId);
+            _logger.Warning("Agent requested invalid label '{Label}' for job {JobId}, ignoring", newLabel, jobId.Value);
             return;
         }
 
@@ -214,7 +214,7 @@ public sealed partial class AgentHub
 
         _logger.Information(
             "RequestLabelChange: job {JobId} requesting label {Label} for issue {IssueIdentifier} (agent={AgentId}, currentStep={CurrentStep})",
-            jobId, newLabel, run.IssueIdentifier, run.AgentId, run.CurrentStep);
+            jobId.Value, newLabel, run.IssueIdentifier, run.AgentId, run.CurrentStep);
 
         await SwapLabelAsync(run, newLabel, kind);
     }
@@ -226,13 +226,13 @@ public sealed partial class AgentHub
     /// Supports both SignalR mode (PipelineRun in memory) and K8s mode (WorkItem payload in DB).
     /// </summary>
     [RequiresActiveJob]
-    public async Task<TokenRefreshResponse> RequestTokenRefresh(string jobId, ProviderKind providerKind)
+    public async Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind)
     {
         // Resolve provider config IDs — from PipelineRun (SignalR mode) or WorkItem payload (K8s mode)
         string? repoProviderConfigId;
         string? brainProviderConfigId;
 
-        var run = _facade.GetRun(jobId);
+        var run = _facade.GetRun(jobId.Value);
         if (run is not null)
         {
             repoProviderConfigId = run.RepoProviderConfigId;
@@ -241,11 +241,11 @@ public sealed partial class AgentHub
         else
         {
             // K8s mode fallback: resolve from WorkItem payload in DB
-            var configIds = await _facade.GetWorkItemProviderConfigIdsAsync(jobId, CancellationToken.None);
+            var configIds = await _facade.GetWorkItemProviderConfigIdsAsync(jobId.Value, CancellationToken.None);
             if (configIds is null)
             {
-                _logger.Warning("No active run or work item found for job {JobId}", jobId);
-                throw new HubException($"No active run or work item found for job {jobId}");
+                _logger.Warning("No active run or work item found for job {JobId}", jobId.Value);
+                throw new HubException($"No active run or work item found for job {jobId.Value}");
             }
 
             repoProviderConfigId = configIds.Value.RepoProviderConfigId;
@@ -253,8 +253,8 @@ public sealed partial class AgentHub
 
             if (string.IsNullOrEmpty(repoProviderConfigId))
             {
-                _logger.Warning("WorkItem {JobId} has no repoProviderConfigId in payload", jobId);
-                throw new HubException($"WorkItem {jobId} has no repoProviderConfigId in payload");
+                _logger.Warning("WorkItem {JobId} has no repoProviderConfigId in payload", jobId.Value);
+                throw new HubException($"WorkItem {jobId.Value} has no repoProviderConfigId in payload");
             }
         }
 
@@ -275,8 +275,8 @@ public sealed partial class AgentHub
 
         if (targetConfig is null)
         {
-            _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);
-            throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
+            _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId.Value, providerKind);
+            throw new HubException($"Provider config not found for job {jobId.Value} (kind: {providerKind})");
         }
 
         // GitHub App auth: generate a short-lived scoped token via JWT exchange
@@ -285,7 +285,7 @@ public sealed partial class AgentHub
             var (token, expiresAt) = await _tokenVending.GenerateAgentTokenAsync(targetConfig, CancellationToken.None);
 
             _logger.Information("Token refreshed for job {JobId} (kind: {ProviderKind}), expires at {ExpiresAt}",
-                jobId, providerKind, expiresAt);
+                jobId.Value, providerKind, expiresAt);
 
             return new TokenRefreshResponse { Token = token, ExpiresAt = expiresAt };
         }
@@ -295,7 +295,7 @@ public sealed partial class AgentHub
             && !string.IsNullOrWhiteSpace(accessToken))
         {
             _logger.Information("Returning static access token for job {JobId} (kind: {ProviderKind})",
-                jobId, providerKind);
+                jobId.Value, providerKind);
 
             // Use a far-future expiry since PATs don't expire through this mechanism
             return new TokenRefreshResponse { Token = accessToken, ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) };
@@ -306,13 +306,13 @@ public sealed partial class AgentHub
             && !string.IsNullOrWhiteSpace(existingToken))
         {
             _logger.Information("Returning existing token for job {JobId} (kind: {ProviderKind})",
-                jobId, providerKind);
+                jobId.Value, providerKind);
 
             return new TokenRefreshResponse { Token = existingToken, ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) };
         }
 
-        _logger.Warning("Provider config for job {JobId} (kind: {ProviderKind}) has no supported authentication method", jobId, providerKind);
-        throw new HubException($"Provider config for job {jobId} (kind: {providerKind}) has no supported authentication method. " +
+        _logger.Warning("Provider config for job {JobId} (kind: {ProviderKind}) has no supported authentication method", jobId.Value, providerKind);
+        throw new HubException($"Provider config for job {jobId.Value} (kind: {providerKind}) has no supported authentication method. " +
             "Expected 'privateKeyBase64' (GitHub App), 'accessToken' (GitLab PAT), or 'token'.");
     }
 
@@ -323,13 +323,13 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.CreateIssueAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public Task<CreatedIssueResult> RequestCreateIssue(string jobId, string title, string body, IReadOnlyList<string> labels)
+    public Task<CreatedIssueResult> RequestCreateIssue(JobId jobId, string title, string body, IReadOnlyList<string> labels)
     {
         ArgumentNullException.ThrowIfNull(title);
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
 
-        return ExecuteWithIssueProviderAsync<CreatedIssueResult>(jobId, "create issue",
+        return ExecuteWithIssueProviderAsync<CreatedIssueResult>(jobId.Value, "create issue",
             (provider, ct) => provider.CreateIssueAsync(title, body, labels, ct));
     }
 
@@ -340,22 +340,21 @@ public sealed partial class AgentHub
     /// </summary>
     [RequiresActiveJob]
     public async Task<CreatedIssueResult> RequestCreateIssueForProvider(
-        string jobId, string issueProviderConfigId, string title, string body, IReadOnlyList<string> labels)
+        JobId jobId, string issueProviderConfigId, string title, string body, IReadOnlyList<string> labels)
     {
-        ArgumentNullException.ThrowIfNull(jobId);
         ArgumentNullException.ThrowIfNull(issueProviderConfigId);
         ArgumentNullException.ThrowIfNull(title);
         ArgumentNullException.ThrowIfNull(body);
         ArgumentNullException.ThrowIfNull(labels);
 
-        var run = _facade.GetRun(jobId);
+        var run = _facade.GetRun(jobId.Value);
         if (run is null)
-            throw new HubException($"No active run found for job {jobId}");
+            throw new HubException($"No active run found for job {jobId.Value}");
 
         var issueConfigs = await _facade.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None);
         var issueConfig = issueConfigs.FirstOrDefault(c => c.Id == issueProviderConfigId);
         if (issueConfig is null)
-            throw new HubException($"Issue provider config '{issueProviderConfigId}' not found for cross-repo routing in job {jobId}");
+            throw new HubException($"Issue provider config '{issueProviderConfigId}' not found for cross-repo routing in job {jobId.Value}");
 
         await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
         try
@@ -365,8 +364,8 @@ public sealed partial class AgentHub
         catch (Exception ex)
         {
             _logger.Error(ex, "RequestCreateIssueForProvider failed for job {JobId}, provider {ProviderId}",
-                jobId, issueProviderConfigId);
-            throw new HubException($"Failed to create issue for job {jobId} via provider {issueProviderConfigId}: {ex.Message}");
+                jobId.Value, issueProviderConfigId);
+            throw new HubException($"Failed to create issue for job {jobId.Value} via provider {issueProviderConfigId}: {ex.Message}");
         }
     }
 
@@ -375,9 +374,9 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.ListOpenIssuesAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public Task<PagedResult<IssueSummary>> RequestListOpenIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels)
+    public Task<PagedResult<IssueSummary>> RequestListOpenIssues(JobId jobId, int page, int pageSize, IReadOnlyList<string>? labels)
     {
-        return ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId, "list open issues",
+        return ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId.Value, "list open issues",
             (provider, ct) => provider.ListOpenIssuesAsync(page, pageSize, labels, ct));
     }
 
@@ -387,9 +386,9 @@ public sealed partial class AgentHub
     /// to include recently-closed sibling issues in agent context.
     /// </summary>
     [RequiresActiveJob]
-    public Task<PagedResult<IssueSummary>> RequestListClosedIssues(string jobId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since)
+    public Task<PagedResult<IssueSummary>> RequestListClosedIssues(JobId jobId, int page, int pageSize, IReadOnlyList<string>? labels, DateTime? since)
     {
-        return ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId, "list closed issues",
+        return ExecuteWithIssueProviderAsync<PagedResult<IssueSummary>>(jobId.Value, "list closed issues",
             (provider, ct) => provider.ListClosedIssuesAsync(page, pageSize, labels, since, ct));
     }
 
@@ -398,11 +397,11 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.GetIssueAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public Task<IssueDetail> RequestGetIssue(string jobId, string identifier)
+    public Task<IssueDetail> RequestGetIssue(JobId jobId, string identifier)
     {
         ArgumentNullException.ThrowIfNull(identifier);
 
-        return ExecuteWithIssueProviderAsync<IssueDetail>(jobId, $"get issue '{identifier}'",
+        return ExecuteWithIssueProviderAsync<IssueDetail>(jobId.Value, $"get issue '{identifier}'",
             (provider, ct) => provider.GetIssueAsync(identifier, ct));
     }
 
@@ -411,11 +410,11 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.ListCommentsAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public Task<IReadOnlyList<IssueComment>> RequestListComments(string jobId, string identifier)
+    public Task<IReadOnlyList<IssueComment>> RequestListComments(JobId jobId, string identifier)
     {
         ArgumentNullException.ThrowIfNull(identifier);
 
-        return ExecuteWithIssueProviderAsync<IReadOnlyList<IssueComment>>(jobId, $"list comments for issue '{identifier}'",
+        return ExecuteWithIssueProviderAsync<IReadOnlyList<IssueComment>>(jobId.Value, $"list comments for issue '{identifier}'",
             (provider, ct) => provider.ListCommentsAsync(identifier, ct));
     }
 
@@ -424,13 +423,13 @@ public sealed partial class AgentHub
     /// Called by the agent's <c>OrchestratorProxy.UpdateCommentAsync</c>.
     /// </summary>
     [RequiresActiveJob]
-    public Task RequestUpdateComment(string jobId, string issueId, string commentId, string body)
+    public Task RequestUpdateComment(JobId jobId, string issueId, string commentId, string body)
     {
         ArgumentNullException.ThrowIfNull(issueId);
         ArgumentNullException.ThrowIfNull(commentId);
         ArgumentNullException.ThrowIfNull(body);
 
-        return ExecuteWithIssueProviderAsync(jobId, $"update comment '{commentId}' on issue '{issueId}'",
+        return ExecuteWithIssueProviderAsync(jobId.Value, $"update comment '{commentId}' on issue '{issueId}'",
             (provider, ct) => provider.UpdateCommentAsync(issueId, commentId, body, ct));
     }
 

@@ -36,7 +36,7 @@ public sealed partial class AgentHub
         _logger.Information("ReportConsolidationComplete ENTRY: {DebugInfo}", debugInfo);
 
         // Manual job validation (cannot use [RequiresActiveJob] because that attribute
-        // expects string jobId as first parameter, but this method takes a complex object).
+        // expects JobId as first parameter, but this method takes a complex object).
         if (agent is not null && agent.ActiveJobId is not null
             && !string.Equals(agent.ActiveJobId, result.JobId, StringComparison.Ordinal))
         {

@@ -147,7 +147,13 @@ builder.Services.AddSignalR(options =>
         // Agents may send output chunks or large payloads; default 32KB is too restrictive.
         options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
     })
-    .AddMessagePackProtocol();
+    .AddMessagePackProtocol(options =>
+    {
+        options.SerializerOptions = MessagePack.MessagePackSerializerOptions.Standard
+            .WithResolver(MessagePack.Resolvers.CompositeResolver.Create(
+                new MessagePack.Formatters.IMessagePackFormatter[] { new CodingAgentWebUI.Pipeline.Models.JobIdFormatter() },
+                new MessagePack.IFormatterResolver[] { MessagePack.Resolvers.ContractlessStandardResolverAllowPrivate.Instance }));
+    });
 
 // SignalR — hub filter for agent authorization
 builder.Services.AddSingleton<IHubFilter>(sp => new AgentAuthorizationFilter(

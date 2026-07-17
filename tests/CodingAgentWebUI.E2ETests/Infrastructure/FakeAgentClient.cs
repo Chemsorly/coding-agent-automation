@@ -4,6 +4,9 @@ using System.Text;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using MessagePack;
+using MessagePack.Formatters;
+using MessagePack.Resolvers;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -319,11 +322,17 @@ public sealed class FakeAgentClient : IAsyncDisposable
 
         _connection = new HubConnectionBuilder()
             .WithUrl($"{serverAddress}{HubRoutes.Agent}?agentId={AgentId}&access_token={derivedToken}")
-            .AddMessagePackProtocol()
+            .AddMessagePackProtocol(options =>
+            {
+                options.SerializerOptions = MessagePackSerializerOptions.Standard
+                    .WithResolver(CompositeResolver.Create(
+                        new IMessagePackFormatter[] { new JobIdFormatter() },
+                        new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
+            })
             .Build();
 
         _connection.On<JobAssignmentMessage>("AssignJob", OnAssignJob);
-        _connection.On<string>("CancelJob", _ => { });
+        _connection.On<JobId>("CancelJob", _ => { });
         _connection.On<ChatPromptMessage>("AssignChatPrompt", msg => ChatPromptAssigned.TrySetResult(msg));
         _connection.On<string>("CancelChat", _ => { });
         _connection.On<FetchModelsRequest>("RequestFetchModels", _ => { });

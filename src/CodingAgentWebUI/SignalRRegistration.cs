@@ -1,5 +1,9 @@
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline.Models;
+using MessagePack;
+using MessagePack.Formatters;
+using MessagePack.Resolvers;
 using Microsoft.AspNetCore.SignalR;
 using Serilog;
 
@@ -21,7 +25,13 @@ internal static class SignalRRegistration
                 // Agents may send output chunks or large payloads; default 32KB is too restrictive.
                 options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
             })
-            .AddMessagePackProtocol();
+            .AddMessagePackProtocol(options =>
+            {
+                options.SerializerOptions = MessagePackSerializerOptions.Standard
+                    .WithResolver(CompositeResolver.Create(
+                        new IMessagePackFormatter[] { new JobIdFormatter() },
+                        new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
+            });
 
         // Hub filter for agent authorization
         services.AddSingleton<IHubFilter>(sp => new AgentAuthorizationFilter(
