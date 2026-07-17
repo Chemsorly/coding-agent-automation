@@ -112,7 +112,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         var agentProviderConfig = await providerManager.ResolveProviderConfigAsync(
             agentProviderId, ProviderKind.Agent, linkedCt);
 
-        config = PipelineConfiguration.ApplyBlacklistOverride(config, repoProviderConfig);
+        config = PipelineConfigurationResolver.ApplyBlacklistOverride(config, repoProviderConfig);
 
         await providerManager.CreateCoreProvidersAsync(
             issueProviderConfig, repoProviderConfig, agentProviderConfig, linkedCt);

@@ -5,6 +5,7 @@ using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 
@@ -39,7 +40,7 @@ public class BackwardCompatibilityPropertyTests
         };
 
         // Act: apply the Default project overrides to the config
-        var result = PipelineConfiguration.ApplyProjectOverrides(originalConfig, defaultProject);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(originalConfig, defaultProject);
 
         // Assert: result must be identical to original — no field changed
         Assert.Equal(originalConfig.MaxRetries, result.MaxRetries);
@@ -85,7 +86,7 @@ public class BackwardCompatibilityPropertyTests
         PipelineConfiguration originalConfig)
     {
         // Act
-        var result = PipelineConfiguration.ApplyProjectOverrides(originalConfig, null);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(originalConfig, null);
 
         // Assert: exact same reference returned (no allocation)
         Assert.Same(originalConfig, result);

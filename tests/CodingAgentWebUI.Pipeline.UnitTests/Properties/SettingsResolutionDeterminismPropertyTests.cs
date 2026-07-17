@@ -6,6 +6,7 @@ using FsCheck;
 using FsCheck.Fluent;
 using FsCheck.Xunit;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.CodeReview.Models;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Properties;
@@ -28,8 +29,8 @@ public class SettingsResolutionDeterminismPropertyTests
     public void ApplyProjectOverrides_IsDeterministic_SameInputsSameOutput(
         SettingsResolutionInput input)
     {
-        var result1 = PipelineConfiguration.ApplyProjectOverrides(input.Config, input.Project);
-        var result2 = PipelineConfiguration.ApplyProjectOverrides(input.Config, input.Project);
+        var result1 = PipelineConfigurationResolver.ApplyProjectOverrides(input.Config, input.Project);
+        var result2 = PipelineConfigurationResolver.ApplyProjectOverrides(input.Config, input.Project);
 
         // All behavioral fields must be identical between both calls
         result1.MaxRetries.Should().Be(result2.MaxRetries);
@@ -67,7 +68,7 @@ public class SettingsResolutionDeterminismPropertyTests
     public void ApplyProjectOverrides_NullProject_ReturnsConfigUnchanged(
         SettingsResolutionInput input)
     {
-        var result = PipelineConfiguration.ApplyProjectOverrides(input.Config, null);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(input.Config, null);
 
         // Config must be identical to original when project is null
         result.MaxRetries.Should().Be(input.Config.MaxRetries);
@@ -112,7 +113,7 @@ public class SettingsResolutionDeterminismPropertyTests
             Name = "NullOverrides"
         };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(input.Config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(input.Config, project);
 
         // All fields should remain unchanged
         result.MaxRetries.Should().Be(input.Config.MaxRetries);
@@ -153,7 +154,7 @@ public class SettingsResolutionDeterminismPropertyTests
         var project = input.Project;
         if (project is null) return; // Skip null project cases (covered by 3b)
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(input.Config, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(input.Config, project);
 
         // Each non-null project field must override the config field
         if (project.MaxRetries.HasValue)

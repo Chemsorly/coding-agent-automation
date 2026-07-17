@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.TestUtilities;
 using FsCheck;
 using FsCheck.Xunit;
@@ -7,7 +8,7 @@ using FsCheck.Xunit;
 namespace CodingAgentWebUI.Pipeline.UnitTests.Properties;
 
 /// <summary>
-/// Property-based tests for PipelineConfiguration.ApplyProjectOverrides.
+/// Property-based tests for PipelineConfigurationResolver.ApplyProjectOverrides.
 /// Validates:
 ///   1. Idempotence: applying the same override twice yields the same result.
 ///   2. Null-transparency: null fields don't change the config (inherit semantics).
@@ -29,8 +30,8 @@ public class PipelineConfigurationOverridePropertyTests
         var baseConfig = TestPipelineConfig.Default();
         var project = CreateOverrideProject(maxRetries.Get, analysisReviewEnabled, hasCodeReview);
 
-        var once = PipelineConfiguration.ApplyProjectOverrides(baseConfig, project);
-        var twice = PipelineConfiguration.ApplyProjectOverrides(once, project);
+        var once = PipelineConfigurationResolver.ApplyProjectOverrides(baseConfig, project);
+        var twice = PipelineConfigurationResolver.ApplyProjectOverrides(once, project);
 
         return once.MaxRetries == twice.MaxRetries
             && once.AnalysisReviewEnabled == twice.AnalysisReviewEnabled
@@ -54,7 +55,7 @@ public class PipelineConfigurationOverridePropertyTests
             // All override fields remain null → inherit
         };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(baseConfig, nullProject);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(baseConfig, nullProject);
 
         return result.MaxRetries == baseConfig.MaxRetries
             && result.MaxAnalysisRetries == baseConfig.MaxAnalysisRetries
@@ -80,7 +81,7 @@ public class PipelineConfigurationOverridePropertyTests
             MaxRetries = overrideRetries.Get
         };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(baseConfig, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(baseConfig, project);
 
         return result.MaxRetries == overrideRetries.Get;
     }
@@ -119,8 +120,8 @@ public class PipelineConfigurationOverridePropertyTests
             // MaxRetries = null → doesn't touch it
         };
 
-        var afterA = PipelineConfiguration.ApplyProjectOverrides(baseConfig, projectA);
-        var afterBoth = PipelineConfiguration.ApplyProjectOverrides(afterA, projectB);
+        var afterA = PipelineConfigurationResolver.ApplyProjectOverrides(baseConfig, projectA);
+        var afterBoth = PipelineConfigurationResolver.ApplyProjectOverrides(afterA, projectB);
 
         return afterBoth.MaxRetries == retriesOverride
             && afterBoth.MaxDecompositionSubIssues == subIssuesOverride;
@@ -140,8 +141,8 @@ public class PipelineConfigurationOverridePropertyTests
         var projectA = new PipelineProject { Id = "proj-a", Name = "A", MaxRetries = retriesA.Get };
         var projectB = new PipelineProject { Id = "proj-b", Name = "B", MaxRetries = retriesB.Get };
 
-        var afterA = PipelineConfiguration.ApplyProjectOverrides(baseConfig, projectA);
-        var afterBoth = PipelineConfiguration.ApplyProjectOverrides(afterA, projectB);
+        var afterA = PipelineConfigurationResolver.ApplyProjectOverrides(baseConfig, projectA);
+        var afterBoth = PipelineConfigurationResolver.ApplyProjectOverrides(afterA, projectB);
 
         return afterBoth.MaxRetries == retriesB.Get;
     }
@@ -168,7 +169,7 @@ public class PipelineConfigurationOverridePropertyTests
         };
 
         // Should never throw — the guard clause catches ArgumentOutOfRangeException
-        var result = PipelineConfiguration.ApplyProjectOverrides(baseConfig, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(baseConfig, project);
 
         return result is not null;
     }
@@ -192,7 +193,7 @@ public class PipelineConfigurationOverridePropertyTests
             BlacklistedPaths = new[] { "vendor/", "dist/" }
         };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(baseConfig, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(baseConfig, project);
 
         result.BlacklistedPaths.Should().BeEquivalentTo(new[] { "vendor/", "dist/" });
         result.BlacklistedPaths.Should().NotContain(".agent");
@@ -216,7 +217,7 @@ public class PipelineConfigurationOverridePropertyTests
             CodeReview = new CodeReviewOverrides { MaxIterations = 1 }
         };
 
-        var result = PipelineConfiguration.ApplyProjectOverrides(baseConfig, project);
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(baseConfig, project);
 
         // MaxIterations overridden, FixPrompt preserved from global
         result.CodeReview.MaxIterations.Should().Be(1);
