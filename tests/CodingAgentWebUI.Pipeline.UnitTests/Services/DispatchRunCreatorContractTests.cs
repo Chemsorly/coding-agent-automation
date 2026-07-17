@@ -22,6 +22,7 @@ public class DispatchRunCreatorContractTests : IDisposable
     private readonly Mock<IProviderFactory> _mockFactory;
     private readonly Mock<IRepositoryProvider> _mockRepoProvider;
     private readonly Mock<Serilog.ILogger> _mockLogger;
+    private readonly OrchestratorRunService _realRunService;
     private readonly PipelineOrchestrationService _service;
 
     public DispatchRunCreatorContractTests()
@@ -60,6 +61,7 @@ public class DispatchRunCreatorContractTests : IDisposable
         // Use a real OrchestratorRunService — lifecycle tests need actual state tracking
         // (mock can't track AddRun→IsIssueBeingProcessed correlation)
         var realRunService = new OrchestratorRunService(_mockLogger.Object);
+        _realRunService = realRunService;
 
         _service = TestOrchestrationFactory.CreateMinimal(
             configStore: _mockConfigStore.Object,
@@ -205,6 +207,104 @@ public class DispatchRunCreatorContractTests : IDisposable
 
         result.Should().NotBeNull();
         result!.RunId.Should().Be("run-1");
+    }
+
+    // ── Contract Test 6: ReserveRunIdAsync ──
+
+    // TODO: ReserveRunIdAsync_ViaInterface_ReturnsValidReservation asserts on hardcoded mock values
+    // ("owner/repo", "claude-sonnet") which confirms mock wiring rather than interesting logic.
+    // Consider adding a test with different provider configs to validate the resolution path.
+    // TODO: The StartedAt assertion uses BeCloseTo with 5-second tolerance which is weak — any
+    // DateTimeOffset within 5s of "now" passes. Additionally, the test does not verify that the
+    // sentinel run was actually registered with the lifecycle service (dedup guard active).
+    // Consider asserting IsIssueBeingProcessed returns true after reservation.
+
+    [Fact]
+    public async Task ReserveRunIdAsync_ViaInterface_ReturnsValidReservation()
+    {
+        IDispatchRunCreator creator = _service;
+
+        var reservation = await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "101", "agent-1", "agent-container-1", CancellationToken.None);
+
+        reservation.Should().NotBeNull();
+        reservation!.RunId.Should().NotBeNullOrEmpty();
+        reservation.RepositoryName.Should().Be("owner/repo");
+        reservation.ModelName.Should().Be("claude-sonnet");
+        reservation.StartedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ReserveRunIdAsync_ViaInterface_DuplicateIssue_ReturnsNull()
+    {
+        IDispatchRunCreator creator = _service;
+
+        // First reservation succeeds
+        await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "42", "agent-1", "agent-x", CancellationToken.None);
+
+        // Second reservation of same issue returns null (dedup)
+        var duplicate = await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "42", "agent-1", "agent-y", CancellationToken.None);
+
+        duplicate.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReserveRunIdAsync_IsIssueBeingProcessed_ReturnsTrueAfterReservation()
+    {
+        IDispatchRunCreator creator = _service;
+
+        await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "42", "agent-1", "agent-x", CancellationToken.None);
+
+        var result = creator.IsIssueBeingProcessed("42", "issue-1");
+        result.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReserveRunIdAsync_MultipleIssues_AllSucceed()
+    {
+        IDispatchRunCreator creator = _service;
+
+        var reservation1 = await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "42", "agent-1", "agent-x", CancellationToken.None);
+        var reservation2 = await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "43", "agent-1", "agent-y", CancellationToken.None);
+
+        reservation1.Should().NotBeNull();
+        reservation2.Should().NotBeNull();
+        reservation1!.RunId.Should().NotBe(reservation2!.RunId);
+    }
+
+    [Fact]
+    public async Task ReserveRunIdAsync_AfterSentinelReplacedWithFullRun_StillReturnsNull()
+    {
+        IDispatchRunCreator creator = _service;
+
+        // Reserve a run ID (creates sentinel)
+        var reservation = await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "50", "agent-1", "agent-x", CancellationToken.None);
+        reservation.Should().NotBeNull();
+
+        // Replace the sentinel with a fully-constructed run (simulates what dispatch does)
+        var fullRun = PipelineRun.Create(
+            runId: reservation!.RunId,
+            issueIdentifier: "50",
+            issueTitle: "Full Run Title",
+            issueProviderConfigId: "issue-1",
+            repoProviderConfigId: "repo-1",
+            runType: PipelineRunType.Review,
+            startedAt: reservation.StartedAt,
+            agentId: "agent-x",
+            agentProviderConfigId: "agent-1");
+        _realRunService.ReplaceRun(fullRun);
+
+        // Attempting to reserve the same issue again should still return null (dedup guard active)
+        var duplicate = await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "50", "agent-1", "agent-y", CancellationToken.None);
+
+        duplicate.Should().BeNull();
     }
 
     public void Dispose()

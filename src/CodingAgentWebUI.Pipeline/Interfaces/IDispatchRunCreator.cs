@@ -44,6 +44,23 @@ public interface IDispatchRunCreator
         PipelineRunType runType = PipelineRunType.Implementation);
 
     /// <summary>
+    /// Allocates a run ID, resolves RepositoryName/ModelName, and reserves the dedup slot
+    /// for the given issue by registering a lightweight sentinel <see cref="PipelineRun"/>.
+    /// Returns <c>null</c> if the issue is already being processed (dedup guard).
+    /// </summary>
+    /// <remarks>
+    /// The sentinel run is visible to <see cref="IOrchestratorRunService.GetActiveRuns"/> consumers
+    /// (with empty IssueTitle) until <see cref="Services.PipelineRunLifecycleService.RegisterReservedRun"/>
+    /// replaces it with the fully-constructed run. This matches the existing behavior of
+    /// <see cref="CreateDispatchedRunAsync"/> which also registers a run with empty IssueTitle.
+    /// </remarks>
+    /// <returns>A <see cref="RunReservation"/> with the allocated RunId and resolved metadata, or <c>null</c> if dedup check fails.</returns>
+    Task<RunReservation?> ReserveRunIdAsync(
+        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId,
+        string issueIdentifier, ProviderConfigId agentProviderId, string? agentId,
+        CancellationToken ct);
+
+    /// <summary>
     /// Returns all currently active pipeline runs from both local and multi-run tracking sources.
     /// Used by the loop service for decomposition concurrency enforcement.
     /// </summary>

@@ -1200,6 +1200,132 @@ public class AgentJobDispatcherTests : IDisposable
     }
 
     [Fact]
+    public async Task DispatchReviewToAgentAsync_ExceptionAfterReservation_CleansUpOrphanedRun()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-review-orphan",
+            Hostname = "host",
+            Labels = new[] { "dotnet" }
+        }, "conn-review-orphan");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        // Setup repo provider mock for ExtractLinkedIssuesAsync
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.RepositoryFullName).Returns("org/repo");
+        mockRepoProvider.Setup(r => r.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+
+        // Make AssignJobAsync throw to trigger the catch block after reservation succeeds
+        _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection lost"));
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.DispatchReviewToAgentAsync(
+            agent,
+            new ReviewDispatchRequest
+            {
+                PrIdentifier = "99",
+                PrBranchName = "feature/orphan-test",
+                PrTitle = "Orphan Test PR",
+                PrUrl = "https://github.com/org/repo/pull/99",
+                PrTargetBranch = "main",
+                IssueProviderId = "ip",
+                RepoProviderId = "rp",
+                InitiatedBy = "user"
+            },
+            Array.Empty<string>(),
+            CancellationToken.None);
+
+        result.Should().BeFalse();
+        agent.Status.Should().Be(AgentStatus.Idle);
+        // The orphaned reservation should be cleaned up (run removed)
+        // because reservedRunId is not null and agent.ActiveJobId is still null
+        _runService.GetActiveRuns().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task DispatchDecompositionToAgentAsync_ExceptionAfterReservation_CleansUpOrphanedRun()
+    {
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-decomp-orphan",
+            Hostname = "host",
+            Labels = new[] { "dotnet" }
+        }, "conn-decomp-orphan");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        // Make AssignJobAsync throw to trigger the catch block after reservation succeeds
+        _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection lost"));
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.DispatchDecompositionToAgentAsync(
+            agent, "epic-orphan", "Epic Orphan Title",
+            PipelineRunType.DecompositionAnalysis,
+            "ip", "rp", null, "user",
+            Array.Empty<string>(), CancellationToken.None);
+
+        result.Should().BeFalse();
+        agent.Status.Should().Be(AgentStatus.Idle);
+        // The orphaned reservation should be cleaned up (run removed)
+        // because reservedRunId is not null and agent.ActiveJobId is still null
+        _runService.GetActiveRuns().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task DispatchReviewToAgentAsync_SuccessfulDispatch_RunPersists()
+    {
+        // Verifies the positive case: when dispatch succeeds, the run remains in active runs
+        // (complementary to the orphan cleanup tests that verify the failure case).
+        var agent = _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-review-persist",
+            Hostname = "host",
+            Labels = new[] { "dotnet" }
+        }, "conn-review-persist");
+
+        SetupHappyPathMocks("agent-provider-1");
+
+        // Setup repo provider mock for ExtractLinkedIssuesAsync
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.RepositoryFullName).Returns("org/repo");
+        mockRepoProvider.Setup(r => r.ExtractLinkedIssuesAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
+        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+
+        _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var dispatcher = CreateDispatcher();
+        var result = await dispatcher.DispatchReviewToAgentAsync(
+            agent,
+            new ReviewDispatchRequest
+            {
+                PrIdentifier = "100",
+                PrBranchName = "feature/persist-test",
+                PrTitle = "Persist Test PR",
+                PrUrl = "https://github.com/org/repo/pull/100",
+                PrTargetBranch = "main",
+                IssueProviderId = "ip",
+                RepoProviderId = "rp",
+                InitiatedBy = "user"
+            },
+            Array.Empty<string>(),
+            CancellationToken.None);
+
+        result.Should().BeTrue();
+        // After successful dispatch, the run persists and agent has the job
+        _runService.GetActiveRuns().Should().HaveCount(1);
+        agent.ActiveJobId.Should().NotBeNull();
+    }
+
+    [Fact]
     public async Task DispatchToAgentAsync_NullProject_UsesDefaultProject()
     {
         var agent = _registry.Register(new AgentRegistrationMessage

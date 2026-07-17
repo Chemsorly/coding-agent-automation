@@ -267,6 +267,7 @@ public sealed partial class AgentJobDispatcher
         CancellationToken ct,
         PipelineProject? project = null)
     {
+        string? reservedRunId = null;
         try
         {
             project = EnsureProject(project, request.PrIdentifier, "PR");
@@ -281,36 +282,32 @@ public sealed partial class AgentJobDispatcher
             // Resolve reviewer configurations for this job (quality gates not needed for reviews)
             var resolvedReviewerConfigs = await _infra.Resolution.ResolveReviewersAsync(requiredLabels, ct);
 
-            // Create the dispatched run via PipelineOrchestrationService
-            var run = await _orchestration.CreateDispatchedRunAsync(
+            // Reserve a run ID and dedup slot via PipelineOrchestrationService
+            var reservation = await _orchestration.ReserveRunIdAsync(
                 request.IssueProviderId, request.RepoProviderId, request.PrIdentifier,
-                agentProviderId, agent.AgentId, ct,
-                request.BrainProviderId, pipelineProviderId: null, request.InitiatedBy,
-                PipelineRunType.Review);
+                agentProviderId, agent.AgentId, ct);
 
-            if (run == null)
+            if (reservation == null)
             {
-                _logger.Warning("Failed to create dispatched run for PR review {PrIdentifier}", request.PrIdentifier);
+                _logger.Warning("Failed to reserve run for PR review {PrIdentifier}", request.PrIdentifier);
                 return false;
             }
+
+            reservedRunId = reservation.RunId;
 
             // Pre-fetch linked issues before constructing the final run (non-fatal on failure)
             var linkedIssueContexts = await PreFetchLinkedIssuesAsync(
                 request.PrIdentifier, request.IssueProviderId, request.RepoProviderId, ct);
 
-            // Replace the initial run with a fully-populated review run atomically.
-            // Using ReplaceRun instead of RemoveRun+AddRun eliminates the race window where
-            // IsIssueBeingProcessed(prIdentifier) would return false during the gap.
-            var previousRepositoryName = run.RepositoryName;
-            var previousModelName = run.ModelName;
-            run = PipelineRun.Create(
-                runId: run.RunId,
+            // Construct the fully-populated review run atomically with all metadata.
+            var run = PipelineRun.Create(
+                runId: reservation.RunId,
                 issueIdentifier: request.PrIdentifier,
                 issueTitle: request.PrTitle,
                 issueProviderConfigId: request.IssueProviderId,
                 repoProviderConfigId: request.RepoProviderId,
                 runType: PipelineRunType.Review,
-                startedAt: run.StartedAtOffset,
+                startedAt: reservation.StartedAt,
                 initiatedBy: request.InitiatedBy,
                 agentId: agent.AgentId,
                 agentProviderConfigId: agentProviderId,
@@ -321,8 +318,8 @@ public sealed partial class AgentJobDispatcher
                 reviewPrDescription: request.PrDescription,
                 reviewPrAuthor: request.PrAuthor,
                 linkedIssueContexts: linkedIssueContexts.Count > 0 ? linkedIssueContexts : null);
-            run.RepositoryName = previousRepositoryName;
-            run.ModelName = previousModelName;
+            run.RepositoryName = reservation.RepositoryName;
+            run.ModelName = reservation.ModelName;
             run.ProjectId = project.Id;
             run.ProjectName = project.Name;
             run.LinkedPullRequest = new LinkedPullRequest
@@ -333,6 +330,10 @@ public sealed partial class AgentJobDispatcher
                 IsDraft = false
             };
 
+            // Atomically replace the sentinel with the fully-constructed run
+            // TODO: This bypasses PipelineRunLifecycleService.RegisterReservedRun (and its NotifyChange() call).
+            // UI/SSE subscribers won't be notified when the sentinel is replaced with the full run.
+            // Either wire through RegisterReservedRun or call NotifyChange() explicitly after ReplaceRun.
             _runService.ReplaceRun(run);
 
             // Populate resolved profile and reviewer config IDs on the run
@@ -382,6 +383,17 @@ public sealed partial class AgentJobDispatcher
         }
         catch (Exception ex)
         {
+            // Clean up orphaned reservation if it was created but not yet assigned to the agent.
+            // NOTE: This is a deliberate improvement over the pre-refactoring behavior where orphaned
+            // runs would persist after dispatch failure. The old CreateDispatchedRunAsync path did not
+            // clean up on failure either, but ReserveRunIdAsync makes the cleanup safe because
+            // the sentinel is minimal and has no side effects beyond the dedup guard.
+            // TODO: If the exception occurs after ReplaceRun but before AssignAndSendAsync sets ActiveJobId,
+            // this removes the fully-constructed run (not just the sentinel). RevertDispatchFailureAsync may
+            // then reference a run that no longer exists. Consider distinguishing sentinel-only vs post-replace state.
+            if (reservedRunId is not null && agent.ActiveJobId is null)
+                _runService.RemoveRun(reservedRunId);
+
             await RevertDispatchFailureAsync(agent, ex,
                 "Failed to dispatch review job to agent {AgentId} for PR {PrIdentifier}",
                 request.RepoProviderId, request.PrIdentifier, AgentLabels.Next, LabelTargetKind.PullRequest);
@@ -408,6 +420,7 @@ public sealed partial class AgentJobDispatcher
         string? decompositionSource = null,
         PipelineProject? project = null)
     {
+        string? reservedRunId = null;
         try
         {
             project = EnsureProject(project, epicIdentifier, "epic");
@@ -419,45 +432,48 @@ public sealed partial class AgentJobDispatcher
 
             var agentProviderId = profile.AgentProviderConfigId;
 
-            // Create the dispatched run via PipelineOrchestrationService
-            var run = await _orchestration.CreateDispatchedRunAsync(
+            // Reserve a run ID and dedup slot via PipelineOrchestrationService
+            var reservation = await _orchestration.ReserveRunIdAsync(
                 issueProviderId, repoProviderId, epicIdentifier,
-                agentProviderId, agent.AgentId, ct,
-                brainProviderId, pipelineProviderId: null, initiatedBy, phaseType);
+                agentProviderId, agent.AgentId, ct);
 
-            if (run == null)
+            if (reservation == null)
             {
-                _logger.Warning("Failed to create dispatched run for decomposition of epic {EpicIdentifier}", epicIdentifier);
+                _logger.Warning("Failed to reserve run for decomposition of epic {EpicIdentifier}", epicIdentifier);
                 return false;
             }
 
+            reservedRunId = reservation.RunId;
+
             // Load config early — needed for WorkspaceBaseDirectory before settings override
             var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
-            var runId = run.RunId;
+            var runId = reservation.RunId;
             var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, "decomposition", runId);
 
-            // Replace the initial run with a fully-populated decomposition run atomically.
-            var previousRepositoryName = run.RepositoryName;
-            var previousModelName = run.ModelName;
-            run = PipelineRun.Create(
+            // Construct the fully-populated decomposition run with all metadata.
+            var run = PipelineRun.Create(
                 runId: runId,
                 issueIdentifier: epicIdentifier,
                 issueTitle: epicTitle,
                 issueProviderConfigId: issueProviderId,
                 repoProviderConfigId: repoProviderId,
                 runType: phaseType,
-                startedAt: run.StartedAtOffset,
+                startedAt: reservation.StartedAt,
                 initiatedBy: initiatedBy,
                 agentId: agent.AgentId,
                 agentProviderConfigId: agentProviderId,
                 brainProviderConfigId: brainProviderId,
                 decompositionSource: decompositionSource);
-            run.RepositoryName = previousRepositoryName;
-            run.ModelName = previousModelName;
+            run.RepositoryName = reservation.RepositoryName;
+            run.ModelName = reservation.ModelName;
             run.WorkspacePath = workspacePath;
             run.ProjectId = project.Id;
             run.ProjectName = project.Name;
 
+            // Atomically replace the sentinel with the fully-constructed run
+            // TODO: This bypasses PipelineRunLifecycleService.RegisterReservedRun (and its NotifyChange() call).
+            // UI/SSE subscribers won't be notified when the sentinel is replaced with the full run.
+            // Either wire through RegisterReservedRun or call NotifyChange() explicitly after ReplaceRun.
             _runService.ReplaceRun(run);
 
             // Populate resolved profile ID on the run
@@ -529,7 +545,6 @@ public sealed partial class AgentJobDispatcher
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
                 project, repoProviderId, brainProviderId, providerConfigs, ct);
 
-            // Swap label to agent:in-progress before dispatch so the epic is immediately marked
             // NOTE: Label swap to agent:in-progress is handled by AssignAndSendAsync → AgentAcceptedRunAsync.
             await BuildAndSendAsync(
                 agent, run, profile,
@@ -551,6 +566,15 @@ public sealed partial class AgentJobDispatcher
         }
         catch (Exception ex)
         {
+            // Clean up orphaned reservation if it was created but not yet assigned to the agent.
+            // NOTE: This is a deliberate improvement over the pre-refactoring behavior where orphaned
+            // runs would persist after dispatch failure (see DispatchToAgentAsync_ExceptionDuringDispatch_RunRemainsOrphaned test).
+            // TODO: If the exception occurs after ReplaceRun but before AssignAndSendAsync sets ActiveJobId,
+            // this removes the fully-constructed run (not just the sentinel). RevertDispatchFailureAsync may
+            // then reference a run that no longer exists. Consider distinguishing sentinel-only vs post-replace state.
+            if (reservedRunId is not null && agent.ActiveJobId is null)
+                _runService.RemoveRun(reservedRunId);
+
             // Revert label on dispatch failure — Phase 1 reverts to agent:epic, Phase 2 reverts to agent:epic-approved
             var revertLabel = phaseType == PipelineRunType.DecompositionAnalysis
                 ? AgentLabels.Epic

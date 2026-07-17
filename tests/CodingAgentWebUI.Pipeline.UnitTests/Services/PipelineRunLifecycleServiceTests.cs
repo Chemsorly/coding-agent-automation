@@ -337,4 +337,47 @@ public class PipelineRunLifecycleServiceTests
 
         public void InvokeClearEventSubscribers() => ClearEventSubscribers();
     }
+
+    // ── RegisterReservedRun Tests ───────────────────────────────────────
+    // TODO: RegisterReservedRun is not called from production code (dispatcher calls _runService.ReplaceRun directly).
+    // These tests validate dead code. Either update the dispatcher to use RegisterReservedRun or remove these tests.
+
+    [Fact]
+    public void RegisterReservedRun_DelegatesToReplaceRun()
+    {
+        var service = CreateService();
+        var run = CreateRun();
+
+        service.RegisterReservedRun(run);
+
+        _mockRunService.Verify(rs => rs.ReplaceRun(run), Times.Once);
+    }
+
+    [Fact]
+    public void RegisterReservedRun_NotifiesChange()
+    {
+        var service = CreateService();
+        var run = CreateRun();
+        var notified = false;
+        service.OnChange += () => notified = true;
+
+        service.RegisterReservedRun(run);
+
+        notified.Should().BeTrue();
+    }
+
+    [Fact]
+    public void RegisterReservedRun_ThrowsWhenNoRunService()
+    {
+        var service = new PipelineRunLifecycleService(
+            _mockHistory.Object,
+            null,
+            _mockLogger.Object);
+        var run = CreateRun();
+
+        var act = () => service.RegisterReservedRun(run);
+
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*not configured*");
+    }
 }

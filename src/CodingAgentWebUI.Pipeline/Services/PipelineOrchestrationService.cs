@@ -190,6 +190,62 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         return run;
     }
 
+    /// <inheritdoc />
+    public async Task<RunReservation?> ReserveRunIdAsync(
+        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId,
+        string issueIdentifier, ProviderConfigId agentProviderId, string? agentId,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+
+        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
+        {
+            _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping reservation", issueIdentifier);
+            return null;
+        }
+
+        // Resolve repo provider config to get repository name
+        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
+        await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
+        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
+        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
+
+        var startedAt = DateTimeOffset.UtcNow;
+
+        // Create a lightweight sentinel run for the dedup guard.
+        // This run is visible to GetActiveRuns() consumers with empty IssueTitle
+        // (same as CreateDispatchedRunAsync behavior).
+        // TODO: Sentinel uses default RunType=Implementation and InitiatedBy="manual" regardless of the
+        // actual dispatch type. During the brief window before ReplaceRun, the UI may show incorrect
+        // RunType/InitiatedBy for the sentinel. Consider adding optional runType/initiatedBy parameters
+        // to ReserveRunIdAsync to match CreateDispatchedRunAsync's behavior.
+        var sentinelRun = PipelineRun.Create(
+            runId: Guid.NewGuid().ToString(),
+            issueIdentifier: issueIdentifier,
+            issueTitle: string.Empty,
+            issueProviderConfigId: issueProviderId.Value,
+            repoProviderConfigId: repoProviderId.Value,
+            startedAt: startedAt,
+            agentId: agentId,
+            agentProviderConfigId: agentProviderId.Value);
+        sentinelRun.RepositoryName = tempRepoProvider.RepositoryFullName;
+        sentinelRun.ModelName = configuredModel;
+
+        // Register sentinel for dedup guard
+        if (!_lifecycle.RegisterDispatchedRun(sentinelRun))
+            return null;
+
+        _logger.Information(
+            "Run ID {RunId} reserved for issue {IssueIdentifier} \u2192 agent {AgentId}",
+            sentinelRun.RunId, issueIdentifier, agentId);
+
+        return new RunReservation(
+            sentinelRun.RunId,
+            tempRepoProvider.RepositoryFullName,
+            configuredModel,
+            startedAt);
+    }
+
     private async Task ExecutePipelineStepsAsync(
         PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
     {

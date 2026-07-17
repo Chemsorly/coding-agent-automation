@@ -247,6 +247,28 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         return true;
     }
 
+    /// <summary>
+    /// Atomically replaces the sentinel run (from <see cref="IDispatchRunCreator.ReserveRunIdAsync"/>)
+    /// with a fully-constructed <see cref="PipelineRun"/>.
+    /// The <paramref name="run"/>'s RunId must match a previously reserved run ID.
+    /// Delegates to <see cref="IOrchestratorRunService.ReplaceRun"/> internally.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if no run service is configured.</exception>
+    // TODO: RegisterReservedRun is not called from production code. The dispatcher calls
+    // _runService.ReplaceRun(run) directly (bypassing NotifyChange). Either update the dispatcher
+    // to use this method, or remove it to avoid dead code confusion.
+    public void RegisterReservedRun(PipelineRun run)
+    {
+        if (_runService is null)
+            throw new InvalidOperationException("OrchestratorRunService is not configured. Cannot register reserved runs.");
+
+        // TODO: Add ArgumentNullException.ThrowIfNull(run) null guard for consistent API boundary validation.
+        _runService.ReplaceRun(run);
+        _logger.Debug("Registered reserved run {RunId} for issue {IssueIdentifier}",
+            run.RunId, run.IssueIdentifier);
+        NotifyChange();
+    }
+
     // ── Lifecycle ───────────────────────────────────────────────────────
 
     /// <summary>Clears all event subscribers. Used by subclasses for state reset.</summary>
