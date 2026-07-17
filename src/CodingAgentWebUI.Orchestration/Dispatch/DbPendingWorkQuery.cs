@@ -39,7 +39,7 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
 
         var result = items.Select(w =>
         {
-            var (issueTitle, repoProviderId, consolidationRunType) = ExtractFromPayload(w.Payload);
+            var (issueTitle, repoProviderId, consolidationRunType, projectId, projectName) = ExtractFromPayload(w.Payload);
             var isConsolidation = w.TaskType == WorkItemTaskType.Consolidation;
             var pendingJob = new PendingJob
             {
@@ -57,7 +57,10 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
                 RunType = w.TaskType == WorkItemTaskType.Review ? PipelineRunType.Review
                     : w.TaskType == WorkItemTaskType.Decomposition ? PipelineRunType.DecompositionAnalysis
                     : PipelineRunType.Implementation,
-                ConsolidationRunType = isConsolidation ? consolidationRunType : null
+                ConsolidationRunType = isConsolidation ? consolidationRunType : null,
+                Project = !string.IsNullOrEmpty(projectId) && !string.IsNullOrEmpty(projectName)
+                    ? new PipelineProject { Id = projectId, Name = projectName }
+                    : null
             };
 
             if (isConsolidation && !pendingJob.IsConsolidation)
@@ -78,27 +81,28 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
     }
 
     /// <summary>
-    /// Extracts IssueTitle, RepoProviderConfigId, and ConsolidationRunType from the serialized payload JSONB.
+    /// Extracts IssueTitle, RepoProviderConfigId, ConsolidationRunType, ProjectId, and ProjectName
+    /// from the serialized payload JSONB.
     /// Falls back to empty strings/null if payload is null or deserialization fails.
     /// </summary>
-    internal static (string IssueTitle, string RepoProviderId, ConsolidationRunType? ConsolidationRunType) ExtractFromPayload(string? payload)
+    internal static (string IssueTitle, string RepoProviderId, ConsolidationRunType? ConsolidationRunType, string? ProjectId, string? ProjectName) ExtractFromPayload(string? payload)
     {
         if (string.IsNullOrEmpty(payload))
-            return ("", "", null);
+            return ("", "", null, null, null);
 
         try
         {
             var request = JsonSerializer.Deserialize<JobDistributionRequest>(payload, PipelineJsonOptions.Default);
             if (request is null)
-                return ("", "", null);
+                return ("", "", null, null, null);
 
             var title = request.IssueDetail?.Title ?? "";
             var repoId = request.RepoProviderConfigId ?? "";
-            return (title, repoId, request.ConsolidationRunType);
+            return (title, repoId, request.ConsolidationRunType, request.ProjectId, request.ProjectName);
         }
         catch (JsonException)
         {
-            return ("", "", null);
+            return ("", "", null, null, null);
         }
     }
 }
