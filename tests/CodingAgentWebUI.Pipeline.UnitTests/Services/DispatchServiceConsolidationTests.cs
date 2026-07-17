@@ -129,7 +129,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         // TODO: Assertion too weak — test setup provides exactly 2 configs (agent + repo). Should assert
         // .Be(2) and verify the specific config IDs to catch regressions in provider resolution logic.
         updatedPayload.ProviderConfigs!.Count.Should().BeGreaterThan(0);
-        updatedPayload.RepoProviderConfigId.Should().Be(TestRepoProviderId);
+        updatedPayload.RepoProviderConfigId.Value.Should().Be(TestRepoProviderId);
     }
 
     [Fact]
@@ -577,7 +577,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             // Verify payload was enriched
             var payload = JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload!, PipelineJsonOptions.Default);
             payload!.ProviderConfigs.Should().NotBeNull();
-            payload.RepoProviderConfigId.Should().Be(TestRepoProviderId);
+            payload.RepoProviderConfigId.Value.Should().Be(TestRepoProviderId);
             payload.PipelineConfiguration.Should().NotBeNull();
         }
 

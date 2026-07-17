@@ -20,17 +20,17 @@ public sealed partial class AgentJobDispatcher
         public required IssueDetail IssueDetail { get; init; }
         public required ParsedIssue ParsedIssue { get; init; }
         public required IReadOnlyList<IssueComment> IssueComments { get; init; }
-        public required string RepoProviderId { get; init; }
-        public required string AgentProviderId { get; init; }
-        public string? BrainProviderId { get; init; }
-        public string? PipelineProviderId { get; init; }
+        public required ProviderConfigId RepoProviderId { get; init; }
+        public required ProviderConfigId AgentProviderId { get; init; }
+        public ProviderConfigId? BrainProviderId { get; init; }
+        public ProviderConfigId? PipelineProviderId { get; init; }
         public required IReadOnlyList<ProviderConfig> ProviderConfigs { get; init; }
         public required PipelineConfiguration Config { get; init; }
         public required string InitiatedBy { get; init; }
         public required string ProfileId { get; init; }
         public required IReadOnlyList<McpServerConfig> McpServers { get; init; }
         public required PipelineProject Project { get; init; }
-        public string? IssueProviderId { get; init; }
+        public ProviderConfigId? IssueProviderId { get; init; }
     }
 
     /// <summary>
@@ -47,10 +47,10 @@ public sealed partial class AgentJobDispatcher
             IssueDetail = ctx.IssueDetail,
             ParsedIssue = ctx.ParsedIssue,
             IssueComments = ctx.IssueComments,
-            RepoProviderConfigId = ctx.RepoProviderId,
-            AgentProviderConfigId = ctx.AgentProviderId,
-            BrainProviderConfigId = ctx.BrainProviderId,
-            PipelineProviderConfigId = ctx.PipelineProviderId,
+            RepoProviderConfigId = ctx.RepoProviderId.Value,
+            AgentProviderConfigId = ctx.AgentProviderId.Value,
+            BrainProviderConfigId = ctx.BrainProviderId?.Value,
+            PipelineProviderConfigId = ctx.PipelineProviderId?.Value,
             ProviderConfigs = ctx.ProviderConfigs,
             PipelineConfiguration = ctx.Config,
             InitiatedBy = ctx.InitiatedBy,
@@ -63,8 +63,8 @@ public sealed partial class AgentJobDispatcher
             ProjectSteeringContent = ctx.Project.SteeringContent,
             // TODO: RepoSteeringContent lookup is effectively dead code — PrepareProviderConfigsAsync → TokenVendingService.CloneWithSettings
             // does not copy SteeringContent, so this always resolves to null. Consider passing SteeringContent separately or fixing CloneWithSettings.
-            RepoSteeringContent = ctx.ProviderConfigs.FirstOrDefault(c => c.Id == ctx.RepoProviderId)?.SteeringContent,
-            IssueProviderConfigId = ctx.IssueProviderId,
+            RepoSteeringContent = ctx.ProviderConfigs.FirstOrDefault(c => c.Id == ctx.RepoProviderId.Value)?.SteeringContent,
+            IssueProviderConfigId = ctx.IssueProviderId?.Value,
             // Variant-specific properties default to safe values; callers override via `with`
             QualityGateConfigs = Array.Empty<QualityGateConfiguration>(),
             ReviewerConfigs = Array.Empty<ReviewerConfiguration>()
@@ -79,10 +79,10 @@ public sealed partial class AgentJobDispatcher
     internal async Task<bool> DispatchToAgentAsync(
         AgentEntry agent,
         string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
+        ProviderConfigId? brainProviderId,
+        ProviderConfigId? pipelineProviderId,
         string initiatedBy,
         IReadOnlyList<string> requiredLabels,
         CancellationToken ct,
@@ -109,7 +109,7 @@ public sealed partial class AgentJobDispatcher
             var run = await _orchestration.CreateDispatchedRunAsync(
                 issueProviderId, repoProviderId, issueIdentifier,
                 agentProviderId, agent.AgentId, ct,
-                brainProviderId, pipelineProviderId, initiatedBy);
+                brainProviderId?.Value, pipelineProviderId?.Value, initiatedBy);
 
             if (run == null)
             {
@@ -140,13 +140,13 @@ public sealed partial class AgentJobDispatcher
 
             // Build and prepare provider configs for the agent
             var providerConfigs = await PrepareProviderConfigsAsync(
-                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
+                repoProviderId.Value, agentProviderId, brainProviderId?.Value, pipelineProviderId?.Value, ct);
 
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
             var config = await PipelineConfiguration.ResolveAsync(
                 _infra.Resolution.ConfigStore.LoadPipelineConfigAsync,
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
-                project, repoProviderId, brainProviderId, providerConfigs, ct);
+                project, repoProviderId.Value, brainProviderId?.Value, providerConfigs, ct);
 
             var ctx = new DispatchContext
             {
@@ -231,7 +231,7 @@ public sealed partial class AgentJobDispatcher
             var run = await _orchestration.CreateDispatchedRunAsync(
                 request.IssueProviderId, request.RepoProviderId, request.PrIdentifier,
                 agentProviderId, agent.AgentId, ct,
-                request.BrainProviderId, pipelineProviderId: null, request.InitiatedBy,
+                request.BrainProviderId?.Value, pipelineProviderId: null, request.InitiatedBy,
                 PipelineRunType.Review);
 
             if (run == null)
@@ -242,7 +242,7 @@ public sealed partial class AgentJobDispatcher
 
             // Pre-fetch linked issues before constructing the final run (non-fatal on failure)
             var linkedIssueContexts = await PreFetchLinkedIssuesAsync(
-                request.PrIdentifier, request.IssueProviderId, request.RepoProviderId, ct);
+                request.PrIdentifier, request.IssueProviderId.Value, request.RepoProviderId.Value, ct);
 
             // Replace the initial run with a fully-populated review run atomically.
             // Using ReplaceRun instead of RemoveRun+AddRun eliminates the race window where
@@ -253,14 +253,14 @@ public sealed partial class AgentJobDispatcher
                 runId: run.RunId,
                 issueIdentifier: request.PrIdentifier,
                 issueTitle: request.PrTitle,
-                issueProviderConfigId: request.IssueProviderId,
-                repoProviderConfigId: request.RepoProviderId,
+                issueProviderConfigId: request.IssueProviderId.Value,
+                repoProviderConfigId: request.RepoProviderId.Value,
                 runType: PipelineRunType.Review,
                 startedAt: run.StartedAtOffset,
                 initiatedBy: request.InitiatedBy,
                 agentId: agent.AgentId,
                 agentProviderConfigId: agentProviderId,
-                brainProviderConfigId: request.BrainProviderId,
+                brainProviderConfigId: request.BrainProviderId?.Value,
                 reviewPrBranchName: request.PrBranchName,
                 reviewPrTargetBranch: request.PrTargetBranch,
                 reviewPrUrl: request.PrUrl,
@@ -287,13 +287,13 @@ public sealed partial class AgentJobDispatcher
 
             // Build and prepare provider configs for the agent
             var providerConfigs = await PrepareProviderConfigsAsync(
-                request.RepoProviderId, agentProviderId, request.BrainProviderId, pipelineProviderId: null, ct);
+                request.RepoProviderId.Value, agentProviderId, request.BrainProviderId?.Value, pipelineProviderId: null, ct);
 
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
             var config = await PipelineConfiguration.ResolveAsync(
                 _infra.Resolution.ConfigStore.LoadPipelineConfigAsync,
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
-                project, request.RepoProviderId, request.BrainProviderId, providerConfigs, ct);
+                project, request.RepoProviderId.Value, request.BrainProviderId?.Value, providerConfigs, ct);
 
             // NOTE: Label swap to agent:in-progress is handled by AssignAndSendAsync → AgentAcceptedRunAsync.
             // This ensures the label only changes when an agent actually accepts the job.
@@ -366,9 +366,9 @@ public sealed partial class AgentJobDispatcher
         string epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
+        ProviderConfigId? brainProviderId,
         string initiatedBy,
         IReadOnlyList<string> requiredLabels,
         CancellationToken ct,
@@ -390,7 +390,7 @@ public sealed partial class AgentJobDispatcher
             var run = await _orchestration.CreateDispatchedRunAsync(
                 issueProviderId, repoProviderId, epicIdentifier,
                 agentProviderId, agent.AgentId, ct,
-                brainProviderId, pipelineProviderId: null, initiatedBy, phaseType);
+                brainProviderId?.Value, pipelineProviderId: null, initiatedBy, phaseType);
 
             if (run == null)
             {
@@ -410,14 +410,14 @@ public sealed partial class AgentJobDispatcher
                 runId: runId,
                 issueIdentifier: epicIdentifier,
                 issueTitle: epicTitle,
-                issueProviderConfigId: issueProviderId,
-                repoProviderConfigId: repoProviderId,
+                issueProviderConfigId: issueProviderId.Value,
+                repoProviderConfigId: repoProviderId.Value,
                 runType: phaseType,
                 startedAt: run.StartedAtOffset,
                 initiatedBy: initiatedBy,
                 agentId: agent.AgentId,
                 agentProviderConfigId: agentProviderId,
-                brainProviderConfigId: brainProviderId,
+                brainProviderConfigId: brainProviderId?.Value,
                 decompositionSource: decompositionSource);
             run.RepositoryName = previousRepositoryName;
             run.ModelName = previousModelName;
@@ -455,7 +455,7 @@ public sealed partial class AgentJobDispatcher
                     if (!templateLookup.TryGetValue(templateId, out var tmpl))
                         continue;
 
-                    var description = repoConfigLookup.TryGetValue(tmpl.RepoProviderId, out var repoCfg)
+                    var description = repoConfigLookup.TryGetValue(tmpl.RepoProviderId.Value, out var repoCfg)
                         ? repoCfg.DisplayName
                         : tmpl.Name;
 
@@ -465,9 +465,9 @@ public sealed partial class AgentJobDispatcher
                         Description = description,
                         DecompositionEnabled = tmpl.DecompositionEnabled,
                         Available = tmpl.Enabled,
-                        IssueProviderId = tmpl.IssueProviderId,
-                        RepoProviderId = tmpl.RepoProviderId,
-                        Labels = repoConfigLookup.TryGetValue(tmpl.RepoProviderId, out var rc)
+                        IssueProviderId = tmpl.IssueProviderId.Value,
+                        RepoProviderId = tmpl.RepoProviderId.Value,
+                        Labels = repoConfigLookup.TryGetValue(tmpl.RepoProviderId.Value, out var rc)
                             ? (rc.RequiredLabels ?? [])
                             : []
                     });
@@ -488,13 +488,13 @@ public sealed partial class AgentJobDispatcher
                 .Where(id => !string.IsNullOrEmpty(id))
                 .Cast<string>();
             var providerConfigs = await PrepareProviderConfigsAsync(
-                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, ct, additionalRepoProviderIds);
+                repoProviderId.Value, agentProviderId, brainProviderId?.Value, pipelineProviderId: null, ct, additionalRepoProviderIds);
 
             // Settings resolution: apply Project → Template overrides to the pre-loaded config
             config = await PipelineConfiguration.ResolveAsync(
                 config,
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
-                project, repoProviderId, brainProviderId, providerConfigs, ct);
+                project, repoProviderId.Value, brainProviderId?.Value, providerConfigs, ct);
 
             var ctx = new DispatchContext
             {
@@ -595,7 +595,7 @@ public sealed partial class AgentJobDispatcher
         AgentEntry agent,
         Exception ex,
         string messageTemplate,
-        string providerConfigId,
+        ProviderConfigId providerConfigId,
         string identifier,
         string revertLabel,
         LabelTargetKind? targetKind = null)

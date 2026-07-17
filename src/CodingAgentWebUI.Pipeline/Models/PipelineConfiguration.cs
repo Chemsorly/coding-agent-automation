@@ -506,7 +506,7 @@ public sealed record PipelineConfiguration
         IReadOnlyList<PipelineJobTemplate> templates)
     {
         var matchingTemplate = templates.FirstOrDefault(t =>
-            t.RepoProviderId == repoProviderId && t.BrainProviderId == brainProviderId);
+            t.RepoProviderId.Value == repoProviderId && t.BrainProviderId?.Value == brainProviderId);
         if (matchingTemplate is { BrainReadOnly: true })
             config = config with { BrainReadOnly = true };
 

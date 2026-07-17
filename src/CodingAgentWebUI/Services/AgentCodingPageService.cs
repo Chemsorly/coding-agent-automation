@@ -205,8 +205,8 @@ public class AgentCodingPageService : IDisposable
         {
             Id = Guid.NewGuid().ToString(), Name = form.Name.Trim(),
             IssueProviderId = form.IssueProviderId, RepoProviderId = form.RepoProviderId,
-            BrainProviderId = string.IsNullOrEmpty(form.BrainProviderId) ? null : form.BrainProviderId,
-            PipelineProviderId = string.IsNullOrEmpty(form.PipelineProviderId) ? null : form.PipelineProviderId,
+            BrainProviderId = string.IsNullOrEmpty(form.BrainProviderId) ? (ProviderConfigId?)null : (ProviderConfigId)form.BrainProviderId,
+            PipelineProviderId = string.IsNullOrEmpty(form.PipelineProviderId) ? (ProviderConfigId?)null : (ProviderConfigId)form.PipelineProviderId,
             BrainReadOnly = form.BrainReadOnly, ImplementationEnabled = form.ImplementationEnabled,
             ReviewEnabled = form.ReviewEnabled, DecompositionEnabled = form.DecompositionEnabled, Enabled = true
         };

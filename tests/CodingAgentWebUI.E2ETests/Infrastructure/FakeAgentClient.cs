@@ -326,7 +326,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
             {
                 options.SerializerOptions = MessagePackSerializerOptions.Standard
                     .WithResolver(CompositeResolver.Create(
-                        new IMessagePackFormatter[] { new JobIdFormatter() },
+                        new IMessagePackFormatter[] { new JobIdFormatter(), new ProviderConfigIdFormatter(), new NullableProviderConfigIdFormatter() },
                         new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
             })
             .Build();

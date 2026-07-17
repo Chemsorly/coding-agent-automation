@@ -151,7 +151,7 @@ builder.Services.AddSignalR(options =>
     {
         options.SerializerOptions = MessagePack.MessagePackSerializerOptions.Standard
             .WithResolver(MessagePack.Resolvers.CompositeResolver.Create(
-                new MessagePack.Formatters.IMessagePackFormatter[] { new CodingAgentWebUI.Pipeline.Models.JobIdFormatter() },
+                new MessagePack.Formatters.IMessagePackFormatter[] { new CodingAgentWebUI.Pipeline.Models.JobIdFormatter(), new CodingAgentWebUI.Pipeline.Models.ProviderConfigIdFormatter(), new CodingAgentWebUI.Pipeline.Models.NullableProviderConfigIdFormatter() },
                 new MessagePack.IFormatterResolver[] { MessagePack.Resolvers.ContractlessStandardResolverAllowPrivate.Instance }));
     });
 

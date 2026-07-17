@@ -3,6 +3,13 @@ using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 
+// TODO: Add round-trip tests for ProviderConfigIdJsonConverter and ProviderConfigIdFormatter/
+// NullableProviderConfigIdFormatter. These are critical for wire compatibility — a test proving
+// {"issueProviderId":"foo"} deserializes correctly (not requiring {"issueProviderId":{"value":"foo"}})
+// would prevent silent data corruption regressions. Also add tests for ProviderConfigId? (nullable)
+// JSON serialization/deserialization to ensure System.Text.Json correctly applies the converter
+// to nullable struct fields like BrainProviderConfigId and PipelineProviderConfigId.
+
 public class ProviderConfigIdTests
 {
     [Fact]

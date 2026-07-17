@@ -166,7 +166,7 @@ internal sealed class DispatchScheduler
 
                         if (_dependencyChecker != null)
                         {
-                            if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var provider))
+                            if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId.Value, out var provider))
                             {
                                 _logger.Warning("Provider '{ProviderId}' not in cache during dependency check for #{Identifier}, skipping dispatch",
                                     template.IssueProviderId, candidate.Identifier);

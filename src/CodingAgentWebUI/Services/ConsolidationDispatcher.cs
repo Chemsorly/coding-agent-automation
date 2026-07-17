@@ -356,7 +356,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         if (template is null)
             return JobDispatcherService.ResolveRequiredLabels(null, _config);
 
-        var repoConfig = await _configStore.GetProviderConfigByIdAsync(template.RepoProviderId, ProviderKind.Repository, ct);
+        var repoConfig = await _configStore.GetProviderConfigByIdAsync(template.RepoProviderId.Value, ProviderKind.Repository, ct);
         return JobDispatcherService.ResolveRequiredLabels(repoConfig, _config);
     }
 

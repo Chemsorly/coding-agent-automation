@@ -12,8 +12,8 @@ public sealed record ReviewDispatchRequest
     public string? PrAuthor { get; init; }
     public required string PrUrl { get; init; }
     public required string PrTargetBranch { get; init; }
-    public required string IssueProviderId { get; init; }
-    public required string RepoProviderId { get; init; }
-    public string? BrainProviderId { get; init; }
+    public required ProviderConfigId IssueProviderId { get; init; }
+    public required ProviderConfigId RepoProviderId { get; init; }
+    public ProviderConfigId? BrainProviderId { get; init; }
     public required string InitiatedBy { get; init; }
 }

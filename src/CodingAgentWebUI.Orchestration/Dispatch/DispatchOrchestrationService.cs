@@ -354,10 +354,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// <inheritdoc />
     public async Task<JobDistributionRequest?> PrepareDistributionRequestAsync(
         string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
+        ProviderConfigId? brainProviderId,
+        ProviderConfigId? pipelineProviderId,
         string initiatedBy,
         PipelineProject project,
         WorkItemTaskType taskType = WorkItemTaskType.Implementation,
@@ -367,8 +367,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var requiredLabels = await ResolveRequiredLabelsInternalAsync(repoProviderId, ct);
 
         var result = await PrepareAsync(
-            issueIdentifier, issueProviderId, repoProviderId,
-            brainProviderId, pipelineProviderId, initiatedBy,
+            issueIdentifier, issueProviderId.Value, repoProviderId.Value,
+            brainProviderId?.Value, pipelineProviderId?.Value, initiatedBy,
             requiredLabels, project, ct, runType);
 
         return result is null ? null : MapToRequest(result, taskType, runType);
@@ -387,9 +387,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
         var result = await PrepareAsync(
             reviewRequest.PrIdentifier,
-            reviewRequest.IssueProviderId,
-            reviewRequest.RepoProviderId,
-            reviewRequest.BrainProviderId,
+            reviewRequest.IssueProviderId.Value,
+            reviewRequest.RepoProviderId.Value,
+            reviewRequest.BrainProviderId?.Value,
             null, // pipelineProviderId
             reviewRequest.InitiatedBy,
             requiredLabels, project, ct,
@@ -418,9 +418,9 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         string epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
+        ProviderConfigId? brainProviderId,
         string initiatedBy,
         PipelineProject project,
         string? decompositionSource = null,
@@ -431,8 +431,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var requiredLabels = await ResolveRequiredLabelsInternalAsync(repoProviderId, ct);
 
         var result = await PrepareAsync(
-            epicIdentifier, issueProviderId, repoProviderId,
-            brainProviderId, null, initiatedBy,
+            epicIdentifier, issueProviderId.Value, repoProviderId.Value,
+            brainProviderId?.Value, null, initiatedBy,
             requiredLabels, project, ct,
             phaseType);
 
@@ -449,10 +449,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// Resolves required labels from the repo provider config, falling back to global config defaults.
     /// </summary>
     private async Task<IReadOnlyList<string>> ResolveRequiredLabelsInternalAsync(
-        string repoProviderId, CancellationToken ct)
+        ProviderConfigId repoProviderId, CancellationToken ct)
     {
         var repoConfig = await _providerConfigStore
-            .GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+            .GetProviderConfigByIdAsync(repoProviderId.Value, ProviderKind.Repository, ct);
         var pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
         return LabelResolver.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
@@ -473,8 +473,8 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             IssueIdentifier = result.IssueDetail.Identifier,
             IssueProviderConfigId = result.CreatedRun.IssueProviderConfigId,
             RepoProviderConfigId = result.CreatedRun.RepoProviderConfigId,
-            BrainProviderConfigId = result.CreatedRun.BrainProviderConfigId,
-            PipelineProviderConfigId = result.CreatedRun.PipelineProviderConfigId,
+            BrainProviderConfigId = result.CreatedRun.BrainProviderConfigId is { } brain ? new ProviderConfigId(brain) : (ProviderConfigId?)null,
+            PipelineProviderConfigId = result.CreatedRun.PipelineProviderConfigId is { } pipeline ? new ProviderConfigId(pipeline) : (ProviderConfigId?)null,
             InitiatedBy = result.CreatedRun.InitiatedBy ?? "loop",
             TaskType = taskType,
             AgentSelector = agentSelector,

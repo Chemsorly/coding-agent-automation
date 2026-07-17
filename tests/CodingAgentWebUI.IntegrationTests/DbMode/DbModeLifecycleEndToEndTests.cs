@@ -919,9 +919,9 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         // Assert
         jobs.Should().HaveCount(1);
         jobs[0].IssueTitle.Should().Be("Payload Round-Trip Title");
-        jobs[0].RepoProviderId.Should().Be("rp-17");
+        jobs[0].RepoProviderId.Value.Should().Be("rp-17");
         jobs[0].IssueIdentifier.Should().Be("owner/repo#17");
-        jobs[0].IssueProviderId.Should().Be("ip-17");
+        jobs[0].IssueProviderId.Value.Should().Be("ip-17");
         jobs[0].RequiredLabels.Should().Contain("dotnet");
     }
 

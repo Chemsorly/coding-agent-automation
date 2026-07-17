@@ -12,7 +12,7 @@ public sealed record PipelineJobTemplate
 {
     /// <summary>Optional brain repository provider config ID.</summary>
     [Key(0)]
-    public string? BrainProviderId { get; init; }
+    public ProviderConfigId? BrainProviderId { get; init; }
 
     /// <summary>
     /// When true, the brain repository is read-only for this template — context is
@@ -39,7 +39,7 @@ public sealed record PipelineJobTemplate
 
     /// <summary>Issue provider config ID — used to poll for agent:next issues.</summary>
     [Key(6)]
-    public required string IssueProviderId { get; init; }
+    public required ProviderConfigId IssueProviderId { get; init; }
 
     /// <summary>Operator-assigned display name (e.g., "DotNet Main Repo").</summary>
     [Key(7)]
@@ -47,11 +47,11 @@ public sealed record PipelineJobTemplate
 
     /// <summary>Optional CI/pipeline provider config ID.</summary>
     [Key(8)]
-    public string? PipelineProviderId { get; init; }
+    public ProviderConfigId? PipelineProviderId { get; init; }
 
     /// <summary>Repository provider config ID — used for cloning and PR creation.</summary>
     [Key(9)]
-    public required string RepoProviderId { get; init; }
+    public required ProviderConfigId RepoProviderId { get; init; }
 
     /// <summary>Whether this template dispatches PR review jobs. Default true.</summary>
     [Key(10)]

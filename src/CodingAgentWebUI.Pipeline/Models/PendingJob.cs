@@ -13,10 +13,10 @@ public sealed record PendingJob
 
     public required string IssueIdentifier { get; init; }
     public string? IssueTitle { get; init; }
-    public required string IssueProviderId { get; init; }
-    public required string RepoProviderId { get; init; }
-    public string? BrainProviderId { get; init; }
-    public string? PipelineProviderId { get; init; }
+    public required ProviderConfigId IssueProviderId { get; init; }
+    public required ProviderConfigId RepoProviderId { get; init; }
+    public ProviderConfigId? BrainProviderId { get; init; }
+    public ProviderConfigId? PipelineProviderId { get; init; }
     public required DateTimeOffset EnqueuedAt { get; init; }
     public required string InitiatedBy { get; init; }
     public IReadOnlyList<string> RequiredLabels { get; init; } = [];

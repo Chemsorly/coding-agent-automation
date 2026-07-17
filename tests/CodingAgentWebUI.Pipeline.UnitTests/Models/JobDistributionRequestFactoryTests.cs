@@ -19,8 +19,8 @@ public class JobDistributionRequestFactoryTests
             Name = "Test Template",
             IssueProviderId = issueProviderId,
             RepoProviderId = repoProviderId,
-            BrainProviderId = brainProviderId,
-            PipelineProviderId = pipelineProviderId
+            BrainProviderId = brainProviderId is not null ? (ProviderConfigId?)new ProviderConfigId(brainProviderId) : null,
+            PipelineProviderId = pipelineProviderId is not null ? (ProviderConfigId?)new ProviderConfigId(pipelineProviderId) : null
         };
 
     private static IssueSummary MakeIssue(

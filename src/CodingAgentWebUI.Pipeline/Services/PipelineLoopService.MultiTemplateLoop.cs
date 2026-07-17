@@ -146,7 +146,7 @@ public sealed partial class PipelineLoopService
         CurrentCycleTemplateCount = enabledTemplates.Count;
 
         // Step 2: Provider cache reconciliation
-        var neededIds = enabledTemplates.Select(t => t.IssueProviderId).ToHashSet();
+        var neededIds = enabledTemplates.Select(t => t.IssueProviderId.Value).ToHashSet();
 
         // Include project-level EpicIssueProviderId values so the cache contains epic providers for polling
         foreach (var project in projects.Where(p => p.Enabled && !string.IsNullOrEmpty(p.EpicIssueProviderId)))
@@ -158,7 +158,7 @@ public sealed partial class PipelineLoopService
         // Reconcile repo provider cache for templates with ReviewEnabled or DecompositionEnabled
         var neededRepoIds = enabledTemplates
             .Where(t => t.ReviewEnabled || t.DecompositionEnabled)
-            .Select(t => t.RepoProviderId)
+            .Select(t => t.RepoProviderId.Value)
             .ToHashSet();
         if (neededRepoIds.Count > 0)
         {

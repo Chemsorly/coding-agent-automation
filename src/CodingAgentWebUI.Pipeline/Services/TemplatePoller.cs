@@ -59,7 +59,7 @@ internal sealed class TemplatePoller
                 // ── Issue polling (only when ImplementationEnabled) ──
                 if (template.ImplementationEnabled)
                 {
-                    if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var provider))
+                    if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId.Value, out var provider))
                     {
                         // Provider not in cache (config issue) — skip issues
                         templateStatuses[template.Id] = new ConfigStatusSnapshot
@@ -89,7 +89,7 @@ internal sealed class TemplatePoller
                 {
                     try
                     {
-                        if (!_cacheManager.RepoProviders.TryGetValue(template.RepoProviderId, out var repoProvider))
+                        if (!_cacheManager.RepoProviders.TryGetValue(template.RepoProviderId.Value, out var repoProvider))
                         {
                             _logger.Warning("Template '{TemplateName}': repo provider '{RepoProviderId}' not found in cache, skipping PR polling",
                                 template.Name, template.RepoProviderId);
@@ -116,7 +116,7 @@ internal sealed class TemplatePoller
                 {
                     try
                     {
-                        if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var decompProvider))
+                        if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId.Value, out var decompProvider))
                         {
                             _logger.Warning("Template '{TemplateName}': issue provider '{IssueProviderId}' not found in cache, skipping decomposition polling",
                                 template.Name, template.IssueProviderId);
@@ -125,7 +125,7 @@ internal sealed class TemplatePoller
                         {
                             // Validate that RepoProviderId references an existing provider config (Req 1.3)
                             // IssueProviderId is already validated by the provider cache lookup above.
-                            if (!_cacheManager.RepoProviders.ContainsKey(template.RepoProviderId))
+                            if (!_cacheManager.RepoProviders.ContainsKey(template.RepoProviderId.Value))
                             {
                                 _logger.Warning("Template '{TemplateName}': decomposition skipped — RepoProviderId '{RepoProviderId}' references non-existent provider config",
                                     template.Name, template.RepoProviderId);
@@ -185,7 +185,7 @@ internal sealed class TemplatePoller
             catch (Exception ex) when (IsAuthError(ex))
             {
                 _logger.Warning(ex, "Template '{TemplateName}' auth error, evicting cached provider", template.Name);
-                await _cacheManager.EvictOnAuthErrorAsync(template.IssueProviderId);
+                await _cacheManager.EvictOnAuthErrorAsync(template.IssueProviderId.Value);
                 var prevStatus = templateStatuses.TryGetValue(template.Id, out var s) ? s : ConfigStatusSnapshot.Empty;
                 templateStatuses[template.Id] = prevStatus with
                 {

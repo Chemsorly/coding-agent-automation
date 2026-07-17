@@ -163,7 +163,7 @@
 <!-- Dispatch Drawers -->
 <IssueDispatchDrawer IsOpen="_drawerOpen" Template="_drawerTemplate"
     Issues="_drawerIssues" IsLoading="_drawerLoading" HasMore="_drawerHasMore" Page="_drawerPage"
-    IsDispatching="_drawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _drawerTemplate?.IssueProviderId ?? ""))"
+    IsDispatching="_drawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _drawerTemplate?.IssueProviderId.Value ?? ""))"
     Readiness="_drawerReadiness"
     AvailableLabels="_drawerLabels" SelectedLabels="_drawerSelectedLabels"
     OnToggleLabel="DrawerToggleLabel" OnClearLabels="DrawerClearLabels"
@@ -185,7 +185,7 @@
 
 <PrDispatchDrawer IsOpen="_prDrawerOpen" Template="_prDrawerTemplate"
     PullRequests="_prDrawerPrs" IsLoading="_prDrawerLoading" HasMore="_prDrawerHasMore" Page="_prDrawerPage"
-    IsDispatching="_prDrawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _prDrawerTemplate?.IssueProviderId ?? ""))"
+    IsDispatching="_prDrawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _prDrawerTemplate?.IssueProviderId.Value ?? ""))"
     AvailableLabels="_prDrawerLabels" SelectedLabels="_prDrawerSelectedLabels"
     OnToggleLabel="PrDrawerToggleLabel" OnClearLabels="PrDrawerClearLabels"
     OnClose="ClosePrDrawer" OnNextPage="PrDrawerNextPage" OnPrevPage="PrDrawerPrevPage" OnDispatch="DispatchPrReviewFromDrawer">
@@ -203,7 +203,7 @@
 
 <EpicDispatchDrawer IsOpen="_epicDrawerOpen" Template="_epicDrawerTemplate"
     Issues="_epicDrawerIssues" IsLoading="_epicDrawerLoading" HasMore="_epicDrawerHasMore" Page="_epicDrawerPage"
-    IsDispatching="_epicDrawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _epicDrawerTemplate?.IssueProviderId ?? ""))"
+    IsDispatching="_epicDrawerDispatching" IsBeingProcessed="@(id => IsIssueActive(id, _epicDrawerTemplate?.IssueProviderId.Value ?? ""))"
     AvailableLabels="_epicDrawerLabels" SelectedLabels="_epicDrawerSelectedLabels"
     OnToggleLabel="EpicDrawerToggleLabel" OnClearLabels="EpicDrawerClearLabels"
     OnClose="CloseEpicDrawer" OnNextPage="EpicDrawerNextPage" OnPrevPage="EpicDrawerPrevPage" OnDispatch="DispatchDecompositionFromDrawer">

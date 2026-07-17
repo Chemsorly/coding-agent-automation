@@ -17,8 +17,8 @@ public static class PipelineLoopTestData
             Name = $"Template-{i}",
             IssueProviderId = $"ip-{i}",
             RepoProviderId = $"rp-{i}",
-            BrainProviderId = i % 2 == 0 ? $"bp-{i}" : null,
-            PipelineProviderId = i % 3 == 0 ? $"pp-{i}" : null,
+            BrainProviderId = i % 2 == 0 ? (ProviderConfigId?)$"bp-{i}" : null,
+            PipelineProviderId = i % 3 == 0 ? (ProviderConfigId?)$"pp-{i}" : null,
             Enabled = allEnabled || i % 2 == 0
         }).ToList();
     }

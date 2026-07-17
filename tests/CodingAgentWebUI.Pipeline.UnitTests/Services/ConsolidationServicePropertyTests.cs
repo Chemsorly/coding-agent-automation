@@ -46,10 +46,10 @@ public class ConsolidationServicePropertyTests : IDisposable
         var result = ConsolidationTemplateFilter.FilterByType(templates, ConsolidationRunType.BrainConsolidation);
 
         foreach (var t in result)
-            t.BrainProviderId.Should().NotBeNullOrWhiteSpace(
+            (t.BrainProviderId?.Value).Should().NotBeNullOrWhiteSpace(
                 $"template '{t.Name}' was included for brain consolidation but has no BrainProviderId");
 
-        var expected = templates.Where(t => !string.IsNullOrWhiteSpace(t.BrainProviderId)).ToList();
+        var expected = templates.Where(t => !string.IsNullOrWhiteSpace(t.BrainProviderId?.Value)).ToList();
         result.Should().HaveCount(expected.Count);
     }
 
@@ -65,15 +65,15 @@ public class ConsolidationServicePropertyTests : IDisposable
 
         foreach (var t in result)
         {
-            t.RepoProviderId.Should().NotBeNullOrWhiteSpace(
+            t.RepoProviderId.Value.Should().NotBeNullOrWhiteSpace(
                 $"template '{t.Name}' was included for refactoring but has no RepoProviderId");
-            t.IssueProviderId.Should().NotBeNullOrWhiteSpace(
+            t.IssueProviderId.Value.Should().NotBeNullOrWhiteSpace(
                 $"template '{t.Name}' was included for refactoring but has no IssueProviderId");
         }
 
         var expected = templates.Where(t =>
-            !string.IsNullOrWhiteSpace(t.RepoProviderId) &&
-            !string.IsNullOrWhiteSpace(t.IssueProviderId)).ToList();
+            !string.IsNullOrWhiteSpace(t.RepoProviderId.Value) &&
+            !string.IsNullOrWhiteSpace(t.IssueProviderId.Value)).ToList();
         result.Should().HaveCount(expected.Count);
     }
 
@@ -241,7 +241,7 @@ public class TemplateFilterArbitraries
                 Name = name,
                 RepoProviderId = hasRepo ? provider : "",
                 IssueProviderId = hasIssue ? provider : "",
-                BrainProviderId = hasBrain ? provider : null
+                BrainProviderId = hasBrain ? (ProviderConfigId?)provider : null
             };
 
         return Gen.Choose(0, 5)

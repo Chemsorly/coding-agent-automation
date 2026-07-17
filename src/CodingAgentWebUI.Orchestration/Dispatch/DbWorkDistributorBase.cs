@@ -97,13 +97,13 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
         // Look up the original enqueue time from prior WorkItems for this issue.
         // This preserves the true "time in queue" across re-dispatches.
         DateTimeOffset? originalEnqueuedAt = null;
-        if (!string.IsNullOrEmpty(request.IssueIdentifier) && !string.IsNullOrEmpty(request.IssueProviderConfigId))
+        if (!string.IsNullOrEmpty(request.IssueIdentifier) && !string.IsNullOrEmpty(request.IssueProviderConfigId.Value))
         {
             await using var lookupDb = await _dbFactory.CreateDbContextAsync(ct);
             originalEnqueuedAt = await lookupDb.WorkItems
                 .AsNoTracking()
                 .Where(w => w.IssueIdentifier == request.IssueIdentifier
-                         && w.IssueProviderConfigId == request.IssueProviderConfigId)
+                         && w.IssueProviderConfigId == request.IssueProviderConfigId.Value)
                 .OrderBy(w => w.CreatedAt)
                 .Select(w => w.OriginalEnqueuedAt ?? w.CreatedAt)
                 .FirstOrDefaultAsync(ct);
@@ -118,7 +118,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
             Id = workItemId,
             TaskType = request.TaskType,
             IssueIdentifier = request.IssueIdentifier,
-            IssueProviderConfigId = request.IssueProviderConfigId,
+            IssueProviderConfigId = request.IssueProviderConfigId.Value,
             Status = initialStatus,
             Payload = payloadJson,
             AgentSelector = request.AgentSelector,
@@ -302,10 +302,10 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
             ForceRefreshAnalysis = request.ForceRefreshAnalysis,
             LinkedPullRequest = request.LinkedPullRequest,
             LinkedIssueContexts = request.LinkedIssueContexts,
-            RepoProviderConfigId = request.RepoProviderConfigId,
-            AgentProviderConfigId = request.AgentProviderConfigId ?? request.RepoProviderConfigId,
-            BrainProviderConfigId = request.BrainProviderConfigId,
-            PipelineProviderConfigId = request.PipelineProviderConfigId,
+            RepoProviderConfigId = request.RepoProviderConfigId.Value,
+            AgentProviderConfigId = request.AgentProviderConfigId ?? request.RepoProviderConfigId.Value,
+            BrainProviderConfigId = request.BrainProviderConfigId?.Value,
+            PipelineProviderConfigId = request.PipelineProviderConfigId?.Value,
             ProviderConfigs = request.ProviderConfigs ?? [],
             PipelineConfiguration = request.PipelineConfiguration ?? new PipelineConfiguration(),
             InitiatedBy = request.InitiatedBy,
@@ -323,7 +323,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
             ProjectSteeringContent = request.ProjectSteeringContent,
             RepoSteeringContent = request.RepoSteeringContent,
             TraceContext = request.TraceContext,
-            IssueProviderConfigId = request.IssueProviderConfigId,
+            IssueProviderConfigId = request.IssueProviderConfigId.Value,
             TaskType = request.TaskType,
             ConsolidationRunType = request.ConsolidationRunType,
             ConsolidationTemplateId = request.ConsolidationTemplateId,

@@ -40,11 +40,11 @@ internal sealed class IssueContextBuilder
     /// <returns>The built <see cref="IssueContext"/>, or <c>null</c> if the provider config was not found.</returns>
     public async Task<IssueContext?> BuildAsync(
         string issueIdentifier,
-        string issueProviderId,
+        ProviderConfigId issueProviderId,
         CancellationToken ct)
     {
         var issueConfig = await _providerConfigStore
-            .GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
+            .GetProviderConfigByIdAsync(issueProviderId.Value, ProviderKind.Issue, ct);
         if (issueConfig is null)
             return null;
 

@@ -204,9 +204,9 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
 
             foreach (var template in enabledTemplates)
             {
-                if (!issueProviderIds.Contains(template.IssueProviderId))
+                if (!issueProviderIds.Contains(template.IssueProviderId.Value))
                     _validationErrors.Add($"Template '{template.Name}' references non-existent issue provider '{template.IssueProviderId}'.");
-                if (!repoProviderIds.Contains(template.RepoProviderId))
+                if (!repoProviderIds.Contains(template.RepoProviderId.Value))
                     _validationErrors.Add($"Template '{template.Name}' references non-existent repo provider '{template.RepoProviderId}'.");
             }
 

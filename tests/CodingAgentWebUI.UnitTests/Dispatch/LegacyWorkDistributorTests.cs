@@ -56,8 +56,8 @@ public class LegacyWorkDistributorTests
     public async Task DistributeAsync_WhenNoAgent_ReturnsFailureWithMessage()
     {
         _mockJobDispatcher.Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
+                It.IsAny<string>(), It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(),
+                It.IsAny<ProviderConfigId?>(), It.IsAny<ProviderConfigId?>(), It.IsAny<string>(),
                 It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<PipelineProject?>()))
             .ReturnsAsync(false);
 
@@ -98,7 +98,7 @@ public class LegacyWorkDistributorTests
     {
         _mockJobDispatcher.Setup(d => d.TryDispatchDecompositionAsync(
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId?>(),
                 It.IsAny<string>(), It.IsAny<CancellationToken>(),
                 It.IsAny<string?>(), It.IsAny<PipelineProject?>()))
             .ReturnsAsync(true);

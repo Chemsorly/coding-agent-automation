@@ -68,7 +68,7 @@ public class ConsolidationPageComponentTests : BunitContext
     {
         Id = id,
         Name = name,
-        BrainProviderId = brainProviderId,
+        BrainProviderId = brainProviderId!,
         IssueProviderId = issueProviderId,
         RepoProviderId = repoProviderId,
         Enabled = enabled

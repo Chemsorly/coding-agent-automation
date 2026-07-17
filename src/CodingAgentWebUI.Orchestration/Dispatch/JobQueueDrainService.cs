@@ -210,7 +210,7 @@ public sealed class JobQueueDrainService : BackgroundService
                             _logger.Information(
                                 "Drain: consolidation job {RunId} is cancelled/failed, discarding",
                                 pendingJob.IssueIdentifier);
-                            _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
+                            _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId.Value);
                             continue;
                         }
                     }
@@ -226,7 +226,7 @@ public sealed class JobQueueDrainService : BackgroundService
                     if (consolidationDispatched)
                     {
                         dispatchedCount++;
-                        _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
+                        _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId.Value);
                     }
                     else
                     {
@@ -253,7 +253,7 @@ public sealed class JobQueueDrainService : BackgroundService
                         // NOTE: There is a narrow race window between this call and the next poll cycle —
                         // the run is already registered in OrchestratorRunService (via CreateDispatchedRunAsync),
                         // so IsIssueBeingProcessed at the loop level guards against re-enqueue.
-                        _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
+                        _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId.Value);
                     }
                     else
                     {
@@ -285,7 +285,7 @@ public sealed class JobQueueDrainService : BackgroundService
         // Fall back to resolving from config
         var pipelineConfig = await _configStore.LoadPipelineConfigAsync(ct);
         var repoConfig = await _configStore.GetProviderConfigByIdAsync(
-            job.RepoProviderId, Pipeline.Models.ProviderKind.Repository, ct);
+            job.RepoProviderId.Value, Pipeline.Models.ProviderKind.Repository, ct);
         return JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
 

@@ -18,7 +18,7 @@ public static class ConsolidationTemplateFilter
     public static bool SupportsBrainConsolidation(PipelineJobTemplate template)
     {
         ArgumentNullException.ThrowIfNull(template);
-        return !string.IsNullOrWhiteSpace(template.BrainProviderId);
+        return !string.IsNullOrWhiteSpace(template.BrainProviderId?.Value);
     }
 
     /// <summary>
@@ -30,8 +30,8 @@ public static class ConsolidationTemplateFilter
     public static bool SupportsRefactoringDetection(PipelineJobTemplate template)
     {
         ArgumentNullException.ThrowIfNull(template);
-        return !string.IsNullOrWhiteSpace(template.RepoProviderId)
-            && !string.IsNullOrWhiteSpace(template.IssueProviderId);
+        return !string.IsNullOrWhiteSpace(template.RepoProviderId.Value)
+            && !string.IsNullOrWhiteSpace(template.IssueProviderId.Value);
     }
 
     /// <summary>

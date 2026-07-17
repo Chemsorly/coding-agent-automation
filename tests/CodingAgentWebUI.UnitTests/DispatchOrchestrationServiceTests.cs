@@ -432,7 +432,7 @@ public class DispatchOrchestrationServiceTests
 
         request.Should().NotBeNull();
         request!.IssueIdentifier.Should().Be("issue-42");
-        request.RepoProviderConfigId.Should().Be("repo-1");
+        request.RepoProviderConfigId.Value.Should().Be("repo-1");
         request.InitiatedBy.Should().Be("test-user");
         request.TaskType.Should().Be(WorkItemTaskType.Implementation);
         request.RunType.Should().Be(PipelineRunType.Implementation);

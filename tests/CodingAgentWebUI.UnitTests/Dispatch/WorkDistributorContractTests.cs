@@ -136,12 +136,12 @@ public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
         // validating request data flows correctly or correct overload is called. Consider stricter argument matching.
         _mockJobDispatcher
             .Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
+                It.IsAny<string>(), It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(),
+                It.IsAny<ProviderConfigId?>(), It.IsAny<ProviderConfigId?>(), It.IsAny<string>(),
                 It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<PipelineProject?>()))
             .ReturnsAsync(true)
-            .Callback<string, string, string, string?, string?, string, CancellationToken, string?, PipelineProject?>(
-                (issueId, provId, _, _, _, _, _, _, _) => _distributedIssues.Add((issueId, provId)));
+            .Callback<string, ProviderConfigId, ProviderConfigId, ProviderConfigId?, ProviderConfigId?, string, CancellationToken, string?, PipelineProject?>(
+                (issueId, provId, _, _, _, _, _, _, _) => _distributedIssues.Add((issueId, provId.Value)));
 
         // TODO: IsIssueBeingProcessedOrQueued uses It.IsAny<string>() matchers — incorrect argument
         // forwarding by LegacyWorkDistributor would go undetected. Consider matching specific values.
@@ -175,8 +175,8 @@ public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
                 runId: Guid.NewGuid().ToString(),
                 issueIdentifier: request.IssueIdentifier,
                 issueTitle: "Contract test issue",
-                issueProviderConfigId: request.IssueProviderConfigId,
-                repoProviderConfigId: request.RepoProviderConfigId,
+                issueProviderConfigId: request.IssueProviderConfigId.Value,
+                repoProviderConfigId: request.RepoProviderConfigId.Value,
                 initiatedBy: request.InitiatedBy)
         });
     }

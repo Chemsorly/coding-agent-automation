@@ -93,7 +93,7 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
                 return ("", "", null);
 
             var title = request.IssueDetail?.Title ?? "";
-            var repoId = request.RepoProviderConfigId ?? "";
+            var repoId = request.RepoProviderConfigId.Value ?? "";
             return (title, repoId, request.ConsolidationRunType);
         }
         catch (JsonException)

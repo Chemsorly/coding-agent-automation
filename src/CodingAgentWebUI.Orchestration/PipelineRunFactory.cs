@@ -29,8 +29,8 @@ public static class PipelineRunFactory
             issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title)
                 ? request.IssueIdentifier
                 : request.IssueDetail!.Title,
-            issueProviderConfigId: request.IssueProviderConfigId,
-            repoProviderConfigId: request.RepoProviderConfigId,
+            issueProviderConfigId: request.IssueProviderConfigId.Value,
+            repoProviderConfigId: request.RepoProviderConfigId.Value,
             runType: request.RunType,
             // TODO: Behavioral change — the old PendingWorkItemDrainService inline code used "loop" as the
             // null fallback for InitiatedBy. Now that the drain service shares this factory, a null InitiatedBy

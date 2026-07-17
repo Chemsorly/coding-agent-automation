@@ -10,16 +10,16 @@ public record JobDistributionRequest
     public required string IssueIdentifier { get; init; }
 
     /// <summary>ID of the issue provider config used to fetch this issue.</summary>
-    public required string IssueProviderConfigId { get; init; }
+    public required ProviderConfigId IssueProviderConfigId { get; init; }
 
     /// <summary>ID of the repository provider config for the work target.</summary>
-    public required string RepoProviderConfigId { get; init; }
+    public required ProviderConfigId RepoProviderConfigId { get; init; }
 
     /// <summary>ID of the brain provider config, if applicable.</summary>
-    public string? BrainProviderConfigId { get; init; }
+    public ProviderConfigId? BrainProviderConfigId { get; init; }
 
     /// <summary>ID of the pipeline provider config, if applicable.</summary>
-    public string? PipelineProviderConfigId { get; init; }
+    public ProviderConfigId? PipelineProviderConfigId { get; init; }
 
     /// <summary>User or system identity that initiated this work item.</summary>
     public required string InitiatedBy { get; init; }

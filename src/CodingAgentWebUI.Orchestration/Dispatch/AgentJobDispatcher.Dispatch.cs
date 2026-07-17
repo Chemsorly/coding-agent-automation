@@ -7,24 +7,27 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 public sealed partial class AgentJobDispatcher
 {
     /// <inheritdoc />
+    // TODO: The old ArgumentNullException.ThrowIfNull guards for issueProviderId/repoProviderId
+    // were removed because ProviderConfigId is a non-nullable struct. However, a default-constructed
+    // ProviderConfigId has Value = null. Consider adding validation (e.g.,
+    // ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value)) to maintain defense-in-depth
+    // at this method boundary and fail fast rather than causing NRE downstream.
     public async Task<bool> TryDispatchAsync(
         string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
+        ProviderConfigId? brainProviderId,
+        ProviderConfigId? pipelineProviderId,
         string initiatedBy,
         CancellationToken ct,
         string? issueTitle = null,
         PipelineProject? project = null)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        ArgumentNullException.ThrowIfNull(issueProviderId);
-        ArgumentNullException.ThrowIfNull(repoProviderId);
         ArgumentNullException.ThrowIfNull(initiatedBy);
 
         // Check if already being processed
-        if (_orchestration.IsIssueBeingProcessed(issueIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(issueIdentifier, issueProviderId))
+        if (_orchestration.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value) || _dispatcher.IsIssueQueued(issueIdentifier, issueProviderId.Value))
         {
             _logger.Information("Issue {IssueIdentifier} already being processed or queued, skipping dispatch", issueIdentifier);
             return false;
@@ -60,7 +63,7 @@ public sealed partial class AgentJobDispatcher
         ArgumentNullException.ThrowIfNull(request);
 
         // Check if already being processed
-        if (IsIssueBeingProcessedOrQueued(request.PrIdentifier, request.IssueProviderId))
+        if (IsIssueBeingProcessedOrQueued(request.PrIdentifier, request.IssueProviderId.Value))
         {
             _logger.Information("PR {PrIdentifier} already being processed or queued, skipping review dispatch", request.PrIdentifier);
             return false;
@@ -99,9 +102,9 @@ public sealed partial class AgentJobDispatcher
         string epicIdentifier,
         string epicTitle,
         PipelineRunType phaseType,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
+        ProviderConfigId issueProviderId,
+        ProviderConfigId repoProviderId,
+        ProviderConfigId? brainProviderId,
         string initiatedBy,
         CancellationToken ct,
         string? decompositionSource = null,
@@ -109,15 +112,13 @@ public sealed partial class AgentJobDispatcher
     {
         ArgumentNullException.ThrowIfNull(epicIdentifier);
         ArgumentNullException.ThrowIfNull(epicTitle);
-        ArgumentNullException.ThrowIfNull(issueProviderId);
-        ArgumentNullException.ThrowIfNull(repoProviderId);
         ArgumentNullException.ThrowIfNull(initiatedBy);
 
         if (phaseType is not (PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition))
             throw new ArgumentOutOfRangeException(nameof(phaseType), phaseType, "Must be DecompositionAnalysis or Decomposition");
 
         // Check if already being processed
-        if (_orchestration.IsIssueBeingProcessed(epicIdentifier, issueProviderId) || _dispatcher.IsIssueQueued(epicIdentifier, issueProviderId))
+        if (_orchestration.IsIssueBeingProcessed(epicIdentifier, issueProviderId.Value) || _dispatcher.IsIssueQueued(epicIdentifier, issueProviderId.Value))
         {
             _logger.Information("Epic {EpicIdentifier} already being processed or queued, skipping decomposition dispatch", epicIdentifier);
             return false;
@@ -153,7 +154,7 @@ public sealed partial class AgentJobDispatcher
 
     private async Task<bool> TryDispatchCoreAsync(
         string identifier,
-        string repoProviderId,
+        ProviderConfigId repoProviderId,
         Func<AgentEntry, IReadOnlyList<string>, CancellationToken, Task<bool>> dispatchToAgent,
         Func<IReadOnlyList<string>, PendingJob> buildPendingJob,
         string logMessageTemplate,
@@ -167,7 +168,7 @@ public sealed partial class AgentJobDispatcher
         }
 
         var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
-        var repoConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
+        var repoConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId.Value, ProviderKind.Repository, ct);
         var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
 
         var agent = _dispatcher.SelectAgent(requiredLabels);

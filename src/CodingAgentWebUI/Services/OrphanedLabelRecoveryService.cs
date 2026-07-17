@@ -130,7 +130,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
         // Deduplicate issue provider config IDs
         var issueProviderIds = templates
-            .Select(t => t.IssueProviderId)
+            .Select(t => t.IssueProviderId.Value)
             .Where(id => !string.IsNullOrEmpty(id))
             .Distinct()
             .ToList();

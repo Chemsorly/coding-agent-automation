@@ -224,8 +224,8 @@ public class WorkItemEndpointsTests : IDisposable
         var dto = okResult.Value!;
         dto.JobId.Should().Be(id.ToString());
         dto.IssueIdentifier.Should().Be(sourcePayload.IssueIdentifier);
-        dto.IssueProviderConfigId.Should().Be(sourcePayload.IssueProviderConfigId);
-        dto.RepoProviderConfigId.Should().Be(sourcePayload.RepoProviderConfigId);
+        dto.IssueProviderConfigId.Should().Be(sourcePayload.IssueProviderConfigId.Value);
+        dto.RepoProviderConfigId.Should().Be(sourcePayload.RepoProviderConfigId.Value);
         dto.InitiatedBy.Should().Be(sourcePayload.InitiatedBy);
         dto.IssueDetail.Should().NotBeNull();
         dto.IssueDetail!.Title.Should().Be("Test Issue");

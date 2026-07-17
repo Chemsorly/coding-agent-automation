@@ -96,7 +96,7 @@ public sealed class DbPendingWorkQueryTests : IDisposable
 
         // Assert
         result.Should().HaveCount(1);
-        result[0].RepoProviderId.Should().Be("repo-provider-xyz");
+        result[0].RepoProviderId.Value.Should().Be("repo-provider-xyz");
     }
 
     [Fact]
@@ -125,7 +125,7 @@ public sealed class DbPendingWorkQueryTests : IDisposable
         // Assert
         result.Should().HaveCount(1);
         result[0].IssueTitle.Should().BeEmpty();
-        result[0].RepoProviderId.Should().BeEmpty();
+        result[0].RepoProviderId.Value.Should().BeEmpty();
     }
 
     [Fact]

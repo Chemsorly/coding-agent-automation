@@ -119,28 +119,28 @@ public sealed class ConsolidationJobPreparer : IConsolidationJobPreparer
         if (template is not null)
         {
             // 3. Add repo provider
-            if (!string.IsNullOrEmpty(template.RepoProviderId))
+            if (!string.IsNullOrEmpty(template.RepoProviderId.Value))
             {
-                repoProviderId = template.RepoProviderId;
+                repoProviderId = template.RepoProviderId.Value;
                 var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-                var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == template.RepoProviderId);
+                var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == template.RepoProviderId.Value);
                 if (repoConfig is not null)
                     rawConfigs.Add(repoConfig);
 
                 // 4. Add brain provider if configured
-                if (!string.IsNullOrEmpty(template.BrainProviderId))
+                if (!string.IsNullOrEmpty(template.BrainProviderId?.Value))
                 {
-                    var brainConfig = repoConfigs.FirstOrDefault(c => c.Id == template.BrainProviderId);
+                    var brainConfig = repoConfigs.FirstOrDefault(c => c.Id == template.BrainProviderId?.Value);
                     if (brainConfig is not null)
                         rawConfigs.Add(brainConfig);
                 }
             }
 
             // 5. Add issue provider for refactoring detection
-            if (type == ConsolidationRunType.RefactoringDetection && !string.IsNullOrEmpty(template.IssueProviderId))
+            if (type == ConsolidationRunType.RefactoringDetection && !string.IsNullOrEmpty(template.IssueProviderId.Value))
             {
                 var issueConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
-                    template.IssueProviderId, ProviderKind.Issue, ct);
+                    template.IssueProviderId.Value, ProviderKind.Issue, ct);
                 if (issueConfig is not null)
                     rawConfigs.Add(issueConfig);
             }
