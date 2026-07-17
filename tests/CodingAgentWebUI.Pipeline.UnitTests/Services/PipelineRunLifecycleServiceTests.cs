@@ -73,6 +73,8 @@ public class PipelineRunLifecycleServiceTests
 
     // ── AddRunToHistoryAsync ─────────────────────────────────────────────────
 
+    // TODO: [WARNING] AddRunToHistoryAsync_DelegatesToHistoryService uses It.IsAny<CancellationToken>(), which cannot detect if a specific token is actually propagated vs default. Strengthen assertion to verify exact token forwarding.
+    // TODO: [WARNING] No test exists for FailRunAsync verifying that its ct parameter is forwarded to AddRunToHistoryAsync. Add a test that passes a specific CancellationToken and asserts it reaches _historyService.
     [Fact]
     public async Task AddRunToHistoryAsync_DelegatesToHistoryService()
     {
