@@ -127,7 +127,7 @@ public sealed partial class AgentJobDispatcher
             run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
 
             // Pre-fetch issue details and comments
-            var issueContext = await PrepareIssueContextAsync(issueIdentifier, issueProviderId, ct);
+            var issueContext = await _issueContextBuilder.BuildAsync(issueIdentifier, issueProviderId, ct);
             if (issueContext is null)
             {
                 _logger.Error("Issue provider config '{ConfigId}' not found", issueProviderId);
@@ -695,69 +695,6 @@ public sealed partial class AgentJobDispatcher
         }
 
         return linkedIssueContexts.AsReadOnly();
-    }
-
-    /// <summary>
-    /// Pre-fetches issue details, comments, swaps labels, and detects existing analysis.
-    /// Returns null if the issue provider config is not found.
-    /// </summary>
-    private async Task<IssueContext?> PrepareIssueContextAsync(
-        string issueIdentifier,
-        string issueProviderId,
-        CancellationToken ct)
-    {
-        var issueConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
-        if (issueConfig == null)
-            return null;
-
-        IssueDetail issueDetail;
-        ParsedIssue parsedIssue;
-        IReadOnlyList<IssueComment> issueComments;
-        await using (var issueProvider = _infra.ProviderFactory.CreateIssueProvider(issueConfig))
-        {
-            issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
-            parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
-            var allComments = await issueProvider.ListCommentsAsync(issueIdentifier, ct);
-            // Cap at 50 comments per REQ-4.4
-            issueComments = allComments.Count > 50
-                ? allComments.Take(50).ToList().AsReadOnly()
-                : allComments;
-        }
-
-        // NOTE: Label swap to agent:in-progress is NOT done here.
-        // It's handled by IRunLifecycleManager.AgentAcceptedRunAsync after the agent accepts the job,
-        // ensuring label state is consistent across all three modes (Legacy, SignalR, K8s).
-
-        // Detect existing analysis and rework state from comments
-        // TODO: Legacy mode (AgentJobDispatcher) does not invoke AnalysisStalenessDetector for the
-        // three new signals (body_changed, agent_error, commit_threshold). Only gate_rejection and
-        // gate_wont_do are detected here. If legacy mode still processes issues, staleness detection
-        // silently does not apply. Consider wiring AnalysisStalenessDetector here as well.
-        string? existingAnalysis = null;
-        bool forceRefreshAnalysis = false;
-        string? stalenessSignal = null;
-        var analysisComment = issueComments
-            .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
-            .OrderByDescending(c => c.CreatedAt)
-            .FirstOrDefault();
-        if (analysisComment is not null)
-        {
-            existingAnalysis = analysisComment.Body;
-            var gateRejection = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateRejection));
-            var gateWontDo = issueComments.FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateWontDo));
-            if (gateRejection?.CreatedAt > analysisComment.CreatedAt)
-            {
-                forceRefreshAnalysis = true;
-                stalenessSignal = "gate_rejection";
-            }
-            else if (gateWontDo?.CreatedAt > analysisComment.CreatedAt)
-            {
-                forceRefreshAnalysis = true;
-                stalenessSignal = "gate_wont_do";
-            }
-        }
-
-        return new IssueContext(issueDetail, parsedIssue, issueComments, existingAnalysis, forceRefreshAnalysis, stalenessSignal);
     }
 
     /// <summary>
