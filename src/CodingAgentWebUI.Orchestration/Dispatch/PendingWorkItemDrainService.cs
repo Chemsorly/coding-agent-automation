@@ -302,15 +302,24 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 // Transition to Dispatched in DB BEFORE sending via SignalR.
                 // This ensures the agent's JobAccepted → Running transition is valid
                 // (Dispatched → Running, not Pending → Running which is rejected).
+                var dispatchTime = DateTimeOffset.UtcNow;
                 await _transitionService.TransitionAsync(
                     item.Id,
                     WorkItemStatus.Dispatched,
                     entity =>
                     {
-                        entity.DispatchedAt = DateTimeOffset.UtcNow;
+                        entity.DispatchedAt = dispatchTime;
                         entity.AssignedAgentId = agentId;
                     },
                     ct);
+
+                // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14).
+                // Without this, StartedAt reflects preparation/enqueue time which can be
+                // hours earlier for queued work, inflating the Duration shown in the UI.
+                if (!string.IsNullOrEmpty(request.RunId))
+                {
+                    _runService.GetRun(request.RunId)?.ResetStartedAt(dispatchTime);
+                }
 
                 var message = DbWorkDistributorBase.BuildJobAssignmentMessage(item.Id, request);
 
