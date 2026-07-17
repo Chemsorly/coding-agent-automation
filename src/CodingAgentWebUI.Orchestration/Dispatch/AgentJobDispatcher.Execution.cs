@@ -72,6 +72,81 @@ public sealed partial class AgentJobDispatcher
     }
 
     /// <summary>
+    /// Builds the <see cref="DispatchContext"/>, produces the base <see cref="JobAssignmentMessage"/>,
+    /// applies variant-specific customization via the <paramref name="customize"/> function, and
+    /// sends the job to the agent. This is the shared tail of all three dispatch paths.
+    /// </summary>
+    private async Task BuildAndSendAsync(
+        AgentEntry agent,
+        PipelineRun run,
+        AgentProfile profile,
+        string issueIdentifier,
+        IssueDetail issueDetail,
+        ParsedIssue parsedIssue,
+        IReadOnlyList<IssueComment> issueComments,
+        string repoProviderId,
+        string agentProviderId,
+        string? brainProviderId,
+        string? pipelineProviderId,
+        string? issueProviderId,
+        IReadOnlyList<ProviderConfig> providerConfigs,
+        PipelineConfiguration config,
+        string initiatedBy,
+        PipelineProject project,
+        Func<JobAssignmentMessage, JobAssignmentMessage> customize,
+        CancellationToken ct)
+    {
+        var ctx = new DispatchContext
+        {
+            RunId = run.RunId,
+            IssueIdentifier = issueIdentifier,
+            IssueDetail = issueDetail,
+            ParsedIssue = parsedIssue,
+            IssueComments = issueComments,
+            RepoProviderId = repoProviderId,
+            AgentProviderId = agentProviderId,
+            BrainProviderId = brainProviderId,
+            PipelineProviderId = pipelineProviderId,
+            ProviderConfigs = providerConfigs,
+            Config = config,
+            InitiatedBy = initiatedBy,
+            ProfileId = profile.Id,
+            McpServers = profile.McpServers,
+            Project = project,
+            IssueProviderId = issueProviderId
+        };
+
+        var message = customize(BuildBaseJobAssignmentMessage(ctx));
+
+        await AssignAndSendAsync(agent, run.RunId, message, ct);
+    }
+
+    /// <summary>
+    /// Prepares provider configs and resolves the pipeline configuration for a dispatch.
+    /// Shared by implementation and review paths which both use the load-and-resolve overload.
+    /// The decomposition path does NOT use this helper because it loads config early for
+    /// <see cref="PipelineConfiguration.WorkspaceBaseDirectory"/> access before run creation.
+    /// </summary>
+    private async Task<(IReadOnlyList<ProviderConfig> ProviderConfigs, PipelineConfiguration Config)> PrepareAndResolveConfigAsync(
+        string repoProviderId,
+        string agentProviderId,
+        string? brainProviderId,
+        string? pipelineProviderId,
+        PipelineProject project,
+        CancellationToken ct)
+    {
+        var providerConfigs = await PrepareProviderConfigsAsync(
+            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
+
+        var config = await PipelineConfigurationResolver.ResolveAsync(
+            _infra.Resolution.ConfigStore.LoadPipelineConfigAsync,
+            _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
+            project, repoProviderId, brainProviderId, providerConfigs, ct);
+
+        return (providerConfigs, config);
+    }
+
+    /// <summary>
     /// Dispatches a job to a specific agent. Resolves the agent profile and quality gate
     /// configurations, creates the PipelineRun, prepares configs, and sends the
     /// <see cref="JobAssignmentMessage"/> via SignalR.
@@ -139,46 +214,25 @@ public sealed partial class AgentJobDispatcher
             run.IssueTitle = issueContext.IssueDetail.Title;
 
             // Build and prepare provider configs for the agent
-            var providerConfigs = await PrepareProviderConfigsAsync(
-                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
-
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
-            var config = await PipelineConfigurationResolver.ResolveAsync(
-                _infra.Resolution.ConfigStore.LoadPipelineConfigAsync,
-                _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
-                project, repoProviderId, brainProviderId, providerConfigs, ct);
+            var (providerConfigs, config) = await PrepareAndResolveConfigAsync(
+                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, project, ct);
 
-            var ctx = new DispatchContext
-            {
-                RunId = run.RunId,
-                IssueIdentifier = issueIdentifier,
-                IssueDetail = issueContext.IssueDetail,
-                ParsedIssue = issueContext.ParsedIssue,
-                IssueComments = issueContext.IssueComments,
-                RepoProviderId = repoProviderId,
-                AgentProviderId = agentProviderId,
-                BrainProviderId = brainProviderId,
-                PipelineProviderId = pipelineProviderId,
-                ProviderConfigs = providerConfigs,
-                Config = config,
-                InitiatedBy = initiatedBy,
-                ProfileId = profile.Id,
-                McpServers = profile.McpServers,
-                Project = project,
-                IssueProviderId = issueProviderId
-            };
-
-            var message = BuildBaseJobAssignmentMessage(ctx) with
-            {
-                ExistingAnalysis = issueContext.ExistingAnalysis,
-                ForceRefreshAnalysis = issueContext.ForceRefreshAnalysis,
-                StalenessSignal = issueContext.StalenessSignal,
-                AnalysisRefreshCount = issueContext.RefreshCount,
-                QualityGateConfigs = resolvedQgcs,
-                ReviewerConfigs = resolvedReviewerConfigs
-            };
-
-            await AssignAndSendAsync(agent, run.RunId, message, ct);
+            await BuildAndSendAsync(
+                agent, run, profile,
+                issueIdentifier, issueContext.IssueDetail, issueContext.ParsedIssue, issueContext.IssueComments,
+                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, issueProviderId,
+                providerConfigs, config, initiatedBy, project,
+                msg => msg with
+                {
+                    ExistingAnalysis = issueContext.ExistingAnalysis,
+                    ForceRefreshAnalysis = issueContext.ForceRefreshAnalysis,
+                    StalenessSignal = issueContext.StalenessSignal,
+                    AnalysisRefreshCount = issueContext.RefreshCount,
+                    QualityGateConfigs = resolvedQgcs,
+                    ReviewerConfigs = resolvedReviewerConfigs
+                },
+                ct);
 
             _logger.Information(
                 "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount}, reviewerConfigs={ReviewerConfigCount}, project={ProjectName})",
@@ -286,14 +340,9 @@ public sealed partial class AgentJobDispatcher
             run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
 
             // Build and prepare provider configs for the agent
-            var providerConfigs = await PrepareProviderConfigsAsync(
-                request.RepoProviderId, agentProviderId, request.BrainProviderId, pipelineProviderId: null, ct);
-
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
-            var config = await PipelineConfigurationResolver.ResolveAsync(
-                _infra.Resolution.ConfigStore.LoadPipelineConfigAsync,
-                _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
-                project, request.RepoProviderId, request.BrainProviderId, providerConfigs, ct);
+            var (providerConfigs, config) = await PrepareAndResolveConfigAsync(
+                request.RepoProviderId, agentProviderId, request.BrainProviderId, null, project, ct);
 
             // NOTE: Label swap to agent:in-progress is handled by AssignAndSendAsync → AgentAcceptedRunAsync.
             // This ensures the label only changes when an agent actually accepts the job.
@@ -308,38 +357,22 @@ public sealed partial class AgentJobDispatcher
             };
             var syntheticParsedIssue = new IssueDescriptionParser().Parse(request.PrDescription ?? string.Empty);
 
-            var ctx = new DispatchContext
-            {
-                RunId = run.RunId,
-                IssueIdentifier = request.PrIdentifier,
-                IssueDetail = syntheticIssueDetail,
-                ParsedIssue = syntheticParsedIssue,
-                IssueComments = Array.Empty<IssueComment>(),
-                RepoProviderId = request.RepoProviderId,
-                AgentProviderId = agentProviderId,
-                BrainProviderId = request.BrainProviderId,
-                PipelineProviderId = null,
-                ProviderConfigs = providerConfigs,
-                Config = config,
-                InitiatedBy = request.InitiatedBy,
-                ProfileId = profile.Id,
-                McpServers = profile.McpServers,
-                Project = project,
-                IssueProviderId = request.IssueProviderId
-            };
-
-            var message = BuildBaseJobAssignmentMessage(ctx) with
-            {
-                LinkedPullRequest = run.LinkedPullRequest,
-                LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null,
-                RunType = PipelineRunType.Review,
-                ReviewPrTargetBranch = request.PrTargetBranch,
-                ReviewPrDescription = request.PrDescription,
-                ReviewPrAuthor = request.PrAuthor,
-                ReviewerConfigs = resolvedReviewerConfigs
-            };
-
-            await AssignAndSendAsync(agent, run.RunId, message, ct);
+            await BuildAndSendAsync(
+                agent, run, profile,
+                request.PrIdentifier, syntheticIssueDetail, syntheticParsedIssue, Array.Empty<IssueComment>(),
+                request.RepoProviderId, agentProviderId, request.BrainProviderId, null, request.IssueProviderId,
+                providerConfigs, config, request.InitiatedBy, project,
+                msg => msg with
+                {
+                    LinkedPullRequest = run.LinkedPullRequest,
+                    LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null,
+                    RunType = PipelineRunType.Review,
+                    ReviewPrTargetBranch = request.PrTargetBranch,
+                    ReviewPrDescription = request.PrDescription,
+                    ReviewPrAuthor = request.PrAuthor,
+                    ReviewerConfigs = resolvedReviewerConfigs
+                },
+                ct);
 
             _logger.Information(
                 "Review job {JobId} dispatched to agent {AgentId} for PR {PrIdentifier} (profile={ProfileId}, reviewerConfigs={ReviewerConfigCount}, linkedIssues={LinkedIssueCount})",
@@ -496,35 +529,19 @@ public sealed partial class AgentJobDispatcher
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
                 project, repoProviderId, brainProviderId, providerConfigs, ct);
 
-            var ctx = new DispatchContext
-            {
-                RunId = run.RunId,
-                IssueIdentifier = epicIdentifier,
-                IssueDetail = syntheticIssueDetail,
-                ParsedIssue = syntheticParsedIssue,
-                IssueComments = Array.Empty<IssueComment>(),
-                RepoProviderId = repoProviderId,
-                AgentProviderId = agentProviderId,
-                BrainProviderId = brainProviderId,
-                PipelineProviderId = null,
-                ProviderConfigs = providerConfigs,
-                Config = config,
-                InitiatedBy = initiatedBy,
-                ProfileId = profile.Id,
-                McpServers = profile.McpServers,
-                Project = project,
-                IssueProviderId = issueProviderId
-            };
-
-            var message = BuildBaseJobAssignmentMessage(ctx) with
-            {
-                RunType = phaseType,
-                ProjectContext = projectContext
-            };
-
             // Swap label to agent:in-progress before dispatch so the epic is immediately marked
             // NOTE: Label swap to agent:in-progress is handled by AssignAndSendAsync → AgentAcceptedRunAsync.
-            await AssignAndSendAsync(agent, run.RunId, message, ct);
+            await BuildAndSendAsync(
+                agent, run, profile,
+                epicIdentifier, syntheticIssueDetail, syntheticParsedIssue, Array.Empty<IssueComment>(),
+                repoProviderId, agentProviderId, brainProviderId, null, issueProviderId,
+                providerConfigs, config, initiatedBy, project,
+                msg => msg with
+                {
+                    RunType = phaseType,
+                    ProjectContext = projectContext
+                },
+                ct);
 
             _logger.Information(
                 "Decomposition {Phase} job {JobId} dispatched to agent {AgentId} for epic {EpicIdentifier} (profile={ProfileId}, project={ProjectName})",
