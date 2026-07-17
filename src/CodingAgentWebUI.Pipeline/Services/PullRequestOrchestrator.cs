@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// build PR info, create PR, and file change stats. Extracted from
 /// PipelineOrchestrationService to reduce file size.
 /// </summary>
-public class PullRequestOrchestrator
+public sealed class PullRequestOrchestrator
 {
     private readonly Serilog.ILogger _logger;
 

@@ -101,7 +101,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IBrainSyncService>()));
 
         services.AddSingleton<Pipeline.Interfaces.IPipelineCompletionFacade>(sp => new PipelineCompletionFacade(
-            sp.GetRequiredService<PullRequestOrchestrator>(),
+            new PullRequestOrchestrator(Log.Logger),
             sp.GetRequiredService<PullRequestFinalizationService>(),
             sp.GetRequiredService<FeedbackService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>()));
