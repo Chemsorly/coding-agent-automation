@@ -28,6 +28,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IProjectStore _projectStore;
     private readonly AnalysisStalenessDetector? _stalenessDetector;
+    private readonly IssueContextBuilder _issueContextBuilder;
     private readonly ILogger _logger;
 
     public DispatchOrchestrationService(
@@ -64,6 +65,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         _stalenessDetector = workItemQuery is not null
             ? new AnalysisStalenessDetector(workItemQuery, logger)
             : null;
+        _issueContextBuilder = new IssueContextBuilder(infra.ProviderFactory, providerConfigStore);
     }
 
     /// <summary>
@@ -163,7 +165,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             .Select(r => r.Id).ToList().AsReadOnly();
 
         // Pre-fetch issue details, comments, and swap labels
-        var issueContext = await PrepareIssueContextAsync(
+        var issueContext = await _issueContextBuilder.BuildAsync(
             issueIdentifier, issueProviderId, ct);
         if (issueContext is null)
         {
@@ -272,67 +274,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     }
 
     /// <summary>
-    /// Pre-fetches issue details, comments, swaps labels to in-progress,
-    /// and detects existing analysis. Returns null if issue provider config not found.
-    /// </summary>
-    private async Task<IssueContext?> PrepareIssueContextAsync(
-        string issueIdentifier, string issueProviderId, CancellationToken ct)
-    {
-        var issueConfig = await _providerConfigStore
-            .GetProviderConfigByIdAsync(issueProviderId, ProviderKind.Issue, ct);
-        if (issueConfig is null)
-            return null;
-
-        IssueDetail issueDetail;
-        ParsedIssue parsedIssue;
-        IReadOnlyList<IssueComment> issueComments;
-        await using (var issueProvider = _infra.ProviderFactory.CreateIssueProvider(issueConfig))
-        {
-            issueDetail = await issueProvider.GetIssueAsync(issueIdentifier, ct);
-            parsedIssue = new IssueDescriptionParser().Parse(issueDetail.Description);
-            var allComments = await issueProvider.ListCommentsAsync(issueIdentifier, ct);
-            issueComments = allComments.Count > 50
-                ? allComments.Take(50).ToList().AsReadOnly()
-                : allComments;
-        }
-
-        // NOTE: Label swap to agent:in-progress is intentionally NOT done here.
-        // It is deferred to ConfirmDistributionLabelAsync, called only after an agent
-        // actually accepts the job (fixes #997 — stale labels on Pending items).
-
-        // Detect existing analysis and rework state from comments
-        string? existingAnalysis = null;
-        bool forceRefreshAnalysis = false;
-        string? stalenessSignal = null;
-        var analysisComment = issueComments
-            .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
-            .OrderByDescending(c => c.CreatedAt)
-            .FirstOrDefault();
-        if (analysisComment is not null)
-        {
-            existingAnalysis = analysisComment.Body;
-            var gateRejection = issueComments
-                .FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateRejection));
-            var gateWontDo = issueComments
-                .FirstOrDefault(c => c.Body.Contains(CommentMarkers.GateWontDo));
-            if (gateRejection?.CreatedAt > analysisComment.CreatedAt)
-            {
-                forceRefreshAnalysis = true;
-                stalenessSignal = "gate_rejection";
-            }
-            else if (gateWontDo?.CreatedAt > analysisComment.CreatedAt)
-            {
-                forceRefreshAnalysis = true;
-                stalenessSignal = "gate_wont_do";
-            }
-        }
-
-        return new IssueContext(
-            issueDetail, parsedIssue, issueComments,
-            existingAnalysis, forceRefreshAnalysis, stalenessSignal, 0);
-    }
-
-    /// <summary>
     /// Builds provider configs list and vends tokens via the token vending service.
     /// </summary>
     private async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
@@ -407,18 +348,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             _projectStore.LoadAllTemplatesAsync,
             project, repoProviderId, brainProviderId, providerConfigs, ct);
     }
-
-    /// <summary>
-    /// Internal DTO for pre-fetched issue context.
-    /// </summary>
-    private sealed record IssueContext(
-        IssueDetail IssueDetail,
-        ParsedIssue ParsedIssue,
-        IReadOnlyList<IssueComment> IssueComments,
-        string? ExistingAnalysis,
-        bool ForceRefreshAnalysis,
-        string? StalenessSignal,
-        int RefreshCount);
 
     // ── IDispatchOrchestrationService implementation ─────────────────────
 
