@@ -526,6 +526,62 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
 
     // TODO: Add boundary test: MaxIterations=2, AC non-compliant on both iterations → run.AcceptanceCriteriaReport reflects final non-compliant state and PR body correctly shows ❌
 
+    [Fact]
+    public async Task CodeReview_AcceptanceCriteria_ParseFailurePreservesExistingReport()
+    {
+        // Arrange: iteration 1 writes valid non-compliant JSON, iteration 2 writes invalid JSON.
+        // The fix (null-coalescing guard) ensures the valid report from iteration 1 is preserved.
+        var callCount = 0;
+        _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+            .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+            {
+                callCount++;
+                // Call 1: review agent (iteration 1) — no findings
+                // Call 2: AC agent (iteration 1) — writes non-compliant JSON
+                // Call 3: fix agent (iteration 1) — CRITICAL from non-compliant AC
+                // Call 4: review agent (iteration 2) — no findings
+                // Call 5: AC agent (iteration 2) — writes invalid JSON (parse returns null)
+                // Call 6: fix agent (iteration 2) — CRITICAL re-injected from preserved stale report
+                // Call 7: summary agent
+                if (callCount == 2)
+                {
+                    WriteAcceptanceCriteriaJson("""
+                    {
+                        "criteria": [
+                            { "criterion": "Feature works", "status": "non_compliant", "reasoning": "Not implemented yet" },
+                            { "criterion": "Tests pass", "status": "non_compliant", "reasoning": "No tests" }
+                        ],
+                        "summary": "0 of 2 criteria addressed."
+                    }
+                    """);
+                }
+                else if (callCount == 5)
+                {
+                    WriteAcceptanceCriteriaJson("not valid json {{{");
+                }
+            })
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+        var config = _config with
+        {
+            AcceptanceCriteriaEnabled = true,
+            CodeReview = new CodeReviewConfiguration { MaxIterations = 2, FixPrompt = "Fix the issues" }
+        };
+
+        // Act
+        await _executor.ExecuteCodeReviewAsync(BuildContext(config), CancellationToken.None, CreateReviewers("Correctness"));
+
+        // Assert: report from iteration 1 is preserved (not overwritten to null by iteration 2's parse failure)
+        _run.AcceptanceCriteriaReport.Should().NotBeNull();
+        _run.AcceptanceCriteriaReport!.Criteria.Should().HaveCount(2);
+        _run.AcceptanceCriteriaReport.Criteria.Should().AllSatisfy(c => c.Status.Should().Be(CriterionStatus.NonCompliant));
+        _run.AcceptanceCriteriaReport.Summary.Should().Be("0 of 2 criteria addressed.");
+
+        // Assert: 7 calls total (review + AC + fix) × 2 iterations + summary
+        _mockAgent.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(7));
+        _run.CodeReviewIterationsCompleted.Should().Be(2);
+    }
+
     private void WriteAcceptanceCriteriaJson(string json)
     {
         var fullPath = Path.Combine(_workspacePath, AgentWorkspacePaths.AcceptanceCriteriaFilePath);
