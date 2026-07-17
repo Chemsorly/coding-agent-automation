@@ -13,8 +13,7 @@ using Serilog.Context;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
-/// Executes the full pipeline locally on the agent, replicating the flow from
-/// <see cref="PipelineOrchestrationService.ExecutePipelineStepsAsync"/>.
+/// Executes the full pipeline locally on the agent via <see cref="PipelineRunExecutionHost"/>.
 /// Reports all progress back to the orchestrator via SignalR hub methods.
 /// </summary>
 /// <remarks>
@@ -322,45 +321,53 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 _ => BuildAgentStepPipeline(job, issueOps, repoConfig)
             };
 
-            await PipelineStepRunner.ExecuteAsync(steps, context, linkedCt);
+            var outcome = await PipelineRunExecutionHost.ExecuteStepsAsync(steps, context, linkedCt);
 
-            // For review/decomposition runs, the step pipeline ends at PostingFindings/PostPlan/PostSummary.
-            // Transition to Completed here (implementation runs do this in CreatePullRequestAsync).
-            if (run.RunType is PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
-                && run.CurrentStep is not PipelineStep.Failed and not PipelineStep.Cancelled)
+            // TODO: Subtle behavioral change from original code — exceptions thrown inside the CompletedOutcome
+            // branch (e.g., MarkCompleted, property setters) now propagate to the outer catch rather than being
+            // returned as a failure payload. In practice these are trivial property setters, but the error-handling
+            // contract is technically different from the original try/catch that wrapped both execution and post-success logic.
+            switch (outcome)
             {
-                run.MarkCompleted();
-                run.CurrentStep = PipelineStep.Completed;
-                run.FinalLabel ??= AgentLabels.Done;
+                case PipelineExecutionOutcome.CompletedOutcome:
+                    // For review/decomposition runs, the step pipeline ends at PostingFindings/PostPlan/PostSummary.
+                    // Transition to Completed here (implementation runs do this in CreatePullRequestAsync).
+                    if (run.RunType is PipelineRunType.Review or PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition
+                        && run.CurrentStep is not PipelineStep.Failed and not PipelineStep.Cancelled)
+                    {
+                        run.MarkCompleted();
+                        run.CurrentStep = PipelineStep.Completed;
+                        run.FinalLabel ??= AgentLabels.Done;
+                    }
+
+                    return BuildCompletionPayload(run);
+
+                case PipelineExecutionOutcome.CancelledOutcome:
+                    run.MarkCompleted();
+
+                    // Note: reporter.TransitionTo is fire-and-forget (not awaited), so the Cancelled
+                    // transition and subsequent EmitOutputLine may race. DisposeAsync in the finally
+                    // block drains both, but orchestrator may observe non-deterministic order.
+                    reporter.TransitionTo(PipelineStep.Cancelled, CancellationToken.None);
+                    EmitOutputLine("🚫 Pipeline cancelled");
+
+                    run.FinalLabel = AgentLabels.Cancelled;
+                    return new JobCompletionPayload
+                    {
+                        FinalStep = PipelineStep.Cancelled,
+                        CompletedAt = DateTimeOffset.UtcNow,
+                        RetryCount = run.RetryCount,
+                        IsRework = run.LinkedPullRequest is not null,
+                        FinalLabel = AgentLabels.Cancelled
+                    };
+
+                case PipelineExecutionOutcome.FailedOutcome { Exception: var ex }:
+                    _logger.Error(ex, "Pipeline execution failed with unhandled error");
+                    return BuildFailurePayload(run, ex.Message);
+
+                default:
+                    throw new InvalidOperationException($"Unexpected pipeline execution outcome: {outcome.GetType().Name}");
             }
-
-            return BuildCompletionPayload(run);
-        }
-        catch (OperationCanceledException)
-        {
-            run.MarkCompleted();
-
-            // Note: reporter.TransitionTo is fire-and-forget (not awaited), so the Cancelled
-            // transition and subsequent EmitOutputLine may race. DisposeAsync in the finally
-            // block drains both, but orchestrator may observe non-deterministic order.
-            reporter.TransitionTo(PipelineStep.Cancelled, CancellationToken.None);
-            EmitOutputLine("🚫 Pipeline cancelled");
-
-            run.FinalLabel = AgentLabels.Cancelled;
-            return new JobCompletionPayload
-            {
-                FinalStep = PipelineStep.Cancelled,
-                CompletedAt = DateTimeOffset.UtcNow,
-                RetryCount = run.RetryCount,
-                IsRework = run.LinkedPullRequest is not null,
-                FinalLabel = AgentLabels.Cancelled
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Pipeline execution failed with unhandled error");
-
-            return BuildFailurePayload(run, ex.Message);
         }
         finally
         {
