@@ -91,4 +91,9 @@ public sealed class AgentCancellationSenderTests
         var act = () => new AgentCancellationSender(_registry, _mockComm.Object, null!);
         act.Should().Throw<ArgumentNullException>();
     }
+
+    // TODO: Add negative test — SendCancelJobAsync with empty-string AgentId should throw ArgumentException.
+    // e.g., _sender.SendCancelJobAsync(new AgentId(""), "run-1") should throw.
+    // TODO: Add negative test — SendCancelJobAsync with default(AgentId) (Value == null) should throw.
+    // e.g., _sender.SendCancelJobAsync(default, "run-1") should throw ArgumentException.
 }

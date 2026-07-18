@@ -3538,7 +3538,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         // Cancellation sender that throws — simulates disconnected agent
         var mockCancellation = new Mock<IAgentCancellationSender>();
         mockCancellation
-            .Setup(c => c.SendCancelJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(c => c.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Agent disconnected"));
 
         var service = new PipelineOrchestrationService(
