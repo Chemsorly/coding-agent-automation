@@ -66,10 +66,7 @@ public sealed class AnalysisStalenessDetector
         // with other parameter validation in this method (AnalysisBodyHash.Compute handles null,
         // but null here likely indicates a caller bug).
 
-        // TODO: new DateTimeOffset(analysisComment.CreatedAt, TimeSpan.Zero) will throw ArgumentException
-        // if CreatedAt.Kind == DateTimeKind.Local with non-zero system timezone offset. Consider using
-        // DateTime.SpecifyKind(analysisComment.CreatedAt, DateTimeKind.Utc) for safety.
-        var analysisSince = new DateTimeOffset(analysisComment.CreatedAt, TimeSpan.Zero);
+        var analysisSince = new DateTimeOffset(DateTime.SpecifyKind(analysisComment.CreatedAt, DateTimeKind.Utc), TimeSpan.Zero);
 
         // Max refresh cap: count hash-marker analyses since last success
         var lastSuccess = await _workItemQuery.GetLastSuccessfulCompletionAsync(
