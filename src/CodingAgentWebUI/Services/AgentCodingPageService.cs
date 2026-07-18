@@ -141,47 +141,26 @@ public class AgentCodingPageService : IDisposable
 
     // ── Template Operations ──
 
-    public async Task<(bool Success, string? Error)> ToggleTemplateEnabledAsync(PipelineJobTemplate template, bool enabled)
-    {
-        var idx = Templates.FindIndex(t => t.Id == template.Id);
-        if (idx < 0) return (true, null);
-        var updated = template with { Enabled = enabled };
-        var projectId = GetParentProject(template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await _projectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
-        catch (Exception ex) { return (false, $"Failed to save: {ex.Message}"); }
-        Templates[idx] = updated;
-        return (true, null);
-    }
+    public Task<(bool Success, string? Error)> ToggleTemplateEnabledAsync(PipelineJobTemplate template, bool enabled)
+        => TogglePropertyAsync(template, (t, e) => t with { Enabled = e }, enabled);
 
-    public async Task<(bool Success, string? Error)> ToggleImplementationEnabledAsync(PipelineJobTemplate template, bool enabled)
-    {
-        var idx = Templates.FindIndex(t => t.Id == template.Id);
-        if (idx < 0) return (true, null);
-        var updated = template with { ImplementationEnabled = enabled };
-        var projectId = GetParentProject(template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await _projectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
-        catch (Exception ex) { return (false, $"Failed to save: {ex.Message}"); }
-        Templates[idx] = updated;
-        return (true, null);
-    }
+    public Task<(bool Success, string? Error)> ToggleImplementationEnabledAsync(PipelineJobTemplate template, bool enabled)
+        => TogglePropertyAsync(template, (t, e) => t with { ImplementationEnabled = e }, enabled);
 
-    public async Task<(bool Success, string? Error)> ToggleReviewEnabledAsync(PipelineJobTemplate template, bool enabled)
-    {
-        var idx = Templates.FindIndex(t => t.Id == template.Id);
-        if (idx < 0) return (true, null);
-        var updated = template with { ReviewEnabled = enabled };
-        var projectId = GetParentProject(template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
-        try { await _projectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
-        catch (Exception ex) { return (false, $"Failed to save: {ex.Message}"); }
-        Templates[idx] = updated;
-        return (true, null);
-    }
+    public Task<(bool Success, string? Error)> ToggleReviewEnabledAsync(PipelineJobTemplate template, bool enabled)
+        => TogglePropertyAsync(template, (t, e) => t with { ReviewEnabled = e }, enabled);
 
-    public async Task<(bool Success, string? Error)> ToggleDecompositionEnabledAsync(PipelineJobTemplate template, bool enabled)
+    public Task<(bool Success, string? Error)> ToggleDecompositionEnabledAsync(PipelineJobTemplate template, bool enabled)
+        => TogglePropertyAsync(template, (t, e) => t with { DecompositionEnabled = e }, enabled);
+
+    private async Task<(bool Success, string? Error)> TogglePropertyAsync(
+        PipelineJobTemplate template,
+        Func<PipelineJobTemplate, bool, PipelineJobTemplate> updater,
+        bool enabled)
     {
         var idx = Templates.FindIndex(t => t.Id == template.Id);
         if (idx < 0) return (true, null);
-        var updated = template with { DecompositionEnabled = enabled };
+        var updated = updater(template, enabled);
         var projectId = GetParentProject(template.Id)?.Id ?? WellKnownIds.DefaultProjectId;
         try { await _projectStore.SaveTemplateAsync(projectId, updated, CancellationToken.None); }
         catch (Exception ex) { return (false, $"Failed to save: {ex.Message}"); }
@@ -616,18 +595,10 @@ public class AgentCodingPageService : IDisposable
     {
         var template = Templates.FirstOrDefault(t => t.Id == templateId);
         if (template == null) return null;
-        HideOtherDrawers("issue");
-        IssueDrawerTemplate = template;
-        IsIssueDrawerOpen = true;
-        CancelAndResetCts();
-        await RefreshActiveIssuesAsync();
-        if (notifyStateChanged != null) await notifyStateChanged();
-        var labelsTask = LoadDrawerLabelsAsync(template);
-        var error = await LoadDrawerIssuesAsync(template, 1);
-        await labelsTask;
-        if (error != null) return error;
-        _ = CheckDrawerDependenciesInBackgroundAsync(template);
-        return null;
+        return await OpenDrawerCoreAsync("issue", template, notifyStateChanged,
+            t => { IssueDrawerTemplate = t; IsIssueDrawerOpen = true; },
+            LoadDrawerLabelsAsync, t => LoadDrawerIssuesAsync(t, 1),
+            CheckDrawerDependenciesInBackgroundAsync);
     }
 
     public void CloseIssueDrawer()
@@ -638,31 +609,22 @@ public class AgentCodingPageService : IDisposable
         ClearDrawerIssues();
     }
 
-    public async Task<string?> SwitchToIssueDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
-    {
-        HideOtherDrawers("issue");
-        if (IssueDrawerTemplate != null && DrawerIssues.Count > 0)
-        {
-            IsIssueDrawerOpen = true;
-            return null;
-        }
-        return await OpenIssueDrawerAsync(templateId, notifyStateChanged);
-    }
+    // TODO: DrawerIssues.Count is evaluated before HideOtherDrawers runs (argument evaluation order).
+    // Currently safe because HideOtherDrawers only toggles booleans, but if it ever clears data collections this will break.
+    public Task<string?> SwitchToIssueDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+        => SwitchToDrawerCoreAsync("issue", templateId, notifyStateChanged,
+            IssueDrawerTemplate, DrawerIssues.Count > 0,
+            () => IsIssueDrawerOpen = true,
+            OpenIssueDrawerAsync);
 
     // TODO: Returning (false, null, null) when template is null causes the component to silently clear _errorMessage.
     // The old code returned early without modifying error state. Consider returning early or returning an error message.
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(IssueSummary issue)
-    {
-        if (IssueDrawerTemplate == null) return (false, null, null);
-        IssueDrawerDispatching = true;
-        try
-        {
-            var (success, error, successMessage) = await DispatchIssueAsync(issue, IssueDrawerTemplate);
-            if (success) CloseIssueDrawer();
-            return (success, error, successMessage);
-        }
-        finally { IssueDrawerDispatching = false; }
-    }
+    public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(IssueSummary issue)
+        => DispatchFromDrawerCoreAsync(
+            IssueDrawerTemplate, issue,
+            dispatching => IssueDrawerDispatching = dispatching,
+            (i, t) => DispatchIssueAsync(i, t),
+            CloseIssueDrawer);
 
     // ── PR Drawer Orchestration ──
 
@@ -671,16 +633,9 @@ public class AgentCodingPageService : IDisposable
         if (string.IsNullOrEmpty(templateId)) return null;
         var template = Templates.FirstOrDefault(t => t.Id == templateId);
         if (template == null) return null;
-        HideOtherDrawers("pr");
-        PrDrawerTemplate = template;
-        IsPrDrawerOpen = true;
-        CancelAndResetCts();
-        await RefreshActiveIssuesAsync();
-        if (notifyStateChanged != null) await notifyStateChanged();
-        var labelsTask = LoadPrDrawerLabelsAsync(template);
-        var error = await LoadPrDrawerPageAsync(template, 1);
-        await labelsTask;
-        return error;
+        return await OpenDrawerCoreAsync("pr", template, notifyStateChanged,
+            t => { PrDrawerTemplate = t; IsPrDrawerOpen = true; },
+            LoadPrDrawerLabelsAsync, t => LoadPrDrawerPageAsync(t, 1));
     }
 
     public void ClosePrDrawer()
@@ -691,30 +646,20 @@ public class AgentCodingPageService : IDisposable
         ClearPrDrawerLabelFilter();
     }
 
-    public async Task<string?> SwitchToPrDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
-    {
-        HideOtherDrawers("pr");
-        if (PrDrawerTemplate != null && PrDrawerPrs.Count > 0)
-        {
-            IsPrDrawerOpen = true;
-            return null;
-        }
-        return await OpenPrDrawerAsync(templateId, notifyStateChanged);
-    }
+    // TODO: Same evaluation-order concern as SwitchToIssueDrawerAsync — PrDrawerPrs.Count evaluated before HideOtherDrawers.
+    public Task<string?> SwitchToPrDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+        => SwitchToDrawerCoreAsync("pr", templateId, notifyStateChanged,
+            PrDrawerTemplate, PrDrawerPrs.Count > 0,
+            () => IsPrDrawerOpen = true,
+            OpenPrDrawerAsync);
 
     // TODO: Same (false, null, null) issue as DispatchFromIssueDrawerAsync — silently clears component error state.
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(PullRequestSummary pr)
-    {
-        if (PrDrawerTemplate == null) return (false, null, null);
-        PrDrawerDispatching = true;
-        try
-        {
-            var (success, error, successMessage) = await DispatchPrReviewAsync(pr, PrDrawerTemplate);
-            // PR drawer intentionally stays open on success for multi-dispatch
-            return (success, error, successMessage);
-        }
-        finally { PrDrawerDispatching = false; }
-    }
+    public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(PullRequestSummary pr)
+        => DispatchFromDrawerCoreAsync(
+            PrDrawerTemplate, pr,
+            dispatching => PrDrawerDispatching = dispatching,
+            (p, t) => DispatchPrReviewAsync(p, t),
+            null); // PR drawer intentionally stays open on success for multi-dispatch
 
     // ── Epic Drawer Orchestration ──
 
@@ -723,16 +668,9 @@ public class AgentCodingPageService : IDisposable
         if (string.IsNullOrEmpty(templateId)) return null;
         var template = Templates.FirstOrDefault(t => t.Id == templateId);
         if (template == null) return null;
-        HideOtherDrawers("epic");
-        EpicDrawerTemplate = template;
-        IsEpicDrawerOpen = true;
-        CancelAndResetCts();
-        await RefreshActiveIssuesAsync();
-        if (notifyStateChanged != null) await notifyStateChanged();
-        var labelsTask = LoadEpicDrawerLabelsAsync(template);
-        var error = await LoadEpicDrawerIssuesAsync(template, 1);
-        await labelsTask;
-        return error;
+        return await OpenDrawerCoreAsync("epic", template, notifyStateChanged,
+            t => { EpicDrawerTemplate = t; IsEpicDrawerOpen = true; },
+            LoadEpicDrawerLabelsAsync, t => LoadEpicDrawerIssuesAsync(t, 1));
     }
 
     public void CloseEpicDrawer()
@@ -743,29 +681,95 @@ public class AgentCodingPageService : IDisposable
         ClearEpicDrawerIssues();
     }
 
-    public async Task<string?> SwitchToEpicDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
-    {
-        HideOtherDrawers("epic");
-        if (EpicDrawerTemplate != null && EpicDrawerIssues.Count > 0)
-        {
-            IsEpicDrawerOpen = true;
-            return null;
-        }
-        return await OpenEpicDrawerAsync(templateId, notifyStateChanged);
-    }
+    // TODO: Same evaluation-order concern as SwitchToIssueDrawerAsync — EpicDrawerIssues.Count evaluated before HideOtherDrawers.
+    public Task<string?> SwitchToEpicDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+        => SwitchToDrawerCoreAsync("epic", templateId, notifyStateChanged,
+            EpicDrawerTemplate, EpicDrawerIssues.Count > 0,
+            () => IsEpicDrawerOpen = true,
+            OpenEpicDrawerAsync);
 
     // TODO: Same (false, null, null) issue as DispatchFromIssueDrawerAsync — silently clears component error state.
-    public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(IssueSummary issue)
+    public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(IssueSummary issue)
+        => DispatchFromDrawerCoreAsync(
+            EpicDrawerTemplate, issue,
+            dispatching => EpicDrawerDispatching = dispatching,
+            (i, t) => DispatchDecompositionAsync(i, t),
+            CloseEpicDrawer);
+
+    // ── Drawer Lifecycle Helpers ──
+
+    /// <summary>
+    /// Shared open lifecycle: hide other drawers → set state → cancel/reset CTS → refresh active issues →
+    /// notify → load labels + items in parallel → optionally run post-load action.
+    /// </summary>
+    private async Task<string?> OpenDrawerCoreAsync(
+        string drawerKind,
+        PipelineJobTemplate template,
+        Func<Task>? notifyStateChanged,
+        Action<PipelineJobTemplate> setTemplateAndOpen,
+        Func<PipelineJobTemplate, Task<string?>> loadLabelsAsync,
+        Func<PipelineJobTemplate, Task<string?>> loadItemsAsync,
+        Func<PipelineJobTemplate, Task>? postLoadAsync = null)
     {
-        if (EpicDrawerTemplate == null) return (false, null, null);
-        EpicDrawerDispatching = true;
+        HideOtherDrawers(drawerKind);
+        setTemplateAndOpen(template);
+        CancelAndResetCts();
+        await RefreshActiveIssuesAsync();
+        if (notifyStateChanged != null) await notifyStateChanged();
+        var labelsTask = loadLabelsAsync(template);
+        var error = await loadItemsAsync(template);
+        // TODO: labelsTask return value (string? error) is silently discarded — matches pre-existing behavior
+        // but the Func<..., Task<string?>> signature misleadingly suggests the error is handled.
+        await labelsTask;
+        if (error != null) return error;
+        // TODO: Fire-and-forget discards exceptions from postLoadAsync (e.g. CheckDrawerDependenciesInBackgroundAsync).
+        // Unobserved faults may trigger TaskScheduler.UnobservedTaskException. Consider adding a fault continuation.
+        if (postLoadAsync != null) _ = postLoadAsync(template);
+        return null;
+    }
+
+    /// <summary>
+    /// Shared switch lifecycle: hide other drawers → check cache → reuse or do a full open.
+    /// Note: HideOtherDrawers is called here AND inside openAsync (via OpenDrawerCoreAsync).
+    /// The double-call is harmless (idempotent) and preserves pre-existing behavior.
+    /// </summary>
+    private async Task<string?> SwitchToDrawerCoreAsync(
+        string drawerKind,
+        string templateId,
+        Func<Task>? notifyStateChanged,
+        PipelineJobTemplate? cachedTemplate,
+        bool hasData,
+        Action setOpen,
+        Func<string, Func<Task>?, Task<string?>> openAsync)
+    {
+        HideOtherDrawers(drawerKind);
+        if (cachedTemplate != null && hasData)
+        {
+            setOpen();
+            return null;
+        }
+        return await openAsync(templateId, notifyStateChanged);
+    }
+
+    /// <summary>
+    /// Shared dispatch lifecycle: guard null template → set dispatching flag → dispatch → optionally close on success.
+    /// </summary>
+    private async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromDrawerCoreAsync<TItem>(
+        PipelineJobTemplate? drawerTemplate,
+        TItem item,
+        Action<bool> setDispatching,
+        Func<TItem, PipelineJobTemplate, Task<(bool Success, string? Error, string? SuccessMessage)>> dispatchAsync,
+        Action? closeDrawer)
+    {
+        if (drawerTemplate == null) return (false, null, null);
+        setDispatching(true);
         try
         {
-            var (success, error, successMessage) = await DispatchDecompositionAsync(issue, EpicDrawerTemplate);
-            if (success) CloseEpicDrawer();
+            var (success, error, successMessage) = await dispatchAsync(item, drawerTemplate);
+            if (success && closeDrawer != null) closeDrawer();
             return (success, error, successMessage);
         }
-        finally { EpicDrawerDispatching = false; }
+        finally { setDispatching(false); }
     }
 
     // ── Dependency Check (with CTS) ──
