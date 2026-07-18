@@ -598,6 +598,224 @@ public class OpenIssueContextWriterTests : IDisposable
     // correct boolean is derived from PipelineRunType (acceptance criteria: "Unit test: epic run
     // includes closed siblings, standalone run does not").
 
-    // TODO: Add test for budget edge case where maxIssues=1 to verify open issues still get
-    // at least one slot (currently closedBudget=Math.Max(1,1/4)=1 leaves openBudget=0).
+    // ──────────────────────────────────────────────────────────────────────────
+    // Budget edge-case tests (maxIssues=1,2,3 with includeClosedSiblings=true)
+    // ──────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task WriteOpenIssueContextAsync_EpicRun_MaxIssuesOne_AllocatesSlotToOpen()
+    {
+        // maxIssues=1 with includeClosedSiblings=true: open must get at least 1 slot
+        var openIssues = new[]
+        {
+            new IssueSummary { Identifier = "open-1", Title = "Open Issue 1", Labels = Array.Empty<string>() }
+        };
+
+        var closedIssues = new[]
+        {
+            new IssueSummary { Identifier = "closed-1", Title = "Closed Issue 1", Labels = new[] { "agent:done" } }
+        };
+
+        _issueOps.Setup(x => x.ListOpenIssuesAsync(1, 30, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = openIssues,
+                Page = 1,
+                PageSize = 30,
+                HasMore = false
+            });
+
+        _issueOps.Setup(x => x.ListClosedIssuesAsync(1, 30, null, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = closedIssues,
+                Page = 1,
+                PageSize = 30,
+                HasMore = false
+            });
+
+        _issueOps.Setup(x => x.GetIssueAsync("open-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "open-1",
+                Title = "Open Issue 1",
+                Description = "Body of open issue",
+                Labels = Array.Empty<string>()
+            });
+
+        _issueOps.Setup(x => x.GetIssueAsync("closed-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "closed-1",
+                Title = "Closed Issue 1",
+                Description = "Body of closed issue",
+                Labels = new[] { "agent:done" }
+            });
+
+        var count = await _writer.WriteOpenIssueContextAsync(
+            _issueOps.Object, _workspacePath, 1, includeClosedSiblings: true, CancellationToken.None);
+
+        // Should write exactly 1 issue: the open one (closed budget = 0 when maxIssues = 1)
+        count.Should().Be(1);
+
+        var openFile = Path.Combine(_workspacePath, AgentWorkspacePaths.OpenIssuesDirectory, "open-1.md");
+        File.Exists(openFile).Should().BeTrue();
+
+        var openContent = await File.ReadAllTextAsync(openFile);
+        openContent.Should().NotContain("status: closed");
+
+        // Closed issue should NOT be written
+        var closedFile = Path.Combine(_workspacePath, AgentWorkspacePaths.OpenIssuesDirectory, "closed-1.md");
+        File.Exists(closedFile).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task WriteOpenIssueContextAsync_EpicRun_MaxIssuesTwo_BothOpenAndClosed()
+    {
+        // TODO: This test does not guard the regression — old formula also yields closedBudget=1, openBudget=1 for maxIssues=2. Consider a parameterized boundary that only the new formula satisfies.
+        // maxIssues=2 with includeClosedSiblings=true: 1 open + 1 closed (regression test)
+        var openIssues = new[]
+        {
+            new IssueSummary { Identifier = "open-1", Title = "Open Issue 1", Labels = Array.Empty<string>() },
+            new IssueSummary { Identifier = "open-2", Title = "Open Issue 2", Labels = Array.Empty<string>() }
+        };
+
+        var closedIssues = new[]
+        {
+            new IssueSummary { Identifier = "closed-1", Title = "Closed Issue 1", Labels = Array.Empty<string>() },
+            new IssueSummary { Identifier = "closed-2", Title = "Closed Issue 2", Labels = Array.Empty<string>() }
+        };
+
+        _issueOps.Setup(x => x.ListOpenIssuesAsync(1, 30, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = openIssues,
+                Page = 1,
+                PageSize = 30,
+                HasMore = false
+            });
+
+        _issueOps.Setup(x => x.ListClosedIssuesAsync(1, 30, null, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = closedIssues,
+                Page = 1,
+                PageSize = 30,
+                HasMore = false
+            });
+
+        _issueOps.Setup(x => x.GetIssueAsync("open-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "open-1",
+                Title = "Open Issue 1",
+                Description = "Body open 1",
+                Labels = Array.Empty<string>()
+            });
+
+        _issueOps.Setup(x => x.GetIssueAsync("closed-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "closed-1",
+                Title = "Closed Issue 1",
+                Description = "Body closed 1",
+                Labels = Array.Empty<string>()
+            });
+
+        var count = await _writer.WriteOpenIssueContextAsync(
+            _issueOps.Object, _workspacePath, 2, includeClosedSiblings: true, CancellationToken.None);
+
+        // Should write 2 total: 1 open + 1 closed
+        count.Should().Be(2);
+
+        File.Exists(Path.Combine(_workspacePath, AgentWorkspacePaths.OpenIssuesDirectory, "open-1.md")).Should().BeTrue();
+        File.Exists(Path.Combine(_workspacePath, AgentWorkspacePaths.OpenIssuesDirectory, "closed-1.md")).Should().BeTrue();
+
+        var closedContent = await File.ReadAllTextAsync(
+            Path.Combine(_workspacePath, AgentWorkspacePaths.OpenIssuesDirectory, "closed-1.md"));
+        closedContent.Should().Contain("status: closed");
+    }
+
+    [Fact]
+    public async Task WriteOpenIssueContextAsync_EpicRun_MaxIssuesThree_OpenGetsPriority()
+    {
+        // TODO: This test does not guard the regression — old formula also yields closedBudget=1, openBudget=2 for maxIssues=3. Consider a parameterized boundary that only the new formula satisfies.
+        // maxIssues=3 with includeClosedSiblings=true: 2 open + 1 closed (regression test)
+        var openIssues = new[]
+        {
+            new IssueSummary { Identifier = "open-1", Title = "Open Issue 1", Labels = Array.Empty<string>() },
+            new IssueSummary { Identifier = "open-2", Title = "Open Issue 2", Labels = Array.Empty<string>() },
+            new IssueSummary { Identifier = "open-3", Title = "Open Issue 3", Labels = Array.Empty<string>() }
+        };
+
+        var closedIssues = new[]
+        {
+            new IssueSummary { Identifier = "closed-1", Title = "Closed Issue 1", Labels = Array.Empty<string>() },
+            new IssueSummary { Identifier = "closed-2", Title = "Closed Issue 2", Labels = Array.Empty<string>() },
+            new IssueSummary { Identifier = "closed-3", Title = "Closed Issue 3", Labels = Array.Empty<string>() }
+        };
+
+        _issueOps.Setup(x => x.ListOpenIssuesAsync(1, 30, null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = openIssues,
+                Page = 1,
+                PageSize = 30,
+                HasMore = false
+            });
+
+        _issueOps.Setup(x => x.ListClosedIssuesAsync(1, 30, null, It.IsAny<DateTime?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = closedIssues,
+                Page = 1,
+                PageSize = 30,
+                HasMore = false
+            });
+
+        // Setup GetIssueAsync for the 2 open + 1 closed that should be fetched
+        _issueOps.Setup(x => x.GetIssueAsync("open-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "open-1",
+                Title = "Open Issue 1",
+                Description = "Body open 1",
+                Labels = Array.Empty<string>()
+            });
+
+        _issueOps.Setup(x => x.GetIssueAsync("open-2", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "open-2",
+                Title = "Open Issue 2",
+                Description = "Body open 2",
+                Labels = Array.Empty<string>()
+            });
+
+        _issueOps.Setup(x => x.GetIssueAsync("closed-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "closed-1",
+                Title = "Closed Issue 1",
+                Description = "Body closed 1",
+                Labels = Array.Empty<string>()
+            });
+
+        var count = await _writer.WriteOpenIssueContextAsync(
+            _issueOps.Object, _workspacePath, 3, includeClosedSiblings: true, CancellationToken.None);
+
+        // Should write 3 total: 2 open + 1 closed
+        count.Should().Be(3);
+
+        File.Exists(Path.Combine(_workspacePath, AgentWorkspacePaths.OpenIssuesDirectory, "open-1.md")).Should().BeTrue();
+        File.Exists(Path.Combine(_workspacePath, AgentWorkspacePaths.OpenIssuesDirectory, "open-2.md")).Should().BeTrue();
+        File.Exists(Path.Combine(_workspacePath, AgentWorkspacePaths.OpenIssuesDirectory, "closed-1.md")).Should().BeTrue();
+
+        // open-3 should NOT be written (over budget)
+        File.Exists(Path.Combine(_workspacePath, AgentWorkspacePaths.OpenIssuesDirectory, "open-3.md")).Should().BeFalse();
+
+        var closedContent = await File.ReadAllTextAsync(
+            Path.Combine(_workspacePath, AgentWorkspacePaths.OpenIssuesDirectory, "closed-1.md"));
+        closedContent.Should().Contain("status: closed");
+    }
 }
