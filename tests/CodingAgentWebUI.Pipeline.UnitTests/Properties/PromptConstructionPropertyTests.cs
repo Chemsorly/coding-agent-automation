@@ -13,8 +13,8 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// </summary>
 public class PromptConstructionPropertyTests
 {
-    private static readonly string DefaultImpl = PipelineConfiguration.DefaultImplementationPrompt;
-    private static readonly string DefaultAnalysis = PipelineConfiguration.DefaultAnalysisPrompt;
+    private static readonly string DefaultImpl = PipelineConfigurationDefaults.DefaultImplementationPrompt;
+    private static readonly string DefaultAnalysis = PipelineConfigurationDefaults.DefaultAnalysisPrompt;
 
     /// <summary>
     /// Prompt contains the issue title and acceptance criteria inline,
