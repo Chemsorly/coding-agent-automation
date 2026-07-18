@@ -254,9 +254,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         }
     }
 
-    // TODO: BuildStepPipeline is dead code — only called from the dead ExecutePipelineStepsAsync method above.    /// <summary>
+    // TODO: BuildStepPipeline is dead code — only called from the dead ExecutePipelineStepsAsync method above.
+    /// <summary>
     /// Builds the ordered list of pipeline steps. Step ordering is explicit and configurable.
-    /// Orchestrator prefix (FetchIssue â†’ Clone â†’ RunEnvironmentSetup â†’ SyncBrainPreRun) followed
+    /// Orchestrator prefix (FetchIssue → Clone → RunEnvironmentSetup → SyncBrainPreRun) followed
     /// by the shared core implementation steps from <see cref="Steps.PipelineStepFactory"/>.
     /// </summary>
     private IReadOnlyList<Steps.IPipelineStep> BuildStepPipeline()
