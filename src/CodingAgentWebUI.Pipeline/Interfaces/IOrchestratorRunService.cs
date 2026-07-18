@@ -19,13 +19,13 @@ public interface IOrchestratorRunService
     IReadOnlyList<PipelineRun> GetActiveRuns();
 
     /// <summary>Gets a specific run by its <see cref="PipelineRun.RunId"/>.</summary>
-    PipelineRun? GetRun(string runId);
+    PipelineRun? GetRun(RunId runId);
 
     /// <summary>Adds a pipeline run to the active runs collection.</summary>
     void AddRun(PipelineRun run);
 
     /// <summary>Removes a pipeline run from the active runs collection.</summary>
-    PipelineRun? RemoveRun(string runId);
+    PipelineRun? RemoveRun(RunId runId);
 
     /// <summary>
     /// Atomically replaces an existing run with a new instance (same RunId).
@@ -35,7 +35,7 @@ public interface IOrchestratorRunService
     void ReplaceRun(PipelineRun run);
 
     /// <summary>Gets or creates the per-run <see cref="OutputRingBuffer"/> for the specified run.</summary>
-    OutputRingBuffer GetOutputBuffer(string runId);
+    OutputRingBuffer GetOutputBuffer(RunId runId);
 
     /// <summary>Returns the number of currently active runs.</summary>
     int ActiveRunCount { get; }
