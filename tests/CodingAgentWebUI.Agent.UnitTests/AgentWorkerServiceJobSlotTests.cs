@@ -12,6 +12,12 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// Unit tests for <see cref="AgentWorkerService"/> job slot acquisition,
 /// concurrency races, and heartbeat lifecycle transitions.
 /// </summary>
+// TODO: These tests exercise AgentJobSlotManager indirectly through AgentWorkerService using
+// reflection to access private fields. Add dedicated AgentJobSlotManagerTests that test the
+// public API (TryAcquireJobSlot, TryAcquireChatSlot, ReleaseJobSlotAndSignalReadyAsync,
+// ReleaseChatSlot, ForceReleaseJobSlot, BuildActiveJobState) directly as a unit, verifying
+// behavior without reflection. Similarly, add AgentConnectionLifecycleTests for standalone
+// lifecycle testing (reconnection, buffer drain, heartbeat) without the full AgentWorkerService.
 [Collection("EnvironmentVariables")]
 public class AgentWorkerServiceJobSlotTests
 {
