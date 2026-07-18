@@ -339,8 +339,8 @@ public class PipelineRunLifecyclePropertyTests
         runServiceMock.Setup(r => r.GetActiveRuns()).Returns(agentRuns.AsReadOnly());
 
         var removedRunIds = new List<string>();
-        runServiceMock.Setup(r => r.RemoveRun(It.IsAny<string>()))
-            .Callback<string>(id => removedRunIds.Add(id));
+        runServiceMock.Setup(r => r.RemoveRun(It.IsAny<RunId>()))
+            .Callback<RunId>(id => removedRunIds.Add(id.Value));
 
         var service = CreateService(historyMock: historyMock, runServiceMock: runServiceMock);
 

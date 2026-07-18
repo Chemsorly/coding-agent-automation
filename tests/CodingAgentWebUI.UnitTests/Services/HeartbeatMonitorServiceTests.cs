@@ -44,14 +44,14 @@ public class HeartbeatMonitorServiceTests : IDisposable
         // validate the full observable state transition, not just mock invocation.
         // Tests that need the race-lost (null) path override this setup.
         _mockLifecycleManager
-            .Setup(l => l.FailRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
-            .Returns((string runId, string reason, CancellationToken _, FailureReason? __) =>
+            .Setup(l => l.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .Returns((RunId runId, string reason, CancellationToken _, FailureReason? __) =>
             {
                 // Simulate ClearAgentState: find the agent owning this run and clear its state
                 var agents = _registry.GetAllAgents();
                 foreach (var agent in agents)
                 {
-                    if (agent.ActiveJobId == runId)
+                    if (agent.ActiveJobId == runId.Value)
                     {
                         lock (agent.SyncRoot)
                         {
@@ -65,7 +65,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
 
                 return Task.FromResult<PipelineRun?>(new PipelineRun
                 {
-                    RunId = runId,
+                    RunId = runId.Value,
                     IssueIdentifier = "test/repo#0",
                     IssueTitle = "Test",
                     IssueProviderConfigId = "ip-default",
@@ -891,7 +891,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
     {
         // Phase 2: FailRunAsync returns null (race lost) — agent should still be deregistered
         _mockLifecycleManager
-            .Setup(l => l.FailRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .Setup(l => l.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
         _mockConfigStore
@@ -929,7 +929,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
     {
         // Phase 1.6: FailRunAsync returns null (race lost) — agent state should be cleared defensively
         _mockLifecycleManager
-            .Setup(l => l.FailRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .Setup(l => l.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
         _mockConfigStore
@@ -996,7 +996,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
     {
         // Phase 1.5: FailRunAsync returns null (race lost) — agent state should be cleared defensively
         _mockLifecycleManager
-            .Setup(l => l.FailRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
+            .Setup(l => l.FailRunAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null);
 
         _mockConfigStore
