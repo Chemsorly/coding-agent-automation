@@ -187,19 +187,11 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         _pipelineCts = pipelineCts;
         var pipelineCt = pipelineCts.Token;
 
-        await using var outputBatcher = new OutputBatcher();
-        outputBatcher.OnFlush += async lines =>
-        {
-            try
-            {
-                await _connectionManager.InvokeAsync(
-                    (conn, token) => conn.InvokeAsync(HubMethodNames.ReportOutputLines, assignment.JobId, lines, token), ct);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to send output lines batch via SignalR");
-            }
-        };
+        await using var outputBatcher = OutputBatcherHubExtensions.CreateWithHubFlush(
+            lines => _connectionManager.InvokeAsync(
+                (conn, token) => conn.InvokeAsync(HubMethodNames.ReportOutputLines, assignment.JobId, lines, token), ct),
+            _logger,
+            "Failed to send output lines batch via SignalR");
 
         var completion = await AgentJobRunner.ExecuteAsync(
             _workItemExecutor, assignment, _connectionManager.Connection, outputBatcher,
