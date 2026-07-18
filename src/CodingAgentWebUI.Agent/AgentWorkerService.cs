@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Resilience;
