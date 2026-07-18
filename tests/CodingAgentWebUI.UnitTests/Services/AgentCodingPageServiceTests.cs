@@ -744,6 +744,12 @@ public class AgentCodingPageServiceTests
         Assert.True(_service.IsIssueDrawerOpen);
     }
 
+    // TODO: Add tests for SwitchToPrDrawerAsync and SwitchToEpicDrawerAsync — they route through
+    // SwitchToDrawerCoreAsync but have no dedicated test coverage. A bug in delegate wiring would go undetected.
+
+    // TODO: Add tests for ToggleImplementationEnabledAsync, ToggleReviewEnabledAsync, and ToggleDecompositionEnabledAsync.
+    // These delegate to TogglePropertyAsync with different updater lambdas but only ToggleTemplateEnabledAsync is tested.
+
     [Fact]
     public async Task DispatchFromIssueDrawerAsync_ClosesDrawer_OnSuccess()
     {
