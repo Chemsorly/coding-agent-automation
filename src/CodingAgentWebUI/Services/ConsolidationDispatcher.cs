@@ -23,7 +23,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly IConfigurationStore _configStore;
     private readonly IProjectStore _projectStore;
     private readonly ITokenVendingService _tokenVending;
-    private readonly IConsolidationJobPreparer _jobPreparer;
+    private readonly IConsolidationJobPreparationService _jobPreparer;
     private readonly PipelineConfiguration _config;
     private readonly IWorkDistributor _workDistributor;
     private readonly IPipelineRunHistoryService _runHistoryService;
@@ -42,7 +42,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         IPipelineRunHistoryService runHistoryService,
         ILogger logger,
         IConsolidationRunStore runStore,
-        IConsolidationJobPreparer? jobPreparer = null)
+        IConsolidationJobPreparationService? jobPreparer = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(jobDispatcher);
@@ -62,7 +62,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         _configStore = configStore;
         _projectStore = projectStore;
         _tokenVending = tokenVending;
-        _jobPreparer = jobPreparer ?? new ConsolidationJobPreparer(configStore, projectStore, tokenVending, logger);
+        _jobPreparer = jobPreparer ?? new ConsolidationJobPreparationService(configStore, projectStore, tokenVending, logger);
         _config = config;
         _workDistributor = workDistributor;
         _runHistoryService = runHistoryService;

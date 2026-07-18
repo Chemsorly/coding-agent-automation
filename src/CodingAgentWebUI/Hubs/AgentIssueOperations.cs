@@ -14,16 +14,16 @@ namespace CodingAgentWebUI.Hubs;
 public sealed class AgentIssueOperations : IHubIssueOperations
 {
     private readonly IAgentHubFacade _facade;
-    private readonly ILabelSwapper _labelSwapper;
+    private readonly ILabelService _labelService;
     private readonly ILogger _logger;
 
     public AgentIssueOperations(
         IAgentHubFacade facade,
-        ILabelSwapper labelSwapper,
+        ILabelService labelService,
         ILogger logger)
     {
         _facade = facade;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _logger = logger;
     }
 
@@ -33,7 +33,7 @@ public sealed class AgentIssueOperations : IHubIssueOperations
     /// <inheritdoc />
     public Task SwapLabelAsync(PipelineRun run, string newLabel, LabelTargetKind targetKind)
     {
-        return _labelSwapper.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, newLabel, targetKind, CancellationToken.None);
+        return _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, newLabel, targetKind, CancellationToken.None);
     }
 
     /// <inheritdoc />

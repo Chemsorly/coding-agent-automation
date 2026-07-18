@@ -38,7 +38,7 @@ public sealed class DispatchService : BackgroundService
     private readonly WorkItemTransitionService _transitionService;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateProvider _templateProvider;
-    private readonly ILabelSwapper? _labelSwapper;
+    private readonly ILabelService? _labelService;
     private readonly ITokenVendingService? _tokenVending;
     private readonly IConsolidationRunStore? _consolidationRunStore;
     private readonly IConsolidationService? _consolidationService;
@@ -46,7 +46,7 @@ public sealed class DispatchService : BackgroundService
     private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IProjectStore? _projectStore;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
-    private readonly IConsolidationJobPreparer? _consolidationJobPreparer;
+    private readonly IConsolidationJobPreparationService? _consolidationJobPreparer;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
     public DispatchService(
@@ -55,7 +55,7 @@ public sealed class DispatchService : BackgroundService
         IKubernetesJobClient kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
-        ILabelSwapper? labelSwapper = null,
+        ILabelService? labelService = null,
         ITokenVendingService? tokenVending = null,
         IConsolidationRunStore? consolidationRunStore = null,
         IConsolidationService? consolidationService = null,
@@ -63,13 +63,13 @@ public sealed class DispatchService : BackgroundService
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
         IPipelineConfigStore? pipelineConfigStore = null,
-        IConsolidationJobPreparer? consolidationJobPreparer = null)
+        IConsolidationJobPreparationService? consolidationJobPreparer = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
         _kubeClient = kubeClient;
         _transitionService = transitionService;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _tokenVending = tokenVending;
         _consolidationRunStore = consolidationRunStore;
         _consolidationService = consolidationService;
@@ -127,7 +127,7 @@ public sealed class DispatchService : BackgroundService
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
         JobTemplateProvider templateProvider,
-        ILabelSwapper? labelSwapper = null,
+        ILabelService? labelService = null,
         ITokenVendingService? tokenVending = null,
         IConsolidationRunStore? consolidationRunStore = null,
         IConsolidationService? consolidationService = null,
@@ -135,13 +135,13 @@ public sealed class DispatchService : BackgroundService
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
         IPipelineConfigStore? pipelineConfigStore = null,
-        IConsolidationJobPreparer? consolidationJobPreparer = null)
+        IConsolidationJobPreparationService? consolidationJobPreparer = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
         _kubeClient = kubeClient;
         _transitionService = transitionService;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _tokenVending = tokenVending;
         _consolidationRunStore = consolidationRunStore;
         _consolidationService = consolidationService;
@@ -512,13 +512,13 @@ public sealed class DispatchService : BackgroundService
                 item.Id, jobName, item.AgentSelector, claimedPvc ?? "none");
 
             // Swap issue label to agent:in-progress (non-fatal — best effort)
-            if (_labelSwapper is not null &&
+            if (_labelService is not null &&
                 !string.IsNullOrEmpty(item.IssueIdentifier) &&
                 !string.IsNullOrEmpty(item.IssueProviderConfigId))
             {
                 try
                 {
-                    await _labelSwapper.SwapLabelAsync(
+                    await _labelService.SwapLabelAsync(
                         item.IssueProviderConfigId, item.IssueIdentifier, AgentLabels.InProgress, ct);
                 }
                 catch (Exception ex)
@@ -611,9 +611,9 @@ public sealed class DispatchService : BackgroundService
             // Delegate config resolution and token vending to shared preparer
             if (_consolidationJobPreparer is null)
             {
-                Log.Error("DispatchService: IConsolidationJobPreparer not available for consolidation WorkItem {WorkItemId}", item.Id);
+                Log.Error("DispatchService: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
                 if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-                await FailWorkItem(item.Id, "IConsolidationJobPreparer not registered", item.TaskType, item.IssueIdentifier, ct);
+                await FailWorkItem(item.Id, "IConsolidationJobPreparationService not registered", item.TaskType, item.IssueIdentifier, ct);
                 return;
             }
 

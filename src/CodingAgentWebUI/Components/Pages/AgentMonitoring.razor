@@ -19,7 +19,7 @@
 @inject IPendingWorkQuery PendingWorkQuery
 @inject IWorkDistributor WorkDistributor
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
-@inject ILabelSwapper LabelSwapper
+@inject ILabelService LabelService
 @inject IPipelineRunHistoryService HistoryService
 @inject IRunLifecycleManager LifecycleManager
 @inject IJSRuntime JS
@@ -1090,7 +1090,7 @@
 
             try
             {
-                await LabelSwapper.SwapLabelAsync(
+                await LabelService.SwapLabelAsync(
                     run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled,
                     run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue,
                     CancellationToken.None);
@@ -1124,7 +1124,7 @@
 
             try
             {
-                await LabelSwapper.SwapLabelAsync(
+                await LabelService.SwapLabelAsync(
                     run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled,
                     run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue,
                     CancellationToken.None);

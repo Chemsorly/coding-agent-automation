@@ -20,7 +20,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly Mock<IProviderConfigStore> _mockProviderConfigStore;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper;
+    private readonly Mock<ILabelService> _mockLabelService;
     private readonly Mock<IPipelineConfigStore> _mockConfigStore;
     private readonly Mock<ILogger> _mockLogger;
     private readonly CancellationTokenSource _cts;
@@ -31,7 +31,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         _mockProjectStore = new Mock<IProjectStore>();
         _mockProviderConfigStore = new Mock<IProviderConfigStore>();
         _mockProviderFactory = new Mock<IProviderFactory>(MockBehavior.Strict);
-        _mockLabelSwapper = new Mock<ILabelSwapper>();
+        _mockLabelService = new Mock<ILabelService>();
         _mockConfigStore = new Mock<IPipelineConfigStore>();
         _mockLogger = new Mock<ILogger>();
 
@@ -73,7 +73,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Returns(false);
 
         var labelSwapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLabelSwapper
+        _mockLabelService
             .Setup(l => l.SwapLabelAsync("provider-1", "42", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask)
             .Callback(() => labelSwapCalled.TrySetResult());
@@ -116,7 +116,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         await Task.Delay(TimeSpan.FromSeconds(2));
 
         // Assert: SwapLabelAsync was NOT called
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
@@ -139,12 +139,12 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<string>()))
             .Returns(false);
 
-        _mockLabelSwapper
+        _mockLabelService
             .Setup(l => l.SwapLabelAsync("provider-1", "1", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("GitHub API error"));
 
         var secondSwapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLabelSwapper
+        _mockLabelService
             .Setup(l => l.SwapLabelAsync("provider-1", "2", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask)
             .Callback(() => secondSwapCalled.TrySetResult());
@@ -194,7 +194,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Returns(false);
 
         var swapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLabelSwapper
+        _mockLabelService
             .Setup(l => l.SwapLabelAsync("provider-2", "99", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask)
             .Callback(() => swapCalled.TrySetResult());
@@ -268,7 +268,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         var swapCount = 0;
         var allSwapsDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLabelSwapper
+        _mockLabelService
             .Setup(l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask)
             .Callback(() =>
@@ -285,10 +285,10 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
 
         // Assert: both providers were scanned
         completed.Should().BeSameAs(allSwapsDone.Task, "Both providers should be scanned");
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync("provider-1", "10", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync("provider-2", "20", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
 
@@ -380,7 +380,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Returns(false);
 
         var swapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLabelSwapper
+        _mockLabelService
             .Setup(l => l.SwapLabelAsync("provider-1", "5", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask)
             .Callback(() => swapCalled.TrySetResult());
@@ -474,7 +474,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         _mockProjectStore.Object,
         _mockProviderConfigStore.Object,
         _mockProviderFactory.Object,
-        _mockLabelSwapper.Object,
+        _mockLabelService.Object,
         _mockConfigStore.Object,
         _mockLogger.Object,
         TimeSpan.FromMilliseconds(50)); // Short grace period for fast tests

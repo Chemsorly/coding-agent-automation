@@ -22,7 +22,7 @@ public sealed record ConsolidationJobPreparationResult
 /// Eliminates duplication between <c>ConsolidationDispatcher</c> (SignalR path)
 /// and <c>DispatchService</c> (K8s path).
 /// </summary>
-public interface IConsolidationJobPreparer
+public interface IConsolidationJobPreparationService
 {
     /// <summary>
     /// Resolves provider configs for a consolidation job and vends short-lived tokens.

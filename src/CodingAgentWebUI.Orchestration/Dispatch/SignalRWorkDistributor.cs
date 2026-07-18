@@ -27,7 +27,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
     private readonly ISignalRWorkDistributorAgentResolver _agentResolver;
     private readonly IOrchestratorRunService _runService;
     private readonly IProjectStore _projectStore;
-    private readonly ILabelSwapper _labelSwapper;
+    private readonly ILabelService _labelService;
     private readonly IRunLifecycleManager? _lifecycleManager;
     private readonly IAgentCancellationSender? _cancellationSender;
 
@@ -38,7 +38,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         ISignalRWorkDistributorAgentResolver agentResolver,
         IOrchestratorRunService runService,
         IProjectStore projectStore,
-        ILabelSwapper labelSwapper,
+        ILabelService labelService,
         ILogger<SignalRWorkDistributor> logger,
         IRunLifecycleManager? lifecycleManager = null,
         IAgentCancellationSender? cancellationSender = null)
@@ -48,7 +48,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         _agentResolver = agentResolver;
         _runService = runService;
         _projectStore = projectStore;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _lifecycleManager = lifecycleManager;
         _cancellationSender = cancellationSender;
     }

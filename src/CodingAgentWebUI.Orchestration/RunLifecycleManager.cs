@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.Orchestration;
 /// - In-memory (OrchestratorRunService)
 /// - Database (WorkItemTransitionService) — null in Legacy mode
 /// - Agent registry (IAgentRegistryService)
-/// - Labels (ILabelSwapper)
+/// - Labels (ILabelService)
 /// - History (IPipelineRunHistoryService)
 /// - Dedup tracker (JobDispatcherService)
 /// </summary>
@@ -25,7 +25,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     private readonly WorkItemTransitionService? _workItemTransition;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IAgentRegistryService _registry;
-    private readonly ILabelSwapper _labelSwapper;
+    private readonly ILabelService _labelService;
     private readonly JobDispatcherService _dispatcher;
     private readonly ILogger _logger;
     private readonly IJobCleanupStrategy? _jobCleanup;
@@ -34,7 +34,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         IOrchestratorRunService runService,
         IPipelineRunHistoryService historyService,
         IAgentRegistryService registry,
-        ILabelSwapper labelSwapper,
+        ILabelService labelService,
         JobDispatcherService dispatcher,
         ILogger logger,
         WorkItemTransitionService? workItemTransition = null,
@@ -43,7 +43,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         ArgumentNullException.ThrowIfNull(runService);
         ArgumentNullException.ThrowIfNull(historyService);
         ArgumentNullException.ThrowIfNull(registry);
-        ArgumentNullException.ThrowIfNull(labelSwapper);
+        ArgumentNullException.ThrowIfNull(labelService);
         ArgumentNullException.ThrowIfNull(dispatcher);
         ArgumentNullException.ThrowIfNull(logger);
 
@@ -51,7 +51,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         _workItemTransition = workItemTransition;
         _historyService = historyService;
         _registry = registry;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _dispatcher = dispatcher;
         _logger = logger;
         _jobCleanup = jobCleanup;
@@ -339,7 +339,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         {
             var targetKind = run.LabelTargetKind;
 
-            await _labelSwapper.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, label, targetKind, ct);
+            await _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, label, targetKind, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -352,7 +352,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     {
         try
         {
-            await _labelSwapper.SwapLabelAsync(providerConfigId, issueIdentifier, label, targetKind, ct);
+            await _labelService.SwapLabelAsync(providerConfigId, issueIdentifier, label, targetKind, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

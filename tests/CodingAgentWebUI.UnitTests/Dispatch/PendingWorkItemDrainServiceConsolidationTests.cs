@@ -26,7 +26,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly Mock<IConsolidationDispatcher> _mockConsolidationDispatcher = new();
     private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
@@ -169,7 +169,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
             _runService,
             _transitionService,
             _mockPendingWork.Object,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             NullLogger<PendingWorkItemDrainService>.Instance);
 
         // Act
@@ -260,7 +260,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
             _runService,
             _transitionService,
             _mockPendingWork.Object,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             NullLogger<PendingWorkItemDrainService>.Instance,
             null, // IProjectStore
             _mockConsolidationDispatcher.Object,
@@ -341,7 +341,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly Mock<IConsolidationDispatcher> _mockConsolidationDispatcher = new();
     private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
@@ -435,7 +435,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
                 new CancellationAwareDbContextFactory(_dbOptions),
                 NullLogger<WorkItemTransitionService>.Instance),
             _mockPendingWork.Object,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             NullLogger<PendingWorkItemDrainService>.Instance,
             null, // IProjectStore
             _mockConsolidationDispatcher.Object,
@@ -468,7 +468,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
             _runService,
             _transitionService,
             _mockPendingWork.Object,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             NullLogger<PendingWorkItemDrainService>.Instance,
             null, // IProjectStore
             _mockConsolidationDispatcher.Object,

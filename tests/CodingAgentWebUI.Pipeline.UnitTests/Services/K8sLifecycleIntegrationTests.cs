@@ -36,7 +36,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
     private readonly Mock<IKubernetesJobClient> _mockKubeClient;
     private readonly Mock<IKubernetes> _mockKube;
     private readonly Mock<IBatchV1Operations> _mockBatchV1;
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper;
+    private readonly Mock<ILabelService> _mockLabelService;
     private readonly LeaderElectionService _leaderElection;
 
     public K8sLifecycleIntegrationTests()
@@ -56,7 +56,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
         _mockKube = new Mock<IKubernetes> { DefaultValue = DefaultValue.Mock };
         _mockBatchV1 = new Mock<IBatchV1Operations> { DefaultValue = DefaultValue.Mock };
         _mockKube.Setup(k => k.BatchV1).Returns(_mockBatchV1.Object);
-        _mockLabelSwapper = new Mock<ILabelSwapper>();
+        _mockLabelService = new Mock<ILabelService>();
         _leaderElection = CreateAlwaysLeaderElection();
     }
 
@@ -343,7 +343,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
     }
 
     [Fact]
-    public async Task K8s_Reconcile_LabelSwapOnFailure_CallsLabelSwapper()
+    public async Task K8s_Reconcile_LabelSwapOnFailure_CallsLabelService()
     {
         // Arrange: Insert a recently-terminal (Failed) WorkItem that still needs label swap
         var workItemId = Guid.NewGuid();
@@ -354,17 +354,17 @@ public class K8sLifecycleIntegrationTests : IDisposable
             issueProviderConfigId: providerConfigId,
             completedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
 
-        _mockLabelSwapper
+        _mockLabelService
             .Setup(l => l.SwapLabelAsync(providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var reconciliationService = CreateReconciliationService(withLabelSwapper: true);
+        var reconciliationService = CreateReconciliationService(withLabelService: true);
 
         // Act: startup label reconciliation detects recently terminal items and swaps labels
         await InvokeReconcileStartupLabelsAsync(reconciliationService);
 
-        // Assert: ILabelSwapper.SwapLabelAsync was called for the terminal item
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        // Assert: ILabelService.SwapLabelAsync was called for the terminal item
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -410,7 +410,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
         return JobTemplateProvider.LoadFromJson(json);
     }
 
-    private ReconciliationService CreateReconciliationService(bool withLabelSwapper = false)
+    private ReconciliationService CreateReconciliationService(bool withLabelService = false)
     {
         var configData = new Dictionary<string, string?>
         {
@@ -424,7 +424,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
         return new ReconciliationService(
             _dbFactory, _leaderElection, _mockKube.Object,
             _transitionService, config,
-            withLabelSwapper ? _mockLabelSwapper.Object : null);
+            withLabelService ? _mockLabelService.Object : null);
     }
 
     // ── Invocation Helpers (reflection for private methods) ──────────────

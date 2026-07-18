@@ -20,10 +20,10 @@ public sealed class ResettablePipelineOrchestrationService : PipelineOrchestrati
         IPipelineCompletionFacade completionFacade,
         IPipelineCancellationFacade cancellationFacade,
         PipelineRunLifecycleService lifecycle,
-        ILabelSwapper labelSwapper,
+        ILabelService labelService,
         ILogger logger)
         : base(configStore, configStore, providerFactory, issueParser, executionFacade,
-               completionFacade, cancellationFacade, lifecycle, labelSwapper, logger)
+               completionFacade, cancellationFacade, lifecycle, labelService, logger)
     {
         _lifecycleForReset = lifecycle;
     }
