@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// validation, and disposal. Extracted from PipelineOrchestrationService to
 /// separate provider lifecycle concerns from pipeline orchestration logic.
 /// </summary>
-public class PipelineProviderManager : IAsyncDisposable
+public sealed class PipelineProviderManager : IAsyncDisposable
 {
     private readonly IProviderConfigStore _configStore;
     private readonly IProviderFactory _providerFactory;
