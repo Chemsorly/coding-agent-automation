@@ -14,6 +14,9 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// </summary>
 public class PipelineOrchestrationServiceTests : IDisposable
 {
+    // TODO: Tests pass the same Mock<IConfigurationStore> for both IPipelineConfigStore and IConfigurationStore
+    // constructor parameters, so reverting the constructor signature to IProviderConfigStore would not be caught.
+    // Consider adding a reflection-based test or typed DI resolution test to guard the refactoring.
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProviderFactory> _mockFactory;
     private readonly Mock<IIssueProvider> _mockIssueProvider;

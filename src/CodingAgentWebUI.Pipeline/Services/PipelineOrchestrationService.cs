@@ -26,7 +26,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IConfigurationStore _configurationStore;
     private readonly IProviderFactory _providerFactory;
-    private readonly ILabelSwapper _labelSwapper;
+    private readonly ILabelService _labelSwapper;
     private readonly IssueDescriptionParser _issueParser;
     private readonly IPipelineExecutionFacade _executionFacade;
     private readonly IPipelineCompletionFacade _completionFacade;
@@ -104,7 +104,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         IPipelineCompletionFacade completionFacade,
         IPipelineCancellationFacade cancellationFacade,
         PipelineRunLifecycleService lifecycle,
-        ILabelSwapper labelSwapper,
+        ILabelService labelSwapper,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(pipelineConfigStore);
@@ -190,6 +190,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         return run;
     }
 
+    // TODO: ExecutePipelineStepsAsync is dead code — never called from any public method in this class.
+    // It (and its callees BuildStepPipeline, OrchestratorCallbacks) should be removed or wired up.
     private async Task ExecutePipelineStepsAsync(
         PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
     {
@@ -252,7 +254,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         }
     }
 
-    /// <summary>
+    // TODO: BuildStepPipeline is dead code — only called from the dead ExecutePipelineStepsAsync method above.    /// <summary>
     /// Builds the ordered list of pipeline steps. Step ordering is explicit and configurable.
     /// Orchestrator prefix (FetchIssue â†’ Clone â†’ RunEnvironmentSetup â†’ SyncBrainPreRun) followed
     /// by the shared core implementation steps from <see cref="Steps.PipelineStepFactory"/>.
@@ -493,7 +495,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         { _logger.Warning(ex, "Pipeline {RunId} failed to persist last-used provider IDs", ActiveRun?.RunId); }
     }
     // TODO: Add unit test that exercises SwapAgentLabelAsync for Implementation runs during normal pipeline execution
-    // (existing tests use TestPipelineRunner which bypasses ILabelSwapper and doesn't validate this code path).
+    // (existing tests use TestPipelineRunner which bypasses ILabelService and doesn't validate this code path).
     private async Task SwapAgentLabelAsync(PipelineRun run, string issueId, string newLabel, CancellationToken ct)
     {
         _logger.Information(
@@ -508,7 +510,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on {Identifier}", newLabel, issueId); }
     }
 
-    // TODO: Add unit test that validates RemoveAllAgentLabelsAsync routes through ILabelSwapper with string.Empty,
+    // TODO: Add unit test that validates RemoveAllAgentLabelsAsync routes through ILabelService with string.Empty,
     // selecting the correct providerConfigId and targetKind for Implementation runs.
     internal async Task RemoveAllAgentLabelsAsync(PipelineRun run, string issueId, CancellationToken ct)
     {
@@ -573,6 +575,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// that need the latest state. The <c>Func</c> ensures the current context snapshot is always accessed.
     /// </para>
     /// </remarks>
+    // TODO: OrchestratorCallbacks is dead code — only instantiated from dead ExecutePipelineStepsAsync method.
     private sealed class OrchestratorCallbacks(
         PipelineOrchestrationService svc,
         PipelineRun run,
