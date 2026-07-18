@@ -371,9 +371,7 @@ public class AgentMonitoringComponentTests : BunitContext
         // Verify job appears
         cut.WaitForAssertion(() => Assert.Contains("org/repo#55", cut.Markup));
 
-        // Act: click the Remove button (find + click inside InvokeAsync to avoid race
-        // with the component's 1-second refresh timer that can re-render and invalidate
-        // event handler IDs between FindAll and Click)
+        // Act: click the Remove button (wrap in InvokeAsync to avoid render-tree race)
         await cut.InvokeAsync(() =>
         {
             var removeBtn = cut.FindAll("button")
