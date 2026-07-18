@@ -101,9 +101,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         ArgumentNullException.ThrowIfNull(connection);
         ArgumentNullException.ThrowIfNull(outputBatcher);
 
-        // TODO: Duration metric inflation — using-declaration causes Dispose() to run AFTER the finally block's
-        // provider disposal, so JobDuration now includes provider cleanup time. Consider stopping the stopwatch
-        // explicitly before provider disposal or moving instrumentation inside a narrower scope.
         using var instrumentation = PipelineRunInstrumentation.Start(
             job.JobId, job.IssueIdentifier, job.RunType, job.ProjectId, job.ProjectName,
             ActivityKind.Consumer,
@@ -177,6 +174,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         }
         finally
         {
+            instrumentation.StopTiming();
             await ProviderDisposer.DisposeAllAsync(repoProvider, agentProvider, brainProvider, pipelineProvider);
             if (additionalRepoProviders is not null)
                 await ProviderDisposer.DisposeAllAsync(additionalRepoProviders.Select(p => p.Provider as IAsyncDisposable));
