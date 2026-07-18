@@ -348,6 +348,47 @@ public class AnalysisStalenessDetectorTests
 
     // ── Project override ──────────────────────────────────────────────────
 
+    // ── DateTimeKind safety ──────────────────────────────────────────────
+
+    // TODO: This test is environment-dependent — on CI with TZ=UTC the old broken code also passes.
+    // Consider using TimeZoneInfo to force a non-UTC zone, or verify the DateTimeOffset value
+    // passed to HasAgentErrorSinceAsync via mock capture to provide true regression protection.
+    [Fact]
+    public async Task EvaluateAsync_LocalDateTimeKind_DoesNotThrow()
+    {
+        // CreatedAt with Local kind should not throw ArgumentException
+        var localTime = new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Local);
+        var analysisComment = CreateAnalysisComment(
+            AnalysisBodyHash.Compute("body"), createdAt: localTime);
+
+        var result = await _detector.EvaluateAsync(
+            analysisComment, new[] { analysisComment }, "body",
+            IssueId, ProviderId, 0, null, CancellationToken.None);
+
+        result.ForceRefresh.Should().BeFalse();
+    }
+
+    // TODO: This test is tautological — new DateTimeOffset(unspecifiedDateTime, TimeSpan.Zero)
+    // never throws ArgumentException because .NET permits any offset when Kind is Unspecified.
+    // This validates a scenario that was never broken. Consider replacing with a value-based
+    // assertion (e.g., verify the DateTimeOffset passed to downstream mocks).
+    [Fact]
+    public async Task EvaluateAsync_UnspecifiedDateTimeKind_DoesNotThrow()
+    {
+        // CreatedAt with Unspecified kind should not throw ArgumentException
+        var unspecifiedTime = new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Unspecified);
+        var analysisComment = CreateAnalysisComment(
+            AnalysisBodyHash.Compute("body"), createdAt: unspecifiedTime);
+
+        var result = await _detector.EvaluateAsync(
+            analysisComment, new[] { analysisComment }, "body",
+            IssueId, ProviderId, 0, null, CancellationToken.None);
+
+        result.ForceRefresh.Should().BeFalse();
+    }
+
+    // ── Project override ──────────────────────────────────────────────────
+
     [Fact]
     public void ProjectOverride_AnalysisCommitThreshold_AppliedCorrectly()
     {
