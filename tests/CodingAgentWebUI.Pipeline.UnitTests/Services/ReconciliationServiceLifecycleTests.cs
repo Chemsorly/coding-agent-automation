@@ -406,11 +406,11 @@ public class ReconciliationServiceLifecycleTests : IDisposable
             .Setup(m => m.FailRunAsync(workItemId.ToString(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<FailureReason?>()))
             .ReturnsAsync((PipelineRun?)null); // Simulate "not in memory" — fallback path
 
-        var mockLabelSwapper = new Mock<ILabelSwapper>();
+        var mockLabelService = new Mock<ILabelService>();
         var mockDedupGuard = new Mock<IJobDeduplicationGuard>();
 
         var service = CreateService(lifecycleManager: mockLifecycle.Object,
-            labelSwapper: mockLabelSwapper.Object, dedupGuard: mockDedupGuard.Object);
+            labelService: mockLabelService.Object, dedupGuard: mockDedupGuard.Object);
 
         // Act
         await service.EnforceTimeoutsAsync(CancellationToken.None);
@@ -427,7 +427,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         item!.Status.Should().Be(WorkItemStatus.Failed);
 
         // Fallback: label swap to agent:error fires
-        mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        mockLabelService.Verify(l => l.SwapLabelAsync(
             "provider-1", "owner/repo#lifecycle1", "agent:error",
             LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
 
@@ -479,7 +479,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
 
     private ReconciliationService CreateService(int retentionDays = 7, LeaderElectionService? leaderElection = null,
         IRunLifecycleManager? lifecycleManager = null, IConsolidationService? consolidationService = null,
-        IConfigurationStore? configStore = null, ILabelSwapper? labelSwapper = null,
+        IConfigurationStore? configStore = null, ILabelService? labelService = null,
         IJobDeduplicationGuard? dedupGuard = null)
     {
         var configData = new Dictionary<string, string?>
@@ -507,7 +507,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
 
         return new ReconciliationService(
             _dbFactory, leaderElection, _mockKube.Object,
-            _transitionService, config, labelSwapper, lifecycleManager,
+            _transitionService, config, labelService, lifecycleManager,
             consolidationService, configStore, dedupGuard);
     }
 

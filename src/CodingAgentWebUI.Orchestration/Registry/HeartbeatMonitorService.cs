@@ -26,7 +26,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     private readonly IOrchestratorRunService _runService;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly JobDispatcherService _dispatcher;
-    private readonly ILabelSwapper _labelSwapper;
+    private readonly ILabelService _labelService;
     private readonly IConfigurationStore _configStore;
     private readonly IConsolidationService? _consolidationService;
     private readonly IRunLifecycleManager _lifecycleManager;
@@ -37,7 +37,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         IOrchestratorRunService runService,
         IPipelineRunHistoryService historyService,
         JobDispatcherService dispatcher,
-        ILabelSwapper labelSwapper,
+        ILabelService labelService,
         IConfigurationStore configStore,
         ILogger logger,
         IRunLifecycleManager lifecycleManager,
@@ -47,7 +47,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         ArgumentNullException.ThrowIfNull(runService);
         ArgumentNullException.ThrowIfNull(historyService);
         ArgumentNullException.ThrowIfNull(dispatcher);
-        ArgumentNullException.ThrowIfNull(labelSwapper);
+        ArgumentNullException.ThrowIfNull(labelService);
         ArgumentNullException.ThrowIfNull(configStore);
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(lifecycleManager);
@@ -56,7 +56,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         _runService = runService;
         _historyService = historyService;
         _dispatcher = dispatcher;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _configStore = configStore;
         _consolidationService = consolidationService;
         _lifecycleManager = lifecycleManager;

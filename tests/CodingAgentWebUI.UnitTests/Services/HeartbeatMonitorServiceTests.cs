@@ -19,7 +19,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
     private readonly OrchestratorRunService _runService;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper;
+    private readonly Mock<ILabelService> _mockLabelService;
     private readonly Mock<IRunLifecycleManager> _mockLifecycleManager;
     private readonly Mock<ILogger> _mockLogger;
     private readonly HeartbeatMonitorService _monitor;
@@ -31,7 +31,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
         _mockConfigStore = new Mock<IConfigurationStore>();
-        _mockLabelSwapper = new Mock<ILabelSwapper>();
+        _mockLabelService = new Mock<ILabelService>();
         _mockLifecycleManager = new Mock<IRunLifecycleManager>();
 
         _mockConfigStore
@@ -82,7 +82,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
             _runService,
             _mockHistoryService.Object,
             dispatcher,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             _mockConfigStore.Object,
             _mockLogger.Object,
             lifecycleManager: _mockLifecycleManager.Object);
@@ -1058,7 +1058,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
             _runService,
             _mockHistoryService.Object,
             dispatcher,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             _mockConfigStore.Object,
             _mockLogger.Object,
             consolidationService: mockConsolidationService.Object,
@@ -1115,7 +1115,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
             _runService,
             _mockHistoryService.Object,
             dispatcher,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             _mockConfigStore.Object,
             _mockLogger.Object,
             consolidationService: mockConsolidationService.Object,

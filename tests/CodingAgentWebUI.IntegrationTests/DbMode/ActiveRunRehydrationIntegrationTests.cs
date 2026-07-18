@@ -88,7 +88,7 @@ public sealed class ActiveRunRehydrationIntegrationTests : IDisposable
         // Create HeartbeatMonitor with real services
         var dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        var mockLabelSwapper = new Mock<ILabelSwapper>();
+        var mockLabelService = new Mock<ILabelService>();
         var mockConfigStore = new Mock<IConfigurationStore>();
         mockConfigStore
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -99,7 +99,7 @@ public sealed class ActiveRunRehydrationIntegrationTests : IDisposable
             _runService,
             mockHistoryService.Object,
             dispatcher,
-            mockLabelSwapper.Object,
+            mockLabelService.Object,
             mockConfigStore.Object,
             _mockLogger.Object,
             lifecycleManager: new Mock<IRunLifecycleManager>().Object);

@@ -35,7 +35,7 @@ public class EpicDeduplicationPropertyTests
         var mockLogger = new Mock<ILogger>();
         var mockConfigStore = new Mock<IConfigurationStore>();
         var mockProviderFactory = new Mock<IProviderFactory>();
-        var mockLabelSwapper = new Mock<ILabelSwapper>();
+        var mockLabelService = new Mock<ILabelService>();
         var mockAgentComm = new Mock<IAgentCommunication>();
 
         var registry = new AgentRegistryService(mockLogger.Object);
@@ -69,7 +69,7 @@ public class EpicDeduplicationPropertyTests
             new DispatchInfrastructure(
                 tokenVending,
                 mockProviderFactory.Object,
-                mockLabelSwapper.Object,
+                mockLabelService.Object,
                 new DispatchResolutionService(
                     new ProfileResolver(),
                     new QualityGateResolver(),

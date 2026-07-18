@@ -535,7 +535,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             _logger.Information(
                 "Orchestration: confirming distribution — swapping label to agent:in-progress for issue {IssueIdentifier}",
                 request.IssueIdentifier);
-            await _infra.LabelSwapper.SwapLabelAsync(
+            await _infra.LabelService.SwapLabelAsync(
                 request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.InProgress, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -553,7 +553,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             // Revert label from agent:in-progress back to agent:next
             _logger.Warning("Reverting failed distribution for issue {IssueIdentifier}: swapping label back to agent:next",
                 request.IssueIdentifier);
-            await _infra.LabelSwapper.SwapLabelAsync(
+            await _infra.LabelService.SwapLabelAsync(
                 request.IssueProviderConfigId, request.IssueIdentifier, AgentLabels.Next, ct);
         }
         catch (Exception ex)

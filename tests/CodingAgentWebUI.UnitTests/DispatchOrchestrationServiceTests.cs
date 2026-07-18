@@ -19,7 +19,7 @@ public class DispatchOrchestrationServiceTests
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
     private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
     private readonly Mock<ILogger> _mockLogger = new();
@@ -82,7 +82,7 @@ public class DispatchOrchestrationServiceTests
             new DispatchInfrastructure(
                 _mockTokenVending.Object,
                 _mockProviderFactory.Object,
-                _mockLabelSwapper.Object,
+                _mockLabelService.Object,
                 _resolution),
             orchestration,
             _runService,
@@ -237,7 +237,7 @@ public class DispatchOrchestrationServiceTests
             ct: CancellationToken.None);
 
         // Label swap is deferred to ConfirmDistributionLabelAsync (#997)
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Never);
     }
@@ -262,7 +262,7 @@ public class DispatchOrchestrationServiceTests
 
         await service.ConfirmDistributionLabelAsync(request, CancellationToken.None);
 
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync("issue-1", "issue-42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -952,7 +952,7 @@ public class DispatchOrchestrationServiceTests
 /// </summary>
 public class DispatchOrchestrationService_RevertFailedDistributionTests
 {
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly OrchestratorRunService _runService;
     private readonly DispatchOrchestrationService _service;
@@ -979,7 +979,7 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
         _service = new DispatchOrchestrationService(
             new DispatchInfrastructure(
                 mockTokenVending.Object, mockProviderFactory.Object,
-                _mockLabelSwapper.Object, resolution),
+                _mockLabelService.Object, resolution),
             orchestration,
             _runService,
             new Mock<IWorkDistributor>().Object,
@@ -1007,7 +1007,7 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
 
         await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
 
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             s => s.SwapLabelAsync("ipc-1", "owner/repo#10", AgentLabels.Next, It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -1047,7 +1047,7 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
     [Fact]
     public async Task RevertFailedDistribution_LabelSwapFailure_DoesNotThrow()
     {
-        _mockLabelSwapper
+        _mockLabelService
             .Setup(s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Provider unreachable"));
 
@@ -1083,7 +1083,7 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
         // Should not throw even with no matching run
         await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
 
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             s => s.SwapLabelAsync("ipc-nonexistent", "owner/repo#999", AgentLabels.Next, It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -1095,7 +1095,7 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
 /// </summary>
 public class DispatchOrchestrationService_DistributeAndFinalizeTests
 {
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IWorkDistributor> _mockWorkDistributor = new();
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly OrchestratorRunService _runService;
@@ -1134,7 +1134,7 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
         _service = new DispatchOrchestrationService(
             new DispatchInfrastructure(
                 mockTokenVending.Object, mockProviderFactory.Object,
-                _mockLabelSwapper.Object, resolution),
+                _mockLabelService.Object, resolution),
             orchestration,
             _runService,
             _mockWorkDistributor.Object,
@@ -1159,7 +1159,7 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
         outcome.ErrorMessage.Should().BeNull();
 
         // Confirm label was swapped to agent:in-progress
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -1180,7 +1180,7 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
         outcome.ErrorMessage.Should().Be("No agent available");
 
         // Label should be reverted to agent:next
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             s => s.SwapLabelAsync("ipc-1", "owner/repo#42", AgentLabels.Next, It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -1198,7 +1198,7 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
         outcome.ErrorMessage.Should().BeNull();
 
         // No label swap should have occurred (drain service handles it later)
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }

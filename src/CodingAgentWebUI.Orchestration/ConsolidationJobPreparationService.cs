@@ -10,7 +10,7 @@ namespace CodingAgentWebUI.Orchestration;
 /// vends scoped GitHub tokens, and determines correct permission scope.
 /// Used by both ConsolidationDispatcher (SignalR) and DispatchService (K8s).
 /// </summary>
-public sealed class ConsolidationJobPreparer : IConsolidationJobPreparer
+public sealed class ConsolidationJobPreparationService : IConsolidationJobPreparationService
 {
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IAgentProfileStore _agentProfileStore;
@@ -18,7 +18,7 @@ public sealed class ConsolidationJobPreparer : IConsolidationJobPreparer
     private readonly ITokenVendingService _tokenVending;
     private readonly ILogger _logger;
 
-    public ConsolidationJobPreparer(
+    public ConsolidationJobPreparationService(
         IProviderConfigStore providerConfigStore,
         IProjectStore projectStore,
         ITokenVendingService tokenVending,
@@ -44,7 +44,7 @@ public sealed class ConsolidationJobPreparer : IConsolidationJobPreparer
     /// <summary>
     /// Convenience constructor for DI when IConfigurationStore is available (implements all sub-interfaces).
     /// </summary>
-    public ConsolidationJobPreparer(
+    public ConsolidationJobPreparationService(
         IConfigurationStore configStore,
         IProjectStore projectStore,
         ITokenVendingService tokenVending,
@@ -76,7 +76,7 @@ public sealed class ConsolidationJobPreparer : IConsolidationJobPreparer
             {
                 rawConfigs.Add(agentConfig);
                 _logger.Debug(
-                    "ConsolidationJobPreparer: resolved agent provider via profile '{ProfileId}' for labels [{Labels}]",
+                    "ConsolidationJobPreparationService: resolved agent provider via profile '{ProfileId}' for labels [{Labels}]",
                     profile.Id, string.Join(", ", agentLabels));
             }
         }
@@ -97,14 +97,14 @@ public sealed class ConsolidationJobPreparer : IConsolidationJobPreparer
             else if (agentConfigs.Count > 0)
             {
                 _logger.Warning(
-                    "ConsolidationJobPreparer: no compatible agent config for labels [{Labels}] — skipping agent provider",
+                    "ConsolidationJobPreparationService: no compatible agent config for labels [{Labels}] — skipping agent provider",
                     string.Join(", ", agentLabels));
             }
 
             if (profiles.Count > 0)
             {
                 _logger.Warning(
-                    "ConsolidationJobPreparer: no profile matches labels [{Labels}], using fallback agent config",
+                    "ConsolidationJobPreparationService: no profile matches labels [{Labels}], using fallback agent config",
                     string.Join(", ", agentLabels));
             }
         }

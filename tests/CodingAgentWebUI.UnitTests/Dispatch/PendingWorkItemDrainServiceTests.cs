@@ -26,7 +26,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
     private readonly OrchestratorRunService _runService;
@@ -88,7 +88,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
 
         // Use a completion signal to know when the label swap has been invoked
         var labelSwapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLabelSwapper
+        _mockLabelService
             .Setup(l => l.SwapLabelAsync("issue-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask)
             .Callback(() => labelSwapCalled.TrySetResult());
@@ -106,7 +106,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
 
         // Assert: label swap was actually called (not a timeout)
         completed.Should().BeSameAs(labelSwapCalled.Task, "label swap should have been called within timeout");
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync("issue-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -158,7 +158,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         await InvokeDrainAsync(service);
 
         // Assert: label was NOT swapped
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
@@ -216,7 +216,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         await InvokeDrainAsync(service);
 
         // Assert: label was NOT swapped
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
@@ -267,7 +267,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
 
         // Use a completion signal to know when the label swap has been invoked
         var labelSwapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLabelSwapper
+        _mockLabelService
             .Setup(l => l.SwapLabelAsync("repo-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask)
             .Callback(() => labelSwapCalled.TrySetResult());
@@ -285,11 +285,11 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
 
         // Assert: label swap was called with PullRequest target kind and repo provider (NOT issue provider)
         completed.Should().BeSameAs(labelSwapCalled.Task, "label swap should have been called within timeout");
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync("repo-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()),
             Times.Once);
         // Ensure issue provider was NOT used
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync("issue-provider-1", It.IsAny<string>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
@@ -478,7 +478,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
                 new CancellationAwareDbContextFactory(_dbOptions),
                 NullLogger<WorkItemTransitionService>.Instance),
             _mockPendingWork.Object,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             NullLogger<PendingWorkItemDrainService>.Instance,
             _mockProjectStore.Object);
 
@@ -510,7 +510,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
             _runService,
             _transitionService,
             _mockPendingWork.Object,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             NullLogger<PendingWorkItemDrainService>.Instance,
             _mockProjectStore.Object);
     }

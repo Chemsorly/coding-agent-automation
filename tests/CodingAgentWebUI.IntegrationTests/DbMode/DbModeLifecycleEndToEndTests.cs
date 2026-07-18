@@ -22,7 +22,7 @@ namespace CodingAgentWebUI.IntegrationTests.DbMode;
 /// Comprehensive end-to-end lifecycle integration tests for DB mode.
 /// Proves all three modes (Legacy, SignalR+DB, K8s) behave identically by exercising
 /// the full dispatch → accept → complete/fail/cancel pipeline with real services
-/// (InMemory EF + real OrchestratorRunService + real AgentRegistryService + mock ILabelSwapper).
+/// (InMemory EF + real OrchestratorRunService + real AgentRegistryService + mock ILabelService).
 /// </summary>
 public sealed class DbModeLifecycleEndToEndTests : IDisposable
 {
@@ -33,7 +33,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
     private readonly AgentRegistryService _registry;
     private readonly JobDispatcherService _dispatcher;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper;
+    private readonly Mock<ILabelService> _mockLabelService;
     private readonly Mock<ILogger> _mockLogger;
     private readonly RunLifecycleManager _lifecycleManager;
 
@@ -57,13 +57,13 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         _registry = new AgentRegistryService(_mockLogger.Object);
         _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        _mockLabelSwapper = new Mock<ILabelSwapper>();
+        _mockLabelService = new Mock<ILabelService>();
 
         _lifecycleManager = new RunLifecycleManager(
             _runService,
             _mockHistoryService.Object,
             _registry,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
             _transitionService);
@@ -130,7 +130,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         updatedRun!.AgentId.Should().Be("agent-full-1");
         agent.ActiveJobId.Should().Be(runId.ToString());
         agent.Status.Should().Be(AgentStatus.Busy);
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-1", "owner/repo#1", AgentLabels.InProgress,
             LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
 
@@ -218,7 +218,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         _runService.GetRun(runId.ToString()).Should().BeNull();
         agent.Status.Should().Be(AgentStatus.Idle);
         agent.ActiveJobId.Should().BeNull();
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-2", "owner/repo#2", AgentLabels.Error,
             LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
         _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
@@ -281,7 +281,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         _runService.GetRun(runId.ToString()).Should().BeNull();
         agent.Status.Should().Be(AgentStatus.Idle);
         agent.ActiveJobId.Should().BeNull();
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-3", "owner/repo#3", AgentLabels.Cancelled,
             LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -315,7 +315,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
 
         // Assert
         selectedAgent.Should().BeNull();
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress,
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
 
@@ -371,7 +371,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             PipelineRunType.Implementation, CancellationToken.None);
 
         // Assert: Label NOW swapped to InProgress
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-5", "owner/repo#5", AgentLabels.InProgress,
             LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
 
@@ -618,7 +618,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             PipelineRunType.Implementation, CancellationToken.None);
 
         // Assert: SwapLabel with issueProviderConfigId + Issue target
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-10", "owner/repo#10", AgentLabels.InProgress,
             LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -651,7 +651,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             PipelineRunType.Review, CancellationToken.None);
 
         // Assert: SwapLabel with repoProviderConfigId + PullRequest target
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "rp-11", "42", AgentLabels.InProgress,
             LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -685,7 +685,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             PipelineRunType.Decomposition, CancellationToken.None);
 
         // Assert: Decomposition uses issueProviderConfigId + Issue (same as Implementation)
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-12", "owner/repo#12", AgentLabels.InProgress,
             LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -722,7 +722,7 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
 
         // Assert: Error label goes to repo provider for review runs
         result.Should().NotBeNull();
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "rp-13", "55", AgentLabels.Error,
             LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()), Times.Once);
     }

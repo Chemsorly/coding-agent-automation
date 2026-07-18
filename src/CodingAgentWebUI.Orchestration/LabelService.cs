@@ -10,13 +10,13 @@ namespace CodingAgentWebUI.Orchestration;
 /// based on <see cref="LabelTargetKind"/>.
 /// All operations are best-effort (failures are caught and logged as warnings).
 /// </summary>
-public sealed class LabelSwapper : ILabelSwapper
+public sealed class LabelService : ILabelService
 {
     private readonly IProviderConfigStore _configStore;
     private readonly IProviderFactory _providerFactory;
     private readonly ILogger _logger;
 
-    public LabelSwapper(
+    public LabelService(
         IProviderConfigStore configStore,
         IProviderFactory providerFactory,
         ILogger logger)

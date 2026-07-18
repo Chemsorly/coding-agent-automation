@@ -3499,7 +3499,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             TestOrchestrationFactory.CreateDefaultCompletionFacade(_mockLogger.Object, mockHistoryService.Object),
             new PipelineCancellationFacade(null, mockCancellation.Object),
             lifecycle,
-            new TestOrchestrationFactory.NoOpLabelSwapper(),
+            new TestOrchestrationFactory.NoOpLabelService(),
             _mockLogger.Object);
 
         // Act
@@ -3550,7 +3550,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             TestOrchestrationFactory.CreateDefaultCompletionFacade(_mockLogger.Object, mockHistoryService.Object),
             new PipelineCancellationFacade(null, mockCancellation.Object),
             lifecycle,
-            new TestOrchestrationFactory.NoOpLabelSwapper(),
+            new TestOrchestrationFactory.NoOpLabelService(),
             _mockLogger.Object);
 
         // Act — should not throw despite cancellation sender failure
@@ -3594,7 +3594,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             TestOrchestrationFactory.CreateDefaultCompletionFacade(_mockLogger.Object, mockHistoryService.Object),
             new PipelineCancellationFacade(null, null),
             lifecycle,
-            new Orchestration.LabelSwapper(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object),
+            new Orchestration.LabelService(_mockConfigStore.Object, _mockFactory.Object, _mockLogger.Object),
             _mockLogger.Object);
 
         await service.CancelActiveAgentRunsAsync();
