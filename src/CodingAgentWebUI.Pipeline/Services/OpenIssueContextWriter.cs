@@ -62,10 +62,7 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
 
         if (includeClosedSiblings)
         {
-            // TODO: Budget edge case — when maxIssues is very small (1–3), Math.Max(1, maxIssues/4)
-            // can make closedBudget disproportionately large, leaving openBudget=0 for maxIssues=1.
-            // Consider ensuring openBudget >= 1 when maxIssues >= 1.
-            closedBudget = Math.Max(1, maxIssues / 4); // 25% for closed issues
+            closedBudget = Math.Min(Math.Max(1, maxIssues / 4), maxIssues - 1); // 25% for closed, capped to guarantee openBudget >= 1
             openBudget = maxIssues - closedBudget;
         }
         else
