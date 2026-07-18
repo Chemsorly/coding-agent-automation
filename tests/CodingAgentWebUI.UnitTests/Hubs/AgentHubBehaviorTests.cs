@@ -258,7 +258,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         // CompleteRunAsync never called (run not in memory)
         _mockLifecycleManager.Verify(l => l.CompleteRunAsync(
-            It.IsAny<string>(), It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
+            It.IsAny<RunId>(), It.IsAny<WorkItemStatus>(), It.IsAny<CancellationToken>(),
             It.IsAny<string?>(), It.IsAny<FailureReason?>()), Times.Never);
 
         // Recovery path: TransitionWorkItemAsync called (will no-op at DB level for terminal state)

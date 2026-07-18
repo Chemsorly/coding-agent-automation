@@ -58,9 +58,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task<PipelineRun?> FailRunAsync(string runId, string failureReason, CancellationToken ct, FailureReason? failureReasonEnum = null)
+    public async Task<PipelineRun?> FailRunAsync(RunId runId, string failureReason, CancellationToken ct, FailureReason? failureReasonEnum = null)
     {
-        ArgumentNullException.ThrowIfNull(runId);
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
 
         // Atomic claim: RemoveRun returns null if another thread already processed this run
         var run = _runService.RemoveRun(runId);
@@ -105,10 +105,10 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task<PipelineRun?> CompleteRunAsync(string runId, WorkItemStatus terminalStatus, CancellationToken ct,
+    public async Task<PipelineRun?> CompleteRunAsync(RunId runId, WorkItemStatus terminalStatus, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null)
     {
-        ArgumentNullException.ThrowIfNull(runId);
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
 
         var run = _runService.RemoveRun(runId);
         if (run is null)
@@ -155,9 +155,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task<PipelineRun?> CancelRunAsync(string runId, CancellationToken ct)
+    public async Task<PipelineRun?> CancelRunAsync(RunId runId, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(runId);
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
 
         var run = _runService.RemoveRun(runId);
         if (run is null)
@@ -196,7 +196,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         // TODO: Consider making _jobCleanup non-nullable and using GetRequiredService in all DI registrations
         // to resolve mode differences entirely at DI registration time (per design goal).
         if (_jobCleanup is not null)
-            await _jobCleanup.TryDeleteJobForRunAsync(runId, ct);
+            await _jobCleanup.TryDeleteJobForRunAsync(runId.Value, ct);
 
         _logger.Information(
             "RunLifecycleManager.CancelRunAsync: run {RunId} cancelled (agent={AgentId})",
@@ -206,11 +206,11 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task AgentAcceptedRunAsync(string runId, string agentId, string issueIdentifier,
+    public async Task AgentAcceptedRunAsync(RunId runId, string agentId, string issueIdentifier,
         string issueProviderConfigId, string repoProviderConfigId,
         PipelineRunType runType, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(runId);
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
         ArgumentNullException.ThrowIfNull(agentId);
 
         // 1. Set AgentId on the in-memory PipelineRun
@@ -224,7 +224,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         {
             lock (agent.SyncRoot)
             {
-                agent.ActiveJobId = runId;
+                agent.ActiveJobId = runId.Value;
             }
             _registry.TransitionStatus(agentId, AgentStatus.Busy);
         }
@@ -246,7 +246,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task TransitionWorkItemToFailedAsync(string runId, CancellationToken ct,
+    public async Task TransitionWorkItemToFailedAsync(RunId runId, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null)
     {
         await TransitionWorkItemAsync(runId, WorkItemStatus.Failed, ct, errorMessage, failureReason);
@@ -254,9 +254,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
     // ── Private helpers ─────────────────────────────────────────────────
 
-    private async Task TransitionWorkItemAsync(string runId, WorkItemStatus status, CancellationToken ct, string? errorMessage = null, FailureReason? failureReason = null)
+    private async Task TransitionWorkItemAsync(RunId runId, WorkItemStatus status, CancellationToken ct, string? errorMessage = null, FailureReason? failureReason = null)
     {
-        if (_workItemTransition is null || !Guid.TryParse(runId, out var workItemId))
+        if (_workItemTransition is null || !Guid.TryParse(runId.Value, out var workItemId))
             return;
 
         try

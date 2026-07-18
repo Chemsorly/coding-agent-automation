@@ -215,7 +215,7 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
         await InvokeDrainPendingItems(service);
 
         // Assert — no run operations
-        _mockRunService.Verify(r => r.GetRun(It.IsAny<string>()), Times.Never);
+        _mockRunService.Verify(r => r.GetRun(It.IsAny<RunId>()), Times.Never);
         _mockRunService.Verify(r => r.AddRun(It.IsAny<PipelineRun>()), Times.Never);
     }
 
