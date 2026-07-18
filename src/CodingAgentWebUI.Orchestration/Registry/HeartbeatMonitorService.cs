@@ -199,12 +199,10 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 agent.AgentId, orphanedJobId, gracePeriod, orphanAge.TotalSeconds);
 
             // Fail the orphaned run directly
-            // TODO: Pass FailureReason.InfrastructureFailure as the enum parameter.
-            // Agent disconnection/orphan is an infrastructure event, not an agent logic error.
             if (orphanedJobId is not null)
             {
                 var result = await _lifecycleManager.FailRunAsync(orphanedJobId,
-                    "Agent did not resume orphaned job within grace period", ct);
+                    "Agent did not resume orphaned job within grace period", ct, FailureReason.InfrastructureFailure);
                 if (result is null)
                 {
                     // Race lost — another path (e.g., ReportJobCompleted) already processed the run.
@@ -390,9 +388,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
             // the agent is Idle in the registry. This is acceptable: the dispatch loop won't
             // pick up a Disconnected-then-Idle agent in that window because Deregister follows
             // immediately and the dispatcher checks agent.Status == Idle && connected.
-            // TODO: Pass FailureReason.InfrastructureFailure as the enum parameter.
-            // Agent disconnection is an infrastructure event, not an agent logic error.
-            var result = await _lifecycleManager.FailRunAsync(agent.ActiveJobId, "Agent disconnected", ct);
+            var result = await _lifecycleManager.FailRunAsync(agent.ActiveJobId, "Agent disconnected", ct, FailureReason.InfrastructureFailure);
             if (result is null)
             {
                 // Race lost — run already processed by another path.
@@ -435,7 +431,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 continue;
 
             // Agent gone from registry entirely — orphaned run
-            await _lifecycleManager.FailRunAsync(run.RunId, "Agent deregistered (orphaned run)", ct);
+            await _lifecycleManager.FailRunAsync(run.RunId, "Agent deregistered (orphaned run)", ct, FailureReason.InfrastructureFailure);
 
             _logger.Warning(
                 "Orphaned run {RunId} for issue {IssueIdentifier} — agent {AgentId} no longer in registry, marking Failed",
