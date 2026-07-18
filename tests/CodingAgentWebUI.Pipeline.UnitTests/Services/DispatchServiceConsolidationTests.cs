@@ -262,6 +262,87 @@ public class DispatchServiceConsolidationTests : IDisposable
         _mockRunStore.Verify(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ── Cancellation Race Guard ─────────────────────────────────────────
+
+    // TODO: Add boundary test for empty/null IssueIdentifier — should bypass the guard and proceed with normal dispatch.
+    // TODO: Add test for null _consolidationRunStore path — guard is skipped entirely when store is not registered.
+
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_RunCancelled_CancelsWorkItemEarly()
+    {
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+        await InsertConsolidationWorkItem(workItemId, runId, "kiro,dotnet");
+
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConsolidationRun
+            {
+                RunId = runId,
+                Type = ConsolidationRunType.BrainConsolidation,
+                StartedAtUtc = DateTimeOffset.UtcNow,
+                Status = ConsolidationRunStatus.Cancelled
+            });
+
+        var service = CreateService();
+
+        await InvokePollAndDispatch(service);
+
+        // Assert: WorkItem transitioned to Cancelled with CompletedAt set
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Cancelled);
+        item.CompletedAt.Should().NotBeNull();
+
+        // Assert: K8s Job was NOT created (early return before any K8s work)
+        _mockKubeClient.Verify(
+            k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Assert: No cascade to ConsolidationService (run is already terminal)
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<int>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_RunFailed_CancelsWorkItemEarly()
+    {
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+        await InsertConsolidationWorkItem(workItemId, runId, "kiro,dotnet");
+
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConsolidationRun
+            {
+                RunId = runId,
+                Type = ConsolidationRunType.BrainConsolidation,
+                StartedAtUtc = DateTimeOffset.UtcNow,
+                Status = ConsolidationRunStatus.Failed
+            });
+
+        var service = CreateService();
+
+        await InvokePollAndDispatch(service);
+
+        // Assert: WorkItem transitioned to Cancelled with CompletedAt set
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(workItemId);
+        item!.Status.Should().Be(WorkItemStatus.Cancelled);
+        item.CompletedAt.Should().NotBeNull();
+
+        // Assert: K8s Job was NOT created (early return before any K8s work)
+        _mockKubeClient.Verify(
+            k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Assert: No cascade to ConsolidationService (run is already terminal)
+        _mockConsolidationService.Verify(
+            s => s.UpdateRunAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunStatus>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<int>()),
+            Times.Never);
+    }
+
     // ── Error Handling ──────────────────────────────────────────────────
 
     [Fact]

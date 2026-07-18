@@ -552,9 +552,27 @@ public sealed class DispatchService : BackgroundService
         Dictionary<string, int> concurrencyBySelector,
         CancellationToken ct)
     {
-        // TODO: Add cancellation race guard — check whether the ConsolidationRun has been cancelled/failed
-        // before dispatching, consistent with PendingWorkItemDrainService (line 178-189). Without this,
-        // a cancelled consolidation run could still have its WorkItem dispatched as a K8s Job.
+        // Cancel-during-dispatch race guard: check if run was cancelled while queued
+        // TODO: Consider also cancelling when consolidationRun is null (record not found/purged),
+        // aligning with PendingWorkItemDrainService (line 183) which uses `consolidationRun is null ||`.
+        // Current behavior: missing record allows dispatch to proceed (defensive for K8s timing issues).
+        if (_consolidationRunStore is not null && !string.IsNullOrEmpty(item.IssueIdentifier))
+        {
+            var runId = item.IssueIdentifier;
+            var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
+            if (consolidationRun is not null &&
+                (consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
+                 consolidationRun.Status == ConsolidationRunStatus.Failed))
+            {
+                Log.Information(
+                    "DispatchService: consolidation run {RunId} is {Status}, skipping dispatch for WorkItem {WorkItemId}",
+                    runId, consolidationRun.Status, item.Id);
+                await _transitionService.TransitionAsync(
+                    item.Id, WorkItemStatus.Cancelled,
+                    entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct);
+                return;
+            }
+        }
 
         var jobName = GenerateJobName(item.Id);
 
