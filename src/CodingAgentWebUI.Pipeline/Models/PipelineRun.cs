@@ -10,6 +10,12 @@ public sealed class PipelineRun
     /// Creates a new <see cref="PipelineRun"/> with invariant defaults and all init-only properties.
     /// Mutable properties (RepositoryName, ModelName, ProjectId, etc.) should be set after construction.
     /// </summary>
+    /// <remarks>
+    /// Prefer the variant-specific factory methods (<see cref="CreateImplementation"/>, <see cref="CreateReview"/>,
+    /// <see cref="CreateDecomposition"/>) when the run type is known at compile time. This method remains
+    /// available for call sites that determine run type at runtime.
+    /// </remarks>
+    [Obsolete("Use CreateImplementation, CreateReview, or CreateDecomposition when the run type is known at compile time.")]
     public static PipelineRun Create(
         string runId,
         string issueIdentifier,
@@ -17,6 +23,110 @@ public sealed class PipelineRun
         string issueProviderConfigId,
         string repoProviderConfigId,
         PipelineRunType runType = PipelineRunType.Implementation,
+        DateTimeOffset? startedAt = null,
+        string initiatedBy = "manual",
+        string? agentId = null,
+        string? agentProviderConfigId = null,
+        string? brainProviderConfigId = null,
+        string? reviewPrBranchName = null,
+        string? reviewPrTargetBranch = null,
+        string? reviewPrUrl = null,
+        string? reviewPrDescription = null,
+        string? reviewPrAuthor = null,
+        IReadOnlyList<LinkedIssueContext>? linkedIssueContexts = null,
+        string? decompositionSource = null)
+    {
+        return CreateCore(
+            runId, issueIdentifier, issueTitle, issueProviderConfigId, repoProviderConfigId,
+            runType, startedAt, initiatedBy, agentId, agentProviderConfigId, brainProviderConfigId,
+            reviewPrBranchName, reviewPrTargetBranch, reviewPrUrl, reviewPrDescription, reviewPrAuthor,
+            linkedIssueContexts, decompositionSource);
+    }
+
+    /// <summary>
+    /// Creates a new <see cref="PipelineRun"/> for an implementation (issue → code → PR) workflow.
+    /// </summary>
+    public static PipelineRun CreateImplementation(
+        string runId,
+        string issueIdentifier,
+        string issueTitle,
+        string issueProviderConfigId,
+        string repoProviderConfigId,
+        DateTimeOffset? startedAt = null,
+        string initiatedBy = "manual",
+        string? agentId = null,
+        string? agentProviderConfigId = null,
+        string? brainProviderConfigId = null)
+    {
+        return CreateCore(
+            runId, issueIdentifier, issueTitle, issueProviderConfigId, repoProviderConfigId,
+            PipelineRunType.Implementation, startedAt, initiatedBy, agentId, agentProviderConfigId, brainProviderConfigId);
+    }
+
+    /// <summary>
+    /// Creates a new <see cref="PipelineRun"/> for a PR review (PR → code review → comment) workflow.
+    /// </summary>
+    public static PipelineRun CreateReview(
+        string runId,
+        string issueIdentifier,
+        string issueTitle,
+        string issueProviderConfigId,
+        string repoProviderConfigId,
+        string reviewPrBranchName,
+        string reviewPrTargetBranch,
+        DateTimeOffset? startedAt = null,
+        string initiatedBy = "manual",
+        string? agentId = null,
+        string? agentProviderConfigId = null,
+        string? brainProviderConfigId = null,
+        string? reviewPrUrl = null,
+        string? reviewPrDescription = null,
+        string? reviewPrAuthor = null,
+        IReadOnlyList<LinkedIssueContext>? linkedIssueContexts = null)
+    {
+        return CreateCore(
+            runId, issueIdentifier, issueTitle, issueProviderConfigId, repoProviderConfigId,
+            PipelineRunType.Review, startedAt, initiatedBy, agentId, agentProviderConfigId, brainProviderConfigId,
+            reviewPrBranchName, reviewPrTargetBranch, reviewPrUrl, reviewPrDescription, reviewPrAuthor,
+            linkedIssueContexts);
+    }
+
+    /// <summary>
+    /// Creates a new <see cref="PipelineRun"/> for a decomposition (epic → sub-issues) workflow.
+    /// </summary>
+    /// <param name="phaseType">Must be <see cref="PipelineRunType.DecompositionAnalysis"/> or <see cref="PipelineRunType.Decomposition"/>.</param>
+    public static PipelineRun CreateDecomposition(
+        string runId,
+        string issueIdentifier,
+        string issueTitle,
+        string issueProviderConfigId,
+        string repoProviderConfigId,
+        PipelineRunType phaseType,
+        DateTimeOffset? startedAt = null,
+        string initiatedBy = "manual",
+        string? agentId = null,
+        string? agentProviderConfigId = null,
+        string? brainProviderConfigId = null,
+        string? decompositionSource = null)
+    {
+        if (phaseType != PipelineRunType.DecompositionAnalysis && phaseType != PipelineRunType.Decomposition)
+            throw new ArgumentOutOfRangeException(nameof(phaseType), phaseType, "Must be DecompositionAnalysis or Decomposition.");
+
+        return CreateCore(
+            runId, issueIdentifier, issueTitle, issueProviderConfigId, repoProviderConfigId,
+            phaseType, startedAt, initiatedBy, agentId, agentProviderConfigId, brainProviderConfigId,
+            decompositionSource: decompositionSource);
+    }
+
+    // TODO: Consider converting CreateCore parameters to a required-then-optional pattern (or a struct/record for optional fields) to reduce risk of accidentally omitting positional arguments if parameter order shifts during maintenance. Named arguments at call sites mitigate this today.
+    /// <summary>Shared construction logic for all factory methods.</summary>
+    private static PipelineRun CreateCore(
+        string runId,
+        string issueIdentifier,
+        string issueTitle,
+        string issueProviderConfigId,
+        string repoProviderConfigId,
+        PipelineRunType runType,
         DateTimeOffset? startedAt = null,
         string initiatedBy = "manual",
         string? agentId = null,
