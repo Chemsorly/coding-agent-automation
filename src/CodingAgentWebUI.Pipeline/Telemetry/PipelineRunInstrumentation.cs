@@ -77,6 +77,13 @@ public sealed class PipelineRunInstrumentation : IDisposable
     public void MarkCompleted() => _completed = true;
 
     /// <summary>
+    /// Stops the internal stopwatch without recording metrics or disposing the activity.
+    /// Call before expensive cleanup to avoid inflating the duration metric.
+    /// Idempotent — safe to call multiple times or before Dispose().
+    /// </summary>
+    public void StopTiming() => _stopwatch.Stop();
+
+    /// <summary>
     /// Stops timing, records duration and success/failure counters.
     /// Also records decomposition-specific duration for decomposition run types.
     /// </summary>
