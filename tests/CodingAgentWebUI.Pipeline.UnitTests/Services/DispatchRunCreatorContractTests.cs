@@ -166,7 +166,7 @@ public class DispatchRunCreatorContractTests : IDisposable
     // ── Contract Test 5: Mock of interface suffices for dispatch consumer ──
 
     [Fact]
-    public async Task MockInterface_CanReplaceConcreteService_ForDispatchDedup()
+    public void MockInterface_CanReplaceConcreteService_ForDispatchDedup()
     {
         // This proves a mock of IDispatchRunCreator is sufficient for dispatch dedup logic
         var mockCreator = new Mock<IDispatchRunCreator>();
