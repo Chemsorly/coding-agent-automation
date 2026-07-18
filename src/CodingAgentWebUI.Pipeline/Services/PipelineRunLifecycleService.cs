@@ -125,12 +125,11 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         run.MarkCompleted();
         EmitOutputLine($"❌ Pipeline failed: {reason}");
         TransitionTo(run, PipelineStep.Failed);
-        // TODO: Pass ct to AddRunToHistoryAsync once the method signature accepts CancellationToken
-        await AddRunToHistoryAsync(run).ConfigureAwait(false);
+        await AddRunToHistoryAsync(run, ct).ConfigureAwait(false);
     }
 
     /// <summary>Adds the run to persistent history.</summary>
-    public Task AddRunToHistoryAsync(PipelineRun run) => _historyService.AddRunToHistoryAsync(run); // TODO: Accept and propagate CancellationToken from callers (FailRunAsync, CancelPipelineAsync, MarkAgentRunsCancelled)
+    public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default) => _historyService.AddRunToHistoryAsync(run, ct);
 
     // ── Event Emission Methods ──────────────────────────────────────────
 

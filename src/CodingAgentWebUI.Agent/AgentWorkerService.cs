@@ -326,18 +326,9 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         var jobCts = _jobCts!;
         _activeJobTask = Task.Run(async () =>
         {
-            await using var outputBatcher = new OutputBatcher();
-            outputBatcher.OnFlush += async lines =>
-            {
-                try
-                {
-                    await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportOutputLines, message.JobId, lines);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to send output lines batch");
-                }
-            };
+            await using var outputBatcher = OutputBatcherHubExtensions.CreateWithHubFlush(
+                lines => _hubManager.Connection.InvokeAsync(HubMethodNames.ReportOutputLines, message.JobId, lines),
+                _logger);
 
             JobCompletionPayload? completion = null;
             try
@@ -421,23 +412,12 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             // Scoped so the batcher is disposed (flushing remaining lines)
             // BEFORE reporting completion to the orchestrator.
             {
-                await using var outputBatcher = new OutputBatcher();
-                outputBatcher.OnFlush += async lines =>
-                {
-                    try
-                    {
-                        var response = new ChatResponseMessage
-                        {
-                            SessionId = message.SessionId,
-                            Lines = lines.ToList()
-                        };
-                        await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportChatResponse, response);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Warning(ex, "Failed to send chat response lines");
-                    }
-                };
+                await using var outputBatcher = OutputBatcherHubExtensions.CreateWithHubFlush(
+                    lines => _hubManager.Connection.InvokeAsync(
+                        HubMethodNames.ReportChatResponse,
+                        new ChatResponseMessage { SessionId = message.SessionId, Lines = lines.ToList() }),
+                    _logger,
+                    "Failed to send chat response lines");
 
                 try
                 {
