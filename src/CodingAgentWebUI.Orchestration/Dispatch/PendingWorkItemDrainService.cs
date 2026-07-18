@@ -274,6 +274,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             }
 
             // --- Pipeline items: existing path ---
+            var dispatchedSuccessfully = false;
             try
             {
                 // Update in-memory PipelineRun with agent ID.
@@ -312,6 +313,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                         entity.AssignedAgentId = agentId;
                     },
                     ct);
+
+                dispatchedSuccessfully = true;
 
                 // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14).
                 // Without this, StartedAt reflects preparation/enqueue time which can be
@@ -360,9 +363,6 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 // - If TransitionAsync(Dispatched) itself failed, item is still Pending → TransitionAsync
                 //   returns true idempotently (already at target).
                 // - If exception was after Dispatched transition, item reverts Dispatched → Pending (valid).
-                // TODO: The idempotent path (item already Pending) does NOT invoke the mutate callback,
-                // so RetryCount won't increment if the exception occurred during TransitionAsync(Dispatched).
-                // Consider checking the return value and manually incrementing RetryCount in that case.
                 try
                 {
                     await _transitionService.TransitionAsync(
@@ -379,6 +379,34 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     _logger.LogWarning(revertEx,
                         "PendingWorkItemDrainService: failed to revert WorkItem {WorkItemId} to Pending after dispatch failure — stuck-item detector will handle",
                         item.Id);
+                }
+
+                // If TransitionAsync(Dispatched) itself failed, the item was already Pending and the
+                // idempotent path above skipped the mutate callback — RetryCount was NOT incremented.
+                // Perform a direct DB update to prevent infinite retry loops.
+                // TODO: If a concurrent process (e.g., stuck-item detector) also increments RetryCount
+                // between the exception and this update, a double-increment could occur. Risk is low
+                // because the drain service is the sole owner of dispatch for a given item, and an extra
+                // increment only accelerates retry exhaustion (safe direction). Consider adding a
+                // concurrency token or conditional update if this assumption changes.
+                if (!dispatchedSuccessfully)
+                {
+                    try
+                    {
+                        await using var retryDb = await _dbFactory.CreateDbContextAsync(CancellationToken.None);
+                        var entity = await retryDb.WorkItems.FindAsync([item.Id], CancellationToken.None);
+                        if (entity is not null)
+                        {
+                            entity.RetryCount++;
+                            await retryDb.SaveChangesAsync(CancellationToken.None);
+                        }
+                    }
+                    catch (Exception retryEx)
+                    {
+                        _logger.LogWarning(retryEx,
+                            "PendingWorkItemDrainService: failed to increment RetryCount for WorkItem {WorkItemId} after dispatch-transition failure",
+                            item.Id);
+                    }
                 }
 
                 continue;
