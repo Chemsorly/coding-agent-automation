@@ -76,7 +76,7 @@ public static class WorkDistributionRegistration
                 sp.GetRequiredService<IOrchestratorRunService>(),
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
                 sp.GetRequiredService<AgentRegistryService>(),
-                sp.GetRequiredService<ILabelSwapper>(),
+                sp.GetRequiredService<ILabelService>(),
                 sp.GetRequiredService<JobDispatcherService>(),
                 Log.Logger,
                 workItemTransition: null,
@@ -162,14 +162,14 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<JobDispatcherService>(),
             Log.Logger,
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetService<IJobCleanupStrategy>()));
 
         // ── PostgresConfigurationStore (replaces JsonConfigurationStore) ─────
-        // Singleton: consumed by singleton services (LabelSwapper, DispatchResolutionService,
+        // Singleton: consumed by singleton services (LabelService, DispatchResolutionService,
         // HeartbeatMonitorService, AgentHubFacade). Uses IDbContextFactory internally
         // (creates/disposes contexts per operation), so singleton lifetime is correct.
         // Internal MemoryCache + _pipelineConfigCache only work correctly as singleton.
@@ -273,7 +273,7 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IConfiguration>(),
-            sp.GetService<ILabelSwapper>(),
+            sp.GetService<ILabelService>(),
             sp.GetService<ITokenVendingService>(),
             sp.GetService<IConsolidationRunStore>(),
             sp.GetService<IConsolidationService>(),
@@ -288,7 +288,7 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IKubernetes>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IConfiguration>(),
-            sp.GetService<ILabelSwapper>(),
+            sp.GetService<ILabelService>(),
             sp.GetService<IRunLifecycleManager>(),
             sp.GetService<IConsolidationService>(),
             sp.GetService<IConfigurationStore>(),
@@ -341,7 +341,7 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>(),
             sp.GetService<Pipeline.Interfaces.IRunLifecycleManager>(),
             sp.GetService<Pipeline.Interfaces.IAgentCancellationSender>()));
@@ -359,7 +359,7 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IPendingWorkQuery>(),
-            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>(),
             sp.GetService<IProjectStore>(),
             sp.GetRequiredService<IConsolidationDispatcher>(),

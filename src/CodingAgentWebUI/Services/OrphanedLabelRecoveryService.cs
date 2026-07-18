@@ -22,7 +22,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     private readonly IProjectStore _projectStore;
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IProviderFactory _providerFactory;
-    private readonly ILabelSwapper _labelSwapper;
+    private readonly ILabelService _labelService;
     private readonly IPipelineConfigStore _configStore;
     private readonly ILogger _logger;
     private readonly TimeSpan _gracePeriod;
@@ -32,10 +32,10 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         IProjectStore projectStore,
         IProviderConfigStore providerConfigStore,
         IProviderFactory providerFactory,
-        ILabelSwapper labelSwapper,
+        ILabelService labelService,
         IPipelineConfigStore configStore,
         ILogger logger)
-        : this(runService, projectStore, providerConfigStore, providerFactory, labelSwapper, configStore, logger, DefaultGracePeriod)
+        : this(runService, projectStore, providerConfigStore, providerFactory, labelService, configStore, logger, DefaultGracePeriod)
     {
     }
 
@@ -47,7 +47,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         IProjectStore projectStore,
         IProviderConfigStore providerConfigStore,
         IProviderFactory providerFactory,
-        ILabelSwapper labelSwapper,
+        ILabelService labelService,
         IPipelineConfigStore configStore,
         ILogger logger,
         TimeSpan gracePeriod)
@@ -56,7 +56,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         _projectStore = projectStore;
         _providerConfigStore = providerConfigStore;
         _providerFactory = providerFactory;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _configStore = configStore;
         _logger = logger.ForContext<OrphanedLabelRecoveryService>();
         _gracePeriod = gracePeriod;
@@ -186,7 +186,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
                     try
                     {
-                        await _labelSwapper.SwapLabelAsync(
+                        await _labelService.SwapLabelAsync(
                             providerConfigId, issue.Identifier, AgentLabels.Error, LabelTargetKind.Issue, ct);
                         recovered++;
                     }

@@ -142,13 +142,13 @@ public class DispatchServiceConsolidationTests : IDisposable
             .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var mockLabelSwapper = new Mock<ILabelSwapper>();
-        var service = CreateService(labelSwapper: mockLabelSwapper.Object);
+        var mockLabelService = new Mock<ILabelService>();
+        var service = CreateService(labelService: mockLabelService.Object);
 
         await InvokePollAndDispatch(service);
 
         // Label swapper should never be called for consolidation items
-        mockLabelSwapper.Verify(
+        mockLabelService.Verify(
             s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
@@ -668,7 +668,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             .ReturnsAsync((ConsolidationRun?)null);
     }
 
-    private DispatchService CreateService(ILabelSwapper? labelSwapper = null)
+    private DispatchService CreateService(ILabelService? labelService = null)
     {
         var configData = new Dictionary<string, string?>
         {
@@ -686,7 +686,7 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         return new DispatchService(
             _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider,
-            labelSwapper,
+            labelService,
             _mockTokenVending.Object,
             _mockRunStore.Object,
             _mockConsolidationService.Object,

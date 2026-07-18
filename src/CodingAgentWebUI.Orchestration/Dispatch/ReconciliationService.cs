@@ -33,7 +33,7 @@ public sealed class ReconciliationService : BackgroundService
     private readonly ILeaderElectionService _leaderElection;
     private readonly IKubernetes _kubeClient;
     private readonly WorkItemTransitionService _transitionService;
-    private readonly ILabelSwapper? _labelSwapper;
+    private readonly ILabelService? _labelService;
     private readonly IRunLifecycleManager? _lifecycleManager;
     private readonly IConsolidationService? _consolidationService;
     private readonly IConfigurationStore? _configStore;
@@ -48,7 +48,7 @@ public sealed class ReconciliationService : BackgroundService
         IKubernetes kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
-        ILabelSwapper? labelSwapper = null,
+        ILabelService? labelService = null,
         IRunLifecycleManager? lifecycleManager = null,
         IConsolidationService? consolidationService = null,
         IConfigurationStore? configStore = null,
@@ -58,7 +58,7 @@ public sealed class ReconciliationService : BackgroundService
         _leaderElection = leaderElection;
         _kubeClient = kubeClient;
         _transitionService = transitionService;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _lifecycleManager = lifecycleManager;
         _consolidationService = consolidationService;
         _configStore = configStore;
@@ -188,7 +188,7 @@ public sealed class ReconciliationService : BackgroundService
     // TODO: This still swaps recently-terminal items back to agent:next on restart (including removing agent:cancelled labels), creating unnecessary label churn. Consider Option C from BUG-10: skip items whose terminal state indicates infrastructure failure (heartbeat timeout, orphan detected) rather than genuine business failure (see BUG-10 review findings)
     private async Task ReconcileStartupLabelsAsync(CancellationToken ct)
     {
-        if (_labelSwapper is null) return;
+        if (_labelService is null) return;
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -220,7 +220,7 @@ public sealed class ReconciliationService : BackgroundService
 
             try
             {
-                await _labelSwapper.SwapLabelAsync(
+                await _labelService.SwapLabelAsync(
                     item.IssueProviderConfigId, item.IssueIdentifier, AgentLabels.Next, ct);
                 Log.Information(
                     "ReconciliationService: startup label reconciliation — swapped to agent:next for {Issue}",
@@ -734,11 +734,11 @@ public sealed class ReconciliationService : BackgroundService
                     }, ct);
 
                 // Best-effort label swap to agent:error (prevents stale agent:in-progress on GitHub)
-                if (_labelSwapper is not null)
+                if (_labelService is not null)
                 {
                     try
                     {
-                        await _labelSwapper.SwapLabelAsync(
+                        await _labelService.SwapLabelAsync(
                             item.IssueProviderConfigId, item.IssueIdentifier,
                             AgentLabels.Error, LabelTargetKind.Issue, ct);
                     }

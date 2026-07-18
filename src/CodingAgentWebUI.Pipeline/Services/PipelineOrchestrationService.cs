@@ -26,7 +26,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IProviderFactory _providerFactory;
-    private readonly ILabelSwapper _labelSwapper;
+    private readonly ILabelService _labelService;
 #pragma warning disable CS0414 // Field assigned but never used — constructor parameter retained for backward compatibility
     // TODO: Consider removing _issueParser field entirely — it is dead code after ExecutePipelineStepsAsync was removed.
     // The constructor signature stability concern only applies to sealed/derived classes; this class is non-sealed but
@@ -109,7 +109,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         IPipelineCompletionFacade completionFacade,
         IPipelineCancellationFacade cancellationFacade,
         PipelineRunLifecycleService lifecycle,
-        ILabelSwapper labelSwapper,
+        ILabelService labelService,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(pipelineConfigStore);
@@ -120,13 +120,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         ArgumentNullException.ThrowIfNull(completionFacade);
         ArgumentNullException.ThrowIfNull(cancellationFacade);
         ArgumentNullException.ThrowIfNull(lifecycle);
-        ArgumentNullException.ThrowIfNull(labelSwapper);
+        ArgumentNullException.ThrowIfNull(labelService);
         ArgumentNullException.ThrowIfNull(logger);
 
         _pipelineConfigStore = pipelineConfigStore;
         _providerConfigStore = providerConfigStore;
         _providerFactory = providerFactory;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _issueParser = issueParser;
         _logger = logger;
         _executionFacade = executionFacade;
@@ -244,7 +244,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             var targetKind = run.LabelTargetKind;
 
-            await _labelSwapper.SwapLabelAsync(
+            await _labelService.SwapLabelAsync(
                 run.ProviderConfigIdForLabel, run.IssueIdentifier, AgentLabels.Cancelled, targetKind, CancellationToken.None);
         }
 
@@ -418,7 +418,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         { _logger.Warning(ex, "Pipeline {RunId} failed to persist last-used provider IDs", ActiveRun?.RunId); }
     }
     // TODO: Add unit test that exercises SwapAgentLabelAsync for Implementation runs during normal pipeline execution
-    // (existing tests use TestPipelineRunner which bypasses ILabelSwapper and doesn't validate this code path).
+    // (existing tests use TestPipelineRunner which bypasses ILabelService and doesn't validate this code path).
     private async Task SwapAgentLabelAsync(PipelineRun run, string issueId, string newLabel, CancellationToken ct)
     {
         _logger.Information(
@@ -428,12 +428,12 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             var targetKind = run.LabelTargetKind;
 
-            await _labelSwapper.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, newLabel, targetKind, ct);
+            await _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, newLabel, targetKind, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on {Identifier}", newLabel, issueId); }
     }
 
-    // TODO: Add unit test that validates RemoveAllAgentLabelsAsync routes through ILabelSwapper with string.Empty,
+    // TODO: Add unit test that validates RemoveAllAgentLabelsAsync routes through ILabelService with string.Empty,
     // selecting the correct providerConfigId and targetKind for Implementation runs.
     internal async Task RemoveAllAgentLabelsAsync(PipelineRun run, string issueId, CancellationToken ct)
     {
@@ -441,7 +441,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             var targetKind = run.LabelTargetKind;
 
-            await _labelSwapper.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, string.Empty, targetKind, ct);
+            await _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, string.Empty, targetKind, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from {Identifier}", issueId); }
     }

@@ -118,7 +118,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
                 HistoryService),
             new PipelineCancellationFacade(null, null),
             lifecycle,
-            TestOrchestrationFactory.NoOpLabelSwapper.Instance,
+            TestOrchestrationFactory.NoOpLabelService.Instance,
             Serilog.Log.Logger);
         RemoveService<PipelineOrchestrationService>(services);
         services.AddSingleton(_orchestration);

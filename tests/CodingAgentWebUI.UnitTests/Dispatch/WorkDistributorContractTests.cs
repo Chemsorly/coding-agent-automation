@@ -222,7 +222,7 @@ public class SignalRWorkDistributorContractTests : WorkDistributorContractTests
             _mockResolver.Object,
             new Mock<IOrchestratorRunService>().Object,
             new Mock<IProjectStore>().Object,
-            new Mock<ILabelSwapper>().Object,
+            new Mock<ILabelService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance);
     }
 

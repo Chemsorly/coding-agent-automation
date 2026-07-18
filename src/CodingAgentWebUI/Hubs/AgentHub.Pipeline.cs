@@ -187,7 +187,7 @@ public sealed partial class AgentHub
     }
 
     /// <summary>
-    /// Executes a label swap on the entity (issue or PR) via <see cref="ILabelSwapper"/>.
+    /// Executes a label swap on the entity (issue or PR) via <see cref="ILabelService"/>.
     /// Routes to the correct provider based on <paramref name="targetKind"/>.
     /// </summary>
     [RequiresActiveJob]

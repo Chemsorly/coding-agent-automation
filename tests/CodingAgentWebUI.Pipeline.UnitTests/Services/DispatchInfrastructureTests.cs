@@ -18,7 +18,7 @@ public class DispatchInfrastructureTests
 {
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
 
     private DispatchInfrastructure CreateInfrastructure()
@@ -33,7 +33,7 @@ public class DispatchInfrastructureTests
         return new DispatchInfrastructure(
             _mockTokenVending.Object,
             _mockProviderFactory.Object,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             resolution);
     }
 
@@ -47,7 +47,7 @@ public class DispatchInfrastructureTests
             _mockConfigStore.Object, new Mock<ILogger>().Object);
 
         var act = () => new DispatchInfrastructure(
-            null!, _mockProviderFactory.Object, _mockLabelSwapper.Object, resolution);
+            null!, _mockProviderFactory.Object, _mockLabelService.Object, resolution);
 
         act.Should().Throw<ArgumentNullException>();
     }
@@ -60,13 +60,13 @@ public class DispatchInfrastructureTests
             _mockConfigStore.Object, new Mock<ILogger>().Object);
 
         var act = () => new DispatchInfrastructure(
-            _mockTokenVending.Object, null!, _mockLabelSwapper.Object, resolution);
+            _mockTokenVending.Object, null!, _mockLabelService.Object, resolution);
 
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
-    public void Constructor_NullLabelSwapper_Throws()
+    public void Constructor_NullLabelService_Throws()
     {
         var resolution = new DispatchResolutionService(
             new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
@@ -82,7 +82,7 @@ public class DispatchInfrastructureTests
     public void Constructor_NullResolution_Throws()
     {
         var act = () => new DispatchInfrastructure(
-            _mockTokenVending.Object, _mockProviderFactory.Object, _mockLabelSwapper.Object, null!);
+            _mockTokenVending.Object, _mockProviderFactory.Object, _mockLabelService.Object, null!);
 
         act.Should().Throw<ArgumentNullException>();
     }
@@ -96,7 +96,7 @@ public class DispatchInfrastructureTests
 
         infra.TokenVending.Should().BeSameAs(_mockTokenVending.Object);
         infra.ProviderFactory.Should().BeSameAs(_mockProviderFactory.Object);
-        infra.LabelSwapper.Should().BeSameAs(_mockLabelSwapper.Object);
+        infra.LabelService.Should().BeSameAs(_mockLabelService.Object);
         infra.Resolution.Should().NotBeNull();
     }
 

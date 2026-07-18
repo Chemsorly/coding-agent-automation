@@ -24,7 +24,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly IOrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
-    private readonly ILabelSwapper _labelSwapper;
+    private readonly ILabelService _labelService;
     private readonly IProjectStore? _projectStore;
     private readonly IConsolidationDispatcher? _consolidationDispatcher;
     private readonly IConsolidationRunStore? _consolidationRunStore;
@@ -41,7 +41,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         IOrchestratorRunService runService,
         WorkItemTransitionService transitionService,
         IPendingWorkQuery pendingWorkQuery,
-        ILabelSwapper labelSwapper,
+        ILabelService labelService,
         ILogger<PendingWorkItemDrainService> logger,
         IProjectStore? projectStore = null,
         IConsolidationDispatcher? consolidationDispatcher = null,
@@ -53,7 +53,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         _runService = runService;
         _transitionService = transitionService;
         _pendingWorkQuery = pendingWorkQuery;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _logger = logger;
         _projectStore = projectStore;
         _consolidationDispatcher = consolidationDispatcher;
@@ -396,7 +396,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     ? LabelTargetKind.PullRequest
                     : LabelTargetKind.Issue;
 
-                await _labelSwapper.SwapLabelAsync(
+                await _labelService.SwapLabelAsync(
                     providerForLabel, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)

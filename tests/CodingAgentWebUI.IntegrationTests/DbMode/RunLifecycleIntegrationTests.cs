@@ -19,7 +19,7 @@ namespace CodingAgentWebUI.IntegrationTests.DbMode;
 
 /// <summary>
 /// Integration tests for RunLifecycleManager with real services (InMemory EF + real
-/// OrchestratorRunService + real AgentRegistryService + mock ILabelSwapper).
+/// OrchestratorRunService + real AgentRegistryService + mock ILabelService).
 /// Validates full lifecycle behavior with real WorkItemTransitionService + real DB (InMemory EF),
 /// proving mode parity between in-memory and DB paths.
 /// </summary>
@@ -32,7 +32,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
     private readonly AgentRegistryService _registry;
     private readonly JobDispatcherService _dispatcher;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper;
+    private readonly Mock<ILabelService> _mockLabelService;
     private readonly Mock<ILogger> _mockLogger;
     private readonly RunLifecycleManager _lifecycleManager;
 
@@ -55,13 +55,13 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         _registry = new AgentRegistryService(_mockLogger.Object);
         _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        _mockLabelSwapper = new Mock<ILabelSwapper>();
+        _mockLabelService = new Mock<ILabelService>();
 
         _lifecycleManager = new RunLifecycleManager(
             _runService,
             _mockHistoryService.Object,
             _registry,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
             _transitionService);
@@ -274,7 +274,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         agent.ActiveJobId.Should().BeNull();
 
         // Label swapped to cancelled
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-3", "owner/repo#300", AgentLabels.Cancelled,
             LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -339,7 +339,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             _runService,
             _mockHistoryService.Object,
             _registry,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
             _transitionService,
@@ -405,7 +405,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             _runService,
             _mockHistoryService.Object,
             _registry,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
             _transitionService,
@@ -475,7 +475,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             _runService,
             _mockHistoryService.Object,
             _registry,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
             _transitionService,
@@ -549,7 +549,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             _runService,
             _mockHistoryService.Object,
             _registry,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
             _transitionService,
@@ -682,7 +682,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         agent.Status.Should().Be(AgentStatus.Busy);
 
         // Label swapped to InProgress on issue provider (Implementation type)
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-5", "owner/repo#500", AgentLabels.InProgress,
             LabelTargetKind.Issue, It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -718,7 +718,7 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             PipelineRunType.Review, CancellationToken.None);
 
         // Assert: For Review runs, label swap uses repoProviderConfigId + PullRequest target
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "rp-6", "42", AgentLabels.InProgress,
             LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()), Times.Once);
 

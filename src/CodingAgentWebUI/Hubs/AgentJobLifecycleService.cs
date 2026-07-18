@@ -18,7 +18,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 {
     private readonly IAgentHubFacade _facade;
     private readonly IRunLifecycleManager _lifecycleManager;
-    private readonly ILabelSwapper _labelSwapper;
+    private readonly ILabelService _labelService;
     private readonly IHubIssueOperations _issueOps;
     private readonly IChangeNotifier _changeNotifier;
     private readonly ILogger _logger;
@@ -26,14 +26,14 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     public AgentJobLifecycleService(
         IAgentHubFacade facade,
         IRunLifecycleManager lifecycleManager,
-        ILabelSwapper labelSwapper,
+        ILabelService labelService,
         IHubIssueOperations issueOps,
         IChangeNotifier changeNotifier,
         ILogger logger)
     {
         _facade = facade;
         _lifecycleManager = lifecycleManager;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _issueOps = issueOps;
         _changeNotifier = changeNotifier;
         _logger = logger;
@@ -316,7 +316,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                     var metadata = await _facade.GetWorkItemIssueMetadataAsync(jobId.Value, ct);
                     if (metadata.HasValue)
                     {
-                        await _labelSwapper.SwapLabelAsync(
+                        await _labelService.SwapLabelAsync(
                             metadata.Value.IssueProviderConfigId,
                             metadata.Value.IssueIdentifier,
                             AgentLabels.Done, LabelTargetKind.Issue, ct);

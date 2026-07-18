@@ -6,7 +6,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// Unified label management interface. The caller specifies what kind of entity
 /// the label belongs to; the implementation routes to the correct provider internally.
 /// </summary>
-public interface ILabelSwapper
+public interface ILabelService
 {
     /// <summary>
     /// Swaps the agent label on an entity: removes all existing agent labels, then adds <paramref name="newLabel"/>.

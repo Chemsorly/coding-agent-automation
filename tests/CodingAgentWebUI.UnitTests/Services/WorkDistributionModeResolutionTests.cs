@@ -310,6 +310,6 @@ public class WorkDistributionModeResolutionTests
         services.AddSingleton(Mock.Of<IOrchestratorRunService>());
         services.AddSingleton(Mock.Of<IPipelineRunHistoryService>());
         services.AddSingleton(registry);
-        services.AddSingleton(Mock.Of<ILabelSwapper>());
+        services.AddSingleton(Mock.Of<ILabelService>());
     }
 }
