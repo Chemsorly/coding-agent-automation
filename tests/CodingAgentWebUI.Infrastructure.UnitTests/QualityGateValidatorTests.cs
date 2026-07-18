@@ -799,6 +799,10 @@ public class QualityGateValidatorTests
     // TODO: Missing test for bounded pipe drain timeout. A process that holds stdout/stderr pipes
     // open after being killed (e.g., grandchild inheriting handles) should still allow the method
     // to return within ~5s due to the drain CancellationTokenSource.
+    // TODO: Missing test for normal-path 30s pipe drain timeout. When a process exits normally but
+    // a grandchild holds stdout/stderr open, the method should return within bounded time and yield
+    // partial/empty output rather than hanging indefinitely. Also verify that if one pipe completes
+    // before the timeout but the other doesn't, the completed pipe's content is preserved.
     [Fact]
     public async Task RunProcessAsync_ExternalCancellation_KillsProcessAndThrowsOperationCanceledException()
     {
