@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.UnitTests.Services;
 
 /// <summary>
 /// Unit tests for <see cref="RunLifecycleManager"/> — validates lifecycle coordination
-/// across run service, agent registry, label swapper, history, and work item transitions.
+/// across run service, agent registry, label service, history, and work item transitions.
 /// </summary>
 public sealed class RunLifecycleManagerTests
 {

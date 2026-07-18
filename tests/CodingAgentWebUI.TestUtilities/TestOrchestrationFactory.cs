@@ -74,7 +74,7 @@ public static class TestOrchestrationFactory
             new FeedbackService(logger),
             historyService ?? new NullHistoryService());
 
-    /// <summary>No-op label swapper for tests that don't exercise label operations.</summary>
+    /// <summary>No-op label service for tests that don't exercise label operations.</summary>
     public sealed class NoOpLabelService : ILabelService
     {
         public static readonly NoOpLabelService Instance = new();
