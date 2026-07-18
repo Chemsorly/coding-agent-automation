@@ -178,10 +178,8 @@ public class CodeReviewOrchestrator
             return 0;
 
         run.AccumulateTokenUsage(acResult, phase: "acceptance_criteria");
-        // TODO: If ParseAsync returns null (e.g., corrupt JSON), this overwrites a valid report from iteration N-1.
-        // Consider: run.AcceptanceCriteriaReport = parsedReport ?? run.AcceptanceCriteriaReport;
         run.AcceptanceCriteriaReport = await AcceptanceCriteriaParser.ParseAsync(
-            run.WorkspacePath!, _logger, ct);
+            run.WorkspacePath!, _logger, ct) ?? run.AcceptanceCriteriaReport;
 
         // Inject non-compliant criteria as CRITICAL findings so the fix agent addresses them
         if (run.AcceptanceCriteriaReport is not { Criteria.Count: > 0 })

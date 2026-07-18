@@ -58,7 +58,7 @@ public class AgentMonitoringComponentTests : BunitContext
         Services.AddSingleton(mockHistory.Object);
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
-        Services.AddSingleton(Mock.Of<ILabelSwapper>());
+        Services.AddSingleton(Mock.Of<ILabelService>());
         Services.AddSingleton(Mock.Of<IConsolidationService>(s =>
             s.GetRunHistoryAsync(It.IsAny<CancellationToken>()) == Task.FromResult<IReadOnlyList<ConsolidationRun>>(Array.Empty<ConsolidationRun>())));
         Services.AddSingleton<IActiveRunQueryService>(_mockActiveRunQuery.Object);
