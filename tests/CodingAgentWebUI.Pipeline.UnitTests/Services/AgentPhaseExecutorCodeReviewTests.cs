@@ -170,6 +170,9 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     }
 
     [Fact]
+    // TODO: Add a multi-iteration test (maxIterations=2) for SendFixAndBreak early-exit path.
+    // Current test uses maxIterations=1, making early-return indistinguishable from normal loop termination.
+    // A test with maxIterations=2 where iteration 1 produces only warnings would validate the loop exits early.
     public async Task CodeReview_NoCriticalFindings_FixPromptSkipped()
     {
         SetupAgentWritingFindings("correctness", "[WARNING] Minor issue");
