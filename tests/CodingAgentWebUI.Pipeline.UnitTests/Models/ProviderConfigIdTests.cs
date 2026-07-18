@@ -57,7 +57,7 @@ public class ProviderConfigIdTests
     [Fact]
     public void Default_HasNullValue()
     {
-        // TODO: Add a test that validates how production code (LabelSwapper, PipelineOrchestrationService)
+        // TODO: Add a test that validates how production code (LabelService, PipelineOrchestrationService)
         // handles a default/null-valued ProviderConfigId. Currently default(ProviderConfigId) passes
         // silently through method signatures and would cause NullReferenceException deeper in the call chain.
         var id = default(ProviderConfigId);

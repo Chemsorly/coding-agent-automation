@@ -24,7 +24,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly Mock<IAgentCommunication> _mockAgentComm;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver;
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper;
+    private readonly Mock<ILabelService> _mockLabelService;
     private readonly SignalRWorkDistributor _sut;
     private readonly InMemoryDbContextFactory _dbFactory;
 
@@ -43,7 +43,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         _dbFactory = new InMemoryDbContextFactory(_dbOptions);
         _mockAgentComm = new Mock<IAgentCommunication>();
         _mockResolver = new Mock<ISignalRWorkDistributorAgentResolver>();
-        _mockLabelSwapper = new Mock<ILabelSwapper>();
+        _mockLabelService = new Mock<ILabelService>();
 
         var transitionService = new WorkItemTransitionService(
             _dbFactory,
@@ -56,7 +56,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _mockResolver.Object,
             new Mock<IOrchestratorRunService>().Object,
             new Mock<IProjectStore>().Object,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             NullLogger<SignalRWorkDistributor>.Instance);
     }
 
@@ -531,7 +531,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, mockRunService.Object,
             new Mock<IProjectStore>().Object,
-            new Mock<ILabelSwapper>().Object,
+            new Mock<ILabelService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance);
 
         var request = CreateMinimalRequest() with { RunId = runId };
@@ -652,7 +652,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
             mockProjectStore.Object,
-            new Mock<ILabelSwapper>().Object,
+            new Mock<ILabelService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance);
 
         var request = CreateMinimalRequest() with { ProjectId = projectId };
@@ -685,7 +685,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
             mockProjectStore.Object,
-            new Mock<ILabelSwapper>().Object,
+            new Mock<ILabelService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance);
 
         var request = CreateMinimalRequest(); // no ProjectId
@@ -717,7 +717,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
 
         // Assert: no label swap at all — issue stays in its current state
         result.Success.Should().BeTrue();
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
@@ -752,7 +752,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _mockResolver.Object,
             new Mock<IOrchestratorRunService>().Object,
             new Mock<IProjectStore>().Object,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             NullLogger<SignalRWorkDistributor>.Instance,
             mockLifecycle.Object);
 
@@ -790,7 +790,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _mockResolver.Object,
             new Mock<IOrchestratorRunService>().Object,
             new Mock<IProjectStore>().Object,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             NullLogger<SignalRWorkDistributor>.Instance,
             mockLifecycle.Object);
 
@@ -828,7 +828,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         var sut = new SignalRWorkDistributor(
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
-            new Mock<IProjectStore>().Object, new Mock<ILabelSwapper>().Object,
+            new Mock<IProjectStore>().Object, new Mock<ILabelService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance,
             mockLifecycle.Object, mockCancellation.Object);
 
@@ -857,7 +857,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         var sut = new SignalRWorkDistributor(
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
-            new Mock<IProjectStore>().Object, new Mock<ILabelSwapper>().Object,
+            new Mock<IProjectStore>().Object, new Mock<ILabelService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance,
             mockLifecycle.Object, mockCancellation.Object);
 
@@ -899,7 +899,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         var sut = new SignalRWorkDistributor(
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
-            new Mock<IProjectStore>().Object, new Mock<ILabelSwapper>().Object,
+            new Mock<IProjectStore>().Object, new Mock<ILabelService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance,
             mockLifecycle.Object, null);
 

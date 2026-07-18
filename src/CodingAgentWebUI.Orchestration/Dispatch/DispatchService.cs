@@ -38,7 +38,7 @@ public sealed class DispatchService : BackgroundService
     private readonly WorkItemTransitionService _transitionService;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateProvider _templateProvider;
-    private readonly ILabelSwapper? _labelSwapper;
+    private readonly ILabelService? _labelService;
     private readonly ITokenVendingService? _tokenVending;
     private readonly IConsolidationRunStore? _consolidationRunStore;
     private readonly IConsolidationService? _consolidationService;
@@ -55,7 +55,7 @@ public sealed class DispatchService : BackgroundService
         IKubernetesJobClient kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
-        ILabelSwapper? labelSwapper = null,
+        ILabelService? labelService = null,
         ITokenVendingService? tokenVending = null,
         IConsolidationRunStore? consolidationRunStore = null,
         IConsolidationService? consolidationService = null,
@@ -69,7 +69,7 @@ public sealed class DispatchService : BackgroundService
         _leaderElection = leaderElection;
         _kubeClient = kubeClient;
         _transitionService = transitionService;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _tokenVending = tokenVending;
         _consolidationRunStore = consolidationRunStore;
         _consolidationService = consolidationService;
@@ -127,7 +127,7 @@ public sealed class DispatchService : BackgroundService
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
         JobTemplateProvider templateProvider,
-        ILabelSwapper? labelSwapper = null,
+        ILabelService? labelService = null,
         ITokenVendingService? tokenVending = null,
         IConsolidationRunStore? consolidationRunStore = null,
         IConsolidationService? consolidationService = null,
@@ -141,7 +141,7 @@ public sealed class DispatchService : BackgroundService
         _leaderElection = leaderElection;
         _kubeClient = kubeClient;
         _transitionService = transitionService;
-        _labelSwapper = labelSwapper;
+        _labelService = labelService;
         _tokenVending = tokenVending;
         _consolidationRunStore = consolidationRunStore;
         _consolidationService = consolidationService;
@@ -512,13 +512,13 @@ public sealed class DispatchService : BackgroundService
                 item.Id, jobName, item.AgentSelector, claimedPvc ?? "none");
 
             // Swap issue label to agent:in-progress (non-fatal — best effort)
-            if (_labelSwapper is not null &&
+            if (_labelService is not null &&
                 !string.IsNullOrEmpty(item.IssueIdentifier) &&
                 !string.IsNullOrEmpty(item.IssueProviderConfigId))
             {
                 try
                 {
-                    await _labelSwapper.SwapLabelAsync(
+                    await _labelService.SwapLabelAsync(
                         item.IssueProviderConfigId, item.IssueIdentifier, AgentLabels.InProgress, ct);
                 }
                 catch (Exception ex)

@@ -37,7 +37,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     private readonly OrchestratorRunService _runService;
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
@@ -158,7 +158,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         return new DispatchOrchestrationService(
             new DispatchInfrastructure(
                 _mockTokenVending.Object, _mockProviderFactory.Object,
-                _mockLabelSwapper.Object,
+                _mockLabelService.Object,
                 new DispatchResolutionService(new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(), _mockConfigStore.Object, _mockLogger.Object)),
             orchestration,
             _runService,
@@ -175,7 +175,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     {
         var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
         return new SignalRWorkDistributor(_dbFactory, _mockAgentComm.Object, transitionService,
-            _mockResolver.Object, _runService, new Mock<IProjectStore>().Object, new Mock<ILabelSwapper>().Object, NullLogger<SignalRWorkDistributor>.Instance);
+            _mockResolver.Object, _runService, new Mock<IProjectStore>().Object, new Mock<ILabelService>().Object, NullLogger<SignalRWorkDistributor>.Instance);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -360,7 +360,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         var dispatcher = new JobDispatcherService(registry, _mockLogger.Object);
         var monitor = new HeartbeatMonitorService(
             registry, _runService, mockHistoryService.Object, dispatcher,
-            _mockLabelSwapper.Object, _mockConfigStore.Object, _mockLogger.Object,
+            _mockLabelService.Object, _mockConfigStore.Object, _mockLogger.Object,
             lifecycleManager: new Mock<IRunLifecycleManager>().Object);
 
         await monitor.SweepAsync(CancellationToken.None);
@@ -389,7 +389,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             "loop", TestProject, ct: CancellationToken.None);
 
         // After prepare: no label swap happened
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Never);
 
@@ -401,7 +401,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         // Now confirm label
         await orchestration.ConfirmDistributionLabelAsync(request!, CancellationToken.None);
 
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync("issue-1", "org/repo#42", AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -424,7 +424,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         result.Queued.Should().BeTrue();
 
         // Label was never swapped to in-progress
-        _mockLabelSwapper.Verify(
+        _mockLabelService.Verify(
             l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Never);
     }
