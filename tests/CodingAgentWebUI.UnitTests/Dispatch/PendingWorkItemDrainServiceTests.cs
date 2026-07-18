@@ -693,32 +693,23 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         // Use a separate DB with a first-save-throws interceptor for the transition service.
         // The drain service's _dbFactory uses normal options (for the direct RetryCount++ fallback).
         var interceptor = new FirstSaveThrowsInterceptor();
-        // TODO: Remove unused interceptorDbOptions — it was superseded by interceptorDbOptions2 which
-        // shares the same database name as normalDbOptions. Left from iteration during test development.
-        var interceptorDbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
-            .UseInMemoryDatabase($"DrainTest_TransitionFails_{Guid.NewGuid()}")
-            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
-            .AddInterceptors(interceptor)
-            .Options;
 
-        // Both factories share the same underlying DB (same database name won't work with interceptor
-        // since interceptor options change the context). Use a single set of options for data seeding
-        // and the drain service's direct DB access, and the interceptor options for the transition service.
-        // Actually — for InMemory provider, we need both to use the SAME database name.
-        // Solution: use interceptor options for everything, and control when it throws.
+        // Both factories share the same InMemory database (by name) so seeded data is visible to both.
+        // The interceptor factory is used by the transition service (throws on first save),
+        // while the normal factory is used for seeding and the drain service's direct DB fallback.
         var sharedDbName = $"DrainTest_TransitionFails_{Guid.NewGuid()}";
         var normalDbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
             .UseInMemoryDatabase(sharedDbName)
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .Options;
-        var interceptorDbOptions2 = new DbContextOptionsBuilder<PipelineDbContext>()
+        var interceptorDbOptions = new DbContextOptionsBuilder<PipelineDbContext>()
             .UseInMemoryDatabase(sharedDbName)
             .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
             .AddInterceptors(interceptor)
             .Options;
 
         var normalFactory = new InMemoryDbContextFactory(normalDbOptions);
-        var interceptorFactory = new InMemoryDbContextFactory(interceptorDbOptions2);
+        var interceptorFactory = new InMemoryDbContextFactory(interceptorDbOptions);
 
         // Seed the work item using the normal factory (no interceptor interference)
         await using (var db = await normalFactory.CreateDbContextAsync())
