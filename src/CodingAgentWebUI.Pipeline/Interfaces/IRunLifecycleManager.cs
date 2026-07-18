@@ -29,7 +29,7 @@ public interface IRunLifecycleManager
     /// Returns the removed PipelineRun, or null if the run wasn't found (already processed).
     /// Thread-safe: uses RemoveRun as atomic claim to prevent double-processing.
     /// </summary>
-    Task<PipelineRun?> FailRunAsync(string runId, string failureReason, CancellationToken ct, FailureReason? failureReasonEnum = null);
+    Task<PipelineRun?> FailRunAsync(RunId runId, string failureReason, CancellationToken ct, FailureReason? failureReasonEnum = null);
 
     /// <summary>
     /// Atomically terminates a run as Completed/Succeeded. Performs in order:
@@ -42,7 +42,7 @@ public interface IRunLifecycleManager
     /// since the final label depends on business logic in ReportJobCompleted).
     /// Returns the removed PipelineRun, or null if not found.
     /// </summary>
-    Task<PipelineRun?> CompleteRunAsync(string runId, WorkItemStatus terminalStatus, CancellationToken ct,
+    Task<PipelineRun?> CompleteRunAsync(RunId runId, WorkItemStatus terminalStatus, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null);
 
     /// <summary>
@@ -57,7 +57,7 @@ public interface IRunLifecycleManager
     ///
     /// Returns the removed PipelineRun, or null if not found.
     /// </summary>
-    Task<PipelineRun?> CancelRunAsync(string runId, CancellationToken ct);
+    Task<PipelineRun?> CancelRunAsync(RunId runId, CancellationToken ct);
 
     /// <summary>
     /// Signals that an agent has accepted a run. Performs in order:
@@ -69,7 +69,7 @@ public interface IRunLifecycleManager
     /// to ensure label swap timing is consistent across modes: labels only change when
     /// an agent actually starts working on the issue.
     /// </summary>
-    Task AgentAcceptedRunAsync(string runId, string agentId, string issueIdentifier,
+    Task AgentAcceptedRunAsync(RunId runId, string agentId, string issueIdentifier,
         string issueProviderConfigId, string repoProviderConfigId,
         PipelineRunType runType, CancellationToken ct);
 
@@ -79,6 +79,6 @@ public interface IRunLifecycleManager
     /// but the DB row is still in a non-terminal state.
     /// No-op in Legacy mode.
     /// </summary>
-    Task TransitionWorkItemToFailedAsync(string runId, CancellationToken ct,
+    Task TransitionWorkItemToFailedAsync(RunId runId, CancellationToken ct,
         string? errorMessage = null, FailureReason? failureReason = null);
 }

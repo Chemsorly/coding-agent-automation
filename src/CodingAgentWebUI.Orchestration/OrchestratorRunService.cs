@@ -57,10 +57,10 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <summary>
     /// Gets a specific run by its <see cref="PipelineRun.RunId"/>.
     /// </summary>
-    public PipelineRun? GetRun(string runId)
+    public PipelineRun? GetRun(RunId runId)
     {
-        ArgumentNullException.ThrowIfNull(runId);
-        return _activeRuns.TryGetValue(runId, out var run) ? run : null;
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
+        return _activeRuns.TryGetValue(runId.Value, out var run) ? run : null;
     }
 
     /// <summary>
@@ -87,12 +87,12 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <summary>
     /// Removes a pipeline run from the active runs collection and disposes its output buffer.
     /// </summary>
-    public PipelineRun? RemoveRun(string runId)
+    public PipelineRun? RemoveRun(RunId runId)
     {
-        ArgumentNullException.ThrowIfNull(runId);
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
 
-        _activeRuns.TryRemove(runId, out var removed);
-        _outputBuffers.TryRemove(runId, out _);
+        _activeRuns.TryRemove(runId.Value, out var removed);
+        _outputBuffers.TryRemove(runId.Value, out _);
 
         if (removed is not null)
         {
@@ -117,10 +117,10 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// <summary>
     /// Gets or creates the per-run <see cref="OutputRingBuffer"/> for the specified run.
     /// </summary>
-    public OutputRingBuffer GetOutputBuffer(string runId)
+    public OutputRingBuffer GetOutputBuffer(RunId runId)
     {
-        ArgumentNullException.ThrowIfNull(runId);
-        return _outputBuffers.GetOrAdd(runId, _ => new OutputRingBuffer(_defaultBufferCapacity));
+        ArgumentException.ThrowIfNullOrEmpty(runId.Value);
+        return _outputBuffers.GetOrAdd(runId.Value, _ => new OutputRingBuffer(_defaultBufferCapacity));
     }
 
     /// <summary>
