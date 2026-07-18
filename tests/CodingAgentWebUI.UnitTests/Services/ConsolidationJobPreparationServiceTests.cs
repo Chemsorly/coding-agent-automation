@@ -8,17 +8,17 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.UnitTests.Services;
 
 /// <summary>
-/// Unit tests for <see cref="ConsolidationJobPreparer"/>.
+/// Unit tests for <see cref="ConsolidationJobPreparationService"/>.
 /// Directly tests the shared preparation logic used by both SignalR and K8s dispatch paths.
 /// </summary>
-public sealed class ConsolidationJobPreparerTests
+public sealed class ConsolidationJobPreparationServiceTests
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
     private readonly Mock<ILogger> _mockLogger = new();
 
-    public ConsolidationJobPreparerTests()
+    public ConsolidationJobPreparationServiceTests()
     {
         // Default: delegate GetProviderConfigByIdAsync to LoadProviderConfigsAsync + filter
         // TODO: Sync-over-async (.GetAwaiter().GetResult()) inside mock Returns lambda is fragile — could deadlock
@@ -47,7 +47,7 @@ public sealed class ConsolidationJobPreparerTests
                 configs.ToList().AsReadOnly());
     }
 
-    private ConsolidationJobPreparer CreateService() =>
+    private ConsolidationJobPreparationService CreateService() =>
         new(_mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, _mockLogger.Object);
 
     #region Constructor null guards
@@ -55,7 +55,7 @@ public sealed class ConsolidationJobPreparerTests
     [Fact]
     public void Ctor_Convenience_NullConfigStore_Throws()
     {
-        var act = () => new ConsolidationJobPreparer(
+        var act = () => new ConsolidationJobPreparationService(
             (IConfigurationStore)null!, _mockProjectStore.Object, _mockTokenVending.Object, _mockLogger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
@@ -63,7 +63,7 @@ public sealed class ConsolidationJobPreparerTests
     [Fact]
     public void Ctor_Convenience_NullProjectStore_Throws()
     {
-        var act = () => new ConsolidationJobPreparer(
+        var act = () => new ConsolidationJobPreparationService(
             _mockConfigStore.Object, (IProjectStore)null!, _mockTokenVending.Object, _mockLogger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
@@ -71,7 +71,7 @@ public sealed class ConsolidationJobPreparerTests
     [Fact]
     public void Ctor_Convenience_NullTokenVending_Throws()
     {
-        var act = () => new ConsolidationJobPreparer(
+        var act = () => new ConsolidationJobPreparationService(
             _mockConfigStore.Object, _mockProjectStore.Object, (ITokenVendingService)null!, _mockLogger.Object);
         act.Should().Throw<ArgumentNullException>();
     }
@@ -79,7 +79,7 @@ public sealed class ConsolidationJobPreparerTests
     [Fact]
     public void Ctor_Convenience_NullLogger_Throws()
     {
-        var act = () => new ConsolidationJobPreparer(
+        var act = () => new ConsolidationJobPreparationService(
             _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, (ILogger)null!);
         act.Should().Throw<ArgumentNullException>();
     }
@@ -89,7 +89,7 @@ public sealed class ConsolidationJobPreparerTests
     {
         // Use a plain IProviderConfigStore mock (does NOT implement IAgentProfileStore)
         var plainProviderConfigStore = new Mock<IProviderConfigStore>();
-        var act = () => new ConsolidationJobPreparer(
+        var act = () => new ConsolidationJobPreparationService(
             plainProviderConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, _mockLogger.Object, null);
         act.Should().Throw<ArgumentException>();
     }

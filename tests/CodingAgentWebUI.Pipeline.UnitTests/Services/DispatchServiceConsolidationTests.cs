@@ -694,7 +694,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             _mockAgentProfileStore.Object,
             _mockProjectStore.Object,
             _mockPipelineConfigStore.Object,
-            new ConsolidationJobPreparer(
+            new ConsolidationJobPreparationService(
                 _mockProviderConfigStore.Object,
                 _mockProjectStore.Object,
                 _mockTokenVending.Object,
@@ -753,7 +753,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             _mockAgentProfileStore.Object,
             _mockProjectStore.Object,
             _mockPipelineConfigStore.Object,
-            new ConsolidationJobPreparer(
+            new ConsolidationJobPreparationService(
                 _mockProviderConfigStore.Object,
                 _mockProjectStore.Object,
                 _mockTokenVending.Object,
