@@ -579,11 +579,26 @@ public class QualityGateValidator : IQualityGateValidator
             throw;
         }
 
-        // TODO: Normal completion path has no bounded timeout on pipe drain. If a grandchild process
-        // inherits stdout/stderr handles and outlives the parent, these awaits block indefinitely.
-        // Consider wrapping with a bounded timeout (e.g., stdoutTask.WaitAsync(timeoutCts.Token)).
-        var stdout = await stdoutTask;
-        var stderr = await stderrTask;
+        // Bound the pipe drain to prevent indefinite hang if a grandchild process inherits
+        // stdout/stderr handles and outlives the parent.
+        // TODO: The two awaits share a single 30s CTS — if stdoutTask takes close to 30s,
+        // stderrTask gets almost no time. Consider using Task.WhenAll with a single WaitAsync
+        // or creating a fresh timeout for the second await.
+        string stdout, stderr;
+        using (var pipeDrainCts = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+        {
+            try
+            {
+                stdout = await stdoutTask.WaitAsync(pipeDrainCts.Token);
+                stderr = await stderrTask.WaitAsync(pipeDrainCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.Warning("Pipe drain timed out after 30s for process that exited with code {ExitCode}; output may be incomplete", process.ExitCode);
+                stdout = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : string.Empty;
+                stderr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : string.Empty;
+            }
+        }
 
         return (process.ExitCode, stdout, stderr);
     }
