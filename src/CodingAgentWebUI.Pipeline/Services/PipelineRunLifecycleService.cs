@@ -246,6 +246,26 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         return true;
     }
 
+    /// <summary>
+    /// Atomically replaces a sentinel run (created by <see cref="RegisterDispatchedRun"/>) with a
+    /// fully-populated <see cref="PipelineRun"/>. The run must have the same RunId as the sentinel.
+    /// Throws <see cref="InvalidOperationException"/> if no run service is configured.
+    /// </summary>
+    public void ReplaceDispatchedRun(PipelineRun run)
+    {
+        if (_runService is null)
+            throw new InvalidOperationException("OrchestratorRunService is not configured. Cannot replace dispatched runs.");
+
+        _runService.ReplaceRun(run);
+        _logger.Debug("Replaced dispatched run {RunId} for issue {IssueIdentifier}",
+            run.RunId, run.IssueIdentifier);
+        // TODO: This NotifyChange() introduces an extra OnChange event that wasn't emitted in the
+        // pre-refactoring code (which called _runService.ReplaceRun directly from the dispatcher).
+        // While benign (triggers an additional UI refresh), this changes observable behavior for
+        // OnChange subscribers. Evaluate whether this notification is desired or should be suppressed.
+        NotifyChange();
+    }
+
     // ── Lifecycle ───────────────────────────────────────────────────────
 
     /// <summary>Clears all event subscribers. Used by subclasses for state reset.</summary>

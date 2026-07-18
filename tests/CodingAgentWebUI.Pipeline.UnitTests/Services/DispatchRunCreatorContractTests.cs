@@ -211,4 +211,148 @@ public class DispatchRunCreatorContractTests : IDisposable
     {
         _service.Dispose();
     }
+
+    // ── Contract Test 6: ReserveRunIdAsync reserves ID and activates dedup guard ──
+
+    [Fact]
+    public async Task ReserveRunIdAsync_ViaInterface_ReturnsValidReservation()
+    {
+        // TODO: This test verifies mock wiring (RepositoryName="owner/repo", ModelName="claude-sonnet")
+        // rather than that production code correctly extracts values from provider configs. It would
+        // not detect a bug where ReserveRunIdAsync reads the wrong property or provider config.
+        // Consider an integration test with real provider config resolution.
+        IDispatchRunCreator creator = _service;
+
+        var reservation = await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "101", "agent-1", "agent-x", CancellationToken.None,
+            initiatedBy: "test");
+
+        reservation.Should().NotBeNull();
+        reservation!.RunId.Should().NotBeNullOrEmpty();
+        reservation.RepositoryName.Should().Be("owner/repo");
+        reservation.ModelName.Should().Be("claude-sonnet");
+        // TODO: BeCloseTo with 5-second tolerance doesn't verify the timestamp came from reservation
+        // logic specifically. Consider capturing time before/after the call and asserting StartedAt
+        // falls within that window, or use a clock abstraction.
+        reservation.StartedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ReserveRunIdAsync_ViaInterface_ActivatesDedupGuard()
+    {
+        IDispatchRunCreator creator = _service;
+
+        await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "102", "agent-1", "agent-x", CancellationToken.None);
+
+        // After reservation, IsIssueBeingProcessed should return true
+        var isProcessing = creator.IsIssueBeingProcessed("102", "issue-1");
+        isProcessing.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReserveRunIdAsync_ViaInterface_DuplicateIssue_ReturnsNull()
+    {
+        IDispatchRunCreator creator = _service;
+
+        // First reservation succeeds
+        await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "103", "agent-1", "agent-x", CancellationToken.None);
+
+        // Second reservation of same issue returns null (dedup)
+        var duplicate = await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "103", "agent-1", "agent-y", CancellationToken.None);
+
+        duplicate.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReserveRunIdAsync_ViaInterface_SentinelVisibleInActiveRuns()
+    {
+        IDispatchRunCreator creator = _service;
+
+        var reservation = await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "104", "agent-1", "agent-x", CancellationToken.None);
+
+        var activeRuns = creator.GetAllActiveRuns();
+        activeRuns.Should().ContainSingle(r => r.RunId == reservation!.RunId);
+    }
+
+    // ── Contract Test 7: RegisterDispatchedRun atomically replaces sentinel ──
+
+    [Fact]
+    public async Task RegisterDispatchedRun_ViaInterface_ReplacesSentinelWithFullRun()
+    {
+        // TODO: This test does not verify that the sentinel's intermediate state (IssueTitle=empty,
+        // RunType=Implementation) is no longer observable after replace. The test would pass even if
+        // RegisterDispatchedRun was a no-op that leaves the sentinel in place. Consider asserting
+        // that sentinel properties (e.g. empty title) are gone and total active run count is still 1.
+        IDispatchRunCreator creator = _service;
+
+        var reservation = await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "105", "agent-1", "agent-x", CancellationToken.None);
+
+        // Construct a fully-populated run using the reserved RunId
+        var fullRun = PipelineRun.CreateReview(
+            runId: reservation!.RunId,
+            issueIdentifier: "105",
+            issueTitle: "Test PR",
+            issueProviderConfigId: "issue-1",
+            repoProviderConfigId: "repo-1",
+            reviewPrBranchName: "feature/test",
+            reviewPrTargetBranch: "main",
+            startedAt: reservation.StartedAt,
+            initiatedBy: "test",
+            agentId: "agent-x",
+            agentProviderConfigId: "agent-1");
+        fullRun.RepositoryName = reservation.RepositoryName;
+        fullRun.ModelName = reservation.ModelName;
+
+        // Register the fully-populated run
+        creator.RegisterDispatchedRun(fullRun);
+
+        // Verify the run was replaced with full metadata
+        var activeRuns = creator.GetAllActiveRuns();
+        var run = activeRuns.Should().ContainSingle(r => r.RunId == reservation.RunId).Which;
+        run.IssueTitle.Should().Be("Test PR");
+        run.RunType.Should().Be(PipelineRunType.Review);
+        run.ReviewPrBranchName.Should().Be("feature/test");
+    }
+
+    [Fact]
+    public async Task RegisterDispatchedRun_ViaInterface_DedupRemainsActiveAfterReplace()
+    {
+        IDispatchRunCreator creator = _service;
+
+        var reservation = await creator.ReserveRunIdAsync(
+            "issue-1", "repo-1", "106", "agent-1", "agent-x", CancellationToken.None);
+
+        var fullRun = PipelineRun.CreateDecomposition(
+            runId: reservation!.RunId,
+            issueIdentifier: "106",
+            issueTitle: "Epic",
+            issueProviderConfigId: "issue-1",
+            repoProviderConfigId: "repo-1",
+            phaseType: PipelineRunType.DecompositionAnalysis,
+            startedAt: reservation.StartedAt,
+            initiatedBy: "test",
+            agentId: "agent-x",
+            agentProviderConfigId: "agent-1");
+        fullRun.RepositoryName = reservation.RepositoryName;
+        fullRun.ModelName = reservation.ModelName;
+
+        creator.RegisterDispatchedRun(fullRun);
+
+        // Dedup guard should still be active after replace
+        var isProcessing = creator.IsIssueBeingProcessed("106", "issue-1");
+        isProcessing.Should().BeTrue();
+    }
+
+    // TODO: Missing negative test — No test covers calling RegisterDispatchedRun with a PipelineRun
+    // whose RunId does not match any existing sentinel. The contract states "The run must use the same
+    // RunId that was returned in the RunReservation" but there's no test verifying behavior on violation.
+
+    // TODO: Missing negative test — No test covers calling RegisterDispatchedRun with a null argument
+    // to verify ArgumentNullException is thrown, despite the production code having an explicit
+    // ArgumentNullException.ThrowIfNull(run) guard.
 }
