@@ -463,10 +463,9 @@ internal sealed class DispatchScheduler
                                 activeDecompositionCount++;
                                 remaining--;
                                 decompMadeProgress = true;
-                                // TODO: processedCount++ here is a behavioral change — the original code did NOT
-                                // increment ProcessedCount for project-level decomposition dispatches. This makes
-                                // UI/metrics counts higher than before. Either remove this to preserve original
-                                // behavior, or also add failedCount++ in the catch block below for consistency.
+                                // Consistent with DispatchRoundAsync: successful dispatch counts as processed.
+                                // TODO: Add a targeted unit test that exercises DispatchFairRoundRobinAsync with a successful
+                                // project-level decomposition and asserts the returned ProcessedCount includes it.
                                 processedCount++;
                                 _logger.Information("Dispatched project-level epic #{EpicIdentifier} ({Phase}) via template '{Template}'",
                                     candidate.Issue.Identifier, candidate.Phase, candidate.Template.Name);
@@ -482,9 +481,12 @@ internal sealed class DispatchScheduler
                                 candidate.Issue.Identifier, ex.Message);
                             remaining--;
                             decompMadeProgress = true;
-                            // TODO: If processedCount++ is kept on success (above), add failedCount++ here
-                            // for consistent accounting. Original code counted neither success nor failure
-                            // for project-level dispatches.
+                            // Consistent with DispatchRoundAsync: failures count as both processed and failed.
+                            // TODO: Add a targeted unit test that triggers a dispatch failure for a project-level
+                            // decomposition candidate and asserts DispatchResult contains the expected ProcessedCount
+                            // and FailedCount. This is a behavioral change (previously neither was incremented on failure).
+                            processedCount++;
+                            failedCount++;
                         }
 
                         break; // One dispatch per project per round (fair alternation)
