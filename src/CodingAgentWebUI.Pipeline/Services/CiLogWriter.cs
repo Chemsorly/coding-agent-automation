@@ -6,7 +6,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Writes CI job log content to workspace files and returns a mapping of jobId → filePath.
 /// Extracted from PipelineOrchestrationService.WriteCiLogsToWorkspace.
 /// </summary>
-public class CiLogWriter
+public sealed class CiLogWriter
 {
     private readonly Serilog.ILogger _logger;
 
