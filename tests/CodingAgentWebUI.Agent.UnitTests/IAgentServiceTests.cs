@@ -174,25 +174,7 @@ public class IAgentServiceTests
 
     private static AgentWorkerService CreateAgentWorkerService()
     {
-        var mockLogger = new Mock<Serilog.ILogger>();
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
-        var mockPipeline = new Mock<IPipelineExecutor>();
-        var mockConsolidation = new Mock<IConsolidationExecutor>();
-        var hubManagerFactory = new HubConnectionManagerFactory(
-            "http://localhost:9999", "test-agent", "test-key", mockLogger.Object);
-        var hubManager = hubManagerFactory.Create();
-
-        return new AgentWorkerService(
-            hubManager,
-            hubManagerFactory,
-            mockPipeline.Object,
-            mockConsolidation.Object,
-            Mock.Of<IJobCompletionReporter>(),
-            mockOrchestrator.Object,
-            Mock.Of<IHttpClientFactory>(),
-            new AgentIdentity("test-agent"),
-            Mock.Of<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
-            mockLogger.Object);
+        return TestAgentWorkerServiceFactory.Create();
     }
 
     private static WorkItemAgentService CreateWorkItemAgentService()

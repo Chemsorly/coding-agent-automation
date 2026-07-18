@@ -324,16 +324,29 @@ public class DiResolutionSmokeTests
         // ── SignalR-mode: AgentWorkerService (not WorkItemHttpClient) ──
         services.AddSingleton<IJobCompletionReporter>(sp =>
             Mock.Of<IJobCompletionReporter>());
-        services.AddSingleton(sp => new AgentWorkerService(
+        services.AddSingleton<SignalRCompletionReporter>(sp => new SignalRCompletionReporter(
+            sp.GetRequiredService<HubConnectionManager>(),
+            CodingAgentWebUI.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(Log.Logger),
+            new CriticalMessageBuffer(),
+            Log.Logger));
+        services.AddSingleton<AgentJobSlotManager>(sp => new AgentJobSlotManager(() => Task.CompletedTask));
+        services.AddSingleton<AgentConnectionLifecycle>(sp => new AgentConnectionLifecycle(
             sp.GetRequiredService<HubConnectionManager>(),
             sp.GetRequiredService<HubConnectionManagerFactory>(),
+            sp.GetRequiredService<SignalRCompletionReporter>(),
+            sp.GetRequiredService<AgentJobSlotManager>(),
+            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<IHostApplicationLifetime>(),
+            Log.Logger));
+        services.AddSingleton(sp => new AgentWorkerService(
+            sp.GetRequiredService<AgentConnectionLifecycle>(),
+            sp.GetRequiredService<AgentJobSlotManager>(),
+            sp.GetRequiredService<AgentIdentity>(),
             sp.GetRequiredService<IPipelineExecutor>(),
             sp.GetRequiredService<IConsolidationExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
-            sp.GetRequiredService<AgentIdentity>(),
-            sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
 
         return services.BuildServiceProvider(new ServiceProviderOptions
