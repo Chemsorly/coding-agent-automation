@@ -230,6 +230,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             try
             {
+                // TODO: run.AgentId is string? — null-forgiving operator defers null detection to
+                // SendCancelJobAsync's ThrowIfNullOrEmpty, which reports confusing parameter name.
+                // Consider guarding with !string.IsNullOrEmpty(run.AgentId) before calling.
                 var cancelTasks = allRuns.Select(run =>
                     _cancellationFacade.AgentCancellation.SendCancelJobAsync(run.AgentId!, run.RunId, CancellationToken.None));
                 await Task.WhenAll(cancelTasks);
