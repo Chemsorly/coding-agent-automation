@@ -303,20 +303,19 @@ public sealed partial class AgentJobDispatcher
             // IsIssueBeingProcessed(prIdentifier) would return false during the gap.
             var previousRepositoryName = run.RepositoryName;
             var previousModelName = run.ModelName;
-            run = PipelineRun.Create(
+            run = PipelineRun.CreateReview(
                 runId: run.RunId,
                 issueIdentifier: request.PrIdentifier,
                 issueTitle: request.PrTitle,
                 issueProviderConfigId: request.IssueProviderId,
                 repoProviderConfigId: request.RepoProviderId,
-                runType: PipelineRunType.Review,
+                reviewPrBranchName: request.PrBranchName,
+                reviewPrTargetBranch: request.PrTargetBranch,
                 startedAt: run.StartedAtOffset,
                 initiatedBy: request.InitiatedBy,
                 agentId: agent.AgentId,
                 agentProviderConfigId: agentProviderId,
                 brainProviderConfigId: request.BrainProviderId,
-                reviewPrBranchName: request.PrBranchName,
-                reviewPrTargetBranch: request.PrTargetBranch,
                 reviewPrUrl: request.PrUrl,
                 reviewPrDescription: request.PrDescription,
                 reviewPrAuthor: request.PrAuthor,
@@ -439,13 +438,13 @@ public sealed partial class AgentJobDispatcher
             // Replace the initial run with a fully-populated decomposition run atomically.
             var previousRepositoryName = run.RepositoryName;
             var previousModelName = run.ModelName;
-            run = PipelineRun.Create(
+            run = PipelineRun.CreateDecomposition(
                 runId: runId,
                 issueIdentifier: epicIdentifier,
                 issueTitle: epicTitle,
                 issueProviderConfigId: issueProviderId,
                 repoProviderConfigId: repoProviderId,
-                runType: phaseType,
+                phaseType: phaseType,
                 startedAt: run.StartedAtOffset,
                 initiatedBy: initiatedBy,
                 agentId: agent.AgentId,
