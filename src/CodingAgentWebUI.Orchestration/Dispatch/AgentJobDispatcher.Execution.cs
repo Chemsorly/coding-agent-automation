@@ -627,9 +627,9 @@ public sealed partial class AgentJobDispatcher
         _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
         if (targetKind.HasValue)
-            await _infra.LabelSwapper.SwapLabelAsync(providerConfigId, identifier, revertLabel, targetKind.Value, CancellationToken.None);
+            await _infra.LabelService.SwapLabelAsync(providerConfigId, identifier, revertLabel, targetKind.Value, CancellationToken.None);
         else
-            await _infra.LabelSwapper.SwapLabelAsync(providerConfigId, identifier, revertLabel, CancellationToken.None);
+            await _infra.LabelService.SwapLabelAsync(providerConfigId, identifier, revertLabel, CancellationToken.None);
     }
 
     /// <summary>

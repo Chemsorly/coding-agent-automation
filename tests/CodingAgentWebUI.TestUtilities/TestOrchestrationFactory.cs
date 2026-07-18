@@ -22,7 +22,7 @@ public static class TestOrchestrationFactory
         IPipelineCompletionFacade? completionFacade = null,
         IPipelineCancellationFacade? cancellationFacade = null,
         PipelineRunLifecycleService? lifecycle = null,
-        ILabelSwapper? labelSwapper = null,
+        ILabelService? labelService = null,
         Serilog.ILogger? logger = null,
         IPipelineRunHistoryService? historyService = null,
         IOrchestratorRunService? runService = null)
@@ -45,7 +45,7 @@ public static class TestOrchestrationFactory
             completionFacade ?? CreateDefaultCompletionFacade(logger, historyService),
             cancellationFacade ?? new PipelineCancellationFacade(null, null),
             lifecycle ?? new PipelineRunLifecycleService(historyService, runService, logger),
-            labelSwapper ?? NoOpLabelSwapper.Instance,
+            labelService ?? NoOpLabelService.Instance,
             logger);
     }
 
@@ -75,9 +75,9 @@ public static class TestOrchestrationFactory
             historyService ?? new NullHistoryService());
 
     /// <summary>No-op label swapper for tests that don't exercise label operations.</summary>
-    public sealed class NoOpLabelSwapper : ILabelSwapper
+    public sealed class NoOpLabelService : ILabelService
     {
-        public static readonly NoOpLabelSwapper Instance = new();
+        public static readonly NoOpLabelService Instance = new();
         public Task SwapLabelAsync(ProviderConfigId providerConfigId, string identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct) => Task.CompletedTask;
         public Task SwapLabelAsync(ProviderConfigId providerConfigId, string identifier, string newLabel, LabelTargetKind targetKind, string? expectedCurrentLabel, CancellationToken ct) => Task.CompletedTask;
         public Task<bool> EnsureAgentLabelsAsync(ProviderConfigId providerConfigId, LabelTargetKind targetKind, CancellationToken ct) => Task.FromResult(true);

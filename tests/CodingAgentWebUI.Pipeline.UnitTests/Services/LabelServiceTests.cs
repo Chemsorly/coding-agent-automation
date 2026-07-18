@@ -7,17 +7,17 @@ using Moq;
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
-/// Unit tests for <see cref="LabelSwapper"/>.
+/// Unit tests for <see cref="LabelService"/>.
 /// Tests label swap routing based on LabelTargetKind (Issue vs PullRequest).
 /// Feature: 025-pr-review-pipeline, Requirements: Req 6, 11
 /// </summary>
-public class LabelSwapperTests
+public class LabelServiceTests
 {
     private readonly Mock<IProviderConfigStore> _configStore = new();
     private readonly Mock<IProviderFactory> _providerFactory = new();
     private readonly Serilog.ILogger _logger = new Serilog.LoggerConfiguration().CreateLogger();
 
-    private LabelSwapper CreateSwapper() => new(_configStore.Object, _providerFactory.Object, _logger);
+    private LabelService CreateLabelService() => new(_configStore.Object, _providerFactory.Object, _logger);
 
     [Fact]
     public async Task SwapLabelAsync_IssueTargetKind_RoutesToIssueProvider()
@@ -40,7 +40,7 @@ public class LabelSwapperTests
         _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
             .Returns(issueProvider.Object);
 
-        var swapper = CreateSwapper();
+        var swapper = CreateLabelService();
 
         await swapper.SwapLabelAsync("ip-1", "42", AgentLabels.InProgress, LabelTargetKind.Issue, CancellationToken.None);
 
@@ -78,7 +78,7 @@ public class LabelSwapperTests
         _providerFactory.Setup(f => f.CreateRepositoryProvider(repoConfig))
             .Returns(repoProvider.Object);
 
-        var swapper = CreateSwapper();
+        var swapper = CreateLabelService();
 
         await swapper.SwapLabelAsync("rp-1", "55", AgentLabels.Done, LabelTargetKind.PullRequest, CancellationToken.None);
 
@@ -116,8 +116,8 @@ public class LabelSwapperTests
         _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
             .Returns(issueProvider.Object);
 
-        // Cast to ILabelSwapper to access the backward-compatible default interface method
-        ILabelSwapper swapper = CreateSwapper();
+        // Cast to ILabelService to access the backward-compatible default interface method
+        ILabelService swapper = CreateLabelService();
 
         // Use the backward-compatible overload (no LabelTargetKind parameter — defaults to Issue)
         await swapper.SwapLabelAsync("ip-1", "99", AgentLabels.Error, CancellationToken.None);
@@ -149,7 +149,7 @@ public class LabelSwapperTests
         _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
             .Returns(issueProvider.Object);
 
-        var swapper = CreateSwapper();
+        var swapper = CreateLabelService();
 
         var result = await swapper.EnsureAgentLabelsAsync("ip-1", LabelTargetKind.Issue, CancellationToken.None);
 
@@ -180,7 +180,7 @@ public class LabelSwapperTests
         _providerFactory.Setup(f => f.CreateRepositoryProvider(repoConfig))
             .Returns(repoProvider.Object);
 
-        var swapper = CreateSwapper();
+        var swapper = CreateLabelService();
 
         var result = await swapper.EnsureAgentLabelsAsync("rp-1", LabelTargetKind.PullRequest, CancellationToken.None);
 
@@ -209,7 +209,7 @@ public class LabelSwapperTests
         _providerFactory.Setup(f => f.CreateRepositoryProvider(repoConfig))
             .Returns(repoProvider.Object);
 
-        var swapper = CreateSwapper();
+        var swapper = CreateLabelService();
 
         // Non-numeric identifier for PR should be handled gracefully
         await swapper.SwapLabelAsync("rp-1", "not-a-number", AgentLabels.InProgress, LabelTargetKind.PullRequest, CancellationToken.None);
@@ -225,7 +225,7 @@ public class LabelSwapperTests
         _configStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>()); // Empty — config not found
 
-        var swapper = CreateSwapper();
+        var swapper = CreateLabelService();
 
         // Should not throw
         await swapper.SwapLabelAsync("nonexistent-id", "42", AgentLabels.InProgress, LabelTargetKind.Issue, CancellationToken.None);
@@ -254,7 +254,7 @@ public class LabelSwapperTests
         _providerFactory.Setup(f => f.CreateIssueProvider(issueConfig))
             .Returns(issueProvider.Object);
 
-        var swapper = CreateSwapper();
+        var swapper = CreateLabelService();
 
         // Should not throw — errors are caught and logged
         await swapper.SwapLabelAsync("ip-1", "42", AgentLabels.Error, LabelTargetKind.Issue, CancellationToken.None);

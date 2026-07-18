@@ -25,7 +25,7 @@ public class AgentJobDispatcherTests : IDisposable
     private readonly OrchestratorRunService _runService;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper;
+    private readonly Mock<ILabelService> _mockLabelService;
     private readonly Mock<IAgentCommunication> _mockAgentComm;
     private readonly HttpClient _httpClient;
     private readonly TokenVendingService _tokenVending;
@@ -39,7 +39,7 @@ public class AgentJobDispatcherTests : IDisposable
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _mockConfigStore = new Mock<IConfigurationStore>();
         _mockProviderFactory = new Mock<IProviderFactory>();
-        _mockLabelSwapper = new Mock<ILabelSwapper>();
+        _mockLabelService = new Mock<ILabelService>();
         _mockAgentComm = new Mock<IAgentCommunication>();
         _httpClient = new HttpClient();
         _tokenVending = new TokenVendingService(_mockLogger.Object, _httpClient);
@@ -85,7 +85,7 @@ public class AgentJobDispatcherTests : IDisposable
             new DispatchInfrastructure(
                 tokenVendingOverride ?? _tokenVending,
                 _mockProviderFactory.Object,
-                _mockLabelSwapper.Object,
+                _mockLabelService.Object,
                 new DispatchResolutionService(
                     new ProfileResolver(),
                     new QualityGateResolver(),
@@ -517,7 +517,7 @@ public class AgentJobDispatcherTests : IDisposable
 
         result.Should().BeFalse();
         // Verify label reverted to agent:next on PullRequest target using RepoProviderId
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "rp", "10", AgentLabels.Next, LabelTargetKind.PullRequest, CancellationToken.None), Times.Once);
     }
 
@@ -588,7 +588,7 @@ public class AgentJobDispatcherTests : IDisposable
         result.Should().BeFalse();
         agent.Status.Should().Be(AgentStatus.Idle);
         // Phase 1 reverts to agent:epic
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip", "epic-exc", AgentLabels.Epic, CancellationToken.None), Times.Once);
     }
 
@@ -615,7 +615,7 @@ public class AgentJobDispatcherTests : IDisposable
         result.Should().BeFalse();
         agent.Status.Should().Be(AgentStatus.Idle);
         // Phase 2 reverts to agent:epic-approved
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip", "epic-exc2", AgentLabels.EpicApproved, CancellationToken.None), Times.Once);
     }
 
@@ -692,7 +692,7 @@ public class AgentJobDispatcherTests : IDisposable
 
         result.Should().BeFalse();
         agent.Status.Should().Be(AgentStatus.Idle);
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip", "issue-exc", AgentLabels.Next, CancellationToken.None), Times.Once);
     }
 
@@ -1188,7 +1188,7 @@ public class AgentJobDispatcherTests : IDisposable
 
         result.Should().BeFalse();
         agent.Status.Should().Be(AgentStatus.Idle);
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip", "issue-orphan", AgentLabels.Next, CancellationToken.None), Times.Once);
 
         // The run remains orphaned because agent.ActiveJobId is null when
@@ -1256,7 +1256,7 @@ public class AgentJobDispatcherTests : IDisposable
 
         result.Should().BeFalse();
         agent.Status.Should().Be(AgentStatus.Idle);
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip", "issue-tvfail", AgentLabels.Next, CancellationToken.None), Times.Once);
     }
 

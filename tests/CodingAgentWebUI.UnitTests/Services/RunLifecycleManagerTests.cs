@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.UnitTests.Services;
 public sealed class RunLifecycleManagerTests
 {
     private readonly Mock<ILogger> _mockLogger = new();
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
@@ -34,7 +34,7 @@ public sealed class RunLifecycleManagerTests
             _runService,
             _mockHistoryService.Object,
             _registry,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
             workItemTransition: null); // Legacy mode — no DB
@@ -55,7 +55,7 @@ public sealed class RunLifecycleManagerTests
             "issue-provider-1", "repo-provider-1", PipelineRunType.Review, CancellationToken.None);
 
         // Assert: label swap uses repoProviderConfigId + PullRequest target
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "repo-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.PullRequest,
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -73,7 +73,7 @@ public sealed class RunLifecycleManagerTests
             "issue-provider-1", "repo-provider-1", PipelineRunType.Implementation, CancellationToken.None);
 
         // Assert: label swap uses issueProviderConfigId + Issue target
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "issue-provider-1", "org/repo#10", AgentLabels.InProgress, LabelTargetKind.Issue,
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -91,7 +91,7 @@ public sealed class RunLifecycleManagerTests
             "issue-provider-1", "repo-provider-1", PipelineRunType.DecompositionAnalysis, CancellationToken.None);
 
         // Assert: label swap uses issueProviderConfigId + Issue target
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "issue-provider-1", "org/repo#5", AgentLabels.InProgress, LabelTargetKind.Issue,
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -151,7 +151,7 @@ public sealed class RunLifecycleManagerTests
         agent.Status.Should().Be(AgentStatus.Idle);
 
         // Label swapped to error via issue provider (Implementation → Issue target)
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.Issue,
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -168,7 +168,7 @@ public sealed class RunLifecycleManagerTests
         // No side effects
         _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
             It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -186,7 +186,7 @@ public sealed class RunLifecycleManagerTests
         var result = await _sut.FailRunAsync("run-review-fail", "Review failed", CancellationToken.None);
 
         // Assert: label swap routes via repo provider for Review runs
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "rp-1", "org/repo#1", AgentLabels.Error, LabelTargetKind.PullRequest,
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -220,7 +220,7 @@ public sealed class RunLifecycleManagerTests
             It.Is<PipelineRun>(r => r.RunId == "run-complete"), It.IsAny<CancellationToken>()), Times.Once);
 
         // CompleteRunAsync does NOT clear agent state or swap labels (caller does that)
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -332,7 +332,7 @@ public sealed class RunLifecycleManagerTests
         agent.Status.Should().Be(AgentStatus.Idle);
 
         // Label swapped to cancelled via issue provider (Implementation → Issue target)
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             "ip-1", "org/repo#1", AgentLabels.Cancelled, LabelTargetKind.Issue,
             It.IsAny<CancellationToken>()), Times.Once);
 
@@ -353,7 +353,7 @@ public sealed class RunLifecycleManagerTests
         // No side effects
         _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
             It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
-        _mockLabelSwapper.Verify(l => l.SwapLabelAsync(
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
             It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
@@ -391,7 +391,7 @@ public sealed class RunLifecycleManagerTests
 public sealed class RunLifecycleManagerResilienceTests
 {
     private readonly Mock<ILogger> _mockLogger = new();
-    private readonly Mock<ILabelSwapper> _mockLabelSwapper = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
@@ -408,7 +408,7 @@ public sealed class RunLifecycleManagerResilienceTests
             _runService,
             _mockHistoryService.Object,
             _registry,
-            _mockLabelSwapper.Object,
+            _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
             workItemTransition: null);

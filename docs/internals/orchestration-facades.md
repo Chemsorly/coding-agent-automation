@@ -51,7 +51,7 @@ The top-level coordinator. Manages provider resolution, issue parsing, execution
 | `IPipelineCompletionFacade` | Delegate PR creation/finalization |
 | `IPipelineCancellationFacade` | Delegate shutdown cancellation |
 | `PipelineRunLifecycleService` | Run state, transitions, events |
-| `ILabelSwapper` | Swap issue labels during pipeline lifecycle |
+| `ILabelService` | Swap issue labels during pipeline lifecycle |
 | `ILogger` | Structured logging |
 
 Also creates `PipelineProviderManager` internally for provider lifecycle tracking.

@@ -119,7 +119,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<Pipeline.Interfaces.IPipelineCompletionFacade>(),
             sp.GetRequiredService<Pipeline.Interfaces.IPipelineCancellationFacade>(),
             sp.GetRequiredService<PipelineRunLifecycleService>(),
-            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<ILabelService>(),
             Log.Logger));
         services.AddSingleton<Pipeline.Interfaces.IOrchestrationShutdownAction>(sp =>
             sp.GetRequiredService<PipelineOrchestrationService>());
@@ -151,7 +151,7 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<IProviderConfigStore>(),
             sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<IPipelineConfigStore>(),
             Log.Logger));
 
@@ -207,7 +207,7 @@ public static class ServiceCollectionExtensions
             pipelineConfig.OutputBufferCapacity));
         services.AddSingleton<IOrchestratorRunService>(sp => sp.GetRequiredService<OrchestratorRunService>());
 
-        services.AddSingleton<ILabelSwapper>(sp => new LabelSwapper(
+        services.AddSingleton<ILabelService>(sp => new LabelService(
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             Log.Logger));
@@ -222,7 +222,7 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IOrchestratorRunService>(),
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
                 sp.GetRequiredService<JobDispatcherService>(),
-                sp.GetRequiredService<ILabelSwapper>(),
+                sp.GetRequiredService<ILabelService>(),
                 sp.GetRequiredService<IConfigurationStore>(),
                 Log.Logger,
                 sp.GetRequiredService<IRunLifecycleManager>(),
@@ -261,7 +261,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(sp => new DispatchInfrastructure(
             sp.GetRequiredService<ITokenVendingService>(),
             sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<DispatchResolutionService>()));
 
         services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
@@ -305,7 +305,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IHubIssueOperations>(sp => new AgentIssueOperations(
             sp.GetRequiredService<IAgentHubFacade>(),
-            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<ILabelService>(),
             Log.Logger));
 
         services.AddSingleton<IAgentOrphanRecoveryService>(sp => new AgentOrphanRecoveryService(
@@ -316,7 +316,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAgentJobLifecycleService>(sp => new AgentJobLifecycleService(
             sp.GetRequiredService<IAgentHubFacade>(),
             sp.GetRequiredService<IRunLifecycleManager>(),
-            sp.GetRequiredService<ILabelSwapper>(),
+            sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<IHubIssueOperations>(),
             sp.GetRequiredService<Pipeline.Interfaces.IChangeNotifier>(),
             Log.Logger));
