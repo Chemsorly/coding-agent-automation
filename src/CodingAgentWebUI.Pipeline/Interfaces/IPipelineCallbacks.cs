@@ -11,10 +11,8 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// <para>
 /// <b>Callback Delegation Pattern:</b> Pipeline steps invoke methods on this interface to
 /// communicate side effects (state transitions, output, label changes, PR creation) back to
-/// the hosting layer without depending on its concrete type. The orchestrator provides the
-/// implementation via <c>OrchestratorCallbacks</c> (in <c>PipelineOrchestrationService</c>),
-/// while the agent worker provides its own implementation via <c>AgentCallbacks</c>
-/// (in <c>LocalPipelineExecutor</c>).
+/// the hosting layer without depending on its concrete type. The agent worker provides the
+/// implementation via <c>AgentCallbacks</c> (in <c>LocalPipelineExecutor</c>).
 /// </para>
 /// <para>
 /// This decouples pipeline step logic from the execution environment — the same steps run
