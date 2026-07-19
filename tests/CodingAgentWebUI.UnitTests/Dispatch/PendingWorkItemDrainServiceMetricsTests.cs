@@ -246,15 +246,20 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
         await db.SaveChangesAsync();
     }
 
-    // TODO: Task.Delay(3000) is non-deterministic — under CI load the drain loop may not complete within 3s,
-    // causing assertions to find zero recorded metrics. Consider a signal-based approach (e.g., waiting on a
-    // semaphore released when AssignJob is called) or polling for the expected metric count with a timeout.
-    private static async Task InvokeDrainAsync(PendingWorkItemDrainService service)
+    private async Task InvokeDrainAsync(PendingWorkItemDrainService service)
     {
         using var cts = new CancellationTokenSource();
         service.Signal();
         var task = service.StartAsync(cts.Token);
-        await Task.Delay(3000);
+
+        // Poll for metrics to appear rather than using a fixed delay.
+        // Under CI load, the drain loop may take longer than a fixed timeout.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (DateTime.UtcNow < deadline && _dispatchLatencies.IsEmpty)
+        {
+            await Task.Delay(100);
+        }
+
         cts.Cancel();
         try { await task; } catch (OperationCanceledException) { }
         await service.StopAsync(CancellationToken.None);
