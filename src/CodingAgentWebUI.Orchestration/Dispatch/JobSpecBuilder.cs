@@ -58,9 +58,31 @@ public static class JobSpecBuilder
         if (!string.IsNullOrEmpty(otelEndpoint))
             envVars.Add(new V1EnvVar { Name = "OTEL_EXPORTER_OTLP_ENDPOINT", Value = otelEndpoint });
 
-        var otelHeaders = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS");
-        if (!string.IsNullOrEmpty(otelHeaders))
-            envVars.Add(new V1EnvVar { Name = "OTEL_EXPORTER_OTLP_HEADERS", Value = otelHeaders });
+        var otelProtocol = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL");
+        if (!string.IsNullOrEmpty(otelProtocol))
+            envVars.Add(new V1EnvVar { Name = "OTEL_EXPORTER_OTLP_PROTOCOL", Value = otelProtocol });
+
+        // OTEL headers may contain auth tokens — read from Secret rather than propagating plaintext
+        envVars.Add(new V1EnvVar
+        {
+            Name = "OTEL_EXPORTER_OTLP_HEADERS",
+            ValueFrom = new V1EnvVarSource
+            {
+                SecretKeyRef = new V1SecretKeySelector
+                {
+                    Name = ctx.AgentApiKeySecretName,
+                    Key = "otel-headers",
+                    Optional = true
+                }
+            }
+        });
+
+        var otelResourceAttrs = Environment.GetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES");
+        if (!string.IsNullOrEmpty(otelResourceAttrs))
+            envVars.Add(new V1EnvVar { Name = "OTEL_RESOURCE_ATTRIBUTES", Value = otelResourceAttrs });
+
+        // Per-job service name for trace/metric attribution
+        envVars.Add(new V1EnvVar { Name = "OTEL_SERVICE_NAME", Value = $"coding-agent-worker-{ctx.JobName}" });
 
         // Propagate agent labels from the template so WorkItemAgentService can read them
         if (!string.IsNullOrEmpty(template.Labels))

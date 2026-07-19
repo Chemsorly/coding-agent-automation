@@ -614,4 +614,127 @@ public class JobSpecBuilderTests
     }
 
     #endregion
+
+    #region OTEL Env Var Propagation
+
+    [Fact]
+    public void Build_WhenOtelEndpointSet_PropagatesOtelEndpoint()
+    {
+        Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318");
+        try
+        {
+            var template = CreateTemplate();
+            var ctx = CreateContext();
+
+            var job = JobSpecBuilder.Build(template, ctx);
+
+            var container = job.Spec.Template.Spec.Containers[0];
+            var env = container.Env.FirstOrDefault(e => e.Name == "OTEL_EXPORTER_OTLP_ENDPOINT");
+            env.Should().NotBeNull();
+            env!.Value.Should().Be("http://collector:4318");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", null);
+        }
+    }
+
+    [Fact]
+    public void Build_WhenOtelProtocolSet_PropagatesOtelProtocol()
+    {
+        Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf");
+        try
+        {
+            var template = CreateTemplate();
+            var ctx = CreateContext();
+
+            var job = JobSpecBuilder.Build(template, ctx);
+
+            var container = job.Spec.Template.Spec.Containers[0];
+            var env = container.Env.FirstOrDefault(e => e.Name == "OTEL_EXPORTER_OTLP_PROTOCOL");
+            env.Should().NotBeNull("OTEL_EXPORTER_OTLP_PROTOCOL must be propagated for agent OTLP export to work");
+            env!.Value.Should().Be("http/protobuf");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL", null);
+        }
+    }
+
+    [Fact]
+    public void Build_WhenOtelResourceAttributesSet_PropagatesResourceAttributes()
+    {
+        Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=production,service.namespace=coding-agent");
+        try
+        {
+            var template = CreateTemplate();
+            var ctx = CreateContext();
+
+            var job = JobSpecBuilder.Build(template, ctx);
+
+            var container = job.Spec.Template.Spec.Containers[0];
+            var env = container.Env.FirstOrDefault(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES");
+            env.Should().NotBeNull("OTEL_RESOURCE_ATTRIBUTES must be propagated for agent trace correlation");
+            env!.Value.Should().Be("deployment.environment=production,service.namespace=coding-agent");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", null);
+        }
+    }
+
+    [Fact]
+    public void Build_WhenOtelVarsNotSet_DoesNotIncludeValueBasedOnes()
+    {
+        // Ensure env vars are clear
+        Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", null);
+        Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL", null);
+        Environment.SetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES", null);
+
+        var template = CreateTemplate();
+        var ctx = CreateContext();
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        container.Env.FirstOrDefault(e => e.Name == "OTEL_EXPORTER_OTLP_ENDPOINT").Should().BeNull();
+        container.Env.FirstOrDefault(e => e.Name == "OTEL_EXPORTER_OTLP_PROTOCOL").Should().BeNull();
+        container.Env.FirstOrDefault(e => e.Name == "OTEL_RESOURCE_ATTRIBUTES").Should().BeNull();
+    }
+
+    [Fact]
+    public void Build_OtelHeaders_UsesSecretKeyRefNotPlaintext()
+    {
+        var template = CreateTemplate();
+        var ctx = CreateContext();
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        var env = container.Env.FirstOrDefault(e => e.Name == "OTEL_EXPORTER_OTLP_HEADERS");
+        env.Should().NotBeNull("OTEL_EXPORTER_OTLP_HEADERS must always be injected via Secret");
+        env!.Value.Should().BeNull("Headers must not be in plaintext Value");
+        env.ValueFrom.Should().NotBeNull();
+        env.ValueFrom!.SecretKeyRef.Should().NotBeNull();
+        env.ValueFrom.SecretKeyRef!.Name.Should().Be("caa-secret");
+        env.ValueFrom.SecretKeyRef.Key.Should().Be("otel-headers");
+        env.ValueFrom.SecretKeyRef.Optional.Should().BeTrue("Secret key may not exist in all deployments");
+    }
+
+    [Fact]
+    public void Build_SetsPerJobOtelServiceName()
+    {
+        var template = CreateTemplate();
+        var ctx = CreateContext();
+        ctx.JobName = "caa-abcdef12";
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        var env = container.Env.FirstOrDefault(e => e.Name == "OTEL_SERVICE_NAME");
+        env.Should().NotBeNull("OTEL_SERVICE_NAME must be set for per-job trace attribution");
+        env!.Value.Should().Be("coding-agent-worker-caa-abcdef12");
+    }
+
+    #endregion
 }

@@ -78,7 +78,7 @@ Log.Logger = new LoggerConfiguration()
     .Enrich.WithSpan()
     .Enrich.WithProperty("AgentId", agentId)
     .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{AgentId}] {Message:lj}{NewLine}{Exception}")
-    .WriteToOtlpIfConfigured("coding-agent-worker")
+    .WriteToOtlpIfConfigured(Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-worker")
     .CreateLogger();
 
 try
@@ -95,7 +95,7 @@ try
     // Configure OpenTelemetry (tracing + metrics)
     builder.Services.AddOpenTelemetry()
         .ConfigureResource(r => r.AddService(
-            serviceName: "coding-agent-worker",
+            serviceName: Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "coding-agent-worker",
             serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"))
         .WithTracing(t => t
             .AddHttpClientInstrumentation()
