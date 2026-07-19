@@ -557,4 +557,105 @@ public class RefactoringExecutorTests : IDisposable
             Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    // ─── Autolink Escaping in Prerequisites ─────────────────────────────────────
+
+    [Fact]
+    public void FormatIssueBody_PrerequisitesWithHashNumber_EscapesAutolinks()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Extract class",
+            AffectedFiles = ["src/Service.cs"],
+            Description = "Extract IDispatchRunCreator",
+            Rationale = "SRP violation",
+            Prerequisites = ["Complete proposal #1 (dead code removal)", "After #2 is merged"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        // #1 and #2 must NOT appear as bare autolinks — they should be escaped
+        body.Should().NotContainEquivalentOf("proposal #1 (dead");
+        body.Should().NotContainEquivalentOf("After #2 is");
+        // But the text meaning should be preserved (escaped form)
+        body.Should().Contain("proposal");
+        body.Should().Contain("dead code removal");
+    }
+
+    [Fact]
+    public void FormatIssueBody_PrerequisitesWithoutHashNumber_PassesThrough()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Rename",
+            AffectedFiles = ["src/A.cs"],
+            Description = "Rename method",
+            Rationale = "Convention",
+            Prerequisites = ["Add characterization tests for X before refactoring"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- Add characterization tests for X before refactoring");
+    }
+
+    // ─── Dependency Resolution (DependsOn field → "Depends on #N" in body) ──────
+
+    [Fact]
+    public void FormatIssueBody_WithResolvedDependencies_PrependsDependsOnLines()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Extract class from service",
+            AffectedFiles = ["src/Service.cs"],
+            Description = "Extract dispatch creation",
+            Rationale = "Too many responsibilities"
+        };
+
+        var resolvedDependencies = new[] { "Depends on #1425", "Depends on #1426" };
+        var body = RefactoringExecutor.FormatIssueBody(proposal, resolvedDependencies);
+
+        // Dependency lines should appear before the Summary section
+        var dependsIndex = body.IndexOf("Depends on #1425");
+        var summaryIndex = body.IndexOf("## Summary");
+        dependsIndex.Should().BeGreaterThanOrEqualTo(0);
+        summaryIndex.Should().BeGreaterThan(dependsIndex);
+
+        body.Should().Contain("Depends on #1425");
+        body.Should().Contain("Depends on #1426");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNullDependencies_NoDependsOnLines()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Independent refactoring",
+            AffectedFiles = ["src/A.cs"],
+            Description = "Standalone",
+            Rationale = "No deps"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, resolvedDependencies: null);
+
+        body.Should().NotContain("Depends on");
+        body.Should().StartWith("## Summary");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithEmptyDependencies_NoDependsOnLines()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Independent refactoring",
+            AffectedFiles = ["src/A.cs"],
+            Description = "Standalone",
+            Rationale = "No deps"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, resolvedDependencies: Array.Empty<string>());
+
+        body.Should().NotContain("Depends on");
+        body.Should().StartWith("## Summary");
+    }
 }

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -441,6 +442,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
     /// <summary>
     /// Creates GitHub issues for each proposal, capped at <paramref name="maxProposals"/>.
+    /// Uses <see cref="DependencyResolver"/> to resolve title-based inter-proposal dependencies
+    /// into "Depends on #N" lines prepended to issue bodies.
     /// Individual issue creation failures are logged but do not stop processing.
     /// </summary>
     private async Task<IReadOnlyList<CreatedIssueInfo>> CreateIssuesAsync(
@@ -450,19 +453,30 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         CancellationToken ct)
     {
         var createdIssues = new List<CreatedIssueInfo>();
-        var proposalsToProcess = proposals.Take(maxProposals);
+        var proposalsToProcess = proposals.Take(maxProposals).ToList();
+        var resolver = new DependencyResolver();
 
         foreach (var proposal in proposalsToProcess)
         {
             try
             {
-                var body = FormatIssueBody(proposal);
+                // Resolve title-based dependencies to "Depends on #N" lines
+                IReadOnlyList<string>? resolvedDeps = null;
+                if (proposal.DependsOn is { Count: > 0 })
+                {
+                    resolvedDeps = resolver.Resolve(proposal.DependsOn, Logger);
+                }
+
+                var body = FormatIssueBody(proposal, resolvedDeps);
                 var sanitizedTitle = SanitizeTitle(proposal.Title);
                 var result = await issueProvider.CreateIssueAsync(
                     sanitizedTitle,
                     body,
                     new[] { AgentLabels.Generated },
                     ct);
+
+                // Register this issue for later proposals that may depend on it
+                resolver.Register(proposal.Title, result.Identifier);
 
                 createdIssues.Add(new CreatedIssueInfo
                 {
@@ -486,14 +500,24 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
     /// <summary>
     /// Formats the issue body from a refactoring proposal using the project's issue template.
+    /// Optionally prepends resolved dependency lines (e.g., "Depends on #1425") before the body.
     /// </summary>
-    internal static string FormatIssueBody(RefactoringProposal proposal)
+    internal static string FormatIssueBody(RefactoringProposal proposal, IReadOnlyList<string>? resolvedDependencies = null)
     {
         var sanitizedDescription = SanitizeMarkdown(proposal.Description);
         var sanitizedRationale = SanitizeMarkdown(proposal.Rationale);
         var affectedFiles = string.Join("\n", proposal.AffectedFiles.Select(f => $"- `{f}`"));
 
         var sb = new StringBuilder();
+
+        // Prepend resolved dependency lines so DependencyParser can find them
+        if (resolvedDependencies is { Count: > 0 })
+        {
+            foreach (var dep in resolvedDependencies)
+                sb.AppendLine(dep);
+            sb.AppendLine();
+        }
+
         sb.AppendLine("## Summary");
         sb.AppendLine();
         sb.AppendLine(sanitizedDescription);
@@ -516,7 +540,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             sb.AppendLine("## Prerequisites");
             sb.AppendLine();
             foreach (var prereq in proposal.Prerequisites.Where(p => p is not null))
-                sb.AppendLine($"- {SanitizeMarkdown(prereq)}");
+                sb.AppendLine($"- {SanitizePrerequisite(prereq)}");
             sb.AppendLine();
         }
 
@@ -560,6 +584,19 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     /// Delegates to <see cref="TextSanitizer.SanitizeMarkdown"/>.
     /// </summary>
     private static string SanitizeMarkdown(string value) => TextSanitizer.SanitizeMarkdown(value);
+
+    /// <summary>
+    /// Sanitizes prerequisite text: applies standard markdown escaping and
+    /// escapes bare #N patterns to prevent wrong GitHub autolinks.
+    /// GitHub auto-links #\d+ to issue numbers — agent-produced prerequisites
+    /// may contain "proposal #1" which would link to wrong issues.
+    /// </summary>
+    private static string SanitizePrerequisite(string value)
+    {
+        var sanitized = SanitizeMarkdown(value);
+        // Escape #N patterns with backtick-wrapping to suppress GitHub autolinking
+        return Regex.Replace(sanitized, @"#(\d+)", "`#$1`");
+    }
 
     /// <summary>
     /// Formats the refactoring run summary with issue count and identifiers.
