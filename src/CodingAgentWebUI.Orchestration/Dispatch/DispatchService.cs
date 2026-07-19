@@ -47,6 +47,7 @@ public sealed class DispatchService : BackgroundService
     private readonly IProjectStore? _projectStore;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
     private readonly IConsolidationJobPreparationService? _consolidationJobPreparer;
+    private readonly IOrchestratorRunService? _runService;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
     public DispatchService(
@@ -63,7 +64,8 @@ public sealed class DispatchService : BackgroundService
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
         IPipelineConfigStore? pipelineConfigStore = null,
-        IConsolidationJobPreparationService? consolidationJobPreparer = null)
+        IConsolidationJobPreparationService? consolidationJobPreparer = null,
+        IOrchestratorRunService? runService = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
@@ -78,6 +80,7 @@ public sealed class DispatchService : BackgroundService
         _projectStore = projectStore;
         _pipelineConfigStore = pipelineConfigStore;
         _consolidationJobPreparer = consolidationJobPreparer;
+        _runService = runService;
         _options = new DispatchServiceOptions();
         configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
 
@@ -135,7 +138,8 @@ public sealed class DispatchService : BackgroundService
         IAgentProfileStore? agentProfileStore = null,
         IProjectStore? projectStore = null,
         IPipelineConfigStore? pipelineConfigStore = null,
-        IConsolidationJobPreparationService? consolidationJobPreparer = null)
+        IConsolidationJobPreparationService? consolidationJobPreparer = null,
+        IOrchestratorRunService? runService = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
@@ -150,6 +154,7 @@ public sealed class DispatchService : BackgroundService
         _projectStore = projectStore;
         _pipelineConfigStore = pipelineConfigStore;
         _consolidationJobPreparer = consolidationJobPreparer;
+        _runService = runService;
         _templateProvider = templateProvider;
         _options = new DispatchServiceOptions();
         configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
@@ -494,6 +499,11 @@ public sealed class DispatchService : BackgroundService
         try
         {
             await db.SaveChangesAsync(ct);
+
+            // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14 fix).
+            // Without this, StartedAt reflects preparation/enqueue time which can be
+            // hours earlier for queued work, inflating the Duration shown in the UI.
+            _runService?.GetRun(item.Id.ToString())?.ResetStartedAt(workItem.DispatchedAt!.Value);
 
             // Record dispatch latency / pending duration metric
             var latency = (workItem.DispatchedAt.Value - (workItem.OriginalEnqueuedAt ?? workItem.CreatedAt)).TotalSeconds;

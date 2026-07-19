@@ -281,16 +281,15 @@ public sealed partial class AgentJobDispatcher
             // Resolve reviewer configurations for this job (quality gates not needed for reviews)
             var resolvedReviewerConfigs = await _infra.Resolution.ResolveReviewersAsync(requiredLabels, ct);
 
-            // Create the dispatched run via PipelineOrchestrationService
-            var run = await _orchestration.CreateDispatchedRunAsync(
+            // Reserve a run ID and dedup guard via PipelineOrchestrationService
+            var reservation = await _orchestration.ReserveRunIdAsync(
                 request.IssueProviderId, request.RepoProviderId, request.PrIdentifier,
                 agentProviderId, agent.AgentId, ct,
-                request.BrainProviderId, pipelineProviderId: null, request.InitiatedBy,
-                PipelineRunType.Review);
+                request.BrainProviderId, pipelineProviderId: null, request.InitiatedBy);
 
-            if (run == null)
+            if (reservation == null)
             {
-                _logger.Warning("Failed to create dispatched run for PR review {PrIdentifier}", request.PrIdentifier);
+                _logger.Warning("Failed to reserve run for PR review {PrIdentifier}", request.PrIdentifier);
                 return false;
             }
 
@@ -298,20 +297,16 @@ public sealed partial class AgentJobDispatcher
             var linkedIssueContexts = await PreFetchLinkedIssuesAsync(
                 request.PrIdentifier, request.IssueProviderId, request.RepoProviderId, ct);
 
-            // Replace the initial run with a fully-populated review run atomically.
-            // Using ReplaceRun instead of RemoveRun+AddRun eliminates the race window where
-            // IsIssueBeingProcessed(prIdentifier) would return false during the gap.
-            var previousRepositoryName = run.RepositoryName;
-            var previousModelName = run.ModelName;
-            run = PipelineRun.CreateReview(
-                runId: run.RunId,
+            // Construct the fully-populated review run using reserved metadata
+            var run = PipelineRun.CreateReview(
+                runId: reservation.RunId,
                 issueIdentifier: request.PrIdentifier,
                 issueTitle: request.PrTitle,
                 issueProviderConfigId: request.IssueProviderId,
                 repoProviderConfigId: request.RepoProviderId,
                 reviewPrBranchName: request.PrBranchName,
                 reviewPrTargetBranch: request.PrTargetBranch,
-                startedAt: run.StartedAtOffset,
+                startedAt: reservation.StartedAt,
                 initiatedBy: request.InitiatedBy,
                 agentId: agent.AgentId,
                 agentProviderConfigId: agentProviderId,
@@ -320,8 +315,8 @@ public sealed partial class AgentJobDispatcher
                 reviewPrDescription: request.PrDescription,
                 reviewPrAuthor: request.PrAuthor,
                 linkedIssueContexts: linkedIssueContexts.Count > 0 ? linkedIssueContexts : null);
-            run.RepositoryName = previousRepositoryName;
-            run.ModelName = previousModelName;
+            run.RepositoryName = reservation.RepositoryName;
+            run.ModelName = reservation.ModelName;
             run.ProjectId = project.Id;
             run.ProjectName = project.Name;
             run.LinkedPullRequest = new LinkedPullRequest
@@ -332,7 +327,8 @@ public sealed partial class AgentJobDispatcher
                 IsDraft = false
             };
 
-            _runService.ReplaceRun(run);
+            // Atomically replace the sentinel with the fully-populated run
+            _orchestration.RegisterDispatchedRun(run);
 
             // Populate resolved profile and reviewer config IDs on the run
             run.ResolvedProfileId = profile.Id;
@@ -418,46 +414,45 @@ public sealed partial class AgentJobDispatcher
 
             var agentProviderId = profile.AgentProviderConfigId;
 
-            // Create the dispatched run via PipelineOrchestrationService
-            var run = await _orchestration.CreateDispatchedRunAsync(
+            // Reserve a run ID and dedup guard via PipelineOrchestrationService
+            var reservation = await _orchestration.ReserveRunIdAsync(
                 issueProviderId, repoProviderId, epicIdentifier,
                 agentProviderId, agent.AgentId, ct,
-                brainProviderId, pipelineProviderId: null, initiatedBy, phaseType);
+                brainProviderId, pipelineProviderId: null, initiatedBy);
 
-            if (run == null)
+            if (reservation == null)
             {
-                _logger.Warning("Failed to create dispatched run for decomposition of epic {EpicIdentifier}", epicIdentifier);
+                _logger.Warning("Failed to reserve run for decomposition of epic {EpicIdentifier}", epicIdentifier);
                 return false;
             }
 
             // Load config early — needed for WorkspaceBaseDirectory before settings override
             var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
-            var runId = run.RunId;
+            var runId = reservation.RunId;
             var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, "decomposition", runId);
 
-            // Replace the initial run with a fully-populated decomposition run atomically.
-            var previousRepositoryName = run.RepositoryName;
-            var previousModelName = run.ModelName;
-            run = PipelineRun.CreateDecomposition(
+            // Construct the fully-populated decomposition run using reserved metadata
+            var run = PipelineRun.CreateDecomposition(
                 runId: runId,
                 issueIdentifier: epicIdentifier,
                 issueTitle: epicTitle,
                 issueProviderConfigId: issueProviderId,
                 repoProviderConfigId: repoProviderId,
                 phaseType: phaseType,
-                startedAt: run.StartedAtOffset,
+                startedAt: reservation.StartedAt,
                 initiatedBy: initiatedBy,
                 agentId: agent.AgentId,
                 agentProviderConfigId: agentProviderId,
                 brainProviderConfigId: brainProviderId,
                 decompositionSource: decompositionSource);
-            run.RepositoryName = previousRepositoryName;
-            run.ModelName = previousModelName;
+            run.RepositoryName = reservation.RepositoryName;
+            run.ModelName = reservation.ModelName;
             run.WorkspacePath = workspacePath;
             run.ProjectId = project.Id;
             run.ProjectName = project.Name;
 
-            _runService.ReplaceRun(run);
+            // Atomically replace the sentinel with the fully-populated run
+            _orchestration.RegisterDispatchedRun(run);
 
             // Populate resolved profile ID on the run
             run.ResolvedProfileId = profile.Id;

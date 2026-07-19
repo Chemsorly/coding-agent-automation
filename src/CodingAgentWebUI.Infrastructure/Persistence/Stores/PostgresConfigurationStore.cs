@@ -488,7 +488,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         db.ReviewerConfigs.RemoveRange(existing);
 
         // Insert default configurations
-        foreach (var config in PipelineConfiguration.DefaultReviewerConfigurations)
+        foreach (var config in PipelineConfigurationDefaults.DefaultReviewerConfigurations)
         {
             if (!Guid.TryParse(config.Id, out var guid))
                 guid = Guid.NewGuid();

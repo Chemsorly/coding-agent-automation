@@ -229,7 +229,7 @@ public class AnalysisConfidenceGateTests
         var issue = new IssueDetail { Identifier = "1", Title = "Test", Description = "Desc", Labels = Array.Empty<string>() };
         var parsed = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = Array.Empty<string>() };
 
-        var prompt = PromptBuilder.BuildAnalysisPrompt(PipelineConfiguration.DefaultAnalysisPrompt, issue, parsed);
+        var prompt = PromptBuilder.BuildAnalysisPrompt(PipelineConfigurationDefaults.DefaultAnalysisPrompt, issue, parsed);
 
         prompt.Should().Contain("analysis-assessment.json");
         prompt.Should().Contain("\"ready\"");

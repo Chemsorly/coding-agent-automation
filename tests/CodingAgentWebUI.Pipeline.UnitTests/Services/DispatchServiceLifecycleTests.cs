@@ -2,8 +2,10 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s;
 using k8s.Autorest;
@@ -319,12 +321,123 @@ public class DispatchServiceLifecycleTests : IDisposable
         hostStopCts.Dispose();
     }
 
+    // ── BUG-14: ResetStartedAt on Dispatch ──────────────────────────────
+
+    // TODO: Add negative test case: dispatch succeeds when GetRun returns null (run not in-memory).
+    // The production code uses null-conditional (?.) to handle this, but no test validates
+    // that dispatch completes without throwing when the run is not registered in OrchestratorRunService.
+
+    // TODO: Add concurrency test: if two dispatch cycles overlap and both attempt ResetStartedAt on the
+    // same PipelineRun, validate thread safety. The GetRun(...) lookup followed by mutation is not atomic.
+    // While unlikely given the single-threaded dispatch loop, this edge case is untested.
+
+    // TODO: Add defensive test verifying the assignment-before-use contract for workItem.DispatchedAt.
+    // Production code uses workItem.DispatchedAt!.Value (null-forgiving) after assigning UtcNow above.
+    // A test should catch regressions if someone reorders the assignment and ResetStartedAt call.
+
+    [Fact]
+    public async Task PollAndDispatch_PendingPipelineItem_ResetsStartedAtOnInMemoryRun()
+    {
+        // Arrange: create a PipelineRun registered in OrchestratorRunService
+        // with a StartedAt at "preparation time" (hours ago)
+        var workItemId = Guid.NewGuid();
+        var enqueueTime = DateTimeOffset.UtcNow.AddHours(-4);
+
+        var run = PipelineRun.Create(
+            runId: workItemId.ToString(),
+            issueIdentifier: "owner/repo#bug14",
+            issueTitle: "BUG-14 test",
+            issueProviderConfigId: "provider-1",
+            repoProviderConfigId: "repo-1",
+            startedAt: enqueueTime);
+
+        var runService = new OrchestratorRunService(new Mock<Serilog.ILogger>().Object);
+        runService.AddRun(run);
+
+        // Insert a Pending work item with ID matching the RunId
+        await InsertWorkItem(workItemId, "owner/repo#bug14", "kiro,dotnet", WorkItemStatus.Pending,
+            createdAt: enqueueTime);
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateService(
+            imageMapping: new Dictionary<string, string> { ["dotnet,kiro"] = "ghcr.io/agent:latest" },
+            runService: runService);
+
+        var beforeDispatch = DateTimeOffset.UtcNow;
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        var afterDispatch = DateTimeOffset.UtcNow;
+
+        // Assert: the in-memory run's StartedAtOffset was updated to dispatch time (not enqueue time)
+        var updatedRun = runService.GetRun(workItemId.ToString());
+        updatedRun.Should().NotBeNull();
+        updatedRun!.StartedAtOffset.Should().BeOnOrAfter(beforeDispatch);
+        updatedRun.StartedAtOffset.Should().BeOnOrBefore(afterDispatch);
+        // Original enqueue time was 4h ago — must no longer be StartedAt
+        updatedRun.StartedAtOffset.Should().BeAfter(enqueueTime.AddHours(3));
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_PendingPipelineItem_DurationReflectsActualWorkNotQueueTime()
+    {
+        // Arrange: simulate a run enqueued 4h ago, dispatched now, completed ~1h after dispatch
+        var workItemId = Guid.NewGuid();
+        var enqueueTime = DateTimeOffset.UtcNow.AddHours(-4);
+
+        var run = PipelineRun.Create(
+            runId: workItemId.ToString(),
+            issueIdentifier: "owner/repo#duration",
+            issueTitle: "Duration test",
+            issueProviderConfigId: "provider-1",
+            repoProviderConfigId: "repo-1",
+            startedAt: enqueueTime);
+
+        var runService = new OrchestratorRunService(new Mock<Serilog.ILogger>().Object);
+        runService.AddRun(run);
+
+        await InsertWorkItem(workItemId, "owner/repo#duration", "kiro,dotnet", WorkItemStatus.Pending,
+            createdAt: enqueueTime);
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateService(
+            imageMapping: new Dictionary<string, string> { ["dotnet,kiro"] = "ghcr.io/agent:latest" },
+            runService: runService);
+
+        // Act: dispatch (updates StartedAt to now)
+        var beforeDispatch = DateTimeOffset.UtcNow;
+        await InvokePollAndDispatch(service);
+
+        // Simulate completion at a fixed absolute time (~60 minutes from now).
+        // Using an absolute time ensures the assertion is NOT a tautology:
+        // if ResetStartedAt were not called, StartedAtOffset would remain at enqueueTime (4h ago)
+        // and the duration would be ~300 minutes instead of ~60.
+        var updatedRun = runService.GetRun(workItemId.ToString())!;
+        var simulatedCompletion = beforeDispatch.AddMinutes(60);
+        updatedRun.MarkCompleted(simulatedCompletion);
+
+        // Assert: duration should be ~60 minutes, NOT ~5 hours (4h queue + 60m work)
+        var duration = updatedRun.CompletedAtOffset!.Value - updatedRun.StartedAtOffset;
+        duration.TotalMinutes.Should().BeLessThan(62,
+            "duration should reflect actual work time (~60m), not queue-inclusive elapsed time (~300m)");
+        duration.TotalMinutes.Should().BeGreaterThan(58,
+            "duration should be approximately 60 minutes of actual agent work");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private DispatchService CreateService(
         Dictionary<string, string>? imageMapping = null,
         Dictionary<string, int>? maxConcurrentPods = null,
-        LeaderElectionService? leaderElection = null)
+        LeaderElectionService? leaderElection = null,
+        IOrchestratorRunService? runService = null)
     {
         imageMapping ??= new Dictionary<string, string>
         {
@@ -347,7 +460,7 @@ public class DispatchServiceLifecycleTests : IDisposable
         // Build JobTemplateProvider from imageMapping + maxConcurrentPods
         var templateProvider = BuildTemplateProvider(imageMapping, maxConcurrentPods);
 
-        return new DispatchService(_dbFactory, leaderElection ?? _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider);
+        return new DispatchService(_dbFactory, leaderElection ?? _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider, runService: runService);
     }
 
     private static JobTemplateProvider BuildTemplateProvider(

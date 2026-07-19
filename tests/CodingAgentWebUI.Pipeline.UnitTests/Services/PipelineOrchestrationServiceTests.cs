@@ -558,12 +558,12 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var config = new PipelineConfiguration();
         config.CodeReview.MaxIterations.Should().Be(2);
         config.CodeReview.FixPrompt.Should().BeNull();
-        PipelineConfiguration.DefaultReviewAgents.Should().NotBeNull();
-        PipelineConfiguration.DefaultReviewAgents.Count.Should().Be(4);
-        PipelineConfiguration.DefaultReviewAgents[0].Name.Should().Be("Correctness");
-        PipelineConfiguration.DefaultReviewAgents[1].Name.Should().Be("DotNetSpecialist");
-        PipelineConfiguration.DefaultReviewAgents[2].Name.Should().Be("SecurityReviewer");
-        PipelineConfiguration.DefaultReviewAgents[3].Name.Should().Be("TestQualityReviewer");
+        PipelineConfigurationDefaults.DefaultReviewAgents.Should().NotBeNull();
+        PipelineConfigurationDefaults.DefaultReviewAgents.Count.Should().Be(4);
+        PipelineConfigurationDefaults.DefaultReviewAgents[0].Name.Should().Be("Correctness");
+        PipelineConfigurationDefaults.DefaultReviewAgents[1].Name.Should().Be("DotNetSpecialist");
+        PipelineConfigurationDefaults.DefaultReviewAgents[2].Name.Should().Be("SecurityReviewer");
+        PipelineConfigurationDefaults.DefaultReviewAgents[3].Name.Should().Be("TestQualityReviewer");
     }
 
     // --- Fix prompt tests ---
@@ -576,7 +576,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 AnalysisReviewEnabled = false,
-                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfigurationDefaults.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -603,7 +603,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
                 AnalysisReviewEnabled = false,
-                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfigurationDefaults.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -1117,7 +1117,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfigurationDefaults.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -1148,7 +1148,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
             .ReturnsAsync(new PipelineConfiguration
             {
                 WorkspaceBaseDirectory = Path.GetTempPath(),
-                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfiguration.DefaultFixPrompt }
+                CodeReview = new CodeReviewConfiguration { MaxIterations = 1, FixPrompt = PipelineConfigurationDefaults.DefaultFixPrompt }
             });
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>
@@ -1258,7 +1258,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public void CodeReviewDefaults_IncludeDefaultAgents()
     {
-        var agents = PipelineConfiguration.DefaultReviewAgents;
+        var agents = PipelineConfigurationDefaults.DefaultReviewAgents;
         agents.Should().HaveCount(4);
         agents[0].Name.Should().Be("Correctness");
         agents[1].Name.Should().Be("DotNetSpecialist");
@@ -1275,11 +1275,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public void DefaultReviewerConfigurations_ContainsExpectedStructure()
     {
-        var configs = PipelineConfiguration.DefaultReviewerConfigurations;
+        var configs = PipelineConfigurationDefaults.DefaultReviewerConfigurations;
         configs.Should().HaveCount(1);
 
         var config = configs[0];
-        config.Id.Should().Be(PipelineConfiguration.DefaultReviewerConfigurationId);
+        config.Id.Should().Be(PipelineConfigurationDefaults.DefaultReviewerConfigurationId);
         config.Id.Should().Be("default-reviewers");
         config.DisplayName.Should().Be("Default Reviewers");
         config.MatchLabels.Should().BeEmpty("default config applies globally");
@@ -1287,11 +1287,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
         config.ExecutionOrder.Should().Be(0);
 
         // Agents should mirror DefaultReviewAgents
-        config.Agents.Should().HaveCount(PipelineConfiguration.DefaultReviewAgents.Count);
+        config.Agents.Should().HaveCount(PipelineConfigurationDefaults.DefaultReviewAgents.Count);
         for (var i = 0; i < config.Agents.Count; i++)
         {
-            config.Agents[i].Name.Should().Be(PipelineConfiguration.DefaultReviewAgents[i].Name);
-            config.Agents[i].Prompt.Should().Be(PipelineConfiguration.DefaultReviewAgents[i].Prompt);
+            config.Agents[i].Name.Should().Be(PipelineConfigurationDefaults.DefaultReviewAgents[i].Name);
+            config.Agents[i].Prompt.Should().Be(PipelineConfigurationDefaults.DefaultReviewAgents[i].Prompt);
         }
     }
 
