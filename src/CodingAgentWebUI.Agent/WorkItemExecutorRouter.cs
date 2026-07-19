@@ -59,6 +59,7 @@ public sealed class WorkItemExecutorRouter : IWorkItemExecutor
             assignment.JobId, assignment.ConsolidationRunType);
 
         // Build ConsolidationJobMessage from the unified assignment
+        // TODO: AutoDispatch not plumbed through K8s/DB mode (see #1435)
         var consolidationJob = new ConsolidationJobMessage
         {
             JobId = assignment.JobId,

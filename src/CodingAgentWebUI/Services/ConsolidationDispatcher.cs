@@ -260,7 +260,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
             LastSuccessfulRunUtc = lastSuccessfulRunUtc?.UtcDateTime,
             FeedbackDataJson = feedbackDataJson,
             WorkspacePath = workspacePath,
-            TraceContext = CaptureTraceContext()
+            TraceContext = CaptureTraceContext(),
+            AutoDispatch = run.AutoDispatch
         };
 
         // Assign the job to the agent

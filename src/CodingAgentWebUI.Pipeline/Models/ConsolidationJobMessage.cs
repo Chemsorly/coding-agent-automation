@@ -49,4 +49,11 @@ public sealed class ConsolidationJobMessage
     /// </summary>
     [Key(9)]
     public Dictionary<string, string>? TraceContext { get; init; }
+
+    /// <summary>
+    /// When true, created refactoring issues will receive both <c>agent:generated</c> and
+    /// <c>agent:next</c> labels. Defaults to <c>false</c> for backward compatibility.
+    /// </summary>
+    [Key(10)]
+    public bool AutoDispatch { get; init; }
 }

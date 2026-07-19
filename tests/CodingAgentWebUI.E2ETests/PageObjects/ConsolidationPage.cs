@@ -83,11 +83,30 @@ public sealed class ConsolidationPage
             $".consolidation-card:has(.consolidation-card-title:has-text('{templateName}')) button:has-text('Brain Consolidation')");
     }
 
-    /// <summary>Clicks the Refactoring Scan trigger button for a template.</summary>
+    /// <summary>Clicks the Refactoring Scan trigger button for a template (opens the pre-flight modal).</summary>
     public async Task ClickRefactoringScanAsync(string templateName)
     {
         await _page.ClickAsync(
             $".consolidation-card:has(.consolidation-card-title:has-text('{templateName}')) button:has-text('Refactoring Scan')");
+    }
+
+    /// <summary>Confirms the refactoring scan pre-flight modal by clicking the Start Scan button.</summary>
+    public async Task ConfirmRefactoringModalAsync()
+    {
+        await _page.ClickAsync(".modal-card button.btn-save:has-text('Start Scan')");
+    }
+
+    /// <summary>Cancels the refactoring scan pre-flight modal.</summary>
+    public async Task CancelRefactoringModalAsync()
+    {
+        await _page.ClickAsync(".modal-card button.btn-cancel:has-text('Cancel')");
+    }
+
+    /// <summary>Checks if the refactoring scan pre-flight modal is visible.</summary>
+    public async Task<bool> IsRefactoringModalVisibleAsync()
+    {
+        var modal = await _page.QuerySelectorAsync(".modal-overlay .modal-card h3#refactoring-modal-title");
+        return modal is not null;
     }
 
     /// <summary>Clicks the Generate Suggestions button.</summary>

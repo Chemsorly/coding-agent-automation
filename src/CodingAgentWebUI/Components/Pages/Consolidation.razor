@@ -99,7 +99,7 @@
                             @if (supportsRefactoring)
                             {
                                 <button class="btn-trigger" disabled="@IsRunning(ConsolidationRunType.RefactoringDetection, template.Id)"
-                                        @onclick="() => TriggerConsolidation(ConsolidationRunType.RefactoringDetection, template.Id, template.Name)">
+                                        @onclick="() => OpenRefactoringModal(template.Id, template.Name)">
                                     <Icon Name="search" Size="14" /> Refactoring Scan
                                 </button>
                             }
@@ -199,6 +199,54 @@
     </section>
 </div>
 
+@* Refactoring Scan Pre-Flight Modal *@
+@if (_showRefactoringModal)
+{
+    <div class="modal-overlay" tabindex="-1" @ref="_modalOverlayRef" @onclick="DismissRefactoringModal" @onkeydown="HandleRefactoringModalKeyDown">
+        <div class="modal-card" @onclick:stopPropagation="true" role="dialog" aria-modal="true" aria-labelledby="refactoring-modal-title">
+            <h3 id="refactoring-modal-title">Trigger Refactoring Scan</h3>
+            <p class="modal-description">Template: <strong>@_modalTemplateName</strong></p>
+
+            <div class="form-group">
+                <label>Issue Labels</label>
+                <div class="refactoring-modal-labels">
+                    <span class="label-badge label-badge-static">agent:generated</span>
+                    <div class="form-checkbox">
+                        <label>
+                            <input type="checkbox" @bind="_modalAutoDispatch" />
+                            <span class="label-badge label-badge-optional">agent:next</span>
+                            — auto-dispatch created issues for agent execution
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Run Parameters</label>
+                <div class="refactoring-modal-params">
+                    <div class="refactoring-modal-param">
+                        <span class="refactoring-modal-param-label">Max issues:</span>
+                        <span class="refactoring-modal-param-value">@_modalMaxProposals</span>
+                    </div>
+                    <div class="refactoring-modal-param">
+                        <span class="refactoring-modal-param-label">Hotspot lookback:</span>
+                        <span class="refactoring-modal-param-value">@_modalHotspotDays days</span>
+                    </div>
+                    <div class="refactoring-modal-param">
+                        <span class="refactoring-modal-param-label">Adversarial review:</span>
+                        <span class="refactoring-modal-param-value">@(_modalReviewEnabled ? "Enabled" : "Disabled")</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-buttons">
+                <button class="btn-save" @onclick="ConfirmRefactoringModal">Start Scan</button>
+                <button class="btn-cancel" @onclick="DismissRefactoringModal">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private IReadOnlyList<PipelineJobTemplate> _templates = [];
     private Dictionary<(ConsolidationRunType, string?), ConsolidationRun?> _lastRuns = new();
@@ -207,12 +255,34 @@
     private string? _statusMessage;
     private bool _statusIsError;
 
+    // Refactoring modal state
+    private bool _showRefactoringModal;
+    private string? _modalTemplateId;
+    private string? _modalTemplateName;
+    private bool _modalAutoDispatch;
+    private int _modalMaxProposals;
+    private int _modalHotspotDays;
+    private bool _modalReviewEnabled;
+    private ElementReference _modalOverlayRef;
+
     protected override async Task OnInitializedAsync()
     {
         BadgeService.Reset();
         ConsolidationService.OnChange += HandleConsolidationChanged;
 
         await LoadDataAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_showRefactoringModal)
+        {
+            try
+            {
+                await _modalOverlayRef.FocusAsync();
+            }
+            catch (Exception) { /* Element may not be rendered yet */ }
+        }
     }
 
     private async Task LoadDataAsync()
@@ -279,14 +349,64 @@
         }
     }
 
-    private async Task TriggerConsolidation(ConsolidationRunType type, string? templateId, string? templateName)
+    private async Task OpenRefactoringModal(string templateId, string templateName)
+    {
+        // Load fresh config values when opening the modal
+        try
+        {
+            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            _modalMaxProposals = config.MaxRefactoringProposals;
+            _modalHotspotDays = (int)config.HotspotAnalysisLookback.TotalDays;
+            _modalReviewEnabled = config.RefactoringReviewEnabled;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load pipeline config for refactoring modal");
+            _modalMaxProposals = 3;
+            _modalHotspotDays = 90;
+            _modalReviewEnabled = true;
+        }
+
+        _modalTemplateId = templateId;
+        _modalTemplateName = templateName;
+        _modalAutoDispatch = false;
+        _showRefactoringModal = true;
+    }
+
+    private async Task ConfirmRefactoringModal()
+    {
+        _showRefactoringModal = false;
+        await TriggerConsolidation(ConsolidationRunType.RefactoringDetection, _modalTemplateId, _modalTemplateName, _modalAutoDispatch);
+    }
+
+    private void DismissRefactoringModal()
+    {
+        _showRefactoringModal = false;
+    }
+
+    // TODO: Enter key bubbles up from checkbox input and will confirm the modal even when the
+    // user may intend to toggle the checkbox. Browsers use Space (not Enter) for checkbox toggle,
+    // so this is low risk, but consider guarding against e.Target being the checkbox element.
+    private async Task HandleRefactoringModalKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+        {
+            DismissRefactoringModal();
+        }
+        else if (e.Key == "Enter")
+        {
+            await ConfirmRefactoringModal();
+        }
+    }
+
+    private async Task TriggerConsolidation(ConsolidationRunType type, string? templateId, string? templateName, bool autoDispatch = false)
     {
         _statusMessage = null;
         _statusIsError = false;
 
         try
         {
-            var run = await ConsolidationService.TriggerAsync(type, templateId, CancellationToken.None);
+            var run = await ConsolidationService.TriggerAsync(type, templateId, CancellationToken.None, autoDispatch);
             if (run == null)
             {
                 _statusMessage = type switch

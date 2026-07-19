@@ -55,4 +55,11 @@ public sealed class ConsolidationRun
     /// of queued runs without re-resolving provider configs.
     /// </summary>
     public IReadOnlyList<string>? QueuedRequiredLabels { get; set; }
+
+    /// <summary>
+    /// When true, created refactoring issues will receive both <c>agent:generated</c> and
+    /// <c>agent:next</c> labels, immediately dispatching them for agent execution.
+    /// Defaults to <c>false</c> for backward compatibility with old persisted runs.
+    /// </summary>
+    public bool AutoDispatch { get; init; }
 }

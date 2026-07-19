@@ -573,5 +573,65 @@ public sealed class ConsolidationDispatcherTests : IDisposable
         result.Should().Be(ConsolidationDispatchResult.Dispatched);
     }
 
+    [Fact]
+    public async Task TryDispatchAsync_AutoDispatchTrue_PropagatedToMessage()
+    {
+        RegisterIdleAgent();
+
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
+
+        ConsolidationJobMessage? capturedMessage = null;
+        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg);
+
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var svc = CreateService(runsDir: Path.Combine(_tempDir, "nonexistent"));
+        var run = new ConsolidationRun
+        {
+            RunId = "r-auto",
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            AutoDispatch = true
+        };
+
+        await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
+
+        capturedMessage.Should().NotBeNull();
+        capturedMessage!.AutoDispatch.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task TryDispatchAsync_AutoDispatchFalse_PropagatedToMessage()
+    {
+        RegisterIdleAgent();
+
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
+
+        ConsolidationJobMessage? capturedMessage = null;
+        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg);
+
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var svc = CreateService(runsDir: Path.Combine(_tempDir, "nonexistent"));
+        var run = new ConsolidationRun
+        {
+            RunId = "r-no-auto",
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            AutoDispatch = false
+        };
+
+        await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
+
+        capturedMessage.Should().NotBeNull();
+        capturedMessage!.AutoDispatch.Should().BeFalse();
+    }
+
     #endregion
 }

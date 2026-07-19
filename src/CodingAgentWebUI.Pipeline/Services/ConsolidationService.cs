@@ -87,10 +87,13 @@ public sealed class ConsolidationService : IConsolidationService
     }
 
     /// <inheritdoc />
+    // TODO: CancellationToken should be the last parameter per .NET convention. Changing this
+    // signature is a breaking change across all callers — defer to a separate cleanup pass.
     public async Task<ConsolidationRun?> TriggerAsync(
         ConsolidationRunType type,
         string? templateId,
-        CancellationToken ct)
+        CancellationToken ct,
+        bool autoDispatch = false)
     {
         // WARNING 4 fix: Use TryAdd as the sole concurrency guard (eliminates TOCTOU race)
         var key = (type, templateId);
@@ -120,7 +123,8 @@ public sealed class ConsolidationService : IConsolidationService
             TemplateId = templateId,
             TemplateName = templateName,
             StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Running
+            Status = ConsolidationRunStatus.Running,
+            AutoDispatch = autoDispatch
         };
 
         // Register in concurrency tracker — TryAdd is the sole guard (no separate ContainsKey check)
