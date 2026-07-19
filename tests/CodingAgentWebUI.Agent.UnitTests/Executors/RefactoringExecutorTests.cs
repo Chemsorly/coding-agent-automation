@@ -188,6 +188,99 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_WithDependsOn_InjectsDependencyLinesInBody()
+    {
+        // Arrange: Two proposals where B depends on A (listed in reverse order to test topological sort)
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract class from service",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Extract IDispatchRunCreator implementation.",
+                    "rationale": "Too many responsibilities.",
+                    "dependsOn": ["Remove dead code cluster"]
+                },
+                {
+                    "title": "Remove dead code cluster",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Delete unused methods.",
+                    "rationale": "285 lines of dead code."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((path, _) =>
+            {
+                var agentDir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["Done."]
+            });
+
+        // Return sequential identifiers so we can verify resolution
+        var callCount = 0;
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return new CreatedIssueResult
+                {
+                    Identifier = (1000 + callCount).ToString(),
+                    Url = $"https://github.com/test/repo/issues/{1000 + callCount}"
+                };
+            });
+
+        // Capture the body of each CreateIssueAsync call
+        var capturedBodies = new List<string>();
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>?, CancellationToken>((_, body, _, _) => capturedBodies.Add(body))
+            .ReturnsAsync(() =>
+            {
+                return new CreatedIssueResult
+                {
+                    Identifier = (1000 + capturedBodies.Count).ToString(),
+                    Url = $"https://github.com/test/repo/issues/{1000 + capturedBodies.Count}"
+                };
+            });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.CreatedIssues.Should().HaveCount(2);
+
+        // Topological sort should have reordered: "Remove dead code cluster" first (no deps),
+        // then "Extract class from service" (depends on the first)
+        capturedBodies.Should().HaveCount(2);
+
+        // First issue (dead code removal) — no dependency lines
+        capturedBodies[0].Should().NotContain("Depends on");
+        capturedBodies[0].Should().Contain("Delete unused methods");
+
+        // Second issue (extract class) — should have "Depends on #1001"
+        // (1001 = the identifier returned for the first-created issue)
+        capturedBodies[1].Should().Contain("Depends on #1001");
+        capturedBodies[1].Should().Contain("Extract IDispatchRunCreator");
+    }
+
+    [Fact]
     public void FormatRefactoringSummary_NoIssues_ReturnsNoOpportunities()
     {
         // Act
