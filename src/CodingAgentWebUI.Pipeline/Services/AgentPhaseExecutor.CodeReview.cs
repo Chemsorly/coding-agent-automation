@@ -30,20 +30,17 @@ public partial class AgentPhaseExecutor
                 run.RunId, reviewerConfig.DisplayName, followUpPrompt.Length);
 
             // Dispatch as a fresh prompt (no resume) to the agent provider
-            var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+            var agentResult = await ExecuteAgentRawAsync(
                 context.AgentProvider,
-                new AgentRequest
-                {
-                    Prompt = followUpPrompt,
-                    WorkspacePath = run.WorkspacePath!,
-                    Timeout = config.AgentTimeout,
-                    UseResume = false
-                },
-                run, config, $"Follow-up for reviewer '{reviewerConfig.DisplayName}'",
-                context.Callbacks.NotifyChange, _logger, ct,
-                line => context.Callbacks.EmitOutputLine(line));
-
-            run.AccumulateTokenUsage(agentResult, phase: $"follow_up_{reviewerConfig.DisplayName}");
+                followUpPrompt,
+                run,
+                config,
+                $"Follow-up for reviewer '{reviewerConfig.DisplayName}'",
+                context.Callbacks.NotifyChange,
+                _logger,
+                ct,
+                line => context.Callbacks.EmitOutputLine(line),
+                phase: $"follow_up_{reviewerConfig.DisplayName}");
 
             // Collect the agent's response text from output lines
             var responseText = agentResult.OutputLines.Count > 0
@@ -222,20 +219,17 @@ public partial class AgentPhaseExecutor
 
             var prompt = PromptBuilder.BuildReviewSummaryPrompt(diffStat, run.IssueTitle, findings);
 
-            var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+            var agentResult = await ExecuteAgentRawAsync(
                 context.AgentProvider,
-                new AgentRequest
-                {
-                    Prompt = prompt,
-                    WorkspacePath = run.WorkspacePath!,
-                    Timeout = config.AgentTimeout,
-                    UseResume = false
-                },
-                run, config, "Review summary generation",
-                context.Callbacks.NotifyChange, _logger, ct,
-                line => context.Callbacks.EmitOutputLine($"[ReviewSummary] {line}"));
-
-            run.AccumulateTokenUsage(agentResult, phase: "review_summary");
+                prompt,
+                run,
+                config,
+                "Review summary generation",
+                context.Callbacks.NotifyChange,
+                _logger,
+                ct,
+                line => context.Callbacks.EmitOutputLine($"[ReviewSummary] {line}"),
+                phase: "review_summary");
 
             // Parse the output for ## Change Summary and ## Review Verdict sections
             var output = agentResult.OutputLines.Count > 0
