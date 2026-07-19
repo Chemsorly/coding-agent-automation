@@ -195,6 +195,78 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         return run;
     }
 
+    /// <inheritdoc />
+    public async Task<RunReservation?> ReserveRunIdAsync(
+        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
+        ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
+        string? brainProviderId = null, string? pipelineProviderId = null,
+        string initiatedBy = "dispatch")
+    {
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+
+        // TODO: TOCTOU race — concurrent calls to ReserveRunIdAsync for the same issueIdentifier can
+        // both pass this check before either registers the sentinel. The inner RegisterDispatchedRun
+        // in PipelineRunLifecycleService has a second dedup check providing a defense layer, but async
+        // provider resolution between the two checks widens the window. Pre-existing pattern from
+        // CreateDispatchedRunAsync; not a regression but worth hardening with a lock or atomic reserve.
+        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
+        {
+            _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping reservation", issueIdentifier);
+            return null;
+        }
+
+        // Resolve repo provider config to get repository name
+        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
+        await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
+        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
+        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
+
+        var runId = Guid.NewGuid().ToString();
+        var startedAt = DateTimeOffset.UtcNow;
+
+        // Create a minimal sentinel run for dedup protection
+        // TODO: Sentinel RunType is hardcoded to Implementation regardless of actual dispatch type
+        // (Review or Decomposition). During the brief window between ReserveRunIdAsync and
+        // RegisterDispatchedRun, code that inspects RunType on active runs (e.g. DispatchScheduler
+        // decomposition concurrency enforcement) will see the wrong type. Consider adding a
+        // runType parameter to ReserveRunIdAsync to set the correct type on the sentinel.
+        var sentinel = PipelineRun.Create(
+            runId: runId,
+            issueIdentifier: issueIdentifier,
+            issueTitle: string.Empty,
+            issueProviderConfigId: issueProviderId.Value,
+            repoProviderConfigId: repoProviderId.Value,
+            runType: PipelineRunType.Implementation,
+            initiatedBy: initiatedBy,
+            agentId: agentId,
+            agentProviderConfigId: agentProviderId.Value,
+            brainProviderConfigId: brainProviderId,
+            startedAt: startedAt);
+        sentinel.RepositoryName = tempRepoProvider.RepositoryFullName;
+        sentinel.ModelName = configuredModel;
+        sentinel.PipelineProviderConfigId = pipelineProviderId;
+
+        // Register sentinel — dedup is active immediately
+        if (!_lifecycle.RegisterDispatchedRun(sentinel))
+            return null;
+
+        _logger.Information(
+            "Reserved run {RunId} for issue {IssueIdentifier} → agent {AgentId}",
+            runId, issueIdentifier, agentId);
+
+        return new RunReservation(runId, tempRepoProvider.RepositoryFullName, configuredModel, startedAt);
+    }
+
+    /// <inheritdoc />
+    public void RegisterDispatchedRun(PipelineRun run)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        _lifecycle.ReplaceDispatchedRun(run);
+        _logger.Information(
+            "Registered dispatched run {RunId} for issue {IssueIdentifier}",
+            run.RunId, run.IssueIdentifier);
+    }
+
     /// <summary>Cancels the active pipeline run. Delegates state transitions to lifecycle service.</summary>
     public async Task CancelPipelineAsync()
     {
@@ -230,6 +302,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             try
             {
+                // TODO: run.AgentId is string? — null-forgiving operator defers null detection to
+                // SendCancelJobAsync's ThrowIfNullOrEmpty, which reports confusing parameter name.
+                // Consider guarding with !string.IsNullOrEmpty(run.AgentId) before calling.
                 var cancelTasks = allRuns.Select(run =>
                     _cancellationFacade.AgentCancellation.SendCancelJobAsync(run.AgentId!, run.RunId, CancellationToken.None));
                 await Task.WhenAll(cancelTasks);

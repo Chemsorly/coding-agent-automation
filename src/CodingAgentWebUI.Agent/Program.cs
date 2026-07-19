@@ -11,6 +11,7 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using KiroCliLib.Configuration;
 using KiroCliLib.Core;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Http.Resilience;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -238,23 +239,52 @@ try
     }
     else
     {
-        // SignalR mode: register AgentWorkerService (existing behavior)
+        // SignalR mode: register AgentWorkerService with extracted components
         builder.Services.AddSingleton<CriticalMessageBuffer>();
-        builder.Services.AddSingleton<IJobCompletionReporter>(sp => new SignalRCompletionReporter(
+        builder.Services.AddSingleton<SignalRCompletionReporter>(sp => new SignalRCompletionReporter(
             sp.GetRequiredService<HubConnectionManager>(),
             ResiliencePipelineFactory.CreateSignalRPipeline(Log.Logger),
             sp.GetRequiredService<CriticalMessageBuffer>(),
             Log.Logger));
-        builder.Services.AddSingleton(sp => new AgentWorkerService(
+        builder.Services.AddSingleton<IJobCompletionReporter>(sp => sp.GetRequiredService<SignalRCompletionReporter>());
+        builder.Services.AddSingleton<AgentJobSlotManager>(sp =>
+        {
+            // Use lazy resolution to break the circular dependency:
+            // AgentJobSlotManager -> AgentConnectionLifecycle -> AgentJobSlotManager.
+            // The signalReady callback is only invoked at runtime (after DI construction),
+            // so lazy resolution is safe here.
+            var agentId = sp.GetRequiredService<AgentIdentity>().Id;
+            return new AgentJobSlotManager(async () =>
+            {
+                try
+                {
+                    var connectionLifecycle = sp.GetRequiredService<AgentConnectionLifecycle>();
+                    await connectionLifecycle.Connection.InvokeAsync(
+                        HubMethodNames.AgentReady, agentId);
+                }
+                catch (Exception ex)
+                {
+                    Log.Logger.Warning(ex, "Failed to send AgentReady signal");
+                }
+            });
+        });
+        builder.Services.AddSingleton<AgentConnectionLifecycle>(sp => new AgentConnectionLifecycle(
             sp.GetRequiredService<HubConnectionManager>(),
             sp.GetRequiredService<HubConnectionManagerFactory>(),
+            sp.GetRequiredService<SignalRCompletionReporter>(),
+            sp.GetRequiredService<AgentJobSlotManager>(),
+            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<IHostApplicationLifetime>(),
+            Log.Logger));
+        builder.Services.AddSingleton(sp => new AgentWorkerService(
+            sp.GetRequiredService<AgentConnectionLifecycle>(),
+            sp.GetRequiredService<AgentJobSlotManager>(),
+            sp.GetRequiredService<AgentIdentity>(),
             sp.GetRequiredService<IPipelineExecutor>(),
             sp.GetRequiredService<IConsolidationExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
-            sp.GetRequiredService<AgentIdentity>(),
-            sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
         builder.Services.AddSingleton<IAgentService>(sp => sp.GetRequiredService<AgentWorkerService>());

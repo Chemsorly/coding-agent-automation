@@ -91,16 +91,14 @@ public class AgentWorkerServiceReconnectionTests
     public void Constructor_ThrowsOnNullFactory()
     {
         var mockLogger = new Mock<Serilog.ILogger>();
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var act = () => new AgentWorkerService(
+        var act = () => new AgentConnectionLifecycle(
             CreateTestHubManager(),
             null!,
-            CreateMockExecutor(),
-            CreateMockConsolidationExecutor(),
-            Mock.Of<IJobCompletionReporter>(),
-            mockOrchestrator.Object,
-            Mock.Of<IHttpClientFactory>(),
+            new SignalRCompletionReporter(CreateTestHubManager(),
+                CodingAgentWebUI.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger.Object),
+                new CriticalMessageBuffer(), mockLogger.Object),
+            new AgentJobSlotManager(() => Task.CompletedTask),
             new AgentIdentity("test"),
             Mock.Of<IHostApplicationLifetime>(),
             mockLogger.Object);
@@ -130,11 +128,11 @@ public class AgentWorkerServiceReconnectionTests
 
     private static TimeSpan InvokeCalculateReconnectionDelay(int attempt)
     {
-        // CalculateReconnectionDelay is private static — invoke via reflection
-        var method = typeof(AgentWorkerService).GetMethod(
+        // CalculateReconnectionDelay is internal static on AgentConnectionLifecycle
+        var method = typeof(AgentConnectionLifecycle).GetMethod(
             "CalculateReconnectionDelay",
             BindingFlags.NonPublic | BindingFlags.Static);
-        method.Should().NotBeNull("CalculateReconnectionDelay should exist as a private static method");
+        method.Should().NotBeNull("CalculateReconnectionDelay should exist as an internal static method");
         return (TimeSpan)method!.Invoke(null, [attempt])!;
     }
 
@@ -150,31 +148,5 @@ public class AgentWorkerServiceReconnectionTests
         var logger = new Mock<Serilog.ILogger>();
         return new HubConnectionManagerFactory(
             "http://localhost:9999", "test-agent", "test-api-key", logger.Object);
-    }
-
-    private static LocalPipelineExecutor CreateMockExecutor()
-    {
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
-        var mockHttpClientFactory = new Mock<IHttpClientFactory>();
-        var mockQualityGateValidator = new Mock<CodingAgentWebUI.Pipeline.Interfaces.IQualityGateValidator>();
-        var mockLogger = new Mock<Serilog.ILogger>();
-        return new LocalPipelineExecutor(
-            mockOrchestrator.Object,
-            mockHttpClientFactory.Object,
-            new PipelineConfiguration(),
-            mockQualityGateValidator.Object,
-            mockLogger.Object,
-            agentIdentity: new AgentIdentity("test-agent"));
-    }
-
-    private static LocalConsolidationExecutor CreateMockConsolidationExecutor()
-    {
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
-        var mockHttpClientFactory = new Mock<IHttpClientFactory>();
-        var mockLogger = new Mock<Serilog.ILogger>();
-        return new LocalConsolidationExecutor(
-            mockOrchestrator.Object,
-            mockHttpClientFactory.Object,
-            mockLogger.Object);
     }
 }

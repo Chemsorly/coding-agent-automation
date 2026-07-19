@@ -10,7 +10,7 @@ public interface IReviewerConfigStore
 
     /// <summary>
     /// Replaces the entire reviewer configuration collection with the factory defaults
-    /// defined in <see cref="PipelineConfiguration.DefaultReviewerConfigurations"/>.
+    /// defined in <see cref="PipelineConfigurationDefaults.DefaultReviewerConfigurations"/>.
     /// </summary>
     Task ResetReviewerConfigsToDefaultAsync(CancellationToken ct);
 }

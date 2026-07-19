@@ -1,4 +1,3 @@
-using System.Net.Http;
 using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
@@ -12,6 +11,12 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// Unit tests for <see cref="AgentWorkerService"/> job slot acquisition,
 /// concurrency races, and heartbeat lifecycle transitions.
 /// </summary>
+// TODO: These tests exercise AgentJobSlotManager indirectly through AgentWorkerService using
+// reflection to access private fields. Add dedicated AgentJobSlotManagerTests that test the
+// public API (TryAcquireJobSlot, TryAcquireChatSlot, ReleaseJobSlotAndSignalReadyAsync,
+// ReleaseChatSlot, ForceReleaseJobSlot, BuildActiveJobState) directly as a unit, verifying
+// behavior without reflection. Similarly, add AgentConnectionLifecycleTests for standalone
+// lifecycle testing (reconnection, buffer drain, heartbeat) without the full AgentWorkerService.
 [Collection("EnvironmentVariables")]
 public class AgentWorkerServiceJobSlotTests
 {
@@ -26,51 +31,52 @@ public class AgentWorkerServiceJobSlotTests
 
         result.Should().BeTrue();
         busyWith.Should().BeNull();
-        GetPrivateField<string?>(service, "_activeJobId").Should().Be("job-1");
+        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("job-1");
     }
 
     [Fact]
     public void TryAcquireJobSlot_AtCapacity_ActiveJob_Rejects()
     {
         var service = CreateService();
-        SetPrivateField(service, "_activeJobId", "existing-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", "existing-job");
 
         var result = InvokeTryAcquireJobSlot(service, "new-job", out var busyWith);
 
         result.Should().BeFalse();
         busyWith.Should().Be("existing-job");
-        GetPrivateField<string?>(service, "_activeJobId").Should().Be("existing-job");
+        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("existing-job");
     }
 
     [Fact]
     public void TryAcquireJobSlot_AtCapacity_ActiveChat_Rejects()
     {
         var service = CreateService();
-        SetPrivateField(service, "_activeChatSessionId", "session-42");
+        SetPrivateField(GetSlotManager(service), "_activeChatSessionId", "session-42");
 
         var result = InvokeTryAcquireJobSlot(service, "new-job", out var busyWith);
 
         result.Should().BeFalse();
         busyWith.Should().Be("chat:session-42");
-        GetPrivateField<string?>(service, "_activeJobId").Should().BeNull();
+        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().BeNull();
     }
 
     [Fact]
     public async Task TryAcquireJobSlot_AfterRelease_SlotFreed()
     {
+        // TODO: This test never verifies that signalReady callback was invoked during
+        // ReleaseJobSlotAndSignalReadyAsync. If the _signalReady() call were accidentally
+        // removed, this test would still pass. Add assertion on callback invocation.
         var service = CreateService();
-        SetPrivateField(service, "_activeJobId", "old-job");
-        SetPrivateField(service, "_jobCts", new CancellationTokenSource());
+        SetPrivateField(GetSlotManager(service), "_activeJobId", "old-job");
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
-        var releaseMethod = GetPrivateMethod(service, "ReleaseJobSlotAndSignalReadyAsync");
-        var task = (Task)releaseMethod.Invoke(service, [])!;
-        await task;
+        await GetSlotManager(service).ReleaseJobSlotAndSignalReadyAsync();
 
         var result = InvokeTryAcquireJobSlot(service, "new-job", out var busyWith);
 
         result.Should().BeTrue();
         busyWith.Should().BeNull();
-        GetPrivateField<string?>(service, "_activeJobId").Should().Be("new-job");
+        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("new-job");
     }
 
     // ── Rejection Notification ───────────────────────────────────────────
@@ -79,7 +85,7 @@ public class AgentWorkerServiceJobSlotTests
     public async Task HandleAssignJob_WhenBusy_RejectionPathCompletes()
     {
         var service = CreateService();
-        SetPrivateField(service, "_activeJobId", "existing-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", "existing-job");
 
         var message = CreateTestJobAssignment("rejected-job");
         var handler = GetPrivateMethod(service, "HandleAssignJobAsync");
@@ -87,14 +93,14 @@ public class AgentWorkerServiceJobSlotTests
         await task;
 
         // Handler completes without throwing; active job unchanged
-        GetPrivateField<string?>(service, "_activeJobId").Should().Be("existing-job");
+        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("existing-job");
     }
 
     [Fact]
     public async Task HandleAssignConsolidationJob_WhenBusy_RejectionPathCompletes()
     {
         var service = CreateService();
-        SetPrivateField(service, "_activeJobId", "existing-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", "existing-job");
 
         var message = new ConsolidationJobMessage
         {
@@ -109,7 +115,7 @@ public class AgentWorkerServiceJobSlotTests
         await task;
 
         // Handler completes without throwing; active job unchanged
-        GetPrivateField<string?>(service, "_activeJobId").Should().Be("existing-job");
+        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("existing-job");
     }
 
     // ── Concurrency Race ─────────────────────────────────────────────────
@@ -139,7 +145,7 @@ public class AgentWorkerServiceJobSlotTests
         var successes = new[] { result1, result2 }.Count(r => r == true);
         successes.Should().Be(1);
 
-        var activeJobId = GetPrivateField<string?>(service, "_activeJobId");
+        var activeJobId = GetPrivateField<string?>(GetSlotManager(service), "_activeJobId");
         activeJobId.Should().NotBeNull();
         activeJobId.Should().Match<string>(id => id == "race-job-1" || id == "race-job-2");
     }
@@ -182,8 +188,8 @@ public class AgentWorkerServiceJobSlotTests
     public void Heartbeat_JobActive_CurrentStepReflectsBusy()
     {
         var service = CreateService();
-        SetPrivateField(service, "_activeJobId", "busy-job");
-        SetPrivateField(service, "_currentStep", PipelineStep.AnalyzingCode);
+        SetPrivateField(GetSlotManager(service), "_activeJobId", "busy-job");
+        SetPrivateField(GetSlotManager(service), "_currentStep", PipelineStep.AnalyzingCode);
 
         service.CurrentStep.Should().Be(PipelineStep.AnalyzingCode);
     }
@@ -192,71 +198,27 @@ public class AgentWorkerServiceJobSlotTests
     public async Task Heartbeat_AfterRelease_CurrentStepReturnsToNull()
     {
         var service = CreateService();
-        SetPrivateField(service, "_activeJobId", "finishing-job");
-        SetPrivateField(service, "_currentStep", PipelineStep.GeneratingCode);
-        SetPrivateField(service, "_jobCts", new CancellationTokenSource());
+        SetPrivateField(GetSlotManager(service), "_activeJobId", "finishing-job");
+        SetPrivateField(GetSlotManager(service), "_currentStep", PipelineStep.GeneratingCode);
+        SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
-        var releaseMethod = GetPrivateMethod(service, "ReleaseJobSlotAndSignalReadyAsync");
-        var task = (Task)releaseMethod.Invoke(service, [])!;
-        await task;
+        await GetSlotManager(service).ReleaseJobSlotAndSignalReadyAsync();
 
         service.CurrentStep.Should().BeNull();
-        GetPrivateField<string?>(service, "_activeJobId").Should().BeNull();
+        GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().BeNull();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static bool InvokeTryAcquireJobSlot(AgentWorkerService service, string jobId, out string? busyWith)
     {
-        var method = service.GetType().GetMethod("TryAcquireJobSlot",
-            BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException("Method 'TryAcquireJobSlot' not found");
-
-        var args = new object?[] { jobId, null };
-        var result = (bool)method.Invoke(service, args)!;
-        busyWith = (string?)args[1];
-        return result;
+        var slotManager = GetSlotManager(service);
+        return slotManager.TryAcquireJobSlot(jobId, out busyWith);
     }
 
     private static AgentWorkerService CreateService()
     {
-        var mockLogger = new Mock<Serilog.ILogger>();
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
-
-        var hubManagerFactory = new HubConnectionManagerFactory(
-            "http://localhost:9999",
-            "test-agent",
-            "test-api-key",
-            mockLogger.Object);
-
-        var hubManager = hubManagerFactory.Create();
-
-        var mockHttpClientFactory = new Mock<IHttpClientFactory>();
-        var mockQualityGateValidator = new Mock<Pipeline.Interfaces.IQualityGateValidator>();
-        var executor = new LocalPipelineExecutor(
-            mockOrchestrator.Object,
-            mockHttpClientFactory.Object,
-            new PipelineConfiguration(),
-            mockQualityGateValidator.Object,
-            mockLogger.Object,
-            agentIdentity: new Pipeline.Models.AgentIdentity("test-agent"));
-
-        var consolidationExecutor = new LocalConsolidationExecutor(
-            mockOrchestrator.Object,
-            mockHttpClientFactory.Object,
-            mockLogger.Object);
-
-        return new AgentWorkerService(
-            hubManager,
-            hubManagerFactory,
-            executor,
-            consolidationExecutor,
-            Mock.Of<IJobCompletionReporter>(),
-            mockOrchestrator.Object,
-            Mock.Of<IHttpClientFactory>(),
-            new AgentIdentity("test-agent"),
-            Mock.Of<IHostApplicationLifetime>(),
-            mockLogger.Object);
+        return TestAgentWorkerServiceFactory.Create();
     }
 
     private static JobAssignmentMessage CreateTestJobAssignment(string jobId)
@@ -300,5 +262,13 @@ public class AgentWorkerServiceJobSlotTests
             BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException($"Field '{fieldName}' not found");
         return (T?)field.GetValue(obj);
+    }
+
+    private static AgentJobSlotManager GetSlotManager(AgentWorkerService service)
+    {
+        var field = typeof(AgentWorkerService).GetField("_slotManager",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("Field '_slotManager' not found");
+        return (AgentJobSlotManager)field.GetValue(service)!;
     }
 }

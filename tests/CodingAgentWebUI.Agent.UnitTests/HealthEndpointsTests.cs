@@ -36,32 +36,7 @@ public class HealthEndpointsTests : IAsyncDisposable
         // Create a mock AgentWorkerService-like object
         // Since AgentWorkerService has concrete dependencies, we register a real one
         // with a mock hub manager that reports the desired connection state
-        var mockLogger = new Mock<Serilog.ILogger>();
-        var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
-        var mockQualityGateValidator = new Mock<IQualityGateValidator>();
-
-        var hubManagerFactory = new HubConnectionManagerFactory(
-            "http://localhost:9999",
-            "test-agent",
-            "test-api-key",
-            mockLogger.Object);
-
-        var hubManager = hubManagerFactory.Create();
-
-        var executor = new LocalPipelineExecutor(
-            mockOrchestrator.Object,
-            new Mock<IHttpClientFactory>().Object,
-            new PipelineConfiguration(),
-            mockQualityGateValidator.Object,
-            mockLogger.Object,
-            agentIdentity: new AgentIdentity("test-agent"));
-
-        var consolidationExecutor = new LocalConsolidationExecutor(
-            mockOrchestrator.Object,
-            new Mock<IHttpClientFactory>().Object,
-            mockLogger.Object);
-
-        var workerService = new AgentWorkerService(hubManager, hubManagerFactory, executor, consolidationExecutor, Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, new Mock<IHttpClientFactory>().Object, new AgentIdentity("test-agent"), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
+        var workerService = TestAgentWorkerServiceFactory.Create();
 
         _host = await new HostBuilder()
             .ConfigureWebHost(webBuilder =>

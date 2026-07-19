@@ -275,7 +275,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
             CodeReview = new CodeReviewConfiguration
             {
                 MaxIterations = 1,
-                FixPrompt = PipelineConfiguration.DefaultFixPrompt
+                FixPrompt = PipelineConfigurationDefaults.DefaultFixPrompt
             }
         };
 

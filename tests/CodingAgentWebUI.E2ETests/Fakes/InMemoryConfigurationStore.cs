@@ -180,7 +180,7 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
     public Task ResetReviewerConfigsToDefaultAsync(CancellationToken ct)
     {
         _reviewerConfigs.Clear();
-        _reviewerConfigs.AddRange(PipelineConfiguration.DefaultReviewerConfigurations);
+        _reviewerConfigs.AddRange(PipelineConfigurationDefaults.DefaultReviewerConfigurations);
         return Task.CompletedTask;
     }
 

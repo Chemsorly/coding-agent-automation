@@ -8,12 +8,12 @@
         <div class="form-group">
             <label>Analysis Prompt</label>
             <textarea @bind="_analysisPrompt" rows="6"></textarea>
-            <button type="button" class="btn-revert" disabled="@(_analysisPrompt == PipelineConfiguration.DefaultAnalysisPrompt)" @onclick="() => _analysisPrompt = PipelineConfiguration.DefaultAnalysisPrompt">Reset to default</button>
+            <button type="button" class="btn-revert" disabled="@(_analysisPrompt == PipelineConfigurationDefaults.DefaultAnalysisPrompt)" @onclick="() => _analysisPrompt = PipelineConfigurationDefaults.DefaultAnalysisPrompt">Reset to default</button>
         </div>
         <div class="form-group">
             <label>Implementation Prompt</label>
             <textarea @bind="_implementationPrompt" rows="6"></textarea>
-            <button type="button" class="btn-revert" disabled="@(_implementationPrompt == PipelineConfiguration.DefaultImplementationPrompt)" @onclick="() => _implementationPrompt = PipelineConfiguration.DefaultImplementationPrompt">Reset to default</button>
+            <button type="button" class="btn-revert" disabled="@(_implementationPrompt == PipelineConfigurationDefaults.DefaultImplementationPrompt)" @onclick="() => _implementationPrompt = PipelineConfigurationDefaults.DefaultImplementationPrompt">Reset to default</button>
         </div>
         <div class="advanced-toggle" @onclick="() => _showAdvanced = !_showAdvanced">
             <span class="toggle-chevron @(_showAdvanced ? "expanded" : "")"><Icon Name="chevron-right" /></span>
@@ -35,12 +35,12 @@
             <div class="form-group">
                 <label>Analysis Review Prompt</label>
                 <textarea @bind="_analysisReviewPrompt" rows="6" disabled="@(!_analysisReviewEnabled)"></textarea>
-                <button type="button" class="btn-revert" disabled="@(!_analysisReviewEnabled || _analysisReviewPrompt == PipelineConfiguration.DefaultAnalysisReviewPrompt)" @onclick="() => _analysisReviewPrompt = PipelineConfiguration.DefaultAnalysisReviewPrompt">Reset to default</button>
+                <button type="button" class="btn-revert" disabled="@(!_analysisReviewEnabled || _analysisReviewPrompt == PipelineConfigurationDefaults.DefaultAnalysisReviewPrompt)" @onclick="() => _analysisReviewPrompt = PipelineConfigurationDefaults.DefaultAnalysisReviewPrompt">Reset to default</button>
             </div>
             <div class="form-group">
                 <label>Analysis Refinement Prompt</label>
                 <textarea @bind="_analysisRefinementPrompt" rows="6" disabled="@(!_analysisReviewEnabled)"></textarea>
-                <button type="button" class="btn-revert" disabled="@(!_analysisReviewEnabled || _analysisRefinementPrompt == PipelineConfiguration.DefaultAnalysisRefinementPrompt)" @onclick="() => _analysisRefinementPrompt = PipelineConfiguration.DefaultAnalysisRefinementPrompt">Reset to default</button>
+                <button type="button" class="btn-revert" disabled="@(!_analysisReviewEnabled || _analysisRefinementPrompt == PipelineConfigurationDefaults.DefaultAnalysisRefinementPrompt)" @onclick="() => _analysisRefinementPrompt = PipelineConfigurationDefaults.DefaultAnalysisRefinementPrompt">Reset to default</button>
             </div>
         </div>
         <div class="config-sub-fields" style="margin-top: 1rem;">
@@ -68,13 +68,13 @@
     [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
-    private string _analysisPrompt = PipelineConfiguration.DefaultAnalysisPrompt;
-    private string _implementationPrompt = PipelineConfiguration.DefaultImplementationPrompt;
+    private string _analysisPrompt = PipelineConfigurationDefaults.DefaultAnalysisPrompt;
+    private string _implementationPrompt = PipelineConfigurationDefaults.DefaultImplementationPrompt;
     private bool _acceptanceCriteriaEnabled = true;
     private string _acceptanceCriteriaPrompt = DefaultPrompts.AcceptanceCriteriaCompliance;
     private bool _analysisReviewEnabled = true;
-    private string _analysisReviewPrompt = PipelineConfiguration.DefaultAnalysisReviewPrompt;
-    private string _analysisRefinementPrompt = PipelineConfiguration.DefaultAnalysisRefinementPrompt;
+    private string _analysisReviewPrompt = PipelineConfigurationDefaults.DefaultAnalysisReviewPrompt;
+    private string _analysisRefinementPrompt = PipelineConfigurationDefaults.DefaultAnalysisRefinementPrompt;
     private bool _showAdvanced;
 
     protected override async Task OnInitializedAsync()

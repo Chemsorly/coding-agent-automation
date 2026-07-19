@@ -1,6 +1,7 @@
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -33,12 +34,15 @@ internal sealed class AgentCancellationSender : IAgentCancellationSender
     }
 
     /// <inheritdoc />
-    public async Task SendCancelJobAsync(string agentId, string runId, CancellationToken ct = default)
+    public async Task SendCancelJobAsync(AgentId agentId, string runId, CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: ThrowIfNullOrEmpty uses [CallerArgumentExpression] which reports "agentId.Value" as the
+        // parameter name instead of "agentId". Consider using the overload with explicit paramName:
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId))
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
         ArgumentNullException.ThrowIfNull(runId);
 
-        var agent = _registry.GetByAgentId(agentId);
+        var agent = _registry.GetByAgentId(agentId.Value);
         if (agent is null) return;
 
         using var perAgentCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -50,7 +54,7 @@ internal sealed class AgentCancellationSender : IAgentCancellationSender
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to send CancelJob to agent {AgentId} for run {RunId}", agentId, runId);
+            _logger.Warning(ex, "Failed to send CancelJob to agent {AgentId} for run {RunId}", agentId.Value, runId);
         }
     }
 }

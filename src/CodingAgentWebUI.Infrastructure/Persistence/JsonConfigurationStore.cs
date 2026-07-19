@@ -384,7 +384,7 @@ public class JsonConfigurationStore : IConfigurationStore
             }
         }
 
-        foreach (var config in PipelineConfiguration.DefaultReviewerConfigurations)
+        foreach (var config in PipelineConfigurationDefaults.DefaultReviewerConfigurations)
         {
             await SaveEntityAsync(config, "reviewers", c => c.Id, ct);
         }
