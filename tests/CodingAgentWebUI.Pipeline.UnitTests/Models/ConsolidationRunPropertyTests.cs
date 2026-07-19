@@ -45,6 +45,7 @@ public class ConsolidationRunPropertyTests
         deserialized.CompletedAtUtc.Should().Be(original.CompletedAtUtc);
         deserialized.Status.Should().Be(original.Status);
         deserialized.Summary.Should().Be(original.Summary);
+        deserialized.AutoDispatch.Should().Be(original.AutoDispatch);
     }
 
     /// <summary>
@@ -71,6 +72,19 @@ public class ConsolidationRunPropertyTests
             deserialized.Suggestions[i].Rationale.Should().Be(original.Suggestions[i].Rationale);
             deserialized.Suggestions[i].Frequency.Should().Be(original.Suggestions[i].Frequency);
         }
+    }
+    /// <summary>
+    /// Backward compatibility: deserializing a ConsolidationRun JSON without AutoDispatch field
+    /// defaults AutoDispatch to false.
+    /// </summary>
+    [Fact]
+    public void ConsolidationRun_BackwardCompat_MissingAutoDispatch_DefaultsFalse()
+    {
+        var json = """{"runId":"r1","type":"RefactoringDetection","startedAtUtc":"2026-01-01T00:00:00+00:00","status":"Running"}""";
+        var deserialized = JsonSerializer.Deserialize<ConsolidationRun>(json, JsonOptions);
+
+        deserialized.Should().NotBeNull();
+        deserialized!.AutoDispatch.Should().BeFalse();
     }
 }
 
@@ -122,6 +136,7 @@ public class ConsolidationRunArbitraries
                 ConsolidationRunStatus.Cancelled)
             from hasSummary in Gen.Elements(true, false)
             from summary in Gen.Elements(SummaryPool)
+            from autoDispatch in Gen.Elements(true, false)
             select new ConsolidationRun
             {
                 RunId = runId,
@@ -131,7 +146,8 @@ public class ConsolidationRunArbitraries
                 StartedAtUtc = startedAt,
                 CompletedAtUtc = hasCompleted ? startedAt.AddMinutes(5) : null,
                 Status = status,
-                Summary = hasSummary ? summary : null
+                Summary = hasSummary ? summary : null,
+                AutoDispatch = autoDispatch
             };
 
         return gen.ToArbitrary();

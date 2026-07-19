@@ -15,8 +15,11 @@ public interface IConsolidationService
     /// <param name="type">The type of consolidation loop to execute.</param>
     /// <param name="templateId">The Pipeline Job Template ID (null for harness suggestions which are global).</param>
     /// <param name="ct">Cancellation token.</param>
+    /// <param name="autoDispatch">When true, created refactoring issues will also receive the <c>agent:next</c> label.</param>
     /// <returns>The created <see cref="ConsolidationRun"/>, or <c>null</c> if the trigger was rejected.</returns>
-    Task<ConsolidationRun?> TriggerAsync(ConsolidationRunType type, string? templateId, CancellationToken ct);
+    // TODO: CancellationToken should be the last parameter per .NET convention. Changing this
+    // signature is a breaking change across all callers — defer to a separate cleanup pass.
+    Task<ConsolidationRun?> TriggerAsync(ConsolidationRunType type, string? templateId, CancellationToken ct, bool autoDispatch = false);
 
     /// <summary>
     /// Returns all consolidation runs, ordered by <see cref="ConsolidationRun.StartedAtUtc"/> descending.

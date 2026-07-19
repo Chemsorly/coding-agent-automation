@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -333,7 +332,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         createdIssues = await RunWithTracingAsync("RefactoringDetection.CreateIssues", job.JobId, async activity =>
         {
             activity?.SetTag("pipeline.proposal_count", proposals.Count);
-            return await CreateIssuesAsync(proposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, ct);
+            return await CreateIssuesAsync(proposals, issueProvider, job.PipelineConfiguration.MaxRefactoringProposals, job.AutoDispatch, ct);
         });
 
         var summary = FormatRefactoringSummary(createdIssues, proposals.Count);
@@ -350,7 +349,6 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         };
     }
 
-    /// <summary>
     /// <summary>
     /// Runs git log to identify frequently-changed files and writes a hotspot summary.
     /// Gracefully degrades on any failure — logs a warning and continues without the file.
@@ -442,46 +440,38 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
     /// <summary>
     /// Creates GitHub issues for each proposal, capped at <paramref name="maxProposals"/>.
-    /// Uses <see cref="DependencyResolver"/> to resolve title-based inter-proposal dependencies
-    /// into "Depends on #N" lines prepended to issue bodies.
-    /// Proposals are topologically sorted so dependencies are created before dependents.
     /// Individual issue creation failures are logged but do not stop processing.
     /// </summary>
+    /// <remarks>
+    /// TODO: Proposals with DependsOn fields are no longer topologically sorted before creation,
+    /// and "Depends on #N" lines are no longer injected into issue bodies. This means dependencies
+    /// between refactoring issues will not be tracked. Consider restoring TopologicalSortProposals
+    /// and DependencyResolver logic in a follow-up PR to re-enable dependency tracking.
+    /// </remarks>
     private async Task<IReadOnlyList<CreatedIssueInfo>> CreateIssuesAsync(
         IReadOnlyList<RefactoringProposal> proposals,
         IIssueProvider issueProvider,
         int maxProposals,
+        bool autoDispatch,
         CancellationToken ct)
     {
         var createdIssues = new List<CreatedIssueInfo>();
-        var proposalsToProcess = TopologicalSortProposals(proposals.Take(maxProposals).ToList());
-        var resolver = new DependencyResolver();
+        var proposalsToProcess = proposals.Take(maxProposals);
+        var labels = autoDispatch
+            ? new[] { AgentLabels.Generated, AgentLabels.Next }
+            : new[] { AgentLabels.Generated };
 
         foreach (var proposal in proposalsToProcess)
         {
             try
             {
-                // Resolve title-based dependencies to "Depends on #N" lines
-                IReadOnlyList<string>? resolvedDeps = null;
-                if (proposal.DependsOn is { Count: > 0 })
-                {
-                    resolvedDeps = resolver.Resolve(proposal.DependsOn, Logger);
-                }
-
-                var body = FormatIssueBody(proposal, resolvedDeps);
+                var body = FormatIssueBody(proposal);
                 var sanitizedTitle = SanitizeTitle(proposal.Title);
                 var result = await issueProvider.CreateIssueAsync(
                     sanitizedTitle,
                     body,
-                    new[] { AgentLabels.Generated },
+                    labels,
                     ct);
-
-                // Register both raw and sanitized title for resolution
-                // (DependsOn references use raw titles from the same JSON array)
-                resolver.Register(proposal.Title, result.Identifier);
-                var sanitized = SanitizeTitle(proposal.Title);
-                if (!string.Equals(proposal.Title.Trim(), sanitized, StringComparison.OrdinalIgnoreCase))
-                    resolver.Register(sanitized, result.Identifier);
 
                 createdIssues.Add(new CreatedIssueInfo
                 {
@@ -504,89 +494,15 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     }
 
     /// <summary>
-    /// Topologically sorts proposals so dependencies are created before dependents.
-    /// Falls back to original order if a cycle is detected or on any error.
-    /// Uses a simple Kahn's algorithm — safe for small collections (max ~10 proposals).
-    /// </summary>
-    internal static IReadOnlyList<RefactoringProposal> TopologicalSortProposals(IReadOnlyList<RefactoringProposal> proposals)
-    {
-        if (proposals.Count <= 1)
-            return proposals;
-
-        // Build title→index lookup (case-insensitive, trimmed — matches DependencyResolver behavior)
-        var titleToIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        for (int i = 0; i < proposals.Count; i++)
-            titleToIndex.TryAdd(proposals[i].Title.Trim(), i);
-
-        // Build adjacency: inDegree[i] = number of proposals that i depends on (within batch)
-        var inDegree = new int[proposals.Count];
-        var dependents = new List<int>[proposals.Count];
-        for (int i = 0; i < proposals.Count; i++)
-            dependents[i] = new List<int>();
-
-        for (int i = 0; i < proposals.Count; i++)
-        {
-            if (proposals[i].DependsOn is not { Count: > 0 }) continue;
-
-            foreach (var depTitle in proposals[i].DependsOn!)
-            {
-                if (string.IsNullOrWhiteSpace(depTitle)) continue;
-                if (titleToIndex.TryGetValue(depTitle.Trim(), out var depIndex) && depIndex != i)
-                {
-                    inDegree[i]++;
-                    dependents[depIndex].Add(i);
-                }
-            }
-        }
-
-        // Kahn's algorithm
-        var queue = new Queue<int>();
-        for (int i = 0; i < proposals.Count; i++)
-        {
-            if (inDegree[i] == 0)
-                queue.Enqueue(i);
-        }
-
-        var sorted = new List<RefactoringProposal>(proposals.Count);
-        while (queue.Count > 0)
-        {
-            var idx = queue.Dequeue();
-            sorted.Add(proposals[idx]);
-            foreach (var dep in dependents[idx])
-            {
-                inDegree[dep]--;
-                if (inDegree[dep] == 0)
-                    queue.Enqueue(dep);
-            }
-        }
-
-        // Cycle detected — fall back to original order
-        if (sorted.Count < proposals.Count)
-            return proposals;
-
-        return sorted;
-    }
-
-    /// <summary>
     /// Formats the issue body from a refactoring proposal using the project's issue template.
-    /// Optionally prepends resolved dependency lines (e.g., "Depends on #1425") before the body.
     /// </summary>
-    internal static string FormatIssueBody(RefactoringProposal proposal, IReadOnlyList<string>? resolvedDependencies = null)
+    internal static string FormatIssueBody(RefactoringProposal proposal)
     {
         var sanitizedDescription = SanitizeMarkdown(proposal.Description);
         var sanitizedRationale = SanitizeMarkdown(proposal.Rationale);
         var affectedFiles = string.Join("\n", proposal.AffectedFiles.Select(f => $"- `{f}`"));
 
         var sb = new StringBuilder();
-
-        // Prepend resolved dependency lines so DependencyParser can find them
-        if (resolvedDependencies is { Count: > 0 })
-        {
-            foreach (var dep in resolvedDependencies)
-                sb.AppendLine(dep);
-            sb.AppendLine();
-        }
-
         sb.AppendLine("## Summary");
         sb.AppendLine();
         sb.AppendLine(sanitizedDescription);
@@ -608,8 +524,11 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         {
             sb.AppendLine("## Prerequisites");
             sb.AppendLine();
+            // TODO: SanitizeMarkdown does not escape #N patterns (e.g., "proposal #1") which GitHub
+            // auto-links to unrelated issues. Consider restoring #N autolink escaping (previously
+            // handled by a dedicated SanitizePrerequisite method) to prevent misleading cross-references.
             foreach (var prereq in proposal.Prerequisites.Where(p => p is not null))
-                sb.AppendLine($"- {SanitizePrerequisite(prereq)}");
+                sb.AppendLine($"- {SanitizeMarkdown(prereq)}");
             sb.AppendLine();
         }
 
@@ -653,20 +572,6 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     /// Delegates to <see cref="TextSanitizer.SanitizeMarkdown"/>.
     /// </summary>
     private static string SanitizeMarkdown(string value) => TextSanitizer.SanitizeMarkdown(value);
-
-    /// <summary>
-    /// Sanitizes prerequisite text: applies standard markdown escaping and
-    /// escapes bare #N patterns to prevent wrong GitHub autolinks.
-    /// GitHub auto-links #\d+ to issue numbers — agent-produced prerequisites
-    /// may contain "proposal #1" which would link to wrong issues.
-    /// </summary>
-    private static string SanitizePrerequisite(string value)
-    {
-        var sanitized = SanitizeMarkdown(value);
-        // Escape #N patterns with backtick-wrapping to suppress GitHub autolinking.
-        // Negative lookbehind avoids false positives on "C# 12", "F# 8", etc.
-        return Regex.Replace(sanitized, @"(?<![A-Za-z])#(\d+)", "`#$1`");
-    }
 
     /// <summary>
     /// Formats the refactoring run summary with issue count and identifiers.

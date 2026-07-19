@@ -134,6 +134,14 @@ public record JobDistributionRequest
     public string? ConsolidationWorkspacePath { get; init; }
 
     /// <summary>
+    /// When true, created refactoring issues will receive both <c>agent:generated</c> and
+    /// <c>agent:next</c> labels. Propagated through the queue/drain/K8s path to ensure
+    /// the flag reaches the executor even when the job is enqueued and dispatched later.
+    /// Defaults to <c>false</c> for backward compatibility.
+    /// </summary>
+    public bool AutoDispatch { get; init; }
+
+    /// <summary>
     /// Pre-assigned run/job ID from orchestration. When set, the work distributor
     /// should use this as the WorkItem ID instead of generating a new one.
     /// This ensures the agent's jobId matches the in-memory PipelineRun.RunId
