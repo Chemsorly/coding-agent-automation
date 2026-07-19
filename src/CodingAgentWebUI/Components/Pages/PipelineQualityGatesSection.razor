@@ -67,7 +67,7 @@
                 <div class="form-group">
                     <label>Fix Prompt <span class="form-hint">(leave empty for single-pass review)</span></label>
                     <textarea @bind="_codeReviewFixPrompt" rows="3"></textarea>
-                    <button type="button" class="btn-revert" disabled="@(_codeReviewFixPrompt == PipelineConfiguration.DefaultFixPrompt)" @onclick="() => _codeReviewFixPrompt = PipelineConfiguration.DefaultFixPrompt">Reset to default</button>
+                    <button type="button" class="btn-revert" disabled="@(_codeReviewFixPrompt == PipelineConfigurationDefaults.DefaultFixPrompt)" @onclick="() => _codeReviewFixPrompt = PipelineConfigurationDefaults.DefaultFixPrompt">Reset to default</button>
                 </div>
             </div>
         }

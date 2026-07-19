@@ -283,14 +283,14 @@ public class ReviewerConfigurationStoreTests : IDisposable
 
         // Assert — custom configs gone, defaults present
         var loaded = await _store.LoadReviewerConfigsAsync(CancellationToken.None);
-        Assert.Equal(PipelineConfiguration.DefaultReviewerConfigurations.Count, loaded.Count);
+        Assert.Equal(PipelineConfigurationDefaults.DefaultReviewerConfigurations.Count, loaded.Count);
 
         var defaultConfig = Assert.Single(loaded);
-        Assert.Equal(PipelineConfiguration.DefaultReviewerConfigurationId, defaultConfig.Id);
+        Assert.Equal(PipelineConfigurationDefaults.DefaultReviewerConfigurationId, defaultConfig.Id);
         Assert.Equal("Default Reviewers", defaultConfig.DisplayName);
         Assert.Empty(defaultConfig.MatchLabels);
         Assert.True(defaultConfig.Enabled);
-        Assert.Equal(PipelineConfiguration.DefaultReviewAgents.Count, defaultConfig.Agents.Count);
+        Assert.Equal(PipelineConfigurationDefaults.DefaultReviewAgents.Count, defaultConfig.Agents.Count);
 
         // Old custom files should not exist on disk
         var reviewersDir = Path.Combine(_tempDir, "reviewers");
@@ -310,8 +310,8 @@ public class ReviewerConfigurationStoreTests : IDisposable
 
         // Assert — defaults were written
         var loaded = await _store.LoadReviewerConfigsAsync(CancellationToken.None);
-        Assert.Equal(PipelineConfiguration.DefaultReviewerConfigurations.Count, loaded.Count);
-        Assert.Equal(PipelineConfiguration.DefaultReviewerConfigurationId, loaded[0].Id);
+        Assert.Equal(PipelineConfigurationDefaults.DefaultReviewerConfigurations.Count, loaded.Count);
+        Assert.Equal(PipelineConfigurationDefaults.DefaultReviewerConfigurationId, loaded[0].Id);
     }
 
     [Fact]
@@ -335,7 +335,7 @@ public class ReviewerConfigurationStoreTests : IDisposable
         // Assert — subsequent load returns defaults, not cached custom config
         var afterReset = await _store.LoadReviewerConfigsAsync(CancellationToken.None);
         Assert.DoesNotContain(afterReset, c => c.Id == "cached-config");
-        Assert.Contains(afterReset, c => c.Id == PipelineConfiguration.DefaultReviewerConfigurationId);
+        Assert.Contains(afterReset, c => c.Id == PipelineConfigurationDefaults.DefaultReviewerConfigurationId);
     }
 
     [Fact]
@@ -348,10 +348,10 @@ public class ReviewerConfigurationStoreTests : IDisposable
         var loaded = await _store.LoadReviewerConfigsAsync(CancellationToken.None);
         var config = Assert.Single(loaded);
 
-        for (var i = 0; i < PipelineConfiguration.DefaultReviewAgents.Count; i++)
+        for (var i = 0; i < PipelineConfigurationDefaults.DefaultReviewAgents.Count; i++)
         {
-            Assert.Equal(PipelineConfiguration.DefaultReviewAgents[i].Name, config.Agents[i].Name);
-            Assert.Equal(PipelineConfiguration.DefaultReviewAgents[i].Prompt, config.Agents[i].Prompt);
+            Assert.Equal(PipelineConfigurationDefaults.DefaultReviewAgents[i].Name, config.Agents[i].Name);
+            Assert.Equal(PipelineConfigurationDefaults.DefaultReviewAgents[i].Prompt, config.Agents[i].Prompt);
         }
     }
 }
