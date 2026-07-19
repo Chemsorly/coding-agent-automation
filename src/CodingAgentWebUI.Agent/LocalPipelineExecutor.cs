@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using CodingAgentWebUI.Agent.KiroCli;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -51,6 +50,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     private readonly AgentIdentity _agentIdentity;
     private readonly AgentProviderResolver _providerResolver;
     private readonly IPipelineReporterFactory _reporterFactory;
+    private readonly PipelineExecutionContextBuilder _contextBuilder;
     private readonly Serilog.ILogger _logger;
 
     public LocalPipelineExecutor(
@@ -83,6 +83,9 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         _agentIdentity = agentIdentity ?? new AgentIdentity(Environment.MachineName);
         _providerResolver = new AgentProviderResolver(logger);
         _reporterFactory = reporterFactory ?? new PipelineReporterFactory(logger);
+        _contextBuilder = new PipelineExecutionContextBuilder(
+            qualityGateValidator, _reporterFactory, _feedbackService, _agentIdentity, logger,
+            brainUpdateService, historyService);
         _logger = logger;
     }
 
@@ -211,104 +214,32 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         CancellationToken ct,
         List<(string TemplateName, IRepositoryProvider Provider)>? additionalRepoProviders = null)
     {
-        var run = PipelineRun.Create(
-            runId: job.JobId,
-            issueIdentifier: job.IssueIdentifier,
-            issueTitle: job.IssueDetail.Title,
-            issueProviderConfigId: string.Empty, // Agent doesn't have issue provider
-            repoProviderConfigId: job.RepoProviderConfigId,
-            runType: job.RunType,
-            initiatedBy: job.InitiatedBy,
-            agentId: _agentIdentity.Id,
-            brainProviderConfigId: brainProvider is not null ? job.BrainProviderConfigId : null,
-            reviewPrBranchName: job.LinkedPullRequest?.BranchName,
-            reviewPrTargetBranch: job.ReviewPrTargetBranch,
-            reviewPrDescription: job.ReviewPrDescription,
-            reviewPrAuthor: job.ReviewPrAuthor,
-            linkedIssueContexts: job.LinkedIssueContexts);
-        run.RepositoryName = repoProvider.RepositoryFullName;
-        run.ModelName = agentProvider is KiroCliAgentProvider kp ? kp.Model : null;
-        run.PipelineProviderConfigId = job.PipelineProviderConfigId;
-        run.LinkedPullRequest = job.LinkedPullRequest;
-        run.ProjectId = job.ProjectId;
-        run.ProjectName = job.ProjectName;
+        // TODO: Resource leak if Build() throws after partial construction (e.g., OOM during
+        // PipelineExecutionContext allocation). localCts and reporter are created inside Build()
+        // but the finally block won't run if Build() itself throws. Consider wrapping Build() in
+        // a try/finally or moving it inside the existing try block with partial-state handling.
+        var buildResult = _contextBuilder.Build(
+            job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
+            issueOps, connection, outputBatcher, onStepChanged, ct);
 
-        run.IssueLabels = job.IssueDetail.Labels;
-
-        // Orchestrators
-        var agentExecution = new AgentPhaseExecutor(_logger);
-        var prOrchestrator = new PullRequestOrchestrator(_logger);
-        var qualityGates = new QualityGateExecutor(_qualityGateValidator, prOrchestrator, new CiLogWriter(_logger), _feedbackService, _logger, _historyService);
-        BrainSyncService? brainSync = _brainUpdateService is not null
-            ? new BrainSyncService(_brainUpdateService, _logger)
-            : null;
-
-        // SignalR communication is encapsulated in PipelineSignalRReporter which owns the
-        // serialization semaphore and all *InternalAsync methods. Manually disposed via
-        // await reporter.DisposeAsync() in the finally block, which drains in-flight sends
-        // before releasing the semaphore.
-        // TODO: Consider using `await using` declaration to make the dispose pattern clearer.
-        var reporter = _reporterFactory.Create(connection, outputBatcher, job.JobId, run, onStepChanged);
-
-        CancellationTokenSource? localCts = null;
-        PipelineStepContext? context = null;
-
-        // Fire-and-forget wrappers delegating to the reporter.
-        // context.InjectedSecrets is null until RunEnvironmentSetupStep populates it,
-        // so output before that step passes through unmasked (no secrets exist yet).
-        void TransitionTo(PipelineStep step) => reporter.TransitionTo(step, ct);
-        void ReportQualityGateResult(QualityGateReport report) => reporter.ReportQualityGateResult(report, ct);
-        void EmitOutputLine(string line) => reporter.EmitOutputLine(line, context, ct);
+        var run = buildResult.Run;
+        var reporter = buildResult.Reporter;
 
         using var _runIdCtx = LogContext.PushProperty("PipelineRunId", run.RunId);
         using var _issueCtx = LogContext.PushProperty("IssueIdentifier", run.IssueIdentifier);
 
+        PipelineStepContext? stepContext = null;
+
         try
         {
-            localCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            var linkedCt = localCts.Token;
+            var linkedCt = buildResult.LocalCts.Token;
 
-            var prContext = new PullRequestCreationContext
-            {
-                RepoProvider = repoProvider,
-                AgentProvider = agentProvider,
-                BrainProvider = brainProvider,
-                BrainSync = brainSync,
-                Config = config,
-                IssueOps = issueOps,
-                Job = job,
-                PrOrchestrator = prOrchestrator,
-                EmitOutputLine = EmitOutputLine,
-                ReportStepTransition = (step, token) => reporter.ReportStepTransitionAsync(step, token)
-            };
-
-            // Build step context
-            var executionContext = new PipelineExecutionContext
-            {
-                Job = job,
-                Run = run,
-                Config = config,
-                RepoProvider = repoProvider,
-                AgentProvider = agentProvider,
-                BrainProvider = brainProvider,
-                BrainSync = brainSync,
-                PipelineProvider = pipelineProvider,
-                IssueOps = issueOps,
-                PrOrchestrator = prOrchestrator,
-                AgentExecution = agentExecution,
-                QualityGates = qualityGates,
-                LocalCts = localCts,
-                PrContext = prContext,
-                TransitionTo = TransitionTo,
-                EmitOutputLine = EmitOutputLine,
-                ReportQualityGateResult = ReportQualityGateResult
-            };
-
-            context = CreateStepContext(executionContext, reporter, ct);
+            stepContext = CreateStepContext(buildResult.ExecutionContext, reporter, ct);
+            buildResult.StepContext = stepContext;
 
             // Inject additional repo providers for cross-repo decomposition cloning
             if (additionalRepoProviders is { Count: > 0 })
-                context.AdditionalRepoProviders = additionalRepoProviders;
+                stepContext.AdditionalRepoProviders = additionalRepoProviders;
 
             // Build step pipeline based on run type
             var steps = run.RunType switch
@@ -319,12 +250,8 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                 _ => BuildAgentStepPipeline(job, issueOps, repoConfig)
             };
 
-            var outcome = await PipelineRunExecutionHost.ExecuteStepsAsync(steps, context, linkedCt);
+            var outcome = await PipelineRunExecutionHost.ExecuteStepsAsync(steps, stepContext, linkedCt);
 
-            // TODO: Subtle behavioral change from original code — exceptions thrown inside the CompletedOutcome
-            // branch (e.g., MarkCompleted, property setters) now propagate to the outer catch rather than being
-            // returned as a failure payload. In practice these are trivial property setters, but the error-handling
-            // contract is technically different from the original try/catch that wrapped both execution and post-success logic.
             switch (outcome)
             {
                 case PipelineExecutionOutcome.CompletedOutcome:
@@ -347,7 +274,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
                     // transition and subsequent EmitOutputLine may race. DisposeAsync in the finally
                     // block drains both, but orchestrator may observe non-deterministic order.
                     reporter.TransitionTo(PipelineStep.Cancelled, CancellationToken.None);
-                    EmitOutputLine("🚫 Pipeline cancelled");
+                    buildResult.EmitOutputLine("🚫 Pipeline cancelled");
 
                     run.FinalLabel = AgentLabels.Cancelled;
                     return new JobCompletionPayload
@@ -369,34 +296,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         }
         finally
         {
-            localCts?.Dispose();
-
-            // Clean up injected environment secrets
-            if (context?.InjectedSecretKeys is { Count: > 0 })
-            {
-                foreach (var key in context.InjectedSecretKeys)
-                    Environment.SetEnvironmentVariable(key, null);
-                _logger.Debug("Cleaned up {Count} injected secret keys", context.InjectedSecretKeys.Count);
-            }
-
-            // Workspace cleanup
-            try
-            {
-                if (run.CurrentStep is PipelineStep.Completed or PipelineStep.Failed or PipelineStep.Cancelled
-                    && !string.IsNullOrEmpty(run.WorkspacePath) && Directory.Exists(run.WorkspacePath))
-                {
-                    Directory.Delete(run.WorkspacePath, recursive: true);
-                    _logger.Information("Cleaned up workspace {WorkspacePath} (step={Step})", run.WorkspacePath, run.CurrentStep);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to clean up workspace {WorkspacePath}", run.WorkspacePath);
-            }
-
-            // Drain in-flight serialized sends before disposing the semaphore.
-            // PipelineSignalRReporter.DisposeAsync drains and disposes the SemaphoreSlim.
-            await reporter.DisposeAsync();
+            await PipelineCleanup.RunAsync(buildResult.LocalCts, stepContext, run, reporter, _logger);
         }
     }
 
