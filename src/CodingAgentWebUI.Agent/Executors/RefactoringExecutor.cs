@@ -350,7 +350,6 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     }
 
     /// <summary>
-    /// <summary>
     /// Runs git log to identify frequently-changed files and writes a hotspot summary.
     /// Gracefully degrades on any failure — logs a warning and continues without the file.
     /// </summary>

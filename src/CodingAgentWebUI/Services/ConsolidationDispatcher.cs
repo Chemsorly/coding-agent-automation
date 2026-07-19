@@ -393,7 +393,6 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     }
 
     /// <summary>
-    /// <summary>
     /// Gets the CompletedAtUtc of the last successful run for the given type and template.
     /// </summary>
     private async Task<DateTimeOffset?> GetLastSuccessfulRunUtcAsync(
