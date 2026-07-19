@@ -658,4 +658,86 @@ public class RefactoringExecutorTests : IDisposable
         body.Should().NotContain("Depends on");
         body.Should().StartWith("## Summary");
     }
+
+    // ─── Topological Sort ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TopologicalSort_IndependentProposals_PreservesOrder()
+    {
+        var proposals = new List<RefactoringProposal>
+        {
+            new() { Title = "A", AffectedFiles = ["x"], Description = "d", Rationale = "r" },
+            new() { Title = "B", AffectedFiles = ["x"], Description = "d", Rationale = "r" },
+            new() { Title = "C", AffectedFiles = ["x"], Description = "d", Rationale = "r" }
+        };
+
+        var sorted = RefactoringExecutor.TopologicalSortProposals(proposals);
+
+        sorted.Select(p => p.Title).Should().ContainInOrder("A", "B", "C");
+    }
+
+    [Fact]
+    public void TopologicalSort_DependentProposal_MovedAfterDependency()
+    {
+        var proposals = new List<RefactoringProposal>
+        {
+            new() { Title = "B depends on A", AffectedFiles = ["x"], Description = "d", Rationale = "r", DependsOn = ["A is independent"] },
+            new() { Title = "A is independent", AffectedFiles = ["x"], Description = "d", Rationale = "r" }
+        };
+
+        var sorted = RefactoringExecutor.TopologicalSortProposals(proposals);
+
+        sorted[0].Title.Should().Be("A is independent");
+        sorted[1].Title.Should().Be("B depends on A");
+    }
+
+    [Fact]
+    public void TopologicalSort_CyclicDependency_FallsBackToOriginalOrder()
+    {
+        var proposals = new List<RefactoringProposal>
+        {
+            new() { Title = "A", AffectedFiles = ["x"], Description = "d", Rationale = "r", DependsOn = ["B"] },
+            new() { Title = "B", AffectedFiles = ["x"], Description = "d", Rationale = "r", DependsOn = ["A"] }
+        };
+
+        var sorted = RefactoringExecutor.TopologicalSortProposals(proposals);
+
+        // Cycle → fallback to original order
+        sorted[0].Title.Should().Be("A");
+        sorted[1].Title.Should().Be("B");
+    }
+
+    [Fact]
+    public void TopologicalSort_ExternalDependency_IgnoredGracefully()
+    {
+        var proposals = new List<RefactoringProposal>
+        {
+            new() { Title = "A", AffectedFiles = ["x"], Description = "d", Rationale = "r", DependsOn = ["External issue not in batch"] }
+        };
+
+        var sorted = RefactoringExecutor.TopologicalSortProposals(proposals);
+
+        sorted[0].Title.Should().Be("A");
+    }
+
+    // ─── Regex: C# language name not escaped ─────────────────────────────────────
+
+    [Fact]
+    public void FormatIssueBody_PrerequisiteWithCSharpLanguage_NotEscaped()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            Prerequisites = ["Requires C# 12 support"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        // "C# 12" should NOT be escaped — the lookbehind prevents it
+        body.Should().Contain("C# 12");
+        body.Should().NotContain("C`#12`");
+    }
 }
