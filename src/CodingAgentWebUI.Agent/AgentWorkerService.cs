@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Text.Json;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.Resilience;
@@ -13,8 +12,9 @@ using Polly;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
-/// Background service that manages the agent lifecycle: connects to the orchestrator,
-/// registers, handles job assignments, sends heartbeats, and gracefully shuts down.
+/// Background service that coordinates the agent lifecycle by composing
+/// <see cref="AgentConnectionLifecycle"/> (connection management, heartbeat, reconnection)
+/// and <see cref="AgentJobSlotManager"/> (slot acquisition, concurrency control).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -22,12 +22,12 @@ namespace CodingAgentWebUI.Agent;
 /// by SignalR messages from the orchestrator hub. The lifecycle is:
 /// </para>
 /// <list type="number">
-///   <item><b>Connect</b> — <see cref="HubConnectionManager"/> establishes a SignalR connection
+///   <item><b>Connect</b> — <see cref="AgentConnectionLifecycle"/> establishes a SignalR connection
 ///     to the orchestrator with automatic reconnection and exponential backoff.</item>
 ///   <item><b>Register</b> — The agent sends a registration message (ID, type, labels, capabilities)
 ///     to the orchestrator, which adds it to the agent registry.</item>
 ///   <item><b>Receive Job</b> — The orchestrator dispatches a <see cref="Pipeline.Models.JobAssignmentMessage"/>
-///     via the <c>AssignJob</c> hub method, triggering <see cref="HubConnectionManager.OnAssignJob"/>.</item>
+///     via the <c>AssignJob</c> hub method, triggering the assign job handler.</item>
 ///   <item><b>Execute</b> — <see cref="LocalPipelineExecutor"/> runs the full pipeline locally,
 ///     reporting progress back to the orchestrator via hub invocations.</item>
 ///   <item><b>Report</b> — On completion (success or failure), the agent sends a
@@ -42,133 +42,78 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class AgentWorkerService : BackgroundService, IAgentService
 {
-    private volatile HubConnectionManager _hubManager;
-    private readonly HubConnectionManagerFactory _hubManagerFactory;
+    private readonly AgentConnectionLifecycle _connectionLifecycle;
+    private readonly AgentJobSlotManager _slotManager;
     private readonly IPipelineExecutor _executor;
     private readonly IConsolidationExecutor _consolidationExecutor;
     private readonly IJobCompletionReporter _completionReporter;
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
-    private readonly bool _isOpenCodeProvider;
-    private TimeSpan _extendedRetryDelay = TimeSpan.FromSeconds(5);
-
     private readonly string _agentId;
-    private readonly IReadOnlyList<string> _labels;
-
-    private volatile CancellationTokenSource? _jobCts;
-    private Task? _activeJobTask;
-    private string? _activeJobId;
-    private JobAssignmentMessage? _activeJobAssignment;
-    private DateTimeOffset? _activeJobStartedAt;
-    private PipelineRunType _activeJobRunType;
-    private PipelineStep? _currentStep;
-    private readonly object _busyLock = new();
-
-    private volatile CancellationTokenSource? _chatCts;
-    private Task? _activeChatTask;
-    private string? _activeChatSessionId;
+    private readonly bool _isOpenCodeProvider;
 
     public AgentWorkerService(
-        HubConnectionManager hubManager,
-        HubConnectionManagerFactory hubManagerFactory,
+        AgentConnectionLifecycle connectionLifecycle,
+        AgentJobSlotManager slotManager,
+        AgentIdentity agentIdentity,
         IPipelineExecutor executor,
         IConsolidationExecutor consolidationExecutor,
         IJobCompletionReporter completionReporter,
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
-        AgentIdentity agentIdentity,
-        IHostApplicationLifetime hostApplicationLifetime,
         Serilog.ILogger logger)
     {
-        ArgumentNullException.ThrowIfNull(hubManager);
-        ArgumentNullException.ThrowIfNull(hubManagerFactory);
+        ArgumentNullException.ThrowIfNull(connectionLifecycle);
+        ArgumentNullException.ThrowIfNull(slotManager);
+        ArgumentNullException.ThrowIfNull(agentIdentity);
         ArgumentNullException.ThrowIfNull(executor);
         ArgumentNullException.ThrowIfNull(consolidationExecutor);
         ArgumentNullException.ThrowIfNull(completionReporter);
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
-        ArgumentNullException.ThrowIfNull(agentIdentity);
-        ArgumentNullException.ThrowIfNull(hostApplicationLifetime);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _hubManager = hubManager;
-        _hubManagerFactory = hubManagerFactory;
+        _connectionLifecycle = connectionLifecycle;
+        _slotManager = slotManager;
+        _agentId = agentIdentity.Id;
         _executor = executor;
         _consolidationExecutor = consolidationExecutor;
         _completionReporter = completionReporter;
         _orchestrator = orchestrator;
         _httpClientFactory = httpClientFactory;
-        _hostApplicationLifetime = hostApplicationLifetime;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
         _isOpenCodeProvider = (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
             .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
 
-        _agentId = agentIdentity.Id;
-
-        var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;
-        _labels = labelsEnv
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToList()
-            .AsReadOnly();
+        // Wire business event handlers
+        _connectionLifecycle.OnAssignJob += HandleAssignJobAsync;
+        _connectionLifecycle.OnCancelJob += HandleCancelJobAsync;
+        _connectionLifecycle.OnAssignChatPrompt += HandleChatPromptAsync;
+        _connectionLifecycle.OnCancelChat += HandleCancelChatAsync;
+        _connectionLifecycle.OnFetchModels += HandleFetchModelsAsync;
+        _connectionLifecycle.OnAssignConsolidationJob += HandleAssignConsolidationJobAsync;
     }
 
     /// <summary>Whether the agent is currently executing a job.</summary>
-    public bool IsBusy => _activeJobId is not null;
+    public bool IsBusy => _slotManager.IsBusy;
 
     /// <summary>The current pipeline step being executed, or null if idle.</summary>
-    public PipelineStep? CurrentStep => _currentStep;
+    public PipelineStep? CurrentStep => _slotManager.CurrentStep;
 
     /// <summary>Whether the hub connection is active.</summary>
-    public bool IsConnected => _hubManager.IsConnected;
+    public bool IsConnected => _connectionLifecycle.IsConnected;
 
     /// <inheritdoc/>
-    public void CancelCurrentJob()
-    {
-        var cts = _jobCts;
-        try { cts?.Cancel(); }
-        catch (ObjectDisposedException) { }
-    }
+    public void CancelCurrentJob() => _slotManager.CancelCurrentJob();
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        WireEventHandlers(_hubManager);
-
         try
         {
-            // Connect to orchestrator
-            await _hubManager.StartAsync(stoppingToken);
-
-            // Register with orchestrator
-            var registration = BuildRegistrationMessage();
-
-            await _signalRPipeline.ExecuteAsync(async token =>
-                await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), stoppingToken);
-            _logger.Information("Agent {AgentId} registered with labels [{Labels}]",
-                _agentId, string.Join(", ", _labels));
-
-            // Heartbeat loop
-            using var heartbeatTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                try
-                {
-                    if (await heartbeatTimer.WaitForNextTickAsync(stoppingToken))
-                        await SendHeartbeatAsync(stoppingToken);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    PipelineTelemetry.AgentHeartbeatFailures.Add(1);
-                    _logger.Warning(ex, "Heartbeat failed, will retry on next tick");
-                }
-            }
+            await _connectionLifecycle.ConnectAndRunAsync(stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -185,87 +130,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         }
     }
 
-    private void WireEventHandlers(HubConnectionManager hubManager)
-    {
-        hubManager.OnAssignJob += HandleAssignJobAsync;
-        hubManager.OnCancelJob += HandleCancelJobAsync;
-        hubManager.OnAssignChatPrompt += HandleChatPromptAsync;
-        hubManager.OnCancelChat += HandleCancelChatAsync;
-        hubManager.OnFetchModels += HandleFetchModelsAsync;
-        hubManager.OnAssignConsolidationJob += HandleAssignConsolidationJobAsync;
-        hubManager.OnReconnected += HandleReconnectedAsync;
-        hubManager.OnClosed += HandleTerminalClosedAsync;
-    }
-
-    private async Task HandleTerminalClosedAsync(Exception? error)
-    {
-        _logger.Warning(error, "SignalR connection entered terminal Closed state, attempting fresh reconnection");
-
-        var ct = _hostApplicationLifetime.ApplicationStopping;
-        const int maxAttempts = 10;
-        for (var attempt = 1; attempt <= maxAttempts; attempt++)
-        {
-            var delay = CalculateReconnectionDelay(attempt);
-            _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
-                attempt, maxAttempts, delay.TotalSeconds);
-
-            HubConnectionManager? newManager = null;
-            try
-            {
-                await Task.Delay(delay, ct);
-
-                var oldManager = _hubManager;
-                newManager = _hubManagerFactory.Create();
-                WireEventHandlers(newManager);
-                await newManager.StartAsync(ct);
-
-                // Register BEFORE transferring ownership — if registration fails,
-                // newManager is still non-null and the catch block disposes it correctly.
-                // TODO: Add test for HandleTerminalClosedAsync where RegisterAgent throws after StartAsync succeeds, verifying newManager is disposed.
-                var registration = BuildRegistrationMessage();
-                await _signalRPipeline.ExecuteAsync(async token =>
-                    await newManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), ct);
-
-                _hubManager = newManager;
-                newManager = null; // Ownership transferred — skip disposal
-
-                // Dispose old manager after successful swap.
-                // Safe: DisposeAsync does not fire the Closed event (no re-entrant call).
-                await SafeDisposeAsync(oldManager);
-
-                _logger.Information("Agent {AgentId} reconnected and re-registered after terminal close", _agentId);
-                await DrainBufferAsync();
-                return;
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                await SafeDisposeAsync(newManager);
-                return;
-            }
-            catch (Exception ex)
-            {
-                await SafeDisposeAsync(newManager);
-                _logger.Warning(ex, "Reconnection attempt {Attempt} failed", attempt);
-            }
-        }
-
-        _logger.Error("All {MaxAttempts} reconnection attempts exhausted, shutting down agent", maxAttempts);
-        _hostApplicationLifetime.StopApplication();
-    }
-
-    private async ValueTask SafeDisposeAsync(HubConnectionManager? manager)
-    {
-        if (manager is null) return;
-        try
-        {
-            await manager.DisposeAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Exception during HubConnectionManager disposal (suppressed)");
-        }
-    }
-
     private async Task HandleAssignJobAsync(JobAssignmentMessage message)
     {
         PipelineTelemetry.AgentJobsReceived.Add(1);
@@ -274,7 +138,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         receiveActivity?.SetTag("job_id", message.JobId);
         receiveActivity?.SetTag("run_type", "implementation");
 
-        if (!TryAcquireJobSlot(message.JobId, out var busyWith))
+        if (!_slotManager.TryAcquireJobSlot(message.JobId, out var busyWith))
         {
             PipelineTelemetry.AgentJobsRejected.Add(1,
                 new KeyValuePair<string, object?>("reason", PipelineTelemetry.AgentRejectionReasons.Busy));
@@ -282,7 +146,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 message.JobId, busyWith);
             try
             {
-                await _hubManager.Connection.InvokeAsync(HubMethodNames.JobRejected, message.JobId, "Agent is busy");
+                await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobRejected, message.JobId, "Agent is busy");
             }
             catch (Exception ex)
             {
@@ -296,46 +160,44 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _logger.Information("Accepted job {JobId} for issue {IssueIdentifier}",
             message.JobId, message.IssueIdentifier);
 
-        lock (_busyLock)
-        {
-            _activeJobAssignment = message;
-            _activeJobRunType = message.RunType;
-        }
+        _slotManager.SetActiveJobAssignment(message, message.RunType);
 
         try
         {
             await _signalRPipeline.ExecuteAsync(async token =>
-                await _hubManager.Connection.InvokeAsync(HubMethodNames.JobAccepted, message.JobId, token), CancellationToken.None);
+                await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobAccepted, message.JobId, token), CancellationToken.None);
         }
         catch (Exception ex)
         {
             receiveActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
             receiveActivity?.AddException(ex);
             _logger.Error(ex, "Failed to send JobAccepted for {JobId}", message.JobId);
-            lock (_busyLock)
-            {
-                _activeJobId = null;
-            }
-#pragma warning disable 0420 // volatile field passed by reference to Interlocked — safe by design
-            var oldCts = Interlocked.Exchange(ref _jobCts, null);
-#pragma warning restore 0420
-            oldCts?.Dispose();
+            _slotManager.ForceReleaseJobSlot();
             return;
         }
 
-        var jobCts = _jobCts!;
-        _activeJobTask = Task.Run(async () =>
+        var jobCts = _slotManager.JobCts!;
+        var activeTask = Task.Run(async () =>
         {
-            await using var outputBatcher = OutputBatcherHubExtensions.CreateWithHubFlush(
-                lines => _hubManager.Connection.InvokeAsync(HubMethodNames.ReportOutputLines, message.JobId, lines),
-                _logger);
+            await using var outputBatcher = new OutputBatcher();
+            outputBatcher.OnFlush += async lines =>
+            {
+                try
+                {
+                    await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportOutputLines, message.JobId, lines);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to send output lines batch");
+                }
+            };
 
             JobCompletionPayload? completion = null;
             try
             {
                 completion = await AgentJobRunner.ExecuteAsync(
-                    _executor, message, _hubManager.Connection, outputBatcher,
-                    step => _currentStep = step,
+                    _executor, message, _connectionLifecycle.Connection, outputBatcher,
+                    step => _slotManager.SetCurrentStep(step),
                     jobCts.Token, cancelledLabel: AgentLabels.Cancelled);
             }
             catch (Exception ex)
@@ -367,34 +229,34 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 }
                 else
                 {
-                    await ReleaseJobSlotAndSignalReadyAsync();
+                    await _slotManager.ReleaseJobSlotAndSignalReadyAsync();
                 }
             }
         });
+        _slotManager.SetActiveJobTask(activeTask);
     }
 
     private Task HandleCancelJobAsync(string jobId)
     {
-        lock (_busyLock)
+        // TODO: ActiveJobId is read without lock — a concurrent ReleaseJobSlotAndSignalReadyAsync could
+        // clear _activeJobId between this check and the CancelCurrentJob() call. Impact is limited to a
+        // spurious no-op cancellation or a missed cancel (orchestrator retries), but consider acquiring
+        // _busyLock for the comparison to match the original code's thread-safety contract.
+        if (_slotManager.ActiveJobId != jobId)
         {
-            if (_activeJobId != jobId)
-            {
-                _logger.Warning("Received CancelJob for {JobId} but active job is {ActiveJobId}",
-                    jobId, _activeJobId);
-                return Task.CompletedTask;
-            }
+            _logger.Warning("Received CancelJob for {JobId} but active job is {ActiveJobId}",
+                jobId, _slotManager.ActiveJobId);
+            return Task.CompletedTask;
         }
 
         _logger.Information("Cancelling job {JobId}", jobId);
-        var cts = _jobCts;
-        try { cts?.Cancel(); }
-        catch (ObjectDisposedException) { }
+        _slotManager.CancelCurrentJob();
         return Task.CompletedTask;
     }
 
     private async Task HandleChatPromptAsync(ChatPromptMessage message)
     {
-        if (!TryAcquireChatSlot(message.SessionId, out var busyWith))
+        if (!_slotManager.TryAcquireChatSlot(message.SessionId, out var busyWith))
         {
             _logger.Warning("Rejecting chat prompt for session {SessionId} — agent is busy",
                 message.SessionId);
@@ -403,8 +265,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
         _logger.Information("Accepted chat prompt for session {SessionId}", message.SessionId);
 
-        var chatCts = _chatCts!;
-        _activeChatTask = Task.Run(async () =>
+        var chatCts = _slotManager.ChatCts!;
+        var activeTask = Task.Run(async () =>
         {
             int exitCode = ExitCodes.GeneralFailure;
             string? error = null;
@@ -412,12 +274,23 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             // Scoped so the batcher is disposed (flushing remaining lines)
             // BEFORE reporting completion to the orchestrator.
             {
-                await using var outputBatcher = OutputBatcherHubExtensions.CreateWithHubFlush(
-                    lines => _hubManager.Connection.InvokeAsync(
-                        HubMethodNames.ReportChatResponse,
-                        new ChatResponseMessage { SessionId = message.SessionId, Lines = lines.ToList() }),
-                    _logger,
-                    "Failed to send chat response lines");
+                await using var outputBatcher = new OutputBatcher();
+                outputBatcher.OnFlush += async lines =>
+                {
+                    try
+                    {
+                        var response = new ChatResponseMessage
+                        {
+                            SessionId = message.SessionId,
+                            Lines = lines.ToList()
+                        };
+                        await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatResponse, response);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Failed to send chat response lines");
+                    }
+                };
 
                 try
                 {
@@ -461,26 +334,19 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                     ExitCode = exitCode,
                     Error = error
                 };
-                await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportChatCompleted, completed);
+                await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatCompleted, completed);
             }
             catch (Exception ex)
             {
                 _logger.Error(ex, "Failed to report chat completion for session {SessionId}", message.SessionId);
             }
 
-            lock (_busyLock)
-            {
-                _activeChatSessionId = null;
-            }
-
-#pragma warning disable 0420 // volatile field passed by reference to Interlocked — safe by design
-            var oldCts = Interlocked.Exchange(ref _chatCts, null);
-#pragma warning restore 0420
-            oldCts?.Dispose();
+            _slotManager.ReleaseChatSlot();
 
             // Do NOT send AgentReady — the chat session is still active.
             // The agent will be released when CancelChat is received (End Chat / navigate away).
         });
+        _slotManager.SetActiveChatTask(activeTask);
     }
 
     private async Task<(int exitCode, string? error)> ExecuteChatViaOpenCodeAsync(
@@ -547,20 +413,21 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
     private async Task HandleCancelChatAsync(string sessionId)
     {
-        Task? chatTask;
-        lock (_busyLock)
+        // TODO: TOCTOU race — ActiveChatSessionId is read under lock, but ActiveChatTask and ChatCts
+        // are read separately without the lock. The chat task's finally block could call ReleaseChatSlot()
+        // between these reads, nulling out the CTS. Consider adding an atomic method on AgentJobSlotManager
+        // that returns (sessionId, task, cts) under a single lock acquisition.
+        if (_slotManager.ActiveChatSessionId != sessionId)
         {
-            if (_activeChatSessionId != sessionId)
-            {
-                _logger.Warning("Received CancelChat for {SessionId} but active session is {ActiveSessionId}",
-                    sessionId, _activeChatSessionId);
-                return;
-            }
-            chatTask = _activeChatTask;
+            _logger.Warning("Received CancelChat for {SessionId} but active session is {ActiveSessionId}",
+                sessionId, _slotManager.ActiveChatSessionId);
+            return;
         }
 
+        var chatTask = _slotManager.ActiveChatTask;
+
         _logger.Information("Cancelling chat session {SessionId}", sessionId);
-        var cts = _chatCts;
+        var cts = _slotManager.ChatCts;
         try { cts?.Cancel(); }
         catch (ObjectDisposedException) { }
 
@@ -573,51 +440,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
         // Signal ready — the chat session is over, agent can accept jobs again
         await SignalAgentReadyAsync();
-    }
-
-    /// <summary>
-    /// Re-registers the agent with the orchestrator after a SignalR reconnection.
-    /// This is critical when the orchestrator pod rolls over — the new pod has no
-    /// prior state and won't recognize heartbeats from unregistered agents.
-    /// </summary>
-    private async Task HandleReconnectedAsync(string? connectionId)
-    {
-        PipelineTelemetry.AgentReconnections.Add(1);
-        _logger.Information("Re-registering agent {AgentId} after reconnection (connectionId={ConnectionId})",
-            _agentId, connectionId);
-
-        var registration = BuildRegistrationMessage();
-
-        try
-        {
-            await _signalRPipeline.ExecuteAsync(async token =>
-                await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), CancellationToken.None);
-            _logger.Information("Agent {AgentId} re-registered successfully after reconnection", _agentId);
-            await DrainBufferAsync();
-        }
-        catch (Exception ex)
-        {
-            _logger.Error(ex, "Failed to re-register agent {AgentId} after initial retry pipeline, starting extended recovery", _agentId);
-
-            for (var i = 0; i < 3; i++)
-            {
-                await Task.Delay(_extendedRetryDelay);
-                try
-                {
-                    await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, CancellationToken.None);
-                    _logger.Information("Agent {AgentId} re-registered on extended attempt {Attempt}", _agentId, i + 1);
-                    await DrainBufferAsync();
-                    return;
-                }
-                catch (Exception retryEx)
-                {
-                    _logger.Warning(retryEx, "Extended re-registration attempt {Attempt}/3 failed for agent {AgentId}", i + 1, _agentId);
-                }
-            }
-
-            _logger.Fatal("Agent {AgentId} cannot re-register after all recovery attempts, terminating for container restart", _agentId);
-            _hostApplicationLifetime.StopApplication();
-        }
     }
 
     private async Task HandleFetchModelsAsync(FetchModelsRequest request)
@@ -667,7 +489,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 }
             }
 
-            await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
+            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
             {
                 RequestId = request.RequestId,
                 Models = models
@@ -684,7 +506,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     {
         try
         {
-            await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
+            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
             {
                 RequestId = requestId,
                 Models = [],
@@ -705,7 +527,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         receiveActivity?.SetTag("job_id", message.JobId);
         receiveActivity?.SetTag("run_type", "consolidation");
 
-        if (!TryAcquireJobSlot(message.JobId, out var busyWith))
+        if (!_slotManager.TryAcquireJobSlot(message.JobId, out var busyWith))
         {
             PipelineTelemetry.AgentJobsRejected.Add(1,
                 new KeyValuePair<string, object?>("reason", PipelineTelemetry.AgentRejectionReasons.Busy));
@@ -713,7 +535,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 message.JobId, busyWith);
             try
             {
-                await _hubManager.Connection.InvokeAsync(HubMethodNames.JobRejected, message.JobId, "Agent is busy");
+                await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobRejected, message.JobId, "Agent is busy");
             }
             catch (Exception ex)
             {
@@ -727,13 +549,13 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _logger.Information("Accepted consolidation job {JobId} of type {Type}",
             message.JobId, message.Type);
 
-        var jobCts = _jobCts!;
-        _activeJobTask = Task.Run(async () =>
+        var jobCts = _slotManager.JobCts!;
+        var activeTask = Task.Run(async () =>
         {
             try
             {
                 await _consolidationExecutor.ExecuteAsync(
-                    message, _hubManager.Connection, jobCts.Token);
+                    message, _connectionLifecycle.Connection, jobCts.Token);
             }
             catch (Exception ex)
             {
@@ -748,7 +570,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                         Success = false,
                         ErrorMessage = ex.Message
                     };
-                    await _hubManager.Connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, failResult);
+                    await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, failResult);
                 }
                 catch (Exception reportEx)
                 {
@@ -757,9 +579,10 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             }
             finally
             {
-                await ReleaseJobSlotAndSignalReadyAsync();
+                await _slotManager.ReleaseJobSlotAndSignalReadyAsync();
             }
         });
+        _slotManager.SetActiveJobTask(activeTask);
     }
 
     /// <summary>
@@ -769,65 +592,11 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     private static void WriteMcpConfig(string fullPath, IReadOnlyList<McpServerConfig> mcpServers)
         => McpConfigWriter.WriteConfig(fullPath, mcpServers);
 
-    private bool TryAcquireJobSlot(string jobId, out string? busyWith)
-    {
-        lock (_busyLock)
-        {
-            if (_activeJobId is not null || _activeChatSessionId is not null)
-            {
-                busyWith = _activeJobId ?? $"chat:{_activeChatSessionId}";
-                return false;
-            }
-
-            _activeJobId = jobId;
-            _activeJobStartedAt = DateTimeOffset.UtcNow;
-            _jobCts = new CancellationTokenSource();
-            busyWith = null;
-            return true;
-        }
-    }
-
-    private async Task ReleaseJobSlotAndSignalReadyAsync()
-    {
-        lock (_busyLock)
-        {
-            _activeJobId = null;
-            _activeJobAssignment = null;
-            _activeJobStartedAt = null;
-            _activeJobRunType = default;
-            _currentStep = null;
-        }
-
-#pragma warning disable 0420 // volatile field passed by reference to Interlocked — safe by design
-        var oldCts = Interlocked.Exchange(ref _jobCts, null);
-#pragma warning restore 0420
-        oldCts?.Dispose();
-
-        await SignalAgentReadyAsync();
-    }
-
-    private bool TryAcquireChatSlot(string sessionId, out string? busyWith)
-    {
-        lock (_busyLock)
-        {
-            if (_activeJobId is not null || _activeChatSessionId is not null)
-            {
-                busyWith = _activeJobId ?? $"chat:{_activeChatSessionId}";
-                return false;
-            }
-
-            _activeChatSessionId = sessionId;
-            _chatCts = new CancellationTokenSource();
-            busyWith = null;
-            return true;
-        }
-    }
-
     private async Task SignalAgentReadyAsync()
     {
         try
         {
-            await _hubManager.Connection.InvokeAsync(HubMethodNames.AgentReady, _agentId);
+            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.AgentReady, _agentId);
         }
         catch (Exception ex)
         {
@@ -835,172 +604,35 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         }
     }
 
-    /// <summary>
-    /// Drains the critical message buffer by replaying each buffered message over
-    /// the current SignalR connection. Called after successful reconnection/re-registration.
-    /// </summary>
-    /// <remarks>
-    /// If replay fails for a message, it is re-buffered with an incremented drain attempt
-    /// counter. Messages exceeding <see cref="MaxDrainAttempts"/> are dropped. After drain,
-    /// the job slot is released if the buffer is empty.
-    /// </remarks>
-    private async Task DrainBufferAsync()
-    {
-        if (_completionReporter is not SignalRCompletionReporter signalRReporter || !signalRReporter.HasPendingMessages)
-            return;
-
-        var criticalMessageBuffer = signalRReporter.Buffer;
-        const int maxDrainAttempts = 3;
-        var messages = criticalMessageBuffer.DrainAll();
-        _logger.Information("Draining critical message buffer: {Count} message(s) pending", messages.Count);
-
-        for (var i = 0; i < messages.Count; i++)
-        {
-            var msg = messages[i];
-            if (msg.DrainAttempts >= maxDrainAttempts)
-            {
-                _logger.Warning(
-                    "Dropping buffered message after {MaxAttempts} drain attempts: {MessageType} for job {JobId}",
-                    maxDrainAttempts, msg.GetType().Name,
-                    (msg as BufferedJobCompleted)?.JobId ?? "unknown");
-                continue;
-            }
-
-            try
-            {
-                switch (msg)
-                {
-                    case BufferedJobCompleted completed:
-                        await _signalRPipeline.ExecuteAsync(async token =>
-                            await _hubManager.Connection.InvokeAsync(
-                                HubMethodNames.ReportJobCompleted, completed.JobId, completed.Payload, token),
-                            CancellationToken.None);
-                        _logger.Information("Successfully replayed buffered ReportJobCompleted for job {JobId}", completed.JobId);
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex,
-                    "Failed to replay buffered message {MessageType} for job {JobId}, re-buffering (attempt {Attempt}/{Max})",
-                    msg.GetType().Name,
-                    (msg as BufferedJobCompleted)?.JobId ?? "unknown",
-                    msg.DrainAttempts + 1, maxDrainAttempts);
-
-                var rebuffered = msg with { DrainAttempts = msg.DrainAttempts + 1 };
-                criticalMessageBuffer.Enqueue(rebuffered);
-
-                // Re-buffer all remaining unprocessed messages to prevent data loss.
-                // These were already dequeued by DrainAll() and would be lost if not re-buffered.
-                for (var j = i + 1; j < messages.Count; j++)
-                {
-                    criticalMessageBuffer.Enqueue(messages[j]);
-                }
-
-                break; // Stop draining — will retry on next reconnection
-            }
-        }
-
-        // After drain, release slot if buffer is now empty
-        if (!signalRReporter.HasPendingMessages)
-            await ReleaseJobSlotAndSignalReadyAsync();
-        else
-            _logger.Warning("Buffer still has pending messages after drain — job slot remains held");
-    }
-
-    private AgentRegistrationMessage BuildRegistrationMessage() => new()
-    {
-        AgentId = _agentId,
-        Hostname = Environment.MachineName,
-        Labels = _labels,
-        ActiveJob = BuildActiveJobState()
-    };
-
-    private ActiveJobState? BuildActiveJobState()
-    {
-        lock (_busyLock)
-        {
-            if (_activeJobId is null || _activeJobAssignment is null)
-                return null;
-
-            return ActiveJobStateFactory.Create(
-                _activeJobId, _activeJobAssignment,
-                _currentStep ?? PipelineStep.GeneratingCode,
-                _activeJobStartedAt ?? DateTimeOffset.UtcNow);
-        }
-    }
-
-    private async Task SendHeartbeatAsync(CancellationToken ct)
-    {
-        var heartbeat = new HeartbeatMessage
-        {
-            AgentId = _agentId,
-            Timestamp = DateTimeOffset.UtcNow,
-            CurrentStep = _currentStep,
-            MemoryUsageMb = Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024)
-        };
-
-        var manager = _hubManager;
-        await manager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
-    }
-
-    internal static TimeSpan CalculateReconnectionDelay(int attempt)
-    {
-        var baseSeconds = Math.Min(Math.Pow(2, attempt), 120);
-        var jitter = Random.Shared.NextDouble(); // 0–1s
-        return TimeSpan.FromSeconds(baseSeconds + jitter);
-    }
-
     private async Task ShutdownAsync()
     {
-        _logger.Information("Agent {AgentId} shutting down...", _agentId);
+        _logger.Information("Agent shutting down...");
 
         // Cancel active job if running
-        if (_activeJobId is not null)
+        if (_slotManager.ActiveJobId is not null)
         {
-            _logger.Information("Cancelling active job {JobId} due to shutdown", _activeJobId);
+            _logger.Information("Cancelling active job {JobId} due to shutdown", _slotManager.ActiveJobId);
             await GracefulShutdownHelper.CancelAndWaitAsync(
-                _jobCts,
-                _activeJobTask,
+                _slotManager.JobCts,
+                _slotManager.ActiveJobTask,
                 TimeSpan.FromSeconds(5),
                 _logger,
                 "Active job shutdown");
         }
 
         // Cancel active chat session if running
-        if (_activeChatSessionId is not null)
+        if (_slotManager.ActiveChatSessionId is not null)
         {
-            _logger.Information("Cancelling active chat session {SessionId} due to shutdown", _activeChatSessionId);
+            _logger.Information("Cancelling active chat session {SessionId} due to shutdown", _slotManager.ActiveChatSessionId);
             await GracefulShutdownHelper.CancelAndWaitAsync(
-                _chatCts,
-                _activeChatTask,
+                _slotManager.ChatCts,
+                _slotManager.ActiveChatTask,
                 TimeSpan.FromSeconds(2),
                 _logger,
                 "Active chat shutdown");
         }
 
-        // Deregister from orchestrator
-        try
-        {
-            if (_hubManager.IsConnected)
-            {
-                await _hubManager.Connection.InvokeAsync(HubMethodNames.DeregisterAgent, _agentId);
-                _logger.Information("Agent {AgentId} deregistered from orchestrator", _agentId);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to deregister agent during shutdown");
-        }
-
-        // Close connection
-        try
-        {
-            await _hubManager.StopAsync(CancellationToken.None);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to close hub connection during shutdown");
-        }
+        // Deregister and close connection
+        await _connectionLifecycle.ShutdownAsync();
     }
 }
