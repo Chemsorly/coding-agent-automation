@@ -48,7 +48,8 @@ internal static class StartupTasks
                     ConsolidationRunType = run.Type,
                     ConsolidationTemplateId = run.TemplateId,
                     ConsolidationWorkspacePath = Path.Combine(pipelineConfig.WorkspaceBaseDirectory, "consolidation", run.RunId),
-                    RunId = run.RunId
+                    RunId = run.RunId,
+                    AutoDispatch = run.AutoDispatch
                 };
                 await workDistributor.DistributeAsync(request, CancellationToken.None);
             }

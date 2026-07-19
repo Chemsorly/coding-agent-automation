@@ -415,26 +415,44 @@ public class MessageSerializationPropertyTests
     }
 
     /// <summary>
-    /// ConsolidationJobMessage backward compatibility: missing Key(10) defaults AutoDispatch to false.
+    /// ConsolidationJobMessage backward compatibility: missing AutoDispatch field defaults to false.
+    /// Simulates receiving a payload from a pre-feature version by writing raw MessagePack bytes
+    /// as a 10-element array (Keys 0-9, no Key 10), then deserializing as ConsolidationJobMessage.
     /// </summary>
-    // TODO: This test is tautological — it serializes with the current schema (which includes Key(10)=false)
-    // then deserializes. It does NOT simulate receiving a payload from an older version lacking Key(10).
-    // Replace with a test that uses raw bytes from a known old payload or a surrogate type without the field.
+    // TODO: Consider capturing raw bytes from an actual pre-feature binary as a test fixture
+    // to guard against structural format changes that raw-byte construction might not catch.
     [Fact]
     public void ConsolidationJobMessage_RoundTrip_WithoutAutoDispatch_DefaultsFalse()
     {
-        var original = new ConsolidationJobMessage
-        {
-            JobId = "consolidation-4",
-            Type = ConsolidationRunType.RefactoringDetection,
-            ProviderConfigs = Array.Empty<ProviderConfig>(),
-            PipelineConfiguration = new PipelineConfiguration()
-        };
+        // Build a MessagePack payload manually that represents a pre-feature ConsolidationJobMessage
+        // with only 10 keys (0-9). The source-generated formatter uses array format where
+        // the position corresponds to the Key index.
+        var bufferWriter = new System.Buffers.ArrayBufferWriter<byte>();
+        var writer = new MessagePack.MessagePackWriter(bufferWriter);
 
-        var bytes = MessagePackSerializer.Serialize(original, MsgPackOptions);
+        // Array of 10 elements (Keys 0 through 9, no Key 10 for AutoDispatch)
+        writer.WriteArrayHeader(10);
+        writer.Write("consolidation-4");                              // [0] JobId
+        writer.Write((int)ConsolidationRunType.RefactoringDetection); // [1] Type
+        writer.WriteNil();                                            // [2] TemplateId
+        writer.WriteNil();                                            // [3] TemplateName
+        writer.WriteArrayHeader(0);                                   // [4] ProviderConfigs (empty array)
+        // [5] PipelineConfiguration — serialize a default instance
+        MessagePackSerializer.Serialize(ref writer, new PipelineConfiguration(), MsgPackOptions);
+        writer.WriteNil();                                            // [6] LastSuccessfulRunUtc
+        writer.WriteNil();                                            // [7] FeedbackDataJson
+        writer.WriteNil();                                            // [8] WorkspacePath
+        writer.WriteNil();                                            // [9] TraceContext
+
+        writer.Flush();
+        var bytes = bufferWriter.WrittenMemory;
+
+        // Deserialize as ConsolidationJobMessage — Key(10) is absent, should default to false
         var deserialized = MessagePackSerializer.Deserialize<ConsolidationJobMessage>(bytes, MsgPackOptions);
 
         deserialized.AutoDispatch.Should().BeFalse();
+        deserialized.JobId.Should().Be("consolidation-4");
+        deserialized.Type.Should().Be(ConsolidationRunType.RefactoringDetection);
     }
 
     private static JobAssignmentMessage CreateMinimalJobAssignmentMessage(PipelineRunType runType)

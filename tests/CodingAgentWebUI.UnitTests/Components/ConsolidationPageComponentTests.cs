@@ -426,6 +426,8 @@ public class ConsolidationPageComponentTests : BunitContext
 
         var modal = cut.Find(".modal-overlay");
         // Default PipelineConfiguration values: MaxRefactoringProposals=3, HotspotAnalysisLookback=90d, RefactoringReviewEnabled=true
+        // TODO: These assertions are overly weak — "3" could match any text in the modal. Scope assertions
+        // to specific DOM elements (e.g., .refactoring-modal-param-value) for precision.
         Assert.Contains("3", modal.TextContent);
         Assert.Contains("90 days", modal.TextContent);
         Assert.Contains("Enabled", modal.TextContent);
@@ -475,6 +477,8 @@ public class ConsolidationPageComponentTests : BunitContext
         refactoringButton.Click();
 
         var checkbox = cut.Find(".modal-card input[type='checkbox']");
+        // TODO: This assertion is tautological — it always passes when the "checked" attribute is absent.
+        // Replace with a direct check on the element's checked property via bUnit for robustness.
         Assert.False(checkbox.HasAttribute("checked") && checkbox.GetAttribute("checked") != "false");
     }
 

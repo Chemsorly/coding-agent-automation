@@ -442,6 +442,12 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     /// Creates GitHub issues for each proposal, capped at <paramref name="maxProposals"/>.
     /// Individual issue creation failures are logged but do not stop processing.
     /// </summary>
+    /// <remarks>
+    /// TODO: Proposals with DependsOn fields are no longer topologically sorted before creation,
+    /// and "Depends on #N" lines are no longer injected into issue bodies. This means dependencies
+    /// between refactoring issues will not be tracked. Consider restoring TopologicalSortProposals
+    /// and DependencyResolver logic in a follow-up PR to re-enable dependency tracking.
+    /// </remarks>
     private async Task<IReadOnlyList<CreatedIssueInfo>> CreateIssuesAsync(
         IReadOnlyList<RefactoringProposal> proposals,
         IIssueProvider issueProvider,
@@ -518,6 +524,9 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         {
             sb.AppendLine("## Prerequisites");
             sb.AppendLine();
+            // TODO: SanitizeMarkdown does not escape #N patterns (e.g., "proposal #1") which GitHub
+            // auto-links to unrelated issues. Consider restoring #N autolink escaping (previously
+            // handled by a dedicated SanitizePrerequisite method) to prevent misleading cross-references.
             foreach (var prereq in proposal.Prerequisites.Where(p => p is not null))
                 sb.AppendLine($"- {SanitizeMarkdown(prereq)}");
             sb.AppendLine();

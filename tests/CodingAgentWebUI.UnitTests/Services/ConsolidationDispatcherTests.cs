@@ -573,6 +573,8 @@ public sealed class ConsolidationDispatcherTests : IDisposable
         result.Should().Be(ConsolidationDispatchResult.Dispatched);
     }
 
+    // TODO: TryDispatchAsync_AutoDispatchTrue/False tests are nearly identical and should be
+    // parameterized with [Theory]/[InlineData(true)]/[InlineData(false)] to reduce duplication.
     [Fact]
     public async Task TryDispatchAsync_AutoDispatchTrue_PropagatedToMessage()
     {

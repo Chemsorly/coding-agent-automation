@@ -110,7 +110,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
                 ConsolidationRunType = type,
                 ConsolidationTemplateId = templateId,
                 ConsolidationWorkspacePath = workspacePath,
-                RunId = run.RunId
+                RunId = run.RunId,
+                AutoDispatch = run.AutoDispatch
             };
 
             var result = await _workDistributor.DistributeAsync(distributionRequest, ct);

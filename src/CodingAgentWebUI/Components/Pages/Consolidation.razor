@@ -275,6 +275,9 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        // TODO: FocusAsync is called on every re-render while the modal is open, which could steal
+        // focus from the checkbox during interaction. Consider tracking a _modalJustOpened flag that
+        // is set in OpenRefactoringModal and cleared after the first successful FocusAsync call.
         if (_showRefactoringModal)
         {
             try
