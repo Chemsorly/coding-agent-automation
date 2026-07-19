@@ -154,30 +154,9 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             return null;
         }
 
-        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+        var run = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
+            issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy, runType, ct);
 
-        // Resolve repo provider config to get repository name
-        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
-        await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
-        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
-        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
-
-        var run = PipelineRun.Create(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: issueIdentifier,
-            issueTitle: string.Empty,
-            issueProviderConfigId: issueProviderId.Value,
-            repoProviderConfigId: repoProviderId.Value,
-            runType: runType,
-            initiatedBy: initiatedBy,
-            agentId: agentId,
-            agentProviderConfigId: agentProviderId.Value,
-            brainProviderConfigId: brainProviderId);
-        run.RepositoryName = tempRepoProvider.RepositoryFullName;
-        run.ModelName = configuredModel;
-        run.PipelineProviderConfigId = pipelineProviderId;
-
-        // Delegate registration to lifecycle service
         if (!_lifecycle.RegisterDispatchedRun(run))
             return null;
 
@@ -209,39 +188,63 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             return null;
         }
 
-        // Resolve repo and agent provider configs for metadata
-        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
-        await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
-        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
-        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
-
-        var runId = Guid.NewGuid().ToString();
+        // TODO: startedAt is captured before ResolveAndCreateRunAsync (provider resolution).
+        // Original code captured it after provider resolution. If excluding provider resolution
+        // latency from start time matters, move this assignment after the helper call.
         var startedAt = DateTimeOffset.UtcNow;
 
-        // Create a minimal sentinel run for dedup guard
-        var sentinel = PipelineRun.Create(
-            runId: runId,
-            issueIdentifier: issueIdentifier,
-            issueTitle: string.Empty,
-            issueProviderConfigId: issueProviderId.Value,
-            repoProviderConfigId: repoProviderId.Value,
-            runType: PipelineRunType.Implementation,
-            initiatedBy: initiatedBy,
-            agentId: agentId,
-            agentProviderConfigId: agentProviderId.Value,
-            brainProviderConfigId: brainProviderId);
-        sentinel.RepositoryName = tempRepoProvider.RepositoryFullName;
-        sentinel.ModelName = configuredModel;
-        sentinel.PipelineProviderConfigId = pipelineProviderId;
+        var sentinel = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
+            issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy,
+            PipelineRunType.Implementation, ct);
 
         if (!_lifecycle.RegisterDispatchedRun(sentinel))
             return null;
 
         _logger.Information(
             "Reserved run {RunId} for issue {IssueIdentifier}",
-            runId, issueIdentifier);
+            sentinel.RunId, issueIdentifier);
 
-        return new RunReservation(runId, tempRepoProvider.RepositoryFullName, configuredModel, startedAt);
+        return new RunReservation(sentinel.RunId, sentinel.RepositoryName!, sentinel.ModelName!, startedAt);
+    }
+
+    /// <summary>
+    /// Resolves provider configs and creates a fully-constructed <see cref="PipelineRun"/> with
+    /// metadata (RepositoryName, ModelName, PipelineProviderConfigId) already set.
+    /// Shared by <see cref="CreateDispatchedRunAsync"/> and <see cref="ReserveRunIdAsync"/>.
+    /// </summary>
+    private async Task<PipelineRun> ResolveAndCreateRunAsync(
+        ProviderConfigId repoProviderId,
+        ProviderConfigId agentProviderId,
+        string issueIdentifier,
+        ProviderConfigId issueProviderId,
+        string? agentId,
+        string? brainProviderId,
+        string? pipelineProviderId,
+        string initiatedBy,
+        PipelineRunType runType,
+        CancellationToken ct)
+    {
+        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
+        await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
+        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
+        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
+
+        var run = PipelineRun.Create(
+            runId: Guid.NewGuid().ToString(),
+            issueIdentifier: issueIdentifier,
+            issueTitle: string.Empty,
+            issueProviderConfigId: issueProviderId.Value,
+            repoProviderConfigId: repoProviderId.Value,
+            runType: runType,
+            initiatedBy: initiatedBy,
+            agentId: agentId,
+            agentProviderConfigId: agentProviderId.Value,
+            brainProviderConfigId: brainProviderId);
+        run.RepositoryName = tempRepoProvider.RepositoryFullName;
+        run.ModelName = configuredModel;
+        run.PipelineProviderConfigId = pipelineProviderId;
+
+        return run;
     }
 
     /// <summary>
