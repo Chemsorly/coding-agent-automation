@@ -383,12 +383,14 @@ public sealed class HeartbeatMonitorService : BackgroundService
         // Grace period expired
         if (agent.ActiveJobId is not null)
         {
+            var jobId = agent.ActiveJobId;
+
             // NOTE: FailRunAsync internally calls ClearAgentState which transitions the agent
             // to Idle before we Deregister below. This creates a sub-millisecond window where
             // the agent is Idle in the registry. This is acceptable: the dispatch loop won't
             // pick up a Disconnected-then-Idle agent in that window because Deregister follows
             // immediately and the dispatcher checks agent.Status == Idle && connected.
-            var result = await _lifecycleManager.FailRunAsync(agent.ActiveJobId, "Agent disconnected", ct, FailureReason.InfrastructureFailure);
+            var result = await _lifecycleManager.FailRunAsync(jobId, "Agent disconnected", ct, FailureReason.InfrastructureFailure);
             if (result is null)
             {
                 // Race lost — run already processed by another path.
@@ -399,11 +401,9 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 }
             }
 
-            // TODO: agent.ActiveJobId is null here because FailRunAsync/ClearAgentState already cleared it.
-            // Capture the job ID in a local variable before calling FailRunAsync to log correctly.
             _logger.Warning(
                 "Agent {AgentId} disconnected with active job {JobId} past grace period ({GracePeriod}), marking run as Failed",
-                agent.AgentId, agent.ActiveJobId, gracePeriod);
+                agent.AgentId, jobId, gracePeriod);
         }
         else
         {
