@@ -1,7 +1,5 @@
-﻿﻿﻿using System.Diagnostics;
-using CodingAgentWebUI.Pipeline.Interfaces;
+﻿﻿﻿using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Telemetry;
 using Serilog.Context;
 
 namespace CodingAgentWebUI.Pipeline.Services;
@@ -40,7 +38,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     protected ParsedIssue? _activeParsedIssue;
     protected IReadOnlyList<IssueComment>? _activeIssueComments;
 
-    // â”€â”€ Delegating properties (backward compatibility) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Delegating properties (backward compatibility) ───────────────────
 
     /// <summary>Fired after each state transition for UI binding. Delegates to lifecycle service.</summary>
     public event Action? OnChange
@@ -84,7 +82,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     public bool HasAnyActiveRuns => _lifecycle.HasAnyActiveRuns;
 
     /// <summary>
-    /// Returns all active runs â€” both the in-process run (if any) and all agent-dispatched runs.
+    /// Returns all active runs — both the in-process run (if any) and all agent-dispatched runs.
     /// Delegates to lifecycle service.
     /// </summary>
     public IReadOnlyList<PipelineRun> GetAllActiveRuns() => _lifecycle.GetAllActiveRuns();
@@ -134,7 +132,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// <summary>
     /// Creates a <see cref="PipelineRun"/> for dispatch to a remote agent.
     /// The run is tracked via <see cref="IOrchestratorRunService"/> (not the local <see cref="ActiveRun"/>).
-    /// Does NOT execute the pipeline locally â€” the agent handles execution.
+    /// Does NOT execute the pipeline locally — the agent handles execution.
     /// </summary>
     /// <returns>The created <see cref="PipelineRun"/> ready for dispatch, or <c>null</c> if the issue is already being processed.</returns>
     public async Task<PipelineRun?> CreateDispatchedRunAsync(
@@ -156,35 +154,14 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             return null;
         }
 
-        var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+        var run = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
+            issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy, runType, ct);
 
-        // Resolve repo provider config to get repository name
-        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
-        await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
-        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
-        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
-
-        var run = PipelineRun.Create(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: issueIdentifier,
-            issueTitle: string.Empty,
-            issueProviderConfigId: issueProviderId.Value,
-            repoProviderConfigId: repoProviderId.Value,
-            runType: runType,
-            initiatedBy: initiatedBy,
-            agentId: agentId,
-            agentProviderConfigId: agentProviderId.Value,
-            brainProviderConfigId: brainProviderId);
-        run.RepositoryName = tempRepoProvider.RepositoryFullName;
-        run.ModelName = configuredModel;
-        run.PipelineProviderConfigId = pipelineProviderId;
-
-        // Delegate registration to lifecycle service
         if (!_lifecycle.RegisterDispatchedRun(run))
             return null;
 
         _logger.Information(
-            "Dispatched run {RunId} created for issue {IssueIdentifier} â†’ agent {AgentId}",
+            "Dispatched run {RunId} created for issue {IssueIdentifier} → agent {AgentId}",
             run.RunId, issueIdentifier, agentId);
 
         return run;
@@ -211,39 +188,63 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             return null;
         }
 
-        // Resolve repo and agent provider configs for metadata
-        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
-        await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
-        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
-        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
-
-        var runId = Guid.NewGuid().ToString();
+        // TODO: startedAt is captured before ResolveAndCreateRunAsync (provider resolution).
+        // Original code captured it after provider resolution. If excluding provider resolution
+        // latency from start time matters, move this assignment after the helper call.
         var startedAt = DateTimeOffset.UtcNow;
 
-        // Create a minimal sentinel run for dedup guard
-        var sentinel = PipelineRun.Create(
-            runId: runId,
-            issueIdentifier: issueIdentifier,
-            issueTitle: string.Empty,
-            issueProviderConfigId: issueProviderId.Value,
-            repoProviderConfigId: repoProviderId.Value,
-            runType: PipelineRunType.Implementation,
-            initiatedBy: initiatedBy,
-            agentId: agentId,
-            agentProviderConfigId: agentProviderId.Value,
-            brainProviderConfigId: brainProviderId);
-        sentinel.RepositoryName = tempRepoProvider.RepositoryFullName;
-        sentinel.ModelName = configuredModel;
-        sentinel.PipelineProviderConfigId = pipelineProviderId;
+        var sentinel = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
+            issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy,
+            PipelineRunType.Implementation, ct);
 
         if (!_lifecycle.RegisterDispatchedRun(sentinel))
             return null;
 
         _logger.Information(
             "Reserved run {RunId} for issue {IssueIdentifier}",
-            runId, issueIdentifier);
+            sentinel.RunId, issueIdentifier);
 
-        return new RunReservation(runId, tempRepoProvider.RepositoryFullName, configuredModel, startedAt);
+        return new RunReservation(sentinel.RunId, sentinel.RepositoryName!, sentinel.ModelName!, startedAt);
+    }
+
+    /// <summary>
+    /// Resolves provider configs and creates a fully-constructed <see cref="PipelineRun"/> with
+    /// metadata (RepositoryName, ModelName, PipelineProviderConfigId) already set.
+    /// Shared by <see cref="CreateDispatchedRunAsync"/> and <see cref="ReserveRunIdAsync"/>.
+    /// </summary>
+    private async Task<PipelineRun> ResolveAndCreateRunAsync(
+        ProviderConfigId repoProviderId,
+        ProviderConfigId agentProviderId,
+        string issueIdentifier,
+        ProviderConfigId issueProviderId,
+        string? agentId,
+        string? brainProviderId,
+        string? pipelineProviderId,
+        string initiatedBy,
+        PipelineRunType runType,
+        CancellationToken ct)
+    {
+        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
+        await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
+        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
+        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
+
+        var run = PipelineRun.Create(
+            runId: Guid.NewGuid().ToString(),
+            issueIdentifier: issueIdentifier,
+            issueTitle: string.Empty,
+            issueProviderConfigId: issueProviderId.Value,
+            repoProviderConfigId: repoProviderId.Value,
+            runType: runType,
+            initiatedBy: initiatedBy,
+            agentId: agentId,
+            agentProviderConfigId: agentProviderId.Value,
+            brainProviderConfigId: brainProviderId);
+        run.RepositoryName = tempRepoProvider.RepositoryFullName;
+        run.ModelName = configuredModel;
+        run.PipelineProviderConfigId = pipelineProviderId;
+
+        return run;
     }
 
     /// <summary>
@@ -256,89 +257,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     {
         ArgumentNullException.ThrowIfNull(run);
         _lifecycle.ReplaceDispatchedRun(run);
-    }
-
-    // TODO: ExecutePipelineStepsAsync is dead code — never called from any public method in this class.
-    // It (and its callees BuildStepPipeline, OrchestratorCallbacks) should be removed or wired up.
-    private async Task ExecutePipelineStepsAsync(
-        PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
-    {
-        using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
-        using var instrumentation = PipelineRunInstrumentation.Start(
-            run.RunId, run.IssueIdentifier, run.RunType, run.ProjectId, run.ProjectName);
-
-        IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
-        Steps.PipelineStepContext? ctx = null;
-
-        var callbacks = new OrchestratorCallbacks(this, run, () => ctx);
-        ctx = Steps.PipelineStepContext.ForOrchestrator(
-            run: run,
-            config: _activeConfig!,
-            repoProvider: _providerManager.ActiveRepoProvider!,
-            agentProvider: _providerManager.ActiveAgentProvider!,
-            brainProvider: _providerManager.ActiveBrainProvider,
-            pipelineProvider: _providerManager.ActivePipelineProvider,
-            cts: _lifecycle.CancellationTokenSource,
-            configStore: _configurationStore,
-            callbacks: callbacks,
-            issueOps: issueOps,
-            agentExecution: _executionFacade.AgentExecution,
-            qualityGates: _executionFacade.QualityGates,
-            brainSync: _executionFacade.BrainSync,
-            prOrchestrator: _completionFacade.PrOrchestrator,
-            logger: _logger,
-            qualityGateValidator: _executionFacade.QualityGateValidator,
-            issueProvider: issueProvider);
-
-        try
-        {
-            await Steps.PipelineStepRunner.ExecuteAsync(BuildStepPipeline(), ctx, ct);
-
-            if (run.CurrentStep == PipelineStep.Completed)
-                instrumentation.MarkCompleted();
-
-            instrumentation.Activity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
-        }
-        catch (OperationCanceledException)
-        {
-            instrumentation.Activity?.SetTag("pipeline.cancelled", true);
-            instrumentation.Activity?.SetTag("pipeline.final_step", "Cancelled");
-
-            if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
-            {
-                _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
-                run.MarkCompleted();
-                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
-                _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
-                _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
-                await _lifecycle.AddRunToHistoryAsync(run).ConfigureAwait(false);
-            }
-        }
-        catch (Exception ex)
-        {
-            instrumentation.Activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            instrumentation.Activity?.AddException(ex);
-            throw;
-        }
-    }
-
-    // TODO: BuildStepPipeline is dead code — only called from the dead ExecutePipelineStepsAsync method above.
-    /// <summary>
-    /// Builds the ordered list of pipeline steps. Step ordering is explicit and configurable.
-    /// Orchestrator prefix (FetchIssue → Clone → RunEnvironmentSetup → SyncBrainPreRun) followed
-    /// by the shared core implementation steps from <see cref="Steps.PipelineStepFactory"/>.
-    /// </summary>
-    private IReadOnlyList<Steps.IPipelineStep> BuildStepPipeline()
-    {
-        var steps = new List<Steps.IPipelineStep>
-        {
-            new Steps.FetchIssueStep(_issueParser, new IssueImageExtractor()),
-            new Steps.CloneRepositoryStep(),
-            new Steps.RunEnvironmentSetupStep(),
-            new Steps.SyncBrainPreRunStep(),
-        };
-        steps.AddRange(Steps.PipelineStepFactory.CreateCoreImplementationSteps());
-        return steps;
     }
 
     /// <summary>Cancels the active pipeline run. Delegates state transitions to lifecycle service.</summary>
@@ -371,7 +289,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         if (allRuns.Count == 0) return;
 
         // Send CancelJob to each agent in parallel (2s per-agent timeout)
-        // Non-fatal â€” agent may already be disconnected
+        // Non-fatal — agent may already be disconnected
         if (_cancellationFacade.AgentCancellation is not null)
         {
             try
@@ -382,7 +300,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             }
             catch (Exception ex)
             {
-                _logger.Warning(ex, "One or more CancelJob sends failed during shutdown â€” proceeding with cleanup");
+                _logger.Warning(ex, "One or more CancelJob sends failed during shutdown — proceeding with cleanup");
             }
         }
 
@@ -394,7 +312,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
                 run.ProviderConfigIdForLabel, run.IssueIdentifier, AgentLabels.Cancelled, targetKind, CancellationToken.None);
         }
 
-        // Delegate state changes to lifecycle â€” returns cancelled issue identifiers
+        // Delegate state changes to lifecycle — returns cancelled issue identifiers
         var cancelledIssues = await _lifecycle.MarkAgentRunsCancelled();
 
         // Release dedup guards so issues become re-dispatchable after restart
@@ -412,163 +330,12 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         => _completionFacade.HistoryService.GetRunHistoryAsync(ct);
 
     // --- Private helpers ---
-    private async Task CreatePullRequestAsync(
-        PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
-    {
-        using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest");
-        activity?.SetTag("pipeline.run_id", run.RunId);
-        activity?.SetTag("pipeline.issue", run.IssueIdentifier);
-        activity?.SetTag("pipeline.pr.is_draft", isDraft);
-        PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
-
-        _lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
-        try
-        {
-            // Set PR info from linked PR before calling the orchestrator (rework mode)
-            if (run.LinkedPullRequest != null)
-            {
-                run.PullRequestUrl = run.LinkedPullRequest.Url;
-                run.PullRequestNumber = run.LinkedPullRequest.Number.ToString();
-            }
-
-            var prUrl = await _completionFacade.PrOrchestrator.CreatePullRequestAsync(
-                run, report, isDraft, _providerManager.ActiveRepoProvider!, _activeIssue,
-                _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
-                isRework: run.LinkedPullRequest != null,
-                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
-
-            await HandlePrCreationResultAsync(run, prUrl, isDraft, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.AddException(ex);
-            _logger.Error(ex, "Pipeline {RunId} failed to create pull request", run.RunId);
-            await FailRunAsync(run, $"PR creation failed: {ex.Message}");
-        }
-    }
-    private Task UpdateFileChangeStatsAsync(PipelineRun run)
-        => _completionFacade.PrOrchestrator.UpdateFileChangeStatsAsync(run, _providerManager.ActiveRepoProvider!);
-
-    private async Task CreateDraftPrIfNotExistsAsync(PipelineRun run, CancellationToken ct)
-    {
-        try
-        {
-            var prUrl = await _completionFacade.PrOrchestrator.CreateDraftPrIfNotExistsAsync(
-                run, _providerManager.ActiveRepoProvider!, ct,
-                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
-            if (prUrl != null)
-                _lifecycle.EmitOutputLine($"ðŸ“‹ Draft PR #{run.PullRequestNumber} created");
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // Non-fatal: CI can still run without a PR existing
-            _logger.Warning(ex, "Pipeline {RunId} failed to create draft PR, continuing", run.RunId);
-        }
-    }
-
-    private async Task FinalizePullRequestAsync(
-        PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
-    {
-        using var activity = PipelineTelemetry.ActivitySource.StartActivity("FinalizePullRequest");
-        activity?.SetTag("pipeline.run_id", run.RunId);
-        activity?.SetTag("pipeline.issue", run.IssueIdentifier);
-        activity?.SetTag("pipeline.pr.is_draft", isDraft);
-        PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
-
-        _lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
-        try
-        {
-            // If no draft PR was created (e.g., CreateDraftPrIfNotExists failed or was skipped),
-            // fall back to the original CreatePullRequest flow
-            if (string.IsNullOrEmpty(run.PullRequestNumber))
-            {
-                _logger.Information("Pipeline {RunId} no existing PR to finalize, falling back to CreatePullRequest", run.RunId);
-                await CreatePullRequestAsync(run, report, isDraft, ct);
-                return;
-            }
-
-            var prUrl = await _completionFacade.PrOrchestrator.FinalizePullRequestAsync(
-                run, report, isDraft, _providerManager.ActiveRepoProvider!, _activeIssue,
-                _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
-                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
-
-            await HandlePrCreationResultAsync(run, prUrl, isDraft, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-            activity?.AddException(ex);
-            _logger.Error(ex, "Pipeline {RunId} failed to finalize pull request", run.RunId);
-            await FailRunAsync(run, $"PR finalization failed: {ex.Message}");
-        }
-    }
-
-    private async Task HandlePrCreationResultAsync(PipelineRun run, string? prUrl, bool isDraft, CancellationToken ct)
-    {
-        if (prUrl == null)
-        { await FailRunAsync(run, "Agent did not produce any changes. No commits ahead of base branch.", ct); return; }
-
-        await PostPullRequestCompletionAsync(run, isDraft, ct);
-    }
-
-    private async Task PostPullRequestCompletionAsync(PipelineRun run, bool isDraft, CancellationToken ct)
-    {
-        var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
-        if (isDraft)
-        {
-            run.FailureReason = "Quality gates failed after max retries; draft PR created.";
-            await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
-        }
-        else
-            await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Done, ct);
-
-        await _completionFacade.Finalization.RunPostPrSequenceAsync(
-            run, isDraft, _providerManager.ActiveAgentProvider!, _providerManager.ActiveRepoProvider!,
-            _activeConfig!, _executionFacade.BrainSync, _providerManager.ActiveBrainProvider, _completionFacade.FeedbackService,
-            _completionFacade.HistoryService, line => _lifecycle.EmitOutputLine(line),
-            step => { _lifecycle.TransitionTo(run, step); return Task.CompletedTask; },
-            ct);
-
-        _lifecycle.TransitionTo(run, finalStep);
-        await _lifecycle.AddRunToHistoryAsync(run).ConfigureAwait(false);
-
-        var duration = run.CompletedAtOffset!.Value - run.StartedAtOffset;
-        if (finalStep == PipelineStep.Completed)
-            _lifecycle.EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");
-        else
-            _lifecycle.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
-
-        if (finalStep == PipelineStep.Completed)
-            _completionFacade.HistoryService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, _activeConfig!.WorkspaceBaseDirectory);
-        _logger.Information("Pipeline {RunId} {Outcome} in {Duration}. Retries: {RetryCount}. PR: {PullRequestUrl}",
-            run.RunId, finalStep, run.CompletedAtOffset!.Value - run.StartedAtOffset, run.RetryCount, run.PullRequestUrl);
-    }
-
-    private async Task PersistLastUsedProviderIdsAsync(
-        string issueId, string repoId, string agentId,
-        string? brainId, string? pipelineId, CancellationToken ct)
-    {
-        try
-        {
-            var lastUsed = _activeConfig!.LastUsedProviderIds.ToDictionary(kv => kv.Key, kv => kv.Value);
-            lastUsed["issue"] = issueId;
-            lastUsed["repository"] = repoId;
-            lastUsed["agent"] = agentId;
-            if (!string.IsNullOrEmpty(brainId)) lastUsed["brain"] = brainId;
-            if (!string.IsNullOrEmpty(pipelineId)) lastUsed["pipeline"] = pipelineId;
-            await _pipelineConfigStore.UpdatePipelineConfigAsync(
-                current => current with { LastUsedProviderIds = lastUsed }, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        { _logger.Warning(ex, "Pipeline {RunId} failed to persist last-used provider IDs", ActiveRun?.RunId); }
-    }
     // TODO: Add unit test that exercises SwapAgentLabelAsync for Implementation runs during normal pipeline execution
     // (existing tests use TestPipelineRunner which bypasses ILabelService and doesn't validate this code path).
     private async Task SwapAgentLabelAsync(PipelineRun run, string issueId, string newLabel, CancellationToken ct)
     {
         _logger.Information(
-            "Pipeline {RunId} SwapAgentLabelAsync: {IssueIdentifier} â†’ {Label} (runType={RunType}, step={CurrentStep})",
+            "Pipeline {RunId} SwapAgentLabelAsync: {IssueIdentifier} → {Label} (runType={RunType}, step={CurrentStep})",
             run.RunId, issueId, newLabel, run.RunType, run.CurrentStep);
         try
         {
@@ -592,24 +359,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from {Identifier}", issueId); }
     }
 
-    private async Task HandlePipelineErrorAsync(PipelineRun run, Exception ex)
-    {
-        using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
-        _logger.Error(ex, "Pipeline {RunId} encountered an unhandled error at step {Step}", run.RunId, run.CurrentStep);
-        await FailRunAsync(run, ex.Message);
-    }
-    private async Task FailRunAsync(PipelineRun run, string reason, CancellationToken ct = default)
-    {
-        run.FailureReason = reason;
-        run.MarkCompleted();
-        _logger.Information(
-            "Pipeline {RunId} PipelineOrchestrationService.FailRunAsync swapping label to agent:error for issue {IssueIdentifier} (reason={Reason}, step={CurrentStep})",
-            run.RunId, run.IssueIdentifier, reason, run.CurrentStep);
-        await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
-        _lifecycle.EmitOutputLine($"❌ Pipeline failed: {reason}");
-        _lifecycle.TransitionTo(run, PipelineStep.Failed);
-        await _lifecycle.AddRunToHistoryAsync(run).ConfigureAwait(false);
-    }
     public async ValueTask DisposeAsync()
     {
         await _providerManager.DisposeAsync();
@@ -617,75 +366,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     }
     public void Dispose()
     {
-        // Do not call DisposePreviousProvidersAsync synchronously â€” .GetAwaiter().GetResult()
+        // Do not call DisposePreviousProvidersAsync synchronously — .GetAwaiter().GetResult()
         // deadlocks in Blazor Server's SynchronizationContext (review finding #13).
         // DisposeAsync() is the correct disposal path; sync Dispose handles only sync resources.
         GC.SuppressFinalize(this);
-    }
-
-    /// <summary>
-    /// Adapts the orchestration service's private helper methods to <see cref="IPipelineCallbacks"/>.
-    /// Delegates lifecycle operations (TransitionTo, EmitOutputLine, NotifyChange, AddRunToHistory) to the lifecycle service.
-    /// Retains provider-dependent operations (SwapAgentLabel, RemoveAllAgentLabels, UpdateFileChangeStats, CreatePullRequest).
-    /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Closure Pattern:</b> This class captures a <c>Func&lt;PipelineStepContext?&gt;</c> (<paramref name="ctxAccessor"/>)
-    /// rather than a direct reference to the <see cref="Steps.PipelineStepContext"/>. This is necessary because the
-    /// step context is constructed <em>after</em> the callbacks instance (the callbacks are a constructor argument
-    /// to the context itself). The <c>Func</c> closure resolves the chicken-and-egg problem: callbacks are created
-    /// first, then the context is created referencing the callbacks, and the <c>Func</c> captures the local variable
-    /// that is assigned after construction.
-    /// </para>
-    /// <para>
-    /// Additionally, mutable properties on the step context (e.g., <c>Issue</c>, <c>ParsedIssue</c>,
-    /// <c>IssueComments</c>) change during pipeline execution as steps populate them. A direct reference
-    /// captured at construction time would be stale for operations like <see cref="CreatePullRequest"/>
-    /// that need the latest state. The <c>Func</c> ensures the current context snapshot is always accessed.
-    /// </para>
-    /// </remarks>
-    // TODO: OrchestratorCallbacks is dead code — only instantiated from dead ExecutePipelineStepsAsync method.
-    private sealed class OrchestratorCallbacks(
-        PipelineOrchestrationService svc,
-        PipelineRun run,
-        Func<Steps.PipelineStepContext?> ctxAccessor) : PipelineCallbacksBase
-    {
-        protected override PipelineRun Run => run;
-        public override void TransitionTo(PipelineStep step) => svc._lifecycle.TransitionTo(run, step);
-        public override void EmitOutputLine(string line) => svc._lifecycle.EmitOutputLine(line);
-        public override void NotifyChange() => svc._lifecycle.NotifyChange();
-        public override Task AddRunToHistoryAsync(PipelineRun r) => svc._lifecycle.AddRunToHistoryAsync(r);
-        public override Task UpdateFileChangeStats(PipelineRun r) => svc.UpdateFileChangeStatsAsync(r);
-        public override Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
-            => svc.SwapAgentLabelAsync(run, issueIdentifier, label, ct);
-        public override Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
-            => svc.RemoveAllAgentLabelsAsync(run, issueIdentifier, ct);
-        public override Task CreatePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
-        {
-            SyncActiveIssueContext();
-            return svc.CreatePullRequestAsync(r, report, isDraft, ct);
-        }
-        public override Task CreateDraftPrIfNotExists(PipelineRun r, CancellationToken ct)
-            => svc.CreateDraftPrIfNotExistsAsync(r, ct);
-        public override Task FinalizePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
-        {
-            SyncActiveIssueContext();
-            return svc.FinalizePullRequestAsync(r, report, isDraft, ct);
-        }
-        private void SyncActiveIssueContext()
-        {
-            var ctx = ctxAccessor();
-            svc._activeIssue = ctx?.Issue;
-            svc._activeParsedIssue = ctx?.ParsedIssue;
-            svc._activeIssueComments = ctx?.IssueComments;
-        }
-        public override Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
-        {
-            run.BrainContextLoaded = contextLoaded;
-            run.BrainKnowledgeFileCount = knowledgeFileCount;
-            svc._lifecycle.NotifyChange();
-            return Task.CompletedTask;
-        }
     }
 
     /// <summary>
