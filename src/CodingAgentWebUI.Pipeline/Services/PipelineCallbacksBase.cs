@@ -11,10 +11,9 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 /// <remarks>
 /// <para>
-/// Concrete subclasses (<c>OrchestratorCallbacks</c> in <c>PipelineOrchestrationService</c>,
-/// <c>AgentCallbacks</c> in <c>LocalPipelineExecutor</c>) retain their transport-specific
-/// delegation strategies (closure-based vs delegate-based). This base class only extracts the
-/// shared policy logic that previously had to be updated in lockstep across both adapters.
+/// The concrete subclass (<c>AgentCallbacks</c> in <c>LocalPipelineExecutor</c>) retains its
+/// transport-specific delegation strategy. This base class extracts the shared policy logic
+/// so that it does not need to be duplicated across callback implementations.
 /// </para>
 /// <para>
 /// The <see cref="CreateDraftPrIfNotExists"/> template method delegates the actual PR creation
