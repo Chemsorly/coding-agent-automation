@@ -226,6 +226,23 @@ public sealed class AgentJobSlotManager
     }
 
     /// <summary>
+    /// Returns an atomic snapshot of the chat slot state for cancel coordination.
+    /// All fields are read under <see cref="_busyLock"/> to prevent TOCTOU races
+    /// where ReleaseChatSlot() could clear state between individual property reads.
+    /// </summary>
+    // TODO: Atomicity guarantee for _activeChatTask is weaker than documented — SetActiveChatTask()
+    // writes without _busyLock or a memory barrier, so on ARM64 the snapshot could return a stale
+    // null for Task even after SetActiveChatTask was called from another thread. See TODO on
+    // SetActiveChatTask for the underlying synchronization gap.
+    public (string? SessionId, Task? Task, CancellationTokenSource? Cts) GetChatSlotSnapshot()
+    {
+        lock (_busyLock)
+        {
+            return (_activeChatSessionId, _activeChatTask, _chatCts);
+        }
+    }
+
+    /// <summary>
     /// Clears the job slot without signaling ready or disposing CTS.
     /// Used when JobAccepted fails and the slot must be released immediately.
     /// </summary>
