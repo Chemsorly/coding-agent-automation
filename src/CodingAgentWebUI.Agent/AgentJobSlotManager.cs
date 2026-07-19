@@ -26,9 +26,7 @@ public sealed class AgentJobSlotManager
 
     private volatile CancellationTokenSource? _jobCts;
     private Task? _activeJobTask;
-    // TODO: _activeJobId is read outside _busyLock (via ActiveJobId/IsBusy properties) from other threads.
-    // Consider declaring volatile or adding lock to the read path to guarantee cross-thread visibility.
-    private string? _activeJobId;
+    private volatile string? _activeJobId;
     private JobAssignmentMessage? _activeJobAssignment;
     private DateTimeOffset? _activeJobStartedAt;
     private PipelineRunType _activeJobRunType;
