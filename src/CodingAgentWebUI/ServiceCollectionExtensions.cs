@@ -112,7 +112,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton(sp => new PipelineOrchestrationService(
             sp.GetRequiredService<IPipelineConfigStore>(),
-            sp.GetRequiredService<IProviderConfigStore>(),
+            sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<IssueDescriptionParser>(),
             sp.GetRequiredService<Pipeline.Interfaces.IPipelineExecutionFacade>(),

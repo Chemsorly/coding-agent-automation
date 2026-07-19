@@ -24,7 +24,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private readonly IOrchestratorRunService _runService;
     private readonly IWorkDistributor _workDistributor;
     private readonly IAgentProfileStore _agentProfileStore;
-    private readonly IProviderConfigStore _providerConfigStore;
+    private readonly IConfigurationStore _providerConfigStore;
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IProjectStore _projectStore;
     private readonly AnalysisStalenessDetector? _stalenessDetector;
@@ -37,7 +37,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IOrchestratorRunService runService,
         IWorkDistributor workDistributor,
         IAgentProfileStore agentProfileStore,
-        IProviderConfigStore providerConfigStore,
+        IConfigurationStore providerConfigStore,
         IPipelineConfigStore pipelineConfigStore,
         IProjectStore projectStore,
         ILogger logger,

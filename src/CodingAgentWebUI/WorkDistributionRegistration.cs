@@ -149,7 +149,7 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<Pipeline.Interfaces.IWorkDistributor>(),
             sp.GetRequiredService<Pipeline.Interfaces.IAgentProfileStore>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IProviderConfigStore>(),
+            sp.GetRequiredService<Pipeline.Interfaces.IConfigurationStore>(),
             sp.GetRequiredService<Pipeline.Interfaces.IPipelineConfigStore>(),
             sp.GetRequiredService<Pipeline.Interfaces.IProjectStore>(),
             Log.Logger,

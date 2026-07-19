@@ -24,15 +24,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 {
     private readonly PipelineRunLifecycleService _lifecycle;
     private readonly IPipelineConfigStore _pipelineConfigStore;
-    private readonly IProviderConfigStore _providerConfigStore;
+    private readonly IConfigurationStore _configurationStore;
     private readonly IProviderFactory _providerFactory;
-    private readonly ILabelService _labelService;
-#pragma warning disable CS0414 // Field assigned but never used — constructor parameter retained for backward compatibility
-    // TODO: Consider removing _issueParser field entirely — it is dead code after ExecutePipelineStepsAsync was removed.
-    // The constructor signature stability concern only applies to sealed/derived classes; this class is non-sealed but
-    // no known subclass (except tests) depends on this parameter. Removing it would also trim IssueDescriptionParser from the DI graph.
+    private readonly ILabelService _labelSwapper;
     private readonly IssueDescriptionParser _issueParser;
-#pragma warning restore CS0414
     private readonly IPipelineExecutionFacade _executionFacade;
     private readonly IPipelineCompletionFacade _completionFacade;
     private readonly IPipelineCancellationFacade _cancellationFacade;
@@ -102,37 +97,37 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
     public PipelineOrchestrationService(
         IPipelineConfigStore pipelineConfigStore,
-        IProviderConfigStore providerConfigStore,
+        IConfigurationStore configurationStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
         IPipelineExecutionFacade executionFacade,
         IPipelineCompletionFacade completionFacade,
         IPipelineCancellationFacade cancellationFacade,
         PipelineRunLifecycleService lifecycle,
-        ILabelService labelService,
+        ILabelService labelSwapper,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(pipelineConfigStore);
-        ArgumentNullException.ThrowIfNull(providerConfigStore);
+        ArgumentNullException.ThrowIfNull(configurationStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(issueParser);
         ArgumentNullException.ThrowIfNull(executionFacade);
         ArgumentNullException.ThrowIfNull(completionFacade);
         ArgumentNullException.ThrowIfNull(cancellationFacade);
         ArgumentNullException.ThrowIfNull(lifecycle);
-        ArgumentNullException.ThrowIfNull(labelService);
+        ArgumentNullException.ThrowIfNull(labelSwapper);
         ArgumentNullException.ThrowIfNull(logger);
 
         _pipelineConfigStore = pipelineConfigStore;
-        _providerConfigStore = providerConfigStore;
+        _configurationStore = configurationStore;
         _providerFactory = providerFactory;
-        _labelService = labelService;
+        _labelSwapper = labelSwapper;
         _issueParser = issueParser;
         _logger = logger;
         _executionFacade = executionFacade;
         _completionFacade = completionFacade;
         _cancellationFacade = cancellationFacade;
-        _providerManager = new PipelineProviderManager(providerConfigStore, providerFactory, logger);
+        _providerManager = new PipelineProviderManager(configurationStore, providerFactory, logger);
         _lifecycle = lifecycle;
     }
 
@@ -195,7 +190,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         return run;
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Reserves a run ID and registers a dedup guard (sentinel) without constructing a full
+    /// <see cref="PipelineRun"/>. Returns metadata needed to construct the final run.
+    /// The sentinel immediately makes <see cref="IsIssueBeingProcessed"/> return <c>true</c>.
+    /// </summary>
+    /// <returns>A <see cref="RunReservation"/> with the allocated RunId and resolved metadata,
+    /// or <c>null</c> if the issue is already being processed.</returns>
     public async Task<RunReservation?> ReserveRunIdAsync(
         ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
         ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
@@ -204,18 +205,13 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
 
-        // TODO: TOCTOU race — concurrent calls to ReserveRunIdAsync for the same issueIdentifier can
-        // both pass this check before either registers the sentinel. The inner RegisterDispatchedRun
-        // in PipelineRunLifecycleService has a second dedup check providing a defense layer, but async
-        // provider resolution between the two checks widens the window. Pre-existing pattern from
-        // CreateDispatchedRunAsync; not a regression but worth hardening with a lock or atomic reserve.
         if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
         {
             _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping reservation", issueIdentifier);
             return null;
         }
 
-        // Resolve repo provider config to get repository name
+        // Resolve repo and agent provider configs for metadata
         var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
         await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
         var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
@@ -224,12 +220,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         var runId = Guid.NewGuid().ToString();
         var startedAt = DateTimeOffset.UtcNow;
 
-        // Create a minimal sentinel run for dedup protection
-        // TODO: Sentinel RunType is hardcoded to Implementation regardless of actual dispatch type
-        // (Review or Decomposition). During the brief window between ReserveRunIdAsync and
-        // RegisterDispatchedRun, code that inspects RunType on active runs (e.g. DispatchScheduler
-        // decomposition concurrency enforcement) will see the wrong type. Consider adding a
-        // runType parameter to ReserveRunIdAsync to set the correct type on the sentinel.
+        // Create a minimal sentinel run for dedup guard
         var sentinel = PipelineRun.Create(
             runId: runId,
             issueIdentifier: issueIdentifier,
@@ -240,31 +231,114 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             initiatedBy: initiatedBy,
             agentId: agentId,
             agentProviderConfigId: agentProviderId.Value,
-            brainProviderConfigId: brainProviderId,
-            startedAt: startedAt);
+            brainProviderConfigId: brainProviderId);
         sentinel.RepositoryName = tempRepoProvider.RepositoryFullName;
         sentinel.ModelName = configuredModel;
         sentinel.PipelineProviderConfigId = pipelineProviderId;
 
-        // Register sentinel — dedup is active immediately
         if (!_lifecycle.RegisterDispatchedRun(sentinel))
             return null;
 
         _logger.Information(
-            "Reserved run {RunId} for issue {IssueIdentifier} → agent {AgentId}",
-            runId, issueIdentifier, agentId);
+            "Reserved run {RunId} for issue {IssueIdentifier}",
+            runId, issueIdentifier);
 
         return new RunReservation(runId, tempRepoProvider.RepositoryFullName, configuredModel, startedAt);
     }
 
-    /// <inheritdoc />
+    /// <summary>
+    /// Registers a fully-constructed <see cref="PipelineRun"/> by atomically replacing the
+    /// sentinel created by <see cref="ReserveRunIdAsync"/>. The run must use the same RunId
+    /// that was returned in the <see cref="RunReservation"/>.
+    /// </summary>
+    /// <param name="run">The fully-populated pipeline run to register.</param>
     public void RegisterDispatchedRun(PipelineRun run)
     {
         ArgumentNullException.ThrowIfNull(run);
         _lifecycle.ReplaceDispatchedRun(run);
-        _logger.Information(
-            "Registered dispatched run {RunId} for issue {IssueIdentifier}",
-            run.RunId, run.IssueIdentifier);
+    }
+
+    // TODO: ExecutePipelineStepsAsync is dead code — never called from any public method in this class.
+    // It (and its callees BuildStepPipeline, OrchestratorCallbacks) should be removed or wired up.
+    private async Task ExecutePipelineStepsAsync(
+        PipelineRun run, IIssueProvider issueProvider, CancellationToken ct)
+    {
+        using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
+        using var instrumentation = PipelineRunInstrumentation.Start(
+            run.RunId, run.IssueIdentifier, run.RunType, run.ProjectId, run.ProjectName);
+
+        IAgentIssueOperations issueOps = new IssueProviderIssueOperations(issueProvider, _logger);
+        Steps.PipelineStepContext? ctx = null;
+
+        var callbacks = new OrchestratorCallbacks(this, run, () => ctx);
+        ctx = Steps.PipelineStepContext.ForOrchestrator(
+            run: run,
+            config: _activeConfig!,
+            repoProvider: _providerManager.ActiveRepoProvider!,
+            agentProvider: _providerManager.ActiveAgentProvider!,
+            brainProvider: _providerManager.ActiveBrainProvider,
+            pipelineProvider: _providerManager.ActivePipelineProvider,
+            cts: _lifecycle.CancellationTokenSource,
+            configStore: _configurationStore,
+            callbacks: callbacks,
+            issueOps: issueOps,
+            agentExecution: _executionFacade.AgentExecution,
+            qualityGates: _executionFacade.QualityGates,
+            brainSync: _executionFacade.BrainSync,
+            prOrchestrator: _completionFacade.PrOrchestrator,
+            logger: _logger,
+            qualityGateValidator: _executionFacade.QualityGateValidator,
+            issueProvider: issueProvider);
+
+        try
+        {
+            await Steps.PipelineStepRunner.ExecuteAsync(BuildStepPipeline(), ctx, ct);
+
+            if (run.CurrentStep == PipelineStep.Completed)
+                instrumentation.MarkCompleted();
+
+            instrumentation.Activity?.SetTag("pipeline.final_step", run.CurrentStep.ToString());
+        }
+        catch (OperationCanceledException)
+        {
+            instrumentation.Activity?.SetTag("pipeline.cancelled", true);
+            instrumentation.Activity?.SetTag("pipeline.final_step", "Cancelled");
+
+            if (run.CurrentStep is not (PipelineStep.Cancelled or PipelineStep.Failed))
+            {
+                _logger.Information("Pipeline {RunId} was cancelled", run.RunId);
+                run.MarkCompleted();
+                await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
+                _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
+                _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
+                await _lifecycle.AddRunToHistoryAsync(run).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex)
+        {
+            instrumentation.Activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            instrumentation.Activity?.AddException(ex);
+            throw;
+        }
+    }
+
+    // TODO: BuildStepPipeline is dead code — only called from the dead ExecutePipelineStepsAsync method above.
+    /// <summary>
+    /// Builds the ordered list of pipeline steps. Step ordering is explicit and configurable.
+    /// Orchestrator prefix (FetchIssue → Clone → RunEnvironmentSetup → SyncBrainPreRun) followed
+    /// by the shared core implementation steps from <see cref="Steps.PipelineStepFactory"/>.
+    /// </summary>
+    private IReadOnlyList<Steps.IPipelineStep> BuildStepPipeline()
+    {
+        var steps = new List<Steps.IPipelineStep>
+        {
+            new Steps.FetchIssueStep(_issueParser, new IssueImageExtractor()),
+            new Steps.CloneRepositoryStep(),
+            new Steps.RunEnvironmentSetupStep(),
+            new Steps.SyncBrainPreRunStep(),
+        };
+        steps.AddRange(Steps.PipelineStepFactory.CreateCoreImplementationSteps());
+        return steps;
     }
 
     /// <summary>Cancels the active pipeline run. Delegates state transitions to lifecycle service.</summary>
@@ -302,9 +376,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             try
             {
-                // TODO: run.AgentId is string? — null-forgiving operator defers null detection to
-                // SendCancelJobAsync's ThrowIfNullOrEmpty, which reports confusing parameter name.
-                // Consider guarding with !string.IsNullOrEmpty(run.AgentId) before calling.
                 var cancelTasks = allRuns.Select(run =>
                     _cancellationFacade.AgentCancellation.SendCancelJobAsync(run.AgentId!, run.RunId, CancellationToken.None));
                 await Task.WhenAll(cancelTasks);
@@ -319,7 +390,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             var targetKind = run.LabelTargetKind;
 
-            await _labelService.SwapLabelAsync(
+            await _labelSwapper.SwapLabelAsync(
                 run.ProviderConfigIdForLabel, run.IssueIdentifier, AgentLabels.Cancelled, targetKind, CancellationToken.None);
         }
 
@@ -503,7 +574,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             var targetKind = run.LabelTargetKind;
 
-            await _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, newLabel, targetKind, ct);
+            await _labelSwapper.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, newLabel, targetKind, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on {Identifier}", newLabel, issueId); }
     }
@@ -516,7 +587,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             var targetKind = run.LabelTargetKind;
 
-            await _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, string.Empty, targetKind, ct);
+            await _labelSwapper.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, string.Empty, targetKind, ct);
         }
         catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from {Identifier}", issueId); }
     }
@@ -573,10 +644,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// that need the latest state. The <c>Func</c> ensures the current context snapshot is always accessed.
     /// </para>
     /// </remarks>
-    // TODO: OrchestratorCallbacks and its delegate methods (CreatePullRequestAsync, FinalizePullRequestAsync,
-    // HandlePrCreationResultAsync, PostPullRequestCompletionAsync, CreateDraftPrIfNotExistsAsync, UpdateFileChangeStatsAsync,
-    // HandlePipelineErrorAsync, FailRunAsync) appear to be dead code after ExecutePipelineStepsAsync was removed.
-    // Evaluate whether they can be safely deleted or if they are still referenced via other paths.
+    // TODO: OrchestratorCallbacks is dead code — only instantiated from dead ExecutePipelineStepsAsync method.
     private sealed class OrchestratorCallbacks(
         PipelineOrchestrationService svc,
         PipelineRun run,
