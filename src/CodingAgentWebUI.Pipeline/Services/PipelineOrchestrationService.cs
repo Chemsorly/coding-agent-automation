@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Singleton service that coordinates the automated development pipeline.
 /// Manages provider resolution, execution orchestration, label swaps, and PR creation.
 /// Delegates run state, lifecycle transitions, events, and cancellation to <see cref="PipelineRunLifecycleService"/>.
-/// Pipeline execution is handled by remote agents via <see cref="CreateDispatchedRunAsync"/> and
+/// Pipeline execution is handled by remote agents via <see cref="DispatchRunCreationService"/> and
 /// <c>LocalPipelineExecutor</c>. Multi-agent dispatch uses concurrent runs tracked via <see cref="IOrchestratorRunService"/>.
 /// </summary>
 // Provider lifecycle management (resolution, disposal, active provider tracking) is delegated
@@ -18,12 +18,10 @@ namespace CodingAgentWebUI.Pipeline.Services;
 // RemoveAllAgentLabels, and CreatePullRequest. A separate facade would add indirection
 // without meaningful simplification. Revisit if pipeline steps accumulate more
 // provider-operation parameters beyond what IPipelineCallbacks covers.
-public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrchestrationShutdownAction, IDispatchRunCreator, IChangeNotifier
+public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrchestrationShutdownAction, IChangeNotifier
 {
     private readonly PipelineRunLifecycleService _lifecycle;
     private readonly IPipelineConfigStore _pipelineConfigStore;
-    private readonly IConfigurationStore _configurationStore;
-    private readonly IProviderFactory _providerFactory;
     private readonly ILabelService _labelSwapper;
     private readonly IssueDescriptionParser _issueParser;
     private readonly IPipelineExecutionFacade _executionFacade;
@@ -117,8 +115,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         ArgumentNullException.ThrowIfNull(logger);
 
         _pipelineConfigStore = pipelineConfigStore;
-        _configurationStore = configurationStore;
-        _providerFactory = providerFactory;
         _labelSwapper = labelSwapper;
         _issueParser = issueParser;
         _logger = logger;
@@ -127,136 +123,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         _cancellationFacade = cancellationFacade;
         _providerManager = new PipelineProviderManager(configurationStore, providerFactory, logger);
         _lifecycle = lifecycle;
-    }
-
-    /// <summary>
-    /// Creates a <see cref="PipelineRun"/> for dispatch to a remote agent.
-    /// The run is tracked via <see cref="IOrchestratorRunService"/> (not the local <see cref="ActiveRun"/>).
-    /// Does NOT execute the pipeline locally — the agent handles execution.
-    /// </summary>
-    /// <returns>The created <see cref="PipelineRun"/> ready for dispatch, or <c>null</c> if the issue is already being processed.</returns>
-    public async Task<PipelineRun?> CreateDispatchedRunAsync(
-        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
-        ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
-        string? brainProviderId = null, string? pipelineProviderId = null,
-        string initiatedBy = "dispatch",
-        PipelineRunType runType = PipelineRunType.Implementation)
-    {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
-        // TODO: Validate that ProviderConfigId.Value is not null/empty for issueProviderId,
-        // repoProviderId, and agentProviderId. The previous string parameters had
-        // ArgumentNullException.ThrowIfNull guards that are now lost because structs can't be null,
-        // but default(ProviderConfigId) or implicit conversion from null still produces Value = null.
-
-        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
-        {
-            _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping dispatch", issueIdentifier);
-            return null;
-        }
-
-        var run = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
-            issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy, runType, ct);
-
-        if (!_lifecycle.RegisterDispatchedRun(run))
-            return null;
-
-        _logger.Information(
-            "Dispatched run {RunId} created for issue {IssueIdentifier} → agent {AgentId}",
-            run.RunId, issueIdentifier, agentId);
-
-        return run;
-    }
-
-    /// <summary>
-    /// Reserves a run ID and registers a dedup guard (sentinel) without constructing a full
-    /// <see cref="PipelineRun"/>. Returns metadata needed to construct the final run.
-    /// The sentinel immediately makes <see cref="IsIssueBeingProcessed"/> return <c>true</c>.
-    /// </summary>
-    /// <returns>A <see cref="RunReservation"/> with the allocated RunId and resolved metadata,
-    /// or <c>null</c> if the issue is already being processed.</returns>
-    public async Task<RunReservation?> ReserveRunIdAsync(
-        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
-        ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
-        string? brainProviderId = null, string? pipelineProviderId = null,
-        string initiatedBy = "dispatch")
-    {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
-
-        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
-        {
-            _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping reservation", issueIdentifier);
-            return null;
-        }
-
-        // TODO: startedAt is captured before ResolveAndCreateRunAsync (provider resolution).
-        // Original code captured it after provider resolution. If excluding provider resolution
-        // latency from start time matters, move this assignment after the helper call.
-        var startedAt = DateTimeOffset.UtcNow;
-
-        var sentinel = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
-            issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy,
-            PipelineRunType.Implementation, ct);
-
-        if (!_lifecycle.RegisterDispatchedRun(sentinel))
-            return null;
-
-        _logger.Information(
-            "Reserved run {RunId} for issue {IssueIdentifier}",
-            sentinel.RunId, issueIdentifier);
-
-        return new RunReservation(sentinel.RunId, sentinel.RepositoryName!, sentinel.ModelName!, startedAt);
-    }
-
-    /// <summary>
-    /// Resolves provider configs and creates a fully-constructed <see cref="PipelineRun"/> with
-    /// metadata (RepositoryName, ModelName, PipelineProviderConfigId) already set.
-    /// Shared by <see cref="CreateDispatchedRunAsync"/> and <see cref="ReserveRunIdAsync"/>.
-    /// </summary>
-    private async Task<PipelineRun> ResolveAndCreateRunAsync(
-        ProviderConfigId repoProviderId,
-        ProviderConfigId agentProviderId,
-        string issueIdentifier,
-        ProviderConfigId issueProviderId,
-        string? agentId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        string initiatedBy,
-        PipelineRunType runType,
-        CancellationToken ct)
-    {
-        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
-        await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
-        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
-        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
-
-        var run = PipelineRun.Create(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: issueIdentifier,
-            issueTitle: string.Empty,
-            issueProviderConfigId: issueProviderId.Value,
-            repoProviderConfigId: repoProviderId.Value,
-            runType: runType,
-            initiatedBy: initiatedBy,
-            agentId: agentId,
-            agentProviderConfigId: agentProviderId.Value,
-            brainProviderConfigId: brainProviderId);
-        run.RepositoryName = tempRepoProvider.RepositoryFullName;
-        run.ModelName = configuredModel;
-        run.PipelineProviderConfigId = pipelineProviderId;
-
-        return run;
-    }
-
-    /// <summary>
-    /// Registers a fully-constructed <see cref="PipelineRun"/> by atomically replacing the
-    /// sentinel created by <see cref="ReserveRunIdAsync"/>. The run must use the same RunId
-    /// that was returned in the <see cref="RunReservation"/>.
-    /// </summary>
-    /// <param name="run">The fully-populated pipeline run to register.</param>
-    public void RegisterDispatchedRun(PipelineRun run)
-    {
-        ArgumentNullException.ThrowIfNull(run);
-        _lifecycle.ReplaceDispatchedRun(run);
     }
 
     /// <summary>Cancels the active pipeline run. Delegates state transitions to lifecycle service.</summary>

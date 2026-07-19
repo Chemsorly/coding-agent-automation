@@ -111,13 +111,13 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HashSet<(string, ProviderConfigId)>());
 
-        var orchestration = TestOrchestrationFactory.CreateMinimal(
+        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: ConfigStore,
             providerFactory: MockFactory.Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(
-            orchestration, MockFactory.Object, ConfigStore, ConfigStore, ConfigStore, MockLogger.Object, mockDistributor.Object);
+            runCreator, MockFactory.Object, ConfigStore, ConfigStore, ConfigStore, MockLogger.Object, mockDistributor.Object);
 
         using var cts = new CancellationTokenSource();
         await loopService.StartAsync(cts.Token);
@@ -192,13 +192,13 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             new ProviderConfig { Id = "rp-exists", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Exists" },
             CancellationToken.None);
 
-        var orchestration = TestOrchestrationFactory.CreateMinimal(
+        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: ConfigStore,
             providerFactory: MockFactory.Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var loopService = new PipelineLoopService(
-            orchestration, MockFactory.Object, ConfigStore, ConfigStore, ConfigStore, MockLogger.Object);
+            runCreator, MockFactory.Object, ConfigStore, ConfigStore, ConfigStore, MockLogger.Object);
 
         // Act
         var started = await loopService.StartLoopAsync();

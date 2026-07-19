@@ -19,7 +19,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
     private readonly Mock<IConfigurationStore> _mockStore;
     private readonly Mock<IProviderFactory> _mockFactory;
     private readonly Mock<Serilog.ILogger> _mockLogger;
-    private readonly PipelineOrchestrationService _orchestration;
+    private readonly DispatchRunCreationService _runCreator;
     private PipelineLoopService? _loopService;
 
     public FlattenTemplatesTests()
@@ -33,7 +33,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
         _mockLogger.Setup(l => l.Warning(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<object>()));
         _mockLogger.Setup(l => l.Warning(It.IsAny<string>(), It.IsAny<int>(), It.IsAny<string>()));
 
-        _orchestration = TestOrchestrationFactory.CreateMinimal(
+        _runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockStore.Object,
             providerFactory: _mockFactory.Object,
             logger: _mockLogger.Object);
@@ -42,7 +42,7 @@ public class FlattenTemplatesTests : IAsyncDisposable
     private PipelineLoopService CreateService()
     {
         _loopService = new PipelineLoopService(
-            _orchestration, _mockFactory.Object,
+            _runCreator, _mockFactory.Object,
             _mockStore.Object, _mockStore.Object, _mockStore.Object,
             _mockLogger.Object);
         return _loopService;
