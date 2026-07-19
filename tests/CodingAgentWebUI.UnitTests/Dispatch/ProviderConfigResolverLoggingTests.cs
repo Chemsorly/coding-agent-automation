@@ -11,10 +11,13 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 /// Verifies that ProviderConfigResolver logs at Error level before throwing
 /// when a required config is not found.
 /// </summary>
+// TODO: Add a test for the positive backfill path — verify that InvalidateCaches() is called
+// when GetProviderConfigByIdAsync returns a valid config (the cast to IConfigurationStore was
+// replaced with a direct call, but no test guards that InvalidateCaches is actually invoked).
 public class ProviderConfigResolverLoggingTests
 {
     private readonly Mock<ILogger> _mockLogger;
-    private readonly Mock<IProviderConfigStore> _mockStore;
+    private readonly Mock<IConfigurationStore> _mockStore;
 
     public ProviderConfigResolverLoggingTests()
     {
@@ -22,10 +25,7 @@ public class ProviderConfigResolverLoggingTests
         _mockLogger.Setup(l => l.ForContext(It.IsAny<string>(), It.IsAny<object?>(), It.IsAny<bool>()))
             .Returns(_mockLogger.Object);
 
-        _mockStore = new Mock<IProviderConfigStore>();
-        // TODO: Add test coverage for cache invalidation path — use Mock<IProviderConfigStore>().As<IConfigurationStore>()
-        // to verify InvalidateCaches is called on successful DB backfill. Also add a negative test that confirms
-        // a pure IProviderConfigStore (without IConfigurationStore) succeeds gracefully on DB backfill without throwing.
+        _mockStore = new Mock<IConfigurationStore>();
         // Return null from DB fallback to trigger the throw
         _mockStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);

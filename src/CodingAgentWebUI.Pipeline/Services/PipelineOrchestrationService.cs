@@ -190,6 +190,74 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         return run;
     }
 
+    /// <summary>
+    /// Reserves a run ID and registers a dedup guard (sentinel) without constructing a full
+    /// <see cref="PipelineRun"/>. Returns metadata needed to construct the final run.
+    /// The sentinel immediately makes <see cref="IsIssueBeingProcessed"/> return <c>true</c>.
+    /// </summary>
+    /// <returns>A <see cref="RunReservation"/> with the allocated RunId and resolved metadata,
+    /// or <c>null</c> if the issue is already being processed.</returns>
+    public async Task<RunReservation?> ReserveRunIdAsync(
+        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
+        ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
+        string? brainProviderId = null, string? pipelineProviderId = null,
+        string initiatedBy = "dispatch")
+    {
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+
+        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
+        {
+            _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping reservation", issueIdentifier);
+            return null;
+        }
+
+        // Resolve repo and agent provider configs for metadata
+        var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
+        await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
+        var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
+        var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
+
+        var runId = Guid.NewGuid().ToString();
+        var startedAt = DateTimeOffset.UtcNow;
+
+        // Create a minimal sentinel run for dedup guard
+        var sentinel = PipelineRun.Create(
+            runId: runId,
+            issueIdentifier: issueIdentifier,
+            issueTitle: string.Empty,
+            issueProviderConfigId: issueProviderId.Value,
+            repoProviderConfigId: repoProviderId.Value,
+            runType: PipelineRunType.Implementation,
+            initiatedBy: initiatedBy,
+            agentId: agentId,
+            agentProviderConfigId: agentProviderId.Value,
+            brainProviderConfigId: brainProviderId);
+        sentinel.RepositoryName = tempRepoProvider.RepositoryFullName;
+        sentinel.ModelName = configuredModel;
+        sentinel.PipelineProviderConfigId = pipelineProviderId;
+
+        if (!_lifecycle.RegisterDispatchedRun(sentinel))
+            return null;
+
+        _logger.Information(
+            "Reserved run {RunId} for issue {IssueIdentifier}",
+            runId, issueIdentifier);
+
+        return new RunReservation(runId, tempRepoProvider.RepositoryFullName, configuredModel, startedAt);
+    }
+
+    /// <summary>
+    /// Registers a fully-constructed <see cref="PipelineRun"/> by atomically replacing the
+    /// sentinel created by <see cref="ReserveRunIdAsync"/>. The run must use the same RunId
+    /// that was returned in the <see cref="RunReservation"/>.
+    /// </summary>
+    /// <param name="run">The fully-populated pipeline run to register.</param>
+    public void RegisterDispatchedRun(PipelineRun run)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        _lifecycle.ReplaceDispatchedRun(run);
+    }
+
     // TODO: ExecutePipelineStepsAsync is dead code — never called from any public method in this class.
     // It (and its callees BuildStepPipeline, OrchestratorCallbacks) should be removed or wired up.
     private async Task ExecutePipelineStepsAsync(
