@@ -65,4 +65,67 @@ public class RefactoringProposalDeserializationTests
         p.Technique.Should().BeNull();
         p.Category.Should().BeNull();
     }
+
+    [Fact]
+    public void Deserialize_WithDependsOn_PopulatesTitleList()
+    {
+        var json = """
+            [
+                {
+                    "title": "Extract class from service",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Extract IDispatchRunCreator",
+                    "rationale": "Too many responsibilities",
+                    "dependsOn": ["Remove dead code cluster", "Extract shared run-metadata resolution"]
+                }
+            ]
+            """;
+
+        var proposals = JsonSerializer.Deserialize<List<RefactoringProposal>>(json, JsonOptions);
+
+        proposals.Should().HaveCount(1);
+        var p = proposals![0];
+        p.DependsOn.Should().BeEquivalentTo(["Remove dead code cluster", "Extract shared run-metadata resolution"]);
+    }
+
+    [Fact]
+    public void Deserialize_WithoutDependsOn_FieldIsNull()
+    {
+        var json = """
+            [
+                {
+                    "title": "Simple rename",
+                    "affectedFiles": ["src/X.cs"],
+                    "description": "Rename method",
+                    "rationale": "Naming convention"
+                }
+            ]
+            """;
+
+        var proposals = JsonSerializer.Deserialize<List<RefactoringProposal>>(json, JsonOptions);
+
+        proposals.Should().HaveCount(1);
+        proposals![0].DependsOn.Should().BeNull();
+    }
+
+    [Fact]
+    public void Deserialize_WithEmptyDependsOn_PopulatesEmptyList()
+    {
+        var json = """
+            [
+                {
+                    "title": "Independent refactoring",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Standalone change",
+                    "rationale": "No dependencies",
+                    "dependsOn": []
+                }
+            ]
+            """;
+
+        var proposals = JsonSerializer.Deserialize<List<RefactoringProposal>>(json, JsonOptions);
+
+        proposals.Should().HaveCount(1);
+        proposals![0].DependsOn.Should().BeEmpty();
+    }
 }

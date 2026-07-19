@@ -188,6 +188,99 @@ public class RefactoringExecutorTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_WithDependsOn_InjectsDependencyLinesInBody()
+    {
+        // Arrange: Two proposals where B depends on A (listed in reverse order to test topological sort)
+        var executor = CreateExecutor();
+        var job = CreateJob();
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract class from service",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Extract IDispatchRunCreator implementation.",
+                    "rationale": "Too many responsibilities.",
+                    "dependsOn": ["Remove dead code cluster"]
+                },
+                {
+                    "title": "Remove dead code cluster",
+                    "affectedFiles": ["src/Service.cs"],
+                    "description": "Delete unused methods.",
+                    "rationale": "285 lines of dead code."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((path, _) =>
+            {
+                var agentDir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult
+            {
+                ExitCode = 0,
+                OutputLines = ["Done."]
+            });
+
+        // Return sequential identifiers so we can verify resolution
+        var callCount = 0;
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                callCount++;
+                return new CreatedIssueResult
+                {
+                    Identifier = (1000 + callCount).ToString(),
+                    Url = $"https://github.com/test/repo/issues/{1000 + callCount}"
+                };
+            });
+
+        // Capture the body of each CreateIssueAsync call
+        var capturedBodies = new List<string>();
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>?, CancellationToken>((_, body, _, _) => capturedBodies.Add(body))
+            .ReturnsAsync(() =>
+            {
+                return new CreatedIssueResult
+                {
+                    Identifier = (1000 + capturedBodies.Count).ToString(),
+                    Url = $"https://github.com/test/repo/issues/{1000 + capturedBodies.Count}"
+                };
+            });
+
+        // Act
+        var result = await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        result.Success.Should().BeTrue();
+        result.CreatedIssues.Should().HaveCount(2);
+
+        // Topological sort should have reordered: "Remove dead code cluster" first (no deps),
+        // then "Extract class from service" (depends on the first)
+        capturedBodies.Should().HaveCount(2);
+
+        // First issue (dead code removal) — no dependency lines
+        capturedBodies[0].Should().NotContain("Depends on");
+        capturedBodies[0].Should().Contain("Delete unused methods");
+
+        // Second issue (extract class) — should have "Depends on #1001"
+        // (1001 = the identifier returned for the first-created issue)
+        capturedBodies[1].Should().Contain("Depends on #1001");
+        capturedBodies[1].Should().Contain("Extract IDispatchRunCreator");
+    }
+
+    [Fact]
     public void FormatRefactoringSummary_NoIssues_ReturnsNoOpportunities()
     {
         // Act
@@ -556,5 +649,188 @@ public class RefactoringExecutorTests : IDisposable
         {
             Directory.Delete(tempDir, recursive: true);
         }
+    }
+
+    // ─── Autolink Escaping in Prerequisites ─────────────────────────────────────
+
+    [Fact]
+    public void FormatIssueBody_PrerequisitesWithHashNumber_EscapesAutolinks()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Extract class",
+            AffectedFiles = ["src/Service.cs"],
+            Description = "Extract IDispatchRunCreator",
+            Rationale = "SRP violation",
+            Prerequisites = ["Complete proposal #1 (dead code removal)", "After #2 is merged"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        // #1 and #2 must NOT appear as bare autolinks — they should be escaped
+        body.Should().NotContainEquivalentOf("proposal #1 (dead");
+        body.Should().NotContainEquivalentOf("After #2 is");
+        // But the text meaning should be preserved (escaped form)
+        body.Should().Contain("proposal");
+        body.Should().Contain("dead code removal");
+    }
+
+    [Fact]
+    public void FormatIssueBody_PrerequisitesWithoutHashNumber_PassesThrough()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Rename",
+            AffectedFiles = ["src/A.cs"],
+            Description = "Rename method",
+            Rationale = "Convention",
+            Prerequisites = ["Add characterization tests for X before refactoring"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- Add characterization tests for X before refactoring");
+    }
+
+    // ─── Dependency Resolution (DependsOn field → "Depends on #N" in body) ──────
+
+    [Fact]
+    public void FormatIssueBody_WithResolvedDependencies_PrependsDependsOnLines()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Extract class from service",
+            AffectedFiles = ["src/Service.cs"],
+            Description = "Extract dispatch creation",
+            Rationale = "Too many responsibilities"
+        };
+
+        var resolvedDependencies = new[] { "Depends on #1425", "Depends on #1426" };
+        var body = RefactoringExecutor.FormatIssueBody(proposal, resolvedDependencies);
+
+        // Dependency lines should appear before the Summary section
+        var dependsIndex = body.IndexOf("Depends on #1425");
+        var summaryIndex = body.IndexOf("## Summary");
+        dependsIndex.Should().BeGreaterThanOrEqualTo(0);
+        summaryIndex.Should().BeGreaterThan(dependsIndex);
+
+        body.Should().Contain("Depends on #1425");
+        body.Should().Contain("Depends on #1426");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNullDependencies_NoDependsOnLines()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Independent refactoring",
+            AffectedFiles = ["src/A.cs"],
+            Description = "Standalone",
+            Rationale = "No deps"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, resolvedDependencies: null);
+
+        body.Should().NotContain("Depends on");
+        body.Should().StartWith("## Summary");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithEmptyDependencies_NoDependsOnLines()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Independent refactoring",
+            AffectedFiles = ["src/A.cs"],
+            Description = "Standalone",
+            Rationale = "No deps"
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal, resolvedDependencies: Array.Empty<string>());
+
+        body.Should().NotContain("Depends on");
+        body.Should().StartWith("## Summary");
+    }
+
+    // ─── Topological Sort ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TopologicalSort_IndependentProposals_PreservesOrder()
+    {
+        var proposals = new List<RefactoringProposal>
+        {
+            new() { Title = "A", AffectedFiles = ["x"], Description = "d", Rationale = "r" },
+            new() { Title = "B", AffectedFiles = ["x"], Description = "d", Rationale = "r" },
+            new() { Title = "C", AffectedFiles = ["x"], Description = "d", Rationale = "r" }
+        };
+
+        var sorted = RefactoringExecutor.TopologicalSortProposals(proposals);
+
+        sorted.Select(p => p.Title).Should().ContainInOrder("A", "B", "C");
+    }
+
+    [Fact]
+    public void TopologicalSort_DependentProposal_MovedAfterDependency()
+    {
+        var proposals = new List<RefactoringProposal>
+        {
+            new() { Title = "B depends on A", AffectedFiles = ["x"], Description = "d", Rationale = "r", DependsOn = ["A is independent"] },
+            new() { Title = "A is independent", AffectedFiles = ["x"], Description = "d", Rationale = "r" }
+        };
+
+        var sorted = RefactoringExecutor.TopologicalSortProposals(proposals);
+
+        sorted[0].Title.Should().Be("A is independent");
+        sorted[1].Title.Should().Be("B depends on A");
+    }
+
+    [Fact]
+    public void TopologicalSort_CyclicDependency_FallsBackToOriginalOrder()
+    {
+        var proposals = new List<RefactoringProposal>
+        {
+            new() { Title = "A", AffectedFiles = ["x"], Description = "d", Rationale = "r", DependsOn = ["B"] },
+            new() { Title = "B", AffectedFiles = ["x"], Description = "d", Rationale = "r", DependsOn = ["A"] }
+        };
+
+        var sorted = RefactoringExecutor.TopologicalSortProposals(proposals);
+
+        // Cycle → fallback to original order
+        sorted[0].Title.Should().Be("A");
+        sorted[1].Title.Should().Be("B");
+    }
+
+    [Fact]
+    public void TopologicalSort_ExternalDependency_IgnoredGracefully()
+    {
+        var proposals = new List<RefactoringProposal>
+        {
+            new() { Title = "A", AffectedFiles = ["x"], Description = "d", Rationale = "r", DependsOn = ["External issue not in batch"] }
+        };
+
+        var sorted = RefactoringExecutor.TopologicalSortProposals(proposals);
+
+        sorted[0].Title.Should().Be("A");
+    }
+
+    // ─── Regex: C# language name not escaped ─────────────────────────────────────
+
+    [Fact]
+    public void FormatIssueBody_PrerequisiteWithCSharpLanguage_NotEscaped()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            Prerequisites = ["Requires C# 12 support"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        // "C# 12" should NOT be escaped — the lookbehind prevents it
+        body.Should().Contain("C# 12");
+        body.Should().NotContain("C`#12`");
     }
 }
