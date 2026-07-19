@@ -75,10 +75,15 @@ public class DispatchOrchestrationServiceTests
             _mockLogger.Object);
     }
 
-    // TODO: Remove unused 'orchestration' parameter — method creates its own runCreator internally (dead parameter from pre-refactoring code)
-    private DispatchOrchestrationService CreateService(
-        PipelineOrchestrationService orchestration)
+    private DispatchOrchestrationService CreateService()
     {
+        // Setup provider factory to return dummy providers (needed by DispatchRunCreationService)
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(p => p.RepositoryFullName).Returns("owner/repo");
+        _mockProviderFactory
+            .Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
+
         var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockConfigStore.Object,
             providerFactory: _mockProviderFactory.Object,
@@ -101,22 +106,6 @@ public class DispatchOrchestrationServiceTests
             _mockConfigStore.Object,
             _mockConfigStore.Object,
             _mockLogger.Object);
-    }
-
-    private PipelineOrchestrationService CreateOrchestration()
-    {
-        // Setup provider factory to return dummy providers
-        var mockRepoProvider = new Mock<IRepositoryProvider>();
-        mockRepoProvider.Setup(p => p.RepositoryFullName).Returns("owner/repo");
-        _mockProviderFactory
-            .Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
-            .Returns(mockRepoProvider.Object);
-
-        return TestUtilities.TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockConfigStore.Object,
-            providerFactory: _mockProviderFactory.Object,
-            logger: _mockLogger.Object,
-            runService: _runService);
     }
 
     private void SetupStandardMocks()
@@ -202,8 +191,7 @@ public class DispatchOrchestrationServiceTests
     public async Task PrepareAsync_WithValidInputs_ReturnsResult()
     {
         SetupStandardMocks();
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
 
         var result = await service.PrepareAsync(
             issueIdentifier: "issue-42",
@@ -229,8 +217,7 @@ public class DispatchOrchestrationServiceTests
     public async Task PrepareAsync_DoesNotSwapLabel()
     {
         SetupStandardMocks();
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
 
         await service.PrepareAsync(
             issueIdentifier: "issue-42",
@@ -253,8 +240,7 @@ public class DispatchOrchestrationServiceTests
     public async Task ConfirmDistributionLabelAsync_SwapsLabelToInProgress()
     {
         SetupStandardMocks();
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
 
         var request = new JobDistributionRequest
         {
@@ -283,8 +269,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<AgentProfile>());
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
 
         var result = await service.PrepareAsync(
             issueIdentifier: "issue-42",
@@ -309,8 +294,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.GetProviderConfigByIdAsync("issue-1", ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
 
         var result = await service.PrepareAsync(
             issueIdentifier: "issue-42",
@@ -330,8 +314,7 @@ public class DispatchOrchestrationServiceTests
     public async Task PrepareAsync_CreatesRunViaOrchestrationService()
     {
         SetupStandardMocks();
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
 
         var result = await service.PrepareAsync(
             issueIdentifier: "issue-42",
@@ -361,8 +344,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Throws(new InvalidOperationException("Provider crashed"));
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
 
         var result = await service.PrepareAsync(
             issueIdentifier: "issue-42",
@@ -382,8 +364,7 @@ public class DispatchOrchestrationServiceTests
     public async Task PrepareAsync_IncludesProviderConfigs()
     {
         SetupStandardMocks();
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
 
         var result = await service.PrepareAsync(
             issueIdentifier: "issue-42",
@@ -421,8 +402,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var request = await iface.PrepareDistributionRequestAsync(
@@ -482,8 +462,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var request = await iface.PrepareDistributionRequestAsync(
@@ -522,8 +501,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDistributionRequestAsync(
@@ -555,8 +533,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var reviewRequest = new ReviewDispatchRequest
@@ -607,8 +584,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var reviewRequest = new ReviewDispatchRequest
@@ -659,8 +635,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var reviewRequest = new ReviewDispatchRequest
@@ -715,8 +690,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(mockIssueProvider.Object);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDecompositionDistributionRequestAsync(
@@ -773,8 +747,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(mockIssueProvider.Object);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDecompositionDistributionRequestAsync(
@@ -817,8 +790,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDecompositionDistributionRequestAsync(
@@ -852,8 +824,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDistributionRequestAsync(
@@ -888,8 +859,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDistributionRequestAsync(
@@ -926,8 +896,7 @@ public class DispatchOrchestrationServiceTests
             .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigWithLabels);
 
-        var orchestration = CreateOrchestration();
-        var service = CreateService(orchestration);
+        var service = CreateService();
         IDispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDistributionRequestAsync(

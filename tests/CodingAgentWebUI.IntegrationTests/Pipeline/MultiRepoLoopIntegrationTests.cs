@@ -111,12 +111,6 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HashSet<(string, ProviderConfigId)>());
 
-        // TODO: Remove unused 'orchestration' variable — only 'runCreator' is referenced after this point
-        var orchestration = TestOrchestrationFactory.CreateMinimal(
-            configStore: ConfigStore,
-            providerFactory: MockFactory.Object,
-            historyService: new Mock<IPipelineRunHistoryService>().Object);
-
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: ConfigStore,
             providerFactory: MockFactory.Object,
@@ -197,12 +191,6 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         await ConfigStore.SaveProviderConfigAsync(
             new ProviderConfig { Id = "rp-exists", Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Exists" },
             CancellationToken.None);
-
-        // TODO: Remove unused 'orchestration' variable — only 'runCreator' is referenced after this point
-        var orchestration = TestOrchestrationFactory.CreateMinimal(
-            configStore: ConfigStore,
-            providerFactory: MockFactory.Object,
-            historyService: new Mock<IPipelineRunHistoryService>().Object);
 
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: ConfigStore,

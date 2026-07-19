@@ -32,7 +32,6 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
     private readonly HttpClient _httpClient;
     private readonly TokenVendingService _tokenVending;
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService;
-    private readonly List<PipelineOrchestrationService> _orchestrationInstances = new();
 
     private JobAssignmentMessage? _capturedMessage;
 
@@ -67,18 +66,6 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
 
     private AgentJobDispatcher CreateDispatcher()
     {
-        var realOrchestration = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockConfigStore.Object,
-            providerFactory: _mockProviderFactory.Object,
-            executionFacade: new PipelineExecutionFacade(
-                new AgentPhaseExecutor(_mockLogger.Object),
-                new QualityGateExecutor(new Mock<IQualityGateValidator>().Object, new PullRequestOrchestrator(_mockLogger.Object), new CiLogWriter(_mockLogger.Object), new FeedbackService(_mockLogger.Object), _mockLogger.Object),
-                new Mock<IQualityGateValidator>().Object,
-                Mock.Of<IBrainSyncService>()),
-            historyService: _mockHistoryService.Object,
-            runService: _runService);
-        _orchestrationInstances.Add(realOrchestration);
-
         var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockConfigStore.Object,
             providerFactory: _mockProviderFactory.Object,
@@ -493,7 +480,5 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
-        foreach (var orchestration in _orchestrationInstances)
-            orchestration.Dispose();
     }
 }
