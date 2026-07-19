@@ -98,7 +98,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// Checks whether the given issue is being processed by any active run (in-process or agent-dispatched).
     /// Delegates to lifecycle service.
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier, ProviderConfigId issueProviderConfigId) => _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId.Value);
+    public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId) => _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId.Value);
 
     public PipelineOrchestrationService(
         IPipelineConfigStore pipelineConfigStore,
@@ -143,13 +143,12 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// </summary>
     /// <returns>The created <see cref="PipelineRun"/> ready for dispatch, or <c>null</c> if the issue is already being processed.</returns>
     public async Task<PipelineRun?> CreateDispatchedRunAsync(
-        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
+        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, IssueIdentifier issueIdentifier,
         ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
         string? brainProviderId = null, string? pipelineProviderId = null,
         string initiatedBy = "dispatch",
         PipelineRunType runType = PipelineRunType.Implementation)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
         // TODO: Validate that ProviderConfigId.Value is not null/empty for issueProviderId,
         // repoProviderId, and agentProviderId. The previous string parameters had
         // ArgumentNullException.ThrowIfNull guards that are now lost because structs can't be null,
@@ -171,7 +170,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
         var run = PipelineRun.Create(
             runId: Guid.NewGuid().ToString(),
-            issueIdentifier: issueIdentifier,
+            issueIdentifier: issueIdentifier.Value,
             issueTitle: string.Empty,
             issueProviderConfigId: issueProviderId.Value,
             repoProviderConfigId: repoProviderId.Value,
@@ -197,12 +196,15 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
     /// <inheritdoc />
     public async Task<RunReservation?> ReserveRunIdAsync(
-        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
+        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, IssueIdentifier issueIdentifier,
         ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
         string? brainProviderId = null, string? pipelineProviderId = null,
         string initiatedBy = "dispatch")
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        // TODO: Validate that issueIdentifier.Value is not null/empty. The previous string parameter had
+        // ArgumentNullException.ThrowIfNull that is now lost because structs can't be null, but
+        // default(IssueIdentifier) or implicit conversion from null still produces Value = null.
+        // Same issue exists in CreateDispatchedRunAsync above.
 
         // TODO: TOCTOU race — concurrent calls to ReserveRunIdAsync for the same issueIdentifier can
         // both pass this check before either registers the sentinel. The inner RegisterDispatchedRun
@@ -232,7 +234,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         // runType parameter to ReserveRunIdAsync to set the correct type on the sentinel.
         var sentinel = PipelineRun.Create(
             runId: runId,
-            issueIdentifier: issueIdentifier,
+            issueIdentifier: issueIdentifier.Value,
             issueTitle: string.Empty,
             issueProviderConfigId: issueProviderId.Value,
             repoProviderConfigId: repoProviderId.Value,
@@ -276,7 +278,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
         // Label swap requires the active issue provider (orchestration concern)
         if (_providerManager.ActiveIssueProvider != null || run.RunType == PipelineRunType.Review)
-            await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
+            await SwapAgentLabelAsync(run, run.IssueIdentifier.Value, AgentLabels.Cancelled, CancellationToken.None);
 
         // Delegate state transitions to lifecycle
         await _lifecycle.CancelPipelineAsync();
@@ -320,7 +322,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             var targetKind = run.LabelTargetKind;
 
             await _labelService.SwapLabelAsync(
-                run.ProviderConfigIdForLabel, run.IssueIdentifier, AgentLabels.Cancelled, targetKind, CancellationToken.None);
+                run.ProviderConfigIdForLabel, run.IssueIdentifier.Value, AgentLabels.Cancelled, targetKind, CancellationToken.None);
         }
 
         // Delegate state changes to lifecycle â€” returns cancelled issue identifiers
@@ -364,7 +366,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
                 run, report, isDraft, _providerManager.ActiveRepoProvider!, _activeIssue,
                 _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
                 isRework: run.LinkedPullRequest != null,
-                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
+                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier.Value));
 
             await HandlePrCreationResultAsync(run, prUrl, isDraft, ct);
         }
@@ -385,7 +387,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         {
             var prUrl = await _completionFacade.PrOrchestrator.CreateDraftPrIfNotExistsAsync(
                 run, _providerManager.ActiveRepoProvider!, ct,
-                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
+                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier.Value));
             if (prUrl != null)
                 _lifecycle.EmitOutputLine($"ðŸ“‹ Draft PR #{run.PullRequestNumber} created");
         }
@@ -420,7 +422,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
             var prUrl = await _completionFacade.PrOrchestrator.FinalizePullRequestAsync(
                 run, report, isDraft, _providerManager.ActiveRepoProvider!, _activeIssue,
                 _activeIssueComments, _activeConfig!, ct, line => _lifecycle.EmitOutputLine(line),
-                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
+                issueReference: _providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier.Value));
 
             await HandlePrCreationResultAsync(run, prUrl, isDraft, ct);
         }
@@ -447,10 +449,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         if (isDraft)
         {
             run.FailureReason = "Quality gates failed after max retries; draft PR created.";
-            await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
+            await SwapAgentLabelAsync(run, run.IssueIdentifier.Value, AgentLabels.Error, ct);
         }
         else
-            await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Done, ct);
+            await SwapAgentLabelAsync(run, run.IssueIdentifier.Value, AgentLabels.Done, ct);
 
         await _completionFacade.Finalization.RunPostPrSequenceAsync(
             run, isDraft, _providerManager.ActiveAgentProvider!, _providerManager.ActiveRepoProvider!,
@@ -534,7 +536,7 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         _logger.Information(
             "Pipeline {RunId} PipelineOrchestrationService.FailRunAsync swapping label to agent:error for issue {IssueIdentifier} (reason={Reason}, step={CurrentStep})",
             run.RunId, run.IssueIdentifier, reason, run.CurrentStep);
-        await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Error, ct);
+        await SwapAgentLabelAsync(run, run.IssueIdentifier.Value, AgentLabels.Error, ct);
         _lifecycle.EmitOutputLine($"❌ Pipeline failed: {reason}");
         _lifecycle.TransitionTo(run, PipelineStep.Failed);
         await _lifecycle.AddRunToHistoryAsync(run).ConfigureAwait(false);

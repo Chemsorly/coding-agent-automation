@@ -198,7 +198,7 @@ public class QualityGateExecutorRetryTests
         await _executor.ProceedToQualityGatesAsync(BuildContext(config), CancellationToken.None);
 
         _mockCallbacks.Verify(
-            c => c.SwapAgentLabel(_run.IssueIdentifier, AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
+            c => c.SwapAgentLabel(_run.IssueIdentifier.Value, AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 

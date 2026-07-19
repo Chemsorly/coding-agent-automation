@@ -96,7 +96,7 @@ public sealed class DownloadIssueImagesStep : IPipelineStep
         if (context.Run.RunType == PipelineRunType.Review
             && !string.IsNullOrWhiteSpace(context.Run.ReviewPrDescription))
         {
-            var prNumber = context.Run.IssueIdentifier; // PR number for review runs
+            var prNumber = context.Run.IssueIdentifier.Value; // PR number for review runs
             var prImages = extractor.Extract(
                 context.Run.ReviewPrDescription, comments: null,
                 prNumber, ImageSourceKind.PullRequest);

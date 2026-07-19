@@ -106,10 +106,10 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
         var dispatchedIssues = new List<string>();
         mockDistributor.Setup(d => d.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .Callback<JobDistributionRequest, CancellationToken>(
-                (request, _) => dispatchedIssues.Add(request.IssueIdentifier))
+                (request, _) => dispatchedIssues.Add(request.IssueIdentifier.Value))
             .ReturnsAsync(new DistributionResult(true, null, null));
         mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<(string, ProviderConfigId)>());
+            .ReturnsAsync(new HashSet<(IssueIdentifier, ProviderConfigId)>());
 
         var orchestration = TestOrchestrationFactory.CreateMinimal(
             configStore: ConfigStore,

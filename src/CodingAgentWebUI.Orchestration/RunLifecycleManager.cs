@@ -89,7 +89,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         }
 
         // 4. Mark issue complete in dedup tracker
-        _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+        _dispatcher.MarkIssueComplete(run.IssueIdentifier.Value, run.IssueProviderConfigId);
 
         // 5. Clear agent state
         ClearAgentState(run.AgentId);
@@ -145,7 +145,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         }
 
         // 3. Mark issue complete in dedup tracker
-        _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+        _dispatcher.MarkIssueComplete(run.IssueIdentifier.Value, run.IssueProviderConfigId);
 
         _logger.Information(
             "RunLifecycleManager.CompleteRunAsync: run {RunId} completed (status={Status})",
@@ -184,7 +184,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         }
 
         // 4. Mark issue complete in dedup tracker
-        _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+        _dispatcher.MarkIssueComplete(run.IssueIdentifier.Value, run.IssueProviderConfigId);
 
         // 5. Clear agent state
         ClearAgentState(run.AgentId);
@@ -339,7 +339,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         {
             var targetKind = run.LabelTargetKind;
 
-            await _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, label, targetKind, ct);
+            await _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier.Value, label, targetKind, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

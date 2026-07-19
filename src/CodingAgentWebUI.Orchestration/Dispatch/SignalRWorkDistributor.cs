@@ -133,7 +133,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
             {
                 await _lifecycleManager.AgentAcceptedRunAsync(
                     request.RunId ?? workItemId.ToString(), resolvedAgentId,
-                    request.IssueIdentifier, request.IssueProviderConfigId,
+                    request.IssueIdentifier.Value, request.IssueProviderConfigId,
                     request.RepoProviderConfigId, request.RunType, ct);
             }
             else

@@ -424,7 +424,7 @@ public sealed class DbModeRaceConditionTests : DbModeE2ETestBase, IClassFixture<
         // Assert: no orphaned in-memory runs
         var runService = Fixture.Factory.Services.GetRequiredService<IOrchestratorRunService>();
         var activeRuns = runService.GetActiveRuns();
-        var leakedRuns = activeRuns.Where(r => r.IssueIdentifier.StartsWith("2100-")).ToList();
+        var leakedRuns = activeRuns.Where(r => r.IssueIdentifier.Value.StartsWith("2100-")).ToList();
         Assert.Empty(leakedRuns);
     }
 }

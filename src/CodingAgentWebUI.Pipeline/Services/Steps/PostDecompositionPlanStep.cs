@@ -50,14 +50,14 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
         // 3. Check for existing plan comment (most recent with marker)
         var postResult = await context.TryCriticalAsync(async () =>
         {
-            var comments = await context.IssueOps.ListCommentsAsync(context.Run.IssueIdentifier, ct);
+            var comments = await context.IssueOps.ListCommentsAsync(context.Run.IssueIdentifier.Value, ct);
             var existingComment = FindMostRecentPlanComment(comments);
 
             if (existingComment is not null)
             {
                 // Update existing comment to avoid duplicates
                 await context.IssueOps.UpdateCommentAsync(
-                    context.Run.IssueIdentifier, existingComment.Id, commentBody, ct);
+                    context.Run.IssueIdentifier.Value, existingComment.Id, commentBody, ct);
                 context.Logger.Information(
                     "Updated existing decomposition plan comment {CommentId} on issue {IssueId}",
                     existingComment.Id, context.Run.IssueIdentifier);
@@ -65,7 +65,7 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
             else
             {
                 // Post new comment
-                await context.IssueOps.PostCommentAsync(context.Run.IssueIdentifier, commentBody, ct);
+                await context.IssueOps.PostCommentAsync(context.Run.IssueIdentifier.Value, commentBody, ct);
                 context.Logger.Information(
                     "Posted new decomposition plan comment on issue {IssueId}",
                     context.Run.IssueIdentifier);
@@ -76,7 +76,7 @@ public sealed class PostDecompositionPlanStep : IPipelineStep
             return StepResult.Stop;
 
         // 4. Swap label to agent:epic-review
-        await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier, AgentLabels.EpicReview, ct);
+        await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier.Value, AgentLabels.EpicReview, ct);
         context.Run.FinalLabel = AgentLabels.EpicReview;
         context.Logger.Information(
             "Swapped label to {Label} on issue {IssueId}",

@@ -115,7 +115,7 @@ public sealed class BrainSyncService : IBrainSyncService
             }
 
             var syncResult = await _brainUpdateService.CommitAndPushAsync(
-                brainPath, run.RunId, run.IssueIdentifier, brainProvider, ct, maxPushRetries);
+                brainPath, run.RunId, run.IssueIdentifier.Value, brainProvider, ct, maxPushRetries);
             run.BrainUpdatesPushed = syncResult.Success;
             run.BrainFilesCommitted = syncResult.FilesCommitted;
 

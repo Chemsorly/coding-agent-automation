@@ -86,7 +86,7 @@ public sealed class CreateBranchStep : IPipelineStep
         return await context.TryCriticalAsync(async () =>
         {
             var branchName = PipelineFormatting.GenerateBranchName(
-                context.Run.IssueIdentifier, context.Issue.Title, context.Run.RunId);
+                context.Run.IssueIdentifier.Value, context.Issue.Title, context.Run.RunId);
             context.Run.BranchName = await context.RepoProvider.CreateBranchAsync(
                 context.Run.WorkspacePath!, branchName, ct);
             context.Logger.Information("Pipeline {RunId} branch {BranchName} created",

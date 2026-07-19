@@ -83,10 +83,13 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// <summary>
     /// Checks whether the given issue is being processed by any active run (in-process or agent-dispatched).
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId)
+    public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, string issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
         ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        // TODO: Validate that issueIdentifier.Value is not null/empty. A default(IssueIdentifier) with
+        // Value = null can reach the comparison logic without throwing, potentially causing
+        // NullReferenceException deeper in the call stack (e.g., when _runService uses Value in
+        // string operations). The previous string parameter had ArgumentNullException.ThrowIfNull.
 
         // Check in-process run
         if (ActiveRun != null && ActiveRun.IssueIdentifier == issueIdentifier
@@ -94,7 +97,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
             return true;
 
         // Check agent runs via OrchestratorRunService
-        return _runService?.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId) == true;
+        return _runService?.IsIssueBeingProcessed(issueIdentifier.Value, issueProviderConfigId) == true;
     }
 
     // ── State Transition Methods ────────────────────────────────────────
@@ -214,7 +217,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
             run.CurrentStep = PipelineStep.Cancelled;
             await AddRunToHistoryAsync(run).ConfigureAwait(false);
             _runService.RemoveRun(run.RunId);
-            cancelledIssues.Add((run.IssueIdentifier, run.IssueProviderConfigId));
+            cancelledIssues.Add((run.IssueIdentifier.Value, run.IssueProviderConfigId));
         }
 
         NotifyChange();

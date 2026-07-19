@@ -89,7 +89,7 @@ public class QualityGateCancellationLabelTests
 
         // Assert: SwapAgentLabel is called with agent:cancelled (NOT RemoveAllAgentLabels)
         _mockCallbacks.Verify(
-            c => c.SwapAgentLabel(_run.IssueIdentifier, AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
+            c => c.SwapAgentLabel(_run.IssueIdentifier.Value, AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
             Times.Once);
 
         // Assert: RemoveAllAgentLabels is NOT called (this was the bug)
@@ -168,7 +168,7 @@ public class QualityGateCancellationLabelTests
 
         // Assert: agent:cancelled label is set
         _mockCallbacks.Verify(
-            c => c.SwapAgentLabel(_run.IssueIdentifier, AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
+            c => c.SwapAgentLabel(_run.IssueIdentifier.Value, AgentLabels.Cancelled, It.IsAny<CancellationToken>()),
             Times.Once);
 
         // Assert: RemoveAllAgentLabels is NOT called

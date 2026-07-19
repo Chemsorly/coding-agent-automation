@@ -65,7 +65,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
             case WorkItemTaskType.Review:
                 var reviewRequest = new ReviewDispatchRequest
                 {
-                    PrIdentifier = request.IssueIdentifier,
+                    PrIdentifier = request.IssueIdentifier.Value,
                     PrBranchName = request.LinkedPullRequest?.BranchName ?? "",
                     PrTitle = request.IssueDetail?.Title ?? "",
                     PrUrl = request.LinkedPullRequest?.Url ?? "",
@@ -82,7 +82,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
 
             case WorkItemTaskType.Decomposition:
                 success = await _jobDispatcher.TryDispatchDecompositionAsync(
-                    request.IssueIdentifier,
+                    request.IssueIdentifier.Value,
                     request.IssueDetail?.Title ?? "",
                     request.RunType,
                     request.IssueProviderConfigId,
@@ -103,7 +103,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
 
                 var consolidationPendingJob = new PendingJob
                 {
-                    IssueIdentifier = request.IssueIdentifier,
+                    IssueIdentifier = request.IssueIdentifier.Value,
                     IssueProviderId = request.IssueProviderConfigId,
                     RepoProviderId = request.RepoProviderConfigId,
                     InitiatedBy = request.InitiatedBy,
@@ -122,7 +122,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
 
             default: // Implementation
                 success = await _jobDispatcher.TryDispatchAsync(
-                    request.IssueIdentifier,
+                    request.IssueIdentifier.Value,
                     request.IssueProviderConfigId,
                     request.RepoProviderConfigId,
                     request.BrainProviderConfigId,
@@ -147,22 +147,22 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
         => Task.FromResult(JobDistributionStatus.Unknown);
 
     /// <inheritdoc />
-    public Task<bool> IsIssueDistributedAsync(string issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct)
-        => Task.FromResult(_jobDispatcher.IsIssueBeingProcessedOrQueued(issueIdentifier, issueProviderConfigId.Value));
+    public Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct)
+        => Task.FromResult(_jobDispatcher.IsIssueBeingProcessedOrQueued(issueIdentifier.Value, issueProviderConfigId.Value));
 
     /// <inheritdoc />
     /// <remarks>
     /// Combines in-memory state from <see cref="JobDispatcherService"/> (queued issues)
     /// and <see cref="IOrchestratorRunService"/> (actively running issues).
     /// </remarks>
-    public Task<HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
+    public Task<HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
     {
-        var result = new HashSet<(string, ProviderConfigId)>();
+        var result = new HashSet<(IssueIdentifier, ProviderConfigId)>();
 
         // Add identifiers from queued jobs
         foreach (var job in _dispatcherService.GetQueuedJobs())
         {
-            result.Add((job.IssueIdentifier, (ProviderConfigId)job.IssueProviderId));
+            result.Add(((IssueIdentifier)job.IssueIdentifier, (ProviderConfigId)job.IssueProviderId));
         }
 
         // Add identifiers from active runs

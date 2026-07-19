@@ -31,7 +31,7 @@ public sealed class FetchIssueStep : IPipelineStep
         }
 
         IssueDetail issue;
-        try { issue = await issueProvider.GetIssueAsync(context.Run.IssueIdentifier, ct); }
+        try { issue = await issueProvider.GetIssueAsync(context.Run.IssueIdentifier.Value, ct); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             context.Logger.Error(ex, "Pipeline {RunId} failed to fetch issue {IssueIdentifier}",
@@ -56,7 +56,7 @@ public sealed class FetchIssueStep : IPipelineStep
         IReadOnlyList<IssueComment> issueComments = Array.Empty<IssueComment>();
         try
         {
-            issueComments = await issueProvider.ListCommentsAsync(context.Run.IssueIdentifier, ct);
+            issueComments = await issueProvider.ListCommentsAsync(context.Run.IssueIdentifier.Value, ct);
             context.Logger.Information("Pipeline {RunId} fetched {CommentCount} comment(s) for issue {IssueIdentifier}",
                 context.Run.RunId, issueComments.Count, context.Run.IssueIdentifier);
         }

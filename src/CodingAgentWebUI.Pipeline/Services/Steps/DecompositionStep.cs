@@ -36,7 +36,7 @@ public sealed class DecompositionStep : IPipelineStep
         context.Callbacks.EmitOutputLine("🧩 Starting sub-issue generation...");
 
         // 6. Validate plan comment exists (marker detection) — do this early to fail fast
-        var comments = await context.IssueOps.ListCommentsAsync(run.IssueIdentifier, ct);
+        var comments = await context.IssueOps.ListCommentsAsync(run.IssueIdentifier.Value, ct);
         var planComment = FindMostRecentPlanComment(comments);
 
         if (planComment is null)

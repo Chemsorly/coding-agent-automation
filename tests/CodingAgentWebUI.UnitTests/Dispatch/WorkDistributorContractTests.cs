@@ -173,7 +173,7 @@ public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
         {
             PipelineRun.Create(
                 runId: Guid.NewGuid().ToString(),
-                issueIdentifier: request.IssueIdentifier,
+                issueIdentifier: request.IssueIdentifier.Value,
                 issueTitle: "Contract test issue",
                 issueProviderConfigId: request.IssueProviderConfigId,
                 repoProviderConfigId: request.RepoProviderConfigId,

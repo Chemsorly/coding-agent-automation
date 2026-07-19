@@ -108,7 +108,7 @@ public partial class QualityGateExecutor
             {
                 _logger.Information("Pipeline {RunId} was cancelled during quality gates", run.RunId);
                 run.MarkCompleted();
-                await callbacks.SwapAgentLabel(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
+                await callbacks.SwapAgentLabel(run.IssueIdentifier.Value, AgentLabels.Cancelled, CancellationToken.None);
                 callbacks.EmitOutputLine("🚫 Pipeline cancelled");
                 callbacks.TransitionTo(PipelineStep.Cancelled);
                 await callbacks.AddRunToHistoryAsync(run);
@@ -121,7 +121,7 @@ public partial class QualityGateExecutor
             _logger.Information(
                 "Pipeline {RunId} QualityGateExecutor swapping label to agent:error for issue {IssueIdentifier} (reason=quality gate validation error)",
                 run.RunId, run.IssueIdentifier);
-            await context.IssueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
+            await context.IssueOps.SwapLabelAsync(run.IssueIdentifier.Value, AgentLabels.Error, CancellationToken.None);
             callbacks.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
             callbacks.TransitionTo(PipelineStep.Failed);
             await callbacks.AddRunToHistoryAsync(run);
@@ -182,7 +182,7 @@ public partial class QualityGateExecutor
             // Build the issue detail for the prompt (use context issue or create a minimal one from run data)
             var issue = context.Issue ?? new IssueDetail
             {
-                Identifier = run.IssueIdentifier,
+                Identifier = run.IssueIdentifier.Value,
                 Title = run.IssueTitle,
                 Description = "(Issue description not available)",
                 Labels = []

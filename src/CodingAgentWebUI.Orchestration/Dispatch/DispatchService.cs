@@ -782,7 +782,7 @@ public sealed class DispatchService : BackgroundService
     /// </summary>
     private async Task TransitionConsolidationRunToRunningAsync(JobDistributionRequest request, CancellationToken ct)
     {
-        var runId = request.RunId ?? request.IssueIdentifier;
+        var runId = request.RunId ?? request.IssueIdentifier.Value;
         if (string.IsNullOrEmpty(runId))
             return;
 

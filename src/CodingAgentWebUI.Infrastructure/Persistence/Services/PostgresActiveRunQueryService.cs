@@ -102,7 +102,7 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
                 summaries.Add(new ActiveRunSummary
                 {
                     RunId = liveRun.RunId,
-                    IssueIdentifier = liveRun.IssueIdentifier,
+                    IssueIdentifier = liveRun.IssueIdentifier.Value,
                     IssueTitle = liveRun.IssueTitle ?? "",
                     RunType = liveRun.RunType,
                     AgentId = liveRun.AgentId,

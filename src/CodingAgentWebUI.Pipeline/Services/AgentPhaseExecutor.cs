@@ -148,7 +148,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
         run.FailureReason = failureReason;
         run.FinalLabel = label;
         run.MarkCompleted();
-        await issueOps.SwapLabelAsync(run.IssueIdentifier, label, ct);
+        await issueOps.SwapLabelAsync(run.IssueIdentifier.Value, label, ct);
         callbacks.TransitionTo(step);
         await callbacks.AddRunToHistoryAsync(run);
         return false;

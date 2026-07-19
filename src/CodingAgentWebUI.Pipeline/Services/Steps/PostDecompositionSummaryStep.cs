@@ -41,7 +41,7 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
         // Post summary comment (non-fatal on failure)
         try
         {
-            await context.IssueOps.PostCommentAsync(context.Run.IssueIdentifier, summaryBody, ct);
+            await context.IssueOps.PostCommentAsync(context.Run.IssueIdentifier.Value, summaryBody, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -54,7 +54,7 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
         context.Run.FinalLabel = targetLabel;
         try
         {
-            await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier, targetLabel, ct);
+            await context.IssueOps.SwapLabelAsync(context.Run.IssueIdentifier.Value, targetLabel, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

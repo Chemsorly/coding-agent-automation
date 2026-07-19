@@ -187,8 +187,8 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             try
             {
                 await AgentLabelOperations.SwapAsync(
-                    (lbl, c) => _activeProviderManager.ActiveIssueProvider!.RemoveLabelAsync(run.IssueIdentifier, lbl, c),
-                    (lbl, c) => _activeProviderManager.ActiveIssueProvider!.AddLabelAsync(run.IssueIdentifier, lbl, c),
+                    (lbl, c) => _activeProviderManager.ActiveIssueProvider!.RemoveLabelAsync(run.IssueIdentifier.Value, lbl, c),
+                    (lbl, c) => _activeProviderManager.ActiveIssueProvider!.AddLabelAsync(run.IssueIdentifier.Value, lbl, c),
                     AgentLabels.Cancelled, CancellationToken.None);
             }
             catch { /* match production: swallow label failures */ }
@@ -236,7 +236,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 run.CompletedAt = DateTime.UtcNow;
                 run.CompletedAtOffset = DateTimeOffset.UtcNow;
                 run.FinalLabel = AgentLabels.Cancelled;
-                await callbacks.SwapAgentLabel(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
+                await callbacks.SwapAgentLabel(run.IssueIdentifier.Value, AgentLabels.Cancelled, CancellationToken.None);
                 _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
                 _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
                 await _lifecycle.AddRunToHistoryAsync(run);
@@ -343,7 +343,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     ctxAccessor()?.IssueComments, ctxAccessor()?.Config ?? new PipelineConfiguration(), ct,
                     line => lifecycle.EmitOutputLine(line),
                     isRework: r.LinkedPullRequest != null,
-                    issueReference: providerManager.ActiveIssueProvider?.FormatIssueReference(r.IssueIdentifier));
+                    issueReference: providerManager.ActiveIssueProvider?.FormatIssueReference(r.IssueIdentifier.Value));
 
                 if (prUrl == null)
                 {
@@ -351,7 +351,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     r.CompletedAt = DateTime.UtcNow;
                     r.CompletedAtOffset = DateTimeOffset.UtcNow;
                     r.FinalLabel = AgentLabels.Error;
-                    await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
+                    await SwapAgentLabel(r.IssueIdentifier.Value, AgentLabels.Error, ct);
                     lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                     lifecycle.TransitionTo(r, PipelineStep.Failed);
                     await lifecycle.AddRunToHistoryAsync(r);
@@ -367,7 +367,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 r.CompletedAt = DateTime.UtcNow;
                 r.CompletedAtOffset = DateTimeOffset.UtcNow;
                 r.FinalLabel = AgentLabels.Error;
-                await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
+                await SwapAgentLabel(r.IssueIdentifier.Value, AgentLabels.Error, ct);
                 lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                 lifecycle.TransitionTo(r, PipelineStep.Failed);
                 await lifecycle.AddRunToHistoryAsync(r);
@@ -393,7 +393,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     r, report, isDraft, providerManager.ActiveRepoProvider!, ctxAccessor()?.Issue,
                     ctxAccessor()?.IssueComments, ctxAccessor()?.Config ?? new PipelineConfiguration(), ct,
                     line => lifecycle.EmitOutputLine(line),
-                    issueReference: providerManager.ActiveIssueProvider?.FormatIssueReference(r.IssueIdentifier));
+                    issueReference: providerManager.ActiveIssueProvider?.FormatIssueReference(r.IssueIdentifier.Value));
 
                 if (prUrl == null && r.PullRequestUrl == null)
                 {
@@ -401,7 +401,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                     r.CompletedAt = DateTime.UtcNow;
                     r.CompletedAtOffset = DateTimeOffset.UtcNow;
                     r.FinalLabel = AgentLabels.Error;
-                    await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
+                    await SwapAgentLabel(r.IssueIdentifier.Value, AgentLabels.Error, ct);
                     lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                     lifecycle.TransitionTo(r, PipelineStep.Failed);
                     await lifecycle.AddRunToHistoryAsync(r);
@@ -419,7 +419,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 r.CompletedAt = DateTime.UtcNow;
                 r.CompletedAtOffset = DateTimeOffset.UtcNow;
                 r.FinalLabel = AgentLabels.Error;
-                await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
+                await SwapAgentLabel(r.IssueIdentifier.Value, AgentLabels.Error, ct);
                 lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
                 lifecycle.TransitionTo(r, PipelineStep.Failed);
                 await lifecycle.AddRunToHistoryAsync(r);
@@ -434,12 +434,12 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 r.FailureReason ??= "Quality gates failed after max retries; draft PR created.";
                 r.IsDraftPr = true;
                 r.FinalLabel = AgentLabels.Error;
-                await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
+                await SwapAgentLabel(r.IssueIdentifier.Value, AgentLabels.Error, ct);
             }
             else
             {
                 r.FinalLabel = AgentLabels.Done;
-                await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Done, ct);
+                await SwapAgentLabel(r.IssueIdentifier.Value, AgentLabels.Done, ct);
             }
 
             // Brain reflection + post-run sync (if brain provider configured and not read-only)

@@ -33,7 +33,7 @@ public sealed class ExtractLinkedIssuesStep : IPipelineStep
 
         context.Callbacks.TransitionTo(PipelineStep.ExtractingLinkedIssues);
 
-        if (!int.TryParse(context.Run.IssueIdentifier, out var prNumber))
+        if (!int.TryParse(context.Run.IssueIdentifier.Value, out var prNumber))
         {
             context.Logger.Warning("PR identifier '{Identifier}' is not a valid integer, skipping linked issue extraction",
                 context.Run.IssueIdentifier);

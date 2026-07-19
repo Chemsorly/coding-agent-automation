@@ -174,7 +174,7 @@ public class SessionIdSpanAttributeTests : IDisposable
         // Set Issue/ParsedIssue so BuildAgentPhaseContext works
         context.Issue = new IssueDetail
         {
-            Identifier = run.IssueIdentifier,
+            Identifier = run.IssueIdentifier.Value,
             Title = "Test Issue",
             Description = "Test description",
             Labels = []

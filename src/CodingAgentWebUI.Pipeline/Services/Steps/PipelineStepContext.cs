@@ -301,7 +301,7 @@ public sealed class PipelineStepContext
         Logger.Information(
             "Pipeline {RunId} FailRunAsync swapping label to agent:error for issue {IssueIdentifier} (reason={Reason}, step={CurrentStep})",
             Run.RunId, Run.IssueIdentifier, reason, Run.CurrentStep);
-        await Callbacks.SwapAgentLabel(Run.IssueIdentifier, AgentLabels.Error, ct);
+        await Callbacks.SwapAgentLabel(Run.IssueIdentifier.Value, AgentLabels.Error, ct);
         Callbacks.EmitOutputLine($"❌ Pipeline failed: {reason}");
         Callbacks.TransitionTo(PipelineStep.Failed);
         await Callbacks.AddRunToHistoryAsync(Run);

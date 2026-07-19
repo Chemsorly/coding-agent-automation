@@ -14,7 +14,7 @@ public sealed class DetectReworkStep : IPipelineStep
 
         try
         {
-            var agentPrs = await context.RepoProvider.GetAgentPullRequestsAsync(context.Run.IssueIdentifier, ct);
+            var agentPrs = await context.RepoProvider.GetAgentPullRequestsAsync(context.Run.IssueIdentifier.Value, ct);
             if (agentPrs.Count > 0)
             {
                 // Close all stale draft PRs

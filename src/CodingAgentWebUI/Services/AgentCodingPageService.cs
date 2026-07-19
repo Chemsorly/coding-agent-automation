@@ -95,7 +95,7 @@ public class AgentCodingPageService : IDisposable
     public bool IssueDrawerDispatching { get; set; }
     public bool PrDrawerDispatching { get; set; }
     public bool EpicDrawerDispatching { get; set; }
-    public HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssues { get; private set; } = new();
+    public HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssues { get; private set; } = new();
 
     public string ActiveDrawerTab => IsIssueDrawerOpen ? "issue" : IsPrDrawerOpen ? "pr" : IsEpicDrawerOpen ? "epic" : "";
 
@@ -572,7 +572,7 @@ public class AgentCodingPageService : IDisposable
 
     /// <summary>Synchronous check against the preloaded active issues set.</summary>
     public bool IsIssueActive(string issueIdentifier, string issueProviderConfigId)
-        => ActiveIssues.Contains((issueIdentifier, issueProviderConfigId));
+        => ActiveIssues.Contains(((IssueIdentifier)issueIdentifier, (ProviderConfigId)issueProviderConfigId));
 
     private void HideOtherDrawers(string keepOpen)
     {

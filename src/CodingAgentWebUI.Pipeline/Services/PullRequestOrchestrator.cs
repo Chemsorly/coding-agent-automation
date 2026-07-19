@@ -42,7 +42,7 @@ public sealed class PullRequestOrchestrator
         ArgumentNullException.ThrowIfNull(config);
 
         var effectiveIssueRef = issueReference ?? $"#{run.IssueIdentifier}";
-        var closeRef = repoProvider.FormatCloseReference(run.IssueIdentifier);
+        var closeRef = repoProvider.FormatCloseReference(run.IssueIdentifier.Value);
 
         // Commit and push
         var commitSuccess = await CommitAndPushAsync(run, effectiveIssueRef, repoProvider, config, ct,
@@ -263,7 +263,7 @@ public sealed class PullRequestOrchestrator
             _logger.Information("Pipeline {RunId} draft PR already exists for branch {BranchName}, looking up existing PR",
                 run.RunId, run.BranchName);
 
-            var existingPrs = await repoProvider.GetAgentPullRequestsAsync(run.IssueIdentifier, ct);
+            var existingPrs = await repoProvider.GetAgentPullRequestsAsync(run.IssueIdentifier.Value, ct);
             var matchingPr = existingPrs.FirstOrDefault(pr => pr.BranchName == run.BranchName);
             if (matchingPr != null)
             {
@@ -312,7 +312,7 @@ public sealed class PullRequestOrchestrator
         ArgumentNullException.ThrowIfNull(config);
 
         var effectiveIssueRef = issueReference ?? $"#{run.IssueIdentifier}";
-        var closeRef = repoProvider.FormatCloseReference(run.IssueIdentifier);
+        var closeRef = repoProvider.FormatCloseReference(run.IssueIdentifier.Value);
 
         if (string.IsNullOrEmpty(run.PullRequestNumber))
         {

@@ -26,7 +26,7 @@ public partial class AgentPhaseExecutor
             var brainContextWritten = await WriteBrainContextIfNeededAsync(run, ct);
 
             var brainWriteInstructions = PromptBuilder.BuildBrainWriteInstructions(
-                run.BrainContextLoaded, run.RunId, run.IssueIdentifier, config.BrainReadOnly);
+                run.BrainContextLoaded, run.RunId, run.IssueIdentifier.Value, config.BrainReadOnly);
 
             var prompt = promptOverride
                 ?? PromptBuilder.BuildPrompt(config.ImplementationPrompt, context.Issue, context.ParsedIssue, brainWriteInstructions, brainContextWritten, imageCount: context.DownloadedImages?.Count ?? 0);

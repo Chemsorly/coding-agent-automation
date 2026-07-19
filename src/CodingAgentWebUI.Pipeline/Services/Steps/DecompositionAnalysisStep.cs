@@ -161,10 +161,10 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         Directory.CreateDirectory(agentDir);
 
         // Fetch issue detail
-        var issue = await context.IssueOps.GetIssueAsync(run.IssueIdentifier, ct);
+        var issue = await context.IssueOps.GetIssueAsync(run.IssueIdentifier.Value, ct);
 
         // Fetch comments
-        var comments = await context.IssueOps.ListCommentsAsync(run.IssueIdentifier, ct);
+        var comments = await context.IssueOps.ListCommentsAsync(run.IssueIdentifier.Value, ct);
 
         // Build issue context content
         var sb = new StringBuilder();

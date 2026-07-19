@@ -17,6 +17,10 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 // and resolves providers. Also add tests validating the transposition-prevention guarantee —
 // e.g., that passing a repo provider ID where an issue provider ID is expected produces
 // distinguishable runtime behavior.
+// TODO: Add boundary condition test for default(IssueIdentifier) passed to CreateDispatchedRunAsync
+// and ReserveRunIdAsync. The previous NullIssueIdentifier test was removed because structs can't be
+// null, but no replacement test verifies behavior when issueIdentifier.Value is null (via
+// default(IssueIdentifier) or implicit conversion from null string).
 public class PipelineOrchestrationServiceDispatchTests : IDisposable
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore;
@@ -93,7 +97,7 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
 
         // Assert
         run.Should().NotBeNull();
-        run!.IssueIdentifier.Should().Be("42");
+        run!.IssueIdentifier.Value.Should().Be("42");
         run.CurrentStep.Should().Be(PipelineStep.Created);
         run.AgentId.Should().Be("agent-container-1");
         run.RepositoryName.Should().Be("owner/repo");
@@ -119,14 +123,6 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
     }
 
     [Fact]
-    public async Task CreateDispatchedRunAsync_NullIssueIdentifier_ThrowsArgumentNullException()
-    {
-        // Act & Assert
-        await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            _service.CreateDispatchedRunAsync("issue-1", "repo-1", null!, "agent-1", "agent-container-1", CancellationToken.None));
-    }
-
-    [Fact]
     public async Task CreateDispatchedRunAsync_NullAgentId_CreatesRunWithNullAgentId()
     {
         // Act — null agentId is valid (used during dispatch window before agent resolution)
@@ -136,7 +132,7 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         // Assert
         run.Should().NotBeNull();
         run!.AgentId.Should().BeNull();
-        run.IssueIdentifier.Should().Be("42");
+        run.IssueIdentifier.Value.Should().Be("42");
     }
 
     public void Dispose()

@@ -105,7 +105,7 @@ public sealed partial class PipelineLoopService
         int MaxRunsPerCycle,
         int MaxConsecutiveFailures,
         int MaxPagesToFetch,
-        HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssueIdentifiers);
+        HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssueIdentifiers);
 
     /// <summary>
     /// Step 1–2: Reads config snapshot, loads projects, flattens templates, filters rate-limited,
@@ -176,7 +176,7 @@ public sealed partial class PipelineLoopService
 
         // Step 2b: Batch-load active issue identifiers for O(1) dedup checks per issue
         // Replaces per-issue IsIssueDistributedAsync calls in the dispatch loop
-        HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)> activeIssueIdentifiers;
+        HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> activeIssueIdentifiers;
         if (_workDistributor is not null)
         {
             try
@@ -187,12 +187,12 @@ public sealed partial class PipelineLoopService
             catch (Exception ex)
             {
                 _logger.Warning(ex, "Failed to load active issue identifiers — proceeding with empty dedup set (may cause duplicate dispatch attempts)");
-                activeIssueIdentifiers = new HashSet<(string, ProviderConfigId)>();
+                activeIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>();
             }
         }
         else
         {
-            activeIssueIdentifiers = new HashSet<(string, ProviderConfigId)>();
+            activeIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>();
         }
 
         // Detect and remediate stuck work items (SignalR mode: Dispatched > 5min → Failed)

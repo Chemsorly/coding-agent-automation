@@ -350,7 +350,7 @@ public class PipelineRunLifecyclePropertyTests
         var allCancelled = agentRuns.All(r => r.CurrentStep == PipelineStep.Cancelled);
         var allInHistory = agentRuns.All(r => addedRuns.Contains(r));
         var allRemoved = agentRuns.All(r => removedRunIds.Contains(r.RunId));
-        var returnedIssues = cancelledIssues.SequenceEqual(agentRuns.Select(r => (r.IssueIdentifier, r.IssueProviderConfigId)));
+        var returnedIssues = cancelledIssues.SequenceEqual(agentRuns.Select(r => (r.IssueIdentifier.Value, r.IssueProviderConfigId)));
 
         return allCompleted && allCancelled && allInHistory && allRemoved && returnedIssues;
     }

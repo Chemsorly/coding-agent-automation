@@ -38,7 +38,7 @@ public sealed class PipelineRunFactoryTests
 
         // Assert
         run.RunId.Should().Be("run-abc-123");
-        run.IssueIdentifier.Should().Be("owner/repo#42");
+        run.IssueIdentifier.Value.Should().Be("owner/repo#42");
         run.IssueTitle.Should().Be("My Issue Title");
         run.IssueProviderConfigId.Should().Be("ip-1");
         run.RepoProviderConfigId.Should().Be("rp-1");

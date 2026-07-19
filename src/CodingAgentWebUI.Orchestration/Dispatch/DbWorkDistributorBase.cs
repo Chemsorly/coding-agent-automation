@@ -97,12 +97,13 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
         // Look up the original enqueue time from prior WorkItems for this issue.
         // This preserves the true "time in queue" across re-dispatches.
         DateTimeOffset? originalEnqueuedAt = null;
-        if (!string.IsNullOrEmpty(request.IssueIdentifier) && !string.IsNullOrEmpty(request.IssueProviderConfigId))
+        if (!string.IsNullOrEmpty(request.IssueIdentifier.Value) && !string.IsNullOrEmpty(request.IssueProviderConfigId))
         {
             await using var lookupDb = await _dbFactory.CreateDbContextAsync(ct);
+            var issueIdentifierValue = request.IssueIdentifier.Value;
             originalEnqueuedAt = await lookupDb.WorkItems
                 .AsNoTracking()
-                .Where(w => w.IssueIdentifier == request.IssueIdentifier
+                .Where(w => w.IssueIdentifier == issueIdentifierValue
                          && w.IssueProviderConfigId == request.IssueProviderConfigId)
                 .OrderBy(w => w.CreatedAt)
                 .Select(w => w.OriginalEnqueuedAt ?? w.CreatedAt)
@@ -117,7 +118,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
         {
             Id = workItemId,
             TaskType = request.TaskType,
-            IssueIdentifier = request.IssueIdentifier,
+            IssueIdentifier = request.IssueIdentifier.Value,
             IssueProviderConfigId = request.IssueProviderConfigId,
             Status = initialStatus,
             Payload = payloadJson,
@@ -189,17 +190,18 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     // ── Shared: Dedup ─────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public virtual async Task<bool> IsIssueDistributedAsync(string issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct)
+    public virtual async Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
+        var issueIdentifierValue = issueIdentifier.Value;
         var issueProviderConfigIdValue = issueProviderConfigId.Value;
 
         // Check for active (non-terminal) WorkItems
         var hasActive = await db.WorkItems
             .AsNoTracking()
             .AnyAsync(w =>
-                w.IssueIdentifier == issueIdentifier &&
+                w.IssueIdentifier == issueIdentifierValue &&
                 w.IssueProviderConfigId == issueProviderConfigIdValue &&
                 ActiveStatuses.Contains(w.Status),
                 ct);
@@ -215,7 +217,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
         return await db.WorkItems
             .AsNoTracking()
             .AnyAsync(w =>
-                w.IssueIdentifier == issueIdentifier &&
+                w.IssueIdentifier == issueIdentifierValue &&
                 w.IssueProviderConfigId == issueProviderConfigIdValue &&
                 !ActiveStatuses.Contains(w.Status) &&
                 w.CompletedAt != null &&
@@ -224,7 +226,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     }
 
     /// <inheritdoc />
-    public virtual async Task<HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
+    public virtual async Task<HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -249,7 +251,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
 
         var result = activePairs
             .Concat(recentTerminalPairs)
-            .Select(p => (p.IssueIdentifier, (ProviderConfigId)p.IssueProviderConfigId))
+            .Select(p => ((IssueIdentifier)p.IssueIdentifier, (ProviderConfigId)p.IssueProviderConfigId))
             .ToHashSet();
 
         return result;
@@ -284,10 +286,10 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
         return new JobAssignmentMessage
         {
             JobId = workItemId.ToString(),
-            IssueIdentifier = request.IssueIdentifier,
+            IssueIdentifier = request.IssueIdentifier.Value,
             IssueDetail = request.IssueDetail ?? new IssueDetail
             {
-                Identifier = request.IssueIdentifier,
+                Identifier = request.IssueIdentifier.Value,
                 Title = string.Empty,
                 Description = string.Empty,
                 Labels = []

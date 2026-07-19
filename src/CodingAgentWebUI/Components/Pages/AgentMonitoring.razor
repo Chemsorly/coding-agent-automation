@@ -1082,7 +1082,7 @@
 
             await HistoryService.AddRunToHistoryAsync(run); // TODO: Pass CancellationToken
             RunService.RemoveRun(run.RunId);
-            Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+            Dispatcher.MarkIssueComplete(run.IssueIdentifier.Value, run.IssueProviderConfigId);
 
             // Also cancel the WorkItem in the DB (DB+SignalR mode)
             try { await WorkDistributor.CancelJobAsync(run.RunId, CancellationToken.None); }
@@ -1091,7 +1091,7 @@
             try
             {
                 await LabelService.SwapLabelAsync(
-                    run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled,
+                    run.IssueProviderConfigId, run.IssueIdentifier.Value, AgentLabels.Cancelled,
                     run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue,
                     CancellationToken.None);
             }
@@ -1113,7 +1113,7 @@
 
             await HistoryService.AddRunToHistoryAsync(run); // TODO: Pass CancellationToken
             RunService.RemoveRun(run.RunId);
-            Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+            Dispatcher.MarkIssueComplete(run.IssueIdentifier.Value, run.IssueProviderConfigId);
 
             lock (agent.SyncRoot)
             {
@@ -1125,7 +1125,7 @@
             try
             {
                 await LabelService.SwapLabelAsync(
-                    run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled,
+                    run.IssueProviderConfigId, run.IssueIdentifier.Value, AgentLabels.Cancelled,
                     run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue,
                     CancellationToken.None);
             }

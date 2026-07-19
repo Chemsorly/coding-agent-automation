@@ -265,7 +265,7 @@ public partial class AgentPhaseExecutor
                 await PostAnalysisCommentAsync(run, context.Issue, context.IssueOps, assessment, ct);
 
                 var abortComment = BuildNotReadyComment(assessment!);
-                try { await context.IssueOps.PostCommentAsync(run.IssueIdentifier, abortComment, ct); }
+                try { await context.IssueOps.PostCommentAsync(run.IssueIdentifier.Value, abortComment, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} failed to post not-ready comment", run.RunId); }
 
@@ -280,7 +280,7 @@ public partial class AgentPhaseExecutor
                 await PostAnalysisCommentAsync(run, context.Issue, context.IssueOps, assessment, ct);
 
                 var wontDoComment = BuildWontDoComment(assessment!);
-                try { await context.IssueOps.PostCommentAsync(run.IssueIdentifier, wontDoComment, ct); }
+                try { await context.IssueOps.PostCommentAsync(run.IssueIdentifier.Value, wontDoComment, ct); }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { _logger.Warning(ex, "Pipeline {RunId} failed to post won't-do comment", run.RunId); }
 
@@ -353,7 +353,7 @@ public partial class AgentPhaseExecutor
             var bodyHash = AnalysisBodyHash.Compute(issue.Description);
             markdown += $"\n<!-- agent:analysis-body-hash:{bodyHash} -->";
 
-            await issueOps.PostCommentAsync(run.IssueIdentifier, markdown, ct);
+            await issueOps.PostCommentAsync(run.IssueIdentifier.Value, markdown, ct);
             _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

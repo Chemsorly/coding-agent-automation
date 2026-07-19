@@ -23,7 +23,7 @@ public sealed class InMemoryActiveRunQueryService : IActiveRunQueryService
         var summaries = runs.Select(r => new ActiveRunSummary
         {
             RunId = r.RunId,
-            IssueIdentifier = r.IssueIdentifier,
+            IssueIdentifier = r.IssueIdentifier.Value,
             IssueTitle = r.IssueTitle,
             RunType = r.RunType,
             AgentId = r.AgentId,

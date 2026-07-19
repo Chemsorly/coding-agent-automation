@@ -179,7 +179,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 }
 
                 // Cancel-during-dispatch race guard: check if run was cancelled while queued
-                var runId = request.IssueIdentifier; // RunId stored as IssueIdentifier for consolidation
+                var runId = request.IssueIdentifier.Value; // RunId stored as IssueIdentifier for consolidation
                 var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
                 if (consolidationRun is null ||
                     consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
@@ -424,7 +424,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     : LabelTargetKind.Issue;
 
                 await _labelService.SwapLabelAsync(
-                    providerForLabel, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
+                    providerForLabel, request.IssueIdentifier.Value, AgentLabels.InProgress, targetKind, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {

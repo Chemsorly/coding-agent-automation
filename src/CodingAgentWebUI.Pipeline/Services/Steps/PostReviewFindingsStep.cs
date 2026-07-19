@@ -58,7 +58,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
 
         context.Callbacks.TransitionTo(PipelineStep.PostingFindings);
 
-        if (!int.TryParse(context.Run.IssueIdentifier, out var prNumber))
+        if (!int.TryParse(context.Run.IssueIdentifier.Value, out var prNumber))
         {
             context.Logger.Warning("PR identifier '{Identifier}' is not a valid integer, skipping review posting",
                 context.Run.IssueIdentifier);

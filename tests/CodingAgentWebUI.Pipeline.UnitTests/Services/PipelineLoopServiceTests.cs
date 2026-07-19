@@ -174,7 +174,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _orchestration.OnChange += () =>
         {
             if (_orchestration.ActiveRun is { CurrentStep: PipelineStep.Created })
-                startedIssues.Add(_orchestration.ActiveRun.IssueIdentifier);
+                startedIssues.Add(_orchestration.ActiveRun.IssueIdentifier.Value);
         };
 
         // The loop will fail on the actual pipeline run (no real providers), but we can verify FIFO ordering
@@ -587,7 +587,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
                 It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DistributionResult(true, null, null));
         mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<(string, ProviderConfigId)>());
+            .ReturnsAsync(new HashSet<(IssueIdentifier, ProviderConfigId)>());
 
         var svc = CreateService(mockDistributor.Object);
         using var cts = new CancellationTokenSource();
@@ -635,7 +635,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         // "already-active" is in the active set — should be SKIPPED
         mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<(string, ProviderConfigId)> { ("already-active", "ip-1") });
+            .ReturnsAsync(new HashSet<(IssueIdentifier, ProviderConfigId)> { ((IssueIdentifier)"already-active", (ProviderConfigId)"ip-1") });
 
         var svc = CreateService(mockDistributor.Object);
         using var cts = new CancellationTokenSource();
@@ -681,12 +681,12 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         var mockDistributor = new Mock<IWorkDistributor>();
         mockDistributor.Setup(d => d.DistributeAsync(
                 It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
-            .Callback<JobDistributionRequest, CancellationToken>((req, _) => dispatchedIdentifiers.Add(req.IssueIdentifier))
+            .Callback<JobDistributionRequest, CancellationToken>((req, _) => dispatchedIdentifiers.Add(req.IssueIdentifier.Value))
             .ReturnsAsync(new DistributionResult(true, null, null));
 
         // Empty active set — no dedup, all issues should proceed
         mockDistributor.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new HashSet<(string, ProviderConfigId)>());
+            .ReturnsAsync(new HashSet<(IssueIdentifier, ProviderConfigId)>());
 
         var svc = CreateService(mockDistributor.Object);
         using var cts = new CancellationTokenSource();

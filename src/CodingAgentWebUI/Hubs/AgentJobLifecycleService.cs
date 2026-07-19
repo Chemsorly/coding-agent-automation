@@ -83,7 +83,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 // Re-queue: transition back to Pending with incremented RetryCount.
                 // The drain service will pick it up again on the next cycle.
                 // Clear the dedup tracker so the drain/loop doesn't consider it "already processing".
-                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+                _facade.MarkIssueComplete(run.IssueIdentifier.Value, run.IssueProviderConfigId);
                 try
                 {
                     await _facade.RequeueWorkItemAsync(jobId.Value, ct);
@@ -101,7 +101,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             if (!shouldRequeue)
             {
                 // Max retries exhausted (or re-queue failed) — permanent failure. Human intervention needed.
-                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+                _facade.MarkIssueComplete(run.IssueIdentifier.Value, run.IssueProviderConfigId);
 
                 try
                 {
@@ -180,7 +180,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 };
 
                 _facade.RemoveRun(jobId.Value);
-                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+                _facade.MarkIssueComplete(run.IssueIdentifier.Value, run.IssueProviderConfigId);
 
                 try
                 {
@@ -255,7 +255,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 // the dedup guard and active runs list may not have been cleaned up.
                 // Without this, the issue becomes permanently blocked from re-dispatch.
                 _facade.RemoveRun(jobId.Value);
-                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+                _facade.MarkIssueComplete(run.IssueIdentifier.Value, run.IssueProviderConfigId);
 
                 // Attempt to transition WorkItem to terminal state so it doesn't stay stuck in Running.
                 try

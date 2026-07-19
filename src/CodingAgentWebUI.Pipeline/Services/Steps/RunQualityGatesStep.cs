@@ -47,7 +47,7 @@ public sealed class RunQualityGatesStep : IPipelineStep
             QualityGateConfigs = allQgcs,
             QgcsConfiguredAtDispatch = qgcsConfiguredAtDispatch,
             Issue = context.Issue,
-            IssueReference = context.IssueProvider?.FormatIssueReference(context.Run.IssueIdentifier)
+            IssueReference = context.IssueProvider?.FormatIssueReference(context.Run.IssueIdentifier.Value)
         };
 
         await context.QualityGates.ProceedToQualityGatesAsync(qualityGateContext, ct);

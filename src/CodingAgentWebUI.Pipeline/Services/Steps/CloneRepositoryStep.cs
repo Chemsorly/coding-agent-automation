@@ -30,7 +30,7 @@ public sealed class CloneRepositoryStep : IPipelineStep
         // before sending the job assignment. Swapping again would produce a redundant GitHub API call
         // that shows up as a confusing "added agent:in-progress and removed agent:in-progress" event.
         if (string.IsNullOrEmpty(context.Run.AgentId))
-            await context.Callbacks.SwapAgentLabel(context.Run.IssueIdentifier, AgentLabels.InProgress, ct);
+            await context.Callbacks.SwapAgentLabel(context.Run.IssueIdentifier.Value, AgentLabels.InProgress, ct);
 
         return await context.TryCriticalAsync(
             () => context.RepoProvider.CloneAsync(workspacePath, ct), "Repository clone", ct);

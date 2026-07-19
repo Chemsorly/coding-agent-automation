@@ -33,7 +33,7 @@ public sealed class AgentIssueOperations : IHubIssueOperations
     /// <inheritdoc />
     public Task SwapLabelAsync(PipelineRun run, string newLabel, LabelTargetKind targetKind)
     {
-        return _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, newLabel, targetKind, CancellationToken.None);
+        return _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier.Value, newLabel, targetKind, CancellationToken.None);
     }
 
     /// <inheritdoc />
@@ -51,7 +51,7 @@ public sealed class AgentIssueOperations : IHubIssueOperations
             await using var issueProvider = _facade.CreateIssueProvider(issueConfig);
             // Validate initializes provider state (e.g., GitLab PathWithNamespace) needed for URL construction
             await issueProvider.ValidateAsync(CancellationToken.None);
-            return await issueProvider.PostCommentAsync(run.IssueIdentifier, body, CancellationToken.None);
+            return await issueProvider.PostCommentAsync(run.IssueIdentifier.Value, body, CancellationToken.None);
         }
         catch (Exception ex)
         {

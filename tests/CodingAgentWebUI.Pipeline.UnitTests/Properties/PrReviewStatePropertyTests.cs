@@ -274,7 +274,7 @@ public class PrReviewStatePropertyTests
 
         // Verify: label swapped to agent:error
         callbacks.Verify(c => c.SwapAgentLabel(
-            run.IssueIdentifier,
+            run.IssueIdentifier.Value,
             AgentLabels.Error,
             It.IsAny<CancellationToken>()), Times.Once);
 
