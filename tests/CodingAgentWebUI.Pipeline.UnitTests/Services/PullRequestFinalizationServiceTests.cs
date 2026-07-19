@@ -363,6 +363,57 @@ public class PullRequestFinalizationServiceTests
         capturedBody.Should().StartWith("### Summary\n\nNext paragraph");
     }
 
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_StripsBlockquotePrefix_WithCrlfLineEndings()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "10";
+        run.PullRequestBody = "existing body";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+        string? capturedBody = null;
+
+        // Simulate CRLF: individual OutputLines contain trailing \r (as happens when upstream splits on \n only)
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["> ### Summary\r", "> \r", "> Some description\r", "> with multiple lines\r"] });
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+            .Returns(Task.CompletedTask);
+
+        await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        capturedBody.Should().StartWith("### Summary\n\nSome description\nwith multiple lines");
+        capturedBody.Should().NotContain("\r");
+        capturedBody.Should().NotContain("> ###");
+    }
+
+    [Fact]
+    public async Task GeneratePrDescriptionAsync_EmptyBlockquoteLine_WithCrlfLineEndings()
+    {
+        var run = CreateRun();
+        run.PullRequestNumber = "10";
+        run.PullRequestBody = "";
+        var agentProvider = new Mock<IAgentProvider>();
+        var repoProvider = new Mock<IRepositoryProvider>();
+        var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
+        string? capturedBody = null;
+
+        // Bare ">" with trailing \r simulates CRLF line endings
+        agentProvider.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["> ### Summary\r", ">\r", "> Next paragraph\r"] });
+        repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
+            .Callback<int, string, bool, CancellationToken>((_, body, _, _) => capturedBody = body)
+            .Returns(Task.CompletedTask);
+
+        await _sut.GeneratePrDescriptionAsync(run, agentProvider.Object, repoProvider.Object, config, _ => { }, CancellationToken.None);
+
+        capturedBody.Should().NotBeNull();
+        capturedBody.Should().StartWith("### Summary\n\nNext paragraph");
+        capturedBody.Should().NotContain("\r");
+    }
+
     // ── RunFullPrCreationAsync ──
 
     [Fact]

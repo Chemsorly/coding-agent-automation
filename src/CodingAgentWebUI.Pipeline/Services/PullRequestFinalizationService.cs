@@ -312,11 +312,9 @@ public sealed class PullRequestFinalizationService
     /// Lines starting with "<c>&gt; </c>" have the prefix removed; bare "<c>&gt;</c>" lines become empty strings.
     /// Mid-line <c>&gt;</c> characters (code, comparisons) are preserved.
     /// </summary>
-    // TODO: text.Split('\n') does not handle \r\n (Windows/CRLF) line endings. If agent output contains \r\n,
-    // line == ">" would fail (it would be ">\r"). Consider using text.ReplaceLineEndings("\n").Split('\n') for robustness.
     private static string StripBlockquotePrefix(string text)
     {
-        var lines = text.Split('\n');
+        var lines = text.ReplaceLineEndings("\n").Split('\n');
         var stripped = lines.Select(line =>
             line.StartsWith("> ") ? line[2..] :
             line == ">" ? "" :
