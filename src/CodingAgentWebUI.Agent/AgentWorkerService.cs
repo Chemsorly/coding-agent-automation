@@ -413,21 +413,19 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
     private async Task HandleCancelChatAsync(string sessionId)
     {
-        // TODO: TOCTOU race — ActiveChatSessionId is read under lock, but ActiveChatTask and ChatCts
-        // are read separately without the lock. The chat task's finally block could call ReleaseChatSlot()
-        // between these reads, nulling out the CTS. Consider adding an atomic method on AgentJobSlotManager
-        // that returns (sessionId, task, cts) under a single lock acquisition.
-        if (_slotManager.ActiveChatSessionId != sessionId)
+        var (activeSessionId, chatTask, cts) = _slotManager.GetChatSlotSnapshot();
+
+        if (activeSessionId != sessionId)
         {
             _logger.Warning("Received CancelChat for {SessionId} but active session is {ActiveSessionId}",
-                sessionId, _slotManager.ActiveChatSessionId);
+                sessionId, activeSessionId);
             return;
         }
 
-        var chatTask = _slotManager.ActiveChatTask;
-
         _logger.Information("Cancelling chat session {SessionId}", sessionId);
-        var cts = _slotManager.ChatCts;
+        // ObjectDisposedException catch is still necessary: the snapshot captures a live CTS
+        // reference, but ReleaseChatSlot() can run AFTER the snapshot was taken (the chat task
+        // completes between our snapshot read and the Cancel() call), disposing the CTS.
         try { cts?.Cancel(); }
         catch (ObjectDisposedException) { }
 
