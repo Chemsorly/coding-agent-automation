@@ -160,6 +160,11 @@ public class HeartbeatMonitorServiceTests : IDisposable
         _registry.GetByAgentId("agent-1").Should().BeNull();
     }
 
+    // TODO: This test does not assert that the log message contains the correct (non-null) job ID.
+    // The mock simulates ClearAgentState (setting ActiveJobId = null), perfectly reproducing the
+    // null-logging bug scenario, but only verifies FailRunAsync was called — not the subsequent
+    // log output. Add a _mockLogger.Verify() assertion confirming the logged JobId equals "job-1"
+    // to provide an actual regression guard for the null-logging fix.
     [Fact]
     public async Task SweepAsync_DisconnectedPastGracePeriod_WithActiveJob_MarksRunFailed()
     {
