@@ -147,6 +147,55 @@ public sealed partial class AgentJobDispatcher
     }
 
     /// <summary>
+    /// Shared prologue for all dispatch paths: ensures a non-null project, resolves the agent profile,
+    /// and extracts the agent provider config ID. Returns <c>null</c> if profile resolution fails.
+    /// </summary>
+    private async Task<(PipelineProject Project, AgentProfile Profile, string AgentProviderId)?>
+        ResolveDispatchCoreAsync(AgentEntry agent, string identifier, string identifierType,
+                                  PipelineProject? project, CancellationToken ct)
+    {
+        project = EnsureProject(project, identifier, identifierType);
+
+        var profile = await _infra.Resolution.ResolveProfileAsync(agent, ct);
+        if (profile is null)
+            return null;
+
+        return (project, profile, profile.AgentProviderConfigId);
+    }
+
+    /// <summary>
+    /// Shared error-handling wrapper for all dispatch paths. Executes <paramref name="body"/> and,
+    /// on exception, reverts agent state and swaps the label back via <see cref="RevertDispatchFailureAsync"/>.
+    /// </summary>
+    /// <param name="agent">The agent being dispatched to.</param>
+    /// <param name="revertProviderConfigId">Provider config ID for the label swap on failure (issueProviderId for impl/decomp, repoProviderId for review).</param>
+    /// <param name="identifier">Issue/PR/epic identifier for logging and label revert.</param>
+    /// <param name="revertLabel">Label to swap back to on failure.</param>
+    /// <param name="failureMessageTemplate">Serilog message template for the error log.</param>
+    /// <param name="body">The dispatch logic to execute.</param>
+    /// <param name="revertTargetKind">Optional label target kind (e.g., PullRequest for review path).</param>
+    private async Task<bool> SafeDispatchAsync(
+        AgentEntry agent,
+        string revertProviderConfigId,
+        string identifier,
+        string revertLabel,
+        string failureMessageTemplate,
+        Func<Task<bool>> body,
+        LabelTargetKind? revertTargetKind = null)
+    {
+        try
+        {
+            return await body();
+        }
+        catch (Exception ex)
+        {
+            await RevertDispatchFailureAsync(agent, ex, failureMessageTemplate,
+                revertProviderConfigId, identifier, revertLabel, revertTargetKind);
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Dispatches a job to a specific agent. Resolves the agent profile and quality gate
     /// configurations, creates the PipelineRun, prepares configs, and sends the
     /// <see cref="JobAssignmentMessage"/> via SignalR.
@@ -163,16 +212,13 @@ public sealed partial class AgentJobDispatcher
         CancellationToken ct,
         PipelineProject? project = null)
     {
-        try
+        return await SafeDispatchAsync(agent, issueProviderId, issueIdentifier, AgentLabels.Next,
+            "Failed to dispatch job to agent {AgentId} for issue {IssueIdentifier}",
+            async () =>
         {
-            project = EnsureProject(project, issueIdentifier, "issue");
-
-            // Resolve profile for this agent
-            var profile = await _infra.Resolution.ResolveProfileAsync(agent, ct);
-            if (profile is null)
-                return false;
-
-            var agentProviderId = profile.AgentProviderConfigId;
+            var core = await ResolveDispatchCoreAsync(agent, issueIdentifier, "issue", project, ct);
+            if (core is null) return false;
+            var (proj, profile, agentProviderId) = core.Value;
 
             // Resolve quality gate configurations for this job
             var resolvedQgcs = await _infra.Resolution.ResolveQualityGatesAsync(requiredLabels, ct);
@@ -193,8 +239,8 @@ public sealed partial class AgentJobDispatcher
             }
 
             // Set project context on the run (captured at dispatch time)
-            run.ProjectId = project.Id;
-            run.ProjectName = project.Name;
+            run.ProjectId = proj.Id;
+            run.ProjectName = proj.Name;
 
             // Populate resolved profile and QGC IDs on the run
             run.ResolvedProfileId = profile.Id;
@@ -216,13 +262,13 @@ public sealed partial class AgentJobDispatcher
             // Build and prepare provider configs for the agent
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
             var (providerConfigs, config) = await PrepareAndResolveConfigAsync(
-                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, project, ct);
+                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, proj, ct);
 
             await BuildAndSendAsync(
                 agent, run, profile,
                 issueIdentifier, issueContext.IssueDetail, issueContext.ParsedIssue, issueContext.IssueComments,
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, issueProviderId,
-                providerConfigs, config, initiatedBy, project,
+                providerConfigs, config, initiatedBy, proj,
                 msg => msg with
                 {
                     ExistingAnalysis = issueContext.ExistingAnalysis,
@@ -236,7 +282,7 @@ public sealed partial class AgentJobDispatcher
 
             _logger.Information(
                 "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount}, reviewerConfigs={ReviewerConfigCount}, project={ProjectName})",
-                run.RunId, agent.AgentId, issueIdentifier, profile.Id, resolvedQgcs.Count, resolvedReviewerConfigs.Count, project.Name);
+                run.RunId, agent.AgentId, issueIdentifier, profile.Id, resolvedQgcs.Count, resolvedReviewerConfigs.Count, proj.Name);
 
             if (resolvedReviewerConfigs.Count > 0)
             {
@@ -246,14 +292,7 @@ public sealed partial class AgentJobDispatcher
             }
 
             return true;
-        }
-        catch (Exception ex)
-        {
-            await RevertDispatchFailureAsync(agent, ex,
-                "Failed to dispatch job to agent {AgentId} for issue {IssueIdentifier}",
-                issueProviderId, issueIdentifier, AgentLabels.Next);
-            return false;
-        }
+        });
     }
 
     /// <summary>
@@ -267,16 +306,13 @@ public sealed partial class AgentJobDispatcher
         CancellationToken ct,
         PipelineProject? project = null)
     {
-        try
+        return await SafeDispatchAsync(agent, request.RepoProviderId, request.PrIdentifier, AgentLabels.Next,
+            "Failed to dispatch review job to agent {AgentId} for PR {PrIdentifier}",
+            async () =>
         {
-            project = EnsureProject(project, request.PrIdentifier, "PR");
-
-            // Resolve profile for this agent
-            var profile = await _infra.Resolution.ResolveProfileAsync(agent, ct);
-            if (profile is null)
-                return false;
-
-            var agentProviderId = profile.AgentProviderConfigId;
+            var core = await ResolveDispatchCoreAsync(agent, request.PrIdentifier, "PR", project, ct);
+            if (core is null) return false;
+            var (proj, profile, agentProviderId) = core.Value;
 
             // Resolve reviewer configurations for this job (quality gates not needed for reviews)
             var resolvedReviewerConfigs = await _infra.Resolution.ResolveReviewersAsync(requiredLabels, ct);
@@ -317,8 +353,8 @@ public sealed partial class AgentJobDispatcher
                 linkedIssueContexts: linkedIssueContexts.Count > 0 ? linkedIssueContexts : null);
             run.RepositoryName = reservation.RepositoryName;
             run.ModelName = reservation.ModelName;
-            run.ProjectId = project.Id;
-            run.ProjectName = project.Name;
+            run.ProjectId = proj.Id;
+            run.ProjectName = proj.Name;
             run.LinkedPullRequest = new LinkedPullRequest
             {
                 Number = int.TryParse(request.PrIdentifier, out var prNum) ? prNum : 0,
@@ -337,7 +373,7 @@ public sealed partial class AgentJobDispatcher
             // Build and prepare provider configs for the agent
             // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
             var (providerConfigs, config) = await PrepareAndResolveConfigAsync(
-                request.RepoProviderId, agentProviderId, request.BrainProviderId, null, project, ct);
+                request.RepoProviderId, agentProviderId, request.BrainProviderId, null, proj, ct);
 
             // NOTE: Label swap to agent:in-progress is handled by AssignAndSendAsync → AgentAcceptedRunAsync.
             // This ensures the label only changes when an agent actually accepts the job.
@@ -356,7 +392,7 @@ public sealed partial class AgentJobDispatcher
                 agent, run, profile,
                 request.PrIdentifier, syntheticIssueDetail, syntheticParsedIssue, Array.Empty<IssueComment>(),
                 request.RepoProviderId, agentProviderId, request.BrainProviderId, null, request.IssueProviderId,
-                providerConfigs, config, request.InitiatedBy, project,
+                providerConfigs, config, request.InitiatedBy, proj,
                 msg => msg with
                 {
                     LinkedPullRequest = run.LinkedPullRequest,
@@ -374,14 +410,7 @@ public sealed partial class AgentJobDispatcher
                 run.RunId, agent.AgentId, request.PrIdentifier, profile.Id, resolvedReviewerConfigs.Count, linkedIssueContexts.Count);
 
             return true;
-        }
-        catch (Exception ex)
-        {
-            await RevertDispatchFailureAsync(agent, ex,
-                "Failed to dispatch review job to agent {AgentId} for PR {PrIdentifier}",
-                request.RepoProviderId, request.PrIdentifier, AgentLabels.Next, LabelTargetKind.PullRequest);
-            return false;
-        }
+        }, LabelTargetKind.PullRequest);
     }
 
     /// <summary>
@@ -403,16 +432,18 @@ public sealed partial class AgentJobDispatcher
         string? decompositionSource = null,
         PipelineProject? project = null)
     {
-        try
+        // Revert label on dispatch failure — Phase 1 reverts to agent:epic, Phase 2 reverts to agent:epic-approved
+        var revertLabel = phaseType == PipelineRunType.DecompositionAnalysis
+            ? AgentLabels.Epic
+            : AgentLabels.EpicApproved;
+
+        return await SafeDispatchAsync(agent, issueProviderId, epicIdentifier, revertLabel,
+            "Failed to dispatch decomposition job to agent {AgentId} for epic {EpicIdentifier}",
+            async () =>
         {
-            project = EnsureProject(project, epicIdentifier, "epic");
-
-            // Resolve profile for this agent
-            var profile = await _infra.Resolution.ResolveProfileAsync(agent, ct);
-            if (profile is null)
-                return false;
-
-            var agentProviderId = profile.AgentProviderConfigId;
+            var core = await ResolveDispatchCoreAsync(agent, epicIdentifier, "epic", project, ct);
+            if (core is null) return false;
+            var (proj, profile, agentProviderId) = core.Value;
 
             // Reserve a run ID and dedup guard via PipelineOrchestrationService
             var reservation = await _orchestration.ReserveRunIdAsync(
@@ -448,8 +479,8 @@ public sealed partial class AgentJobDispatcher
             run.RepositoryName = reservation.RepositoryName;
             run.ModelName = reservation.ModelName;
             run.WorkspacePath = workspacePath;
-            run.ProjectId = project.Id;
-            run.ProjectName = project.Name;
+            run.ProjectId = proj.Id;
+            run.ProjectName = proj.Name;
 
             // Atomically replace the sentinel with the fully-populated run
             _orchestration.RegisterDispatchedRun(run);
@@ -470,14 +501,14 @@ public sealed partial class AgentJobDispatcher
             // Build DecompositionProjectContext for cross-repo decomposition (project-level epics only).
             // Per-template decomposition (EpicIssueProviderId is null) should NOT get project context.
             DecompositionProjectContext? projectContext = null;
-            if (!string.IsNullOrEmpty(project.EpicIssueProviderId))
+            if (!string.IsNullOrEmpty(proj.EpicIssueProviderId))
             {
                 var repoProviderConfigs = await _infra.Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
                 var repoConfigLookup = repoProviderConfigs.ToDictionary(c => c.Id);
                 var templateLookup = (await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
 
                 var repositories = new List<RepositoryTarget>();
-                foreach (var templateId in project.TemplateIds)
+                foreach (var templateId in proj.TemplateIds)
                 {
                     if (!templateLookup.TryGetValue(templateId, out var tmpl))
                         continue;
@@ -502,7 +533,7 @@ public sealed partial class AgentJobDispatcher
 
                 projectContext = new DecompositionProjectContext
                 {
-                    ProjectName = project.Name,
+                    ProjectName = proj.Name,
                     Repositories = repositories.AsReadOnly()
                 };
             }
@@ -521,7 +552,7 @@ public sealed partial class AgentJobDispatcher
             config = await PipelineConfigurationResolver.ResolveAsync(
                 config,
                 _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
-                project, repoProviderId, brainProviderId, providerConfigs, ct);
+                proj, repoProviderId, brainProviderId, providerConfigs, ct);
 
             // Swap label to agent:in-progress before dispatch so the epic is immediately marked
             // NOTE: Label swap to agent:in-progress is handled by AssignAndSendAsync → AgentAcceptedRunAsync.
@@ -529,7 +560,7 @@ public sealed partial class AgentJobDispatcher
                 agent, run, profile,
                 epicIdentifier, syntheticIssueDetail, syntheticParsedIssue, Array.Empty<IssueComment>(),
                 repoProviderId, agentProviderId, brainProviderId, null, issueProviderId,
-                providerConfigs, config, initiatedBy, project,
+                providerConfigs, config, initiatedBy, proj,
                 msg => msg with
                 {
                     RunType = phaseType,
@@ -539,21 +570,10 @@ public sealed partial class AgentJobDispatcher
 
             _logger.Information(
                 "Decomposition {Phase} job {JobId} dispatched to agent {AgentId} for epic {EpicIdentifier} (profile={ProfileId}, project={ProjectName})",
-                phaseType, run.RunId, agent.AgentId, epicIdentifier, profile.Id, project.Name);
+                phaseType, run.RunId, agent.AgentId, epicIdentifier, profile.Id, proj.Name);
 
             return true;
-        }
-        catch (Exception ex)
-        {
-            // Revert label on dispatch failure — Phase 1 reverts to agent:epic, Phase 2 reverts to agent:epic-approved
-            var revertLabel = phaseType == PipelineRunType.DecompositionAnalysis
-                ? AgentLabels.Epic
-                : AgentLabels.EpicApproved;
-            await RevertDispatchFailureAsync(agent, ex,
-                "Failed to dispatch decomposition job to agent {AgentId} for epic {EpicIdentifier}",
-                issueProviderId, epicIdentifier, revertLabel);
-            return false;
-        }
+        });
     }
 
     /// <summary>
