@@ -150,7 +150,15 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
     private DispatchOrchestrationService CreateOrchestrationService()
     {
+        // TODO: Remove unused 'orchestration' variable — only 'runCreator' is used. Also, orchestration
+        // and runCreator each create separate PipelineRunLifecycleService instances (they share _runService
+        // but have independent lifecycle state, which doesn't fully mirror production DI wiring).
         var orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockConfigStore.Object,
+            providerFactory: _mockProviderFactory.Object,
+            lifecycle: new PipelineRunLifecycleService(new Mock<IPipelineRunHistoryService>().Object, _runService, _mockLogger.Object));
+
+        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockConfigStore.Object,
             providerFactory: _mockProviderFactory.Object,
             lifecycle: new PipelineRunLifecycleService(new Mock<IPipelineRunHistoryService>().Object, _runService, _mockLogger.Object));
@@ -160,7 +168,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
                 _mockTokenVending.Object, _mockProviderFactory.Object,
                 _mockLabelService.Object,
                 new DispatchResolutionService(new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(), _mockConfigStore.Object, _mockLogger.Object)),
-            orchestration,
+            runCreator,
             _runService,
             new Mock<IWorkDistributor>().Object,
             // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.

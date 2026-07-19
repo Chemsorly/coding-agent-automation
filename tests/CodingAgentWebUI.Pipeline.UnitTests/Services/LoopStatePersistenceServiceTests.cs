@@ -225,13 +225,19 @@ public class LoopStatePersistenceServiceTests : IDisposable
         mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
 
+        // TODO: Remove unused 'orchestration' variable — only 'runCreator' is passed to PipelineLoopService
         var orchestration = TestOrchestrationFactory.CreateMinimal(
             configStore: mockStore.Object,
             providerFactory: mockFactory.Object,
             logger: _logger);
 
+        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
+            configStore: mockStore.Object,
+            providerFactory: mockFactory.Object,
+            logger: _logger);
+
         return new PipelineLoopService(
-            orchestration,
+            runCreator,
             mockFactory.Object,
             mockConfigStore.Object,
             mockProviderConfigStore.Object,

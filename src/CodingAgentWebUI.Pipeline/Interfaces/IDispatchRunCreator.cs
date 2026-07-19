@@ -10,6 +10,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// <para>
 /// Implementations:
 /// <list type="bullet">
+///   <!-- TODO: Update reference — production implementation is now DispatchRunCreationService, not PipelineOrchestrationService -->
 ///   <item><description><see cref="Services.PipelineOrchestrationService"/> — production implementation</description></item>
 /// </list>
 /// </para>

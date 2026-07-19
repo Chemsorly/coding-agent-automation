@@ -79,11 +79,17 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
             runService: _runService);
         _orchestrationInstances.Add(realOrchestration);
 
+        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
+            configStore: _mockConfigStore.Object,
+            providerFactory: _mockProviderFactory.Object,
+            historyService: _mockHistoryService.Object,
+            runService: _runService);
+
         return new AgentJobDispatcher(
             _dispatcher,
             _registry,
             _runService,
-            realOrchestration,
+            runCreator,
             new DispatchInfrastructure(
                 _tokenVending,
                 _mockProviderFactory.Object,

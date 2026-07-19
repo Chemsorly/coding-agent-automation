@@ -75,16 +75,23 @@ public class DispatchOrchestrationServiceTests
             _mockLogger.Object);
     }
 
+    // TODO: Remove unused 'orchestration' parameter — method creates its own runCreator internally (dead parameter from pre-refactoring code)
     private DispatchOrchestrationService CreateService(
         PipelineOrchestrationService orchestration)
     {
+        var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
+            configStore: _mockConfigStore.Object,
+            providerFactory: _mockProviderFactory.Object,
+            logger: _mockLogger.Object,
+            runService: _runService);
+
         return new DispatchOrchestrationService(
             new DispatchInfrastructure(
                 _mockTokenVending.Object,
                 _mockProviderFactory.Object,
                 _mockLabelService.Object,
                 _resolution),
-            orchestration,
+            runCreator,
             _runService,
             _mockWorkDistributor.Object,
             // TODO: Use separate typed mocks for each sub-interface (IAgentProfileStore, IProviderConfigStore,
@@ -976,11 +983,17 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             logger: _mockLogger.Object,
             runService: _runService);
 
+        var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
+            configStore: mockConfigStore.Object,
+            providerFactory: mockProviderFactory.Object,
+            logger: _mockLogger.Object,
+            runService: _runService);
+
         _service = new DispatchOrchestrationService(
             new DispatchInfrastructure(
                 mockTokenVending.Object, mockProviderFactory.Object,
                 _mockLabelService.Object, resolution),
-            orchestration,
+            runCreator,
             _runService,
             new Mock<IWorkDistributor>().Object,
             // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
@@ -1131,11 +1144,17 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
             logger: _mockLogger.Object,
             runService: _runService);
 
+        var runCreator = TestUtilities.TestOrchestrationFactory.CreateMinimalRunCreator(
+            configStore: mockConfigStore.Object,
+            providerFactory: mockProviderFactory.Object,
+            logger: _mockLogger.Object,
+            runService: _runService);
+
         _service = new DispatchOrchestrationService(
             new DispatchInfrastructure(
                 mockTokenVending.Object, mockProviderFactory.Object,
                 _mockLabelService.Object, resolution),
-            orchestration,
+            runCreator,
             _runService,
             _mockWorkDistributor.Object,
             // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
