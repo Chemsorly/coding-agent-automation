@@ -3,14 +3,13 @@ using CodingAgentWebUI.Pipeline.Models;
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
-/// Narrow interface exposing only the dispatch-path operations from
-/// <see cref="Services.PipelineOrchestrationService"/>. Consumers that need
-/// dedup checks, run creation, and active-run queries for dispatch purposes
+/// Narrow interface exposing only the dispatch-path operations from the orchestration layer.
+/// Consumers that need dedup checks, run creation, and active-run queries for dispatch purposes
 /// depend on this interface rather than the full orchestration service.
 /// <para>
 /// Implementations:
 /// <list type="bullet">
-///   <item><description><see cref="Services.PipelineOrchestrationService"/> — production implementation</description></item>
+///   <item><description><see cref="Services.DispatchRunCreationService"/> — production implementation</description></item>
 /// </list>
 /// </para>
 /// </summary>

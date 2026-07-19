@@ -361,11 +361,11 @@ public class PipelineLoopPropertyTests
     private static PipelineLoopService CreateService(Mock<IConfigurationStore> mockStore, Mock<IProviderFactory> mockFactory, IWorkDistributor? distributor = null)
     {
         var mockLogger = new Mock<Serilog.ILogger>();
-        var orchestration = TestOrchestrationFactory.CreateMinimal(
+        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: mockStore.Object,
             providerFactory: mockFactory.Object,
             logger: mockLogger.Object);
 
-        return new PipelineLoopService(orchestration, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object, distributor);
+        return new PipelineLoopService(runCreator, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object, distributor);
     }
 }

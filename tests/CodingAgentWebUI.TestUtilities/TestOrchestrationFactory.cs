@@ -49,6 +49,30 @@ public static class TestOrchestrationFactory
             logger);
     }
 
+    /// <summary>
+    /// Creates a <see cref="DispatchRunCreationService"/> with the same lifecycle as a companion
+    /// <see cref="PipelineOrchestrationService"/>. Use when a test needs both an orchestration service
+    /// and a separate <see cref="IDispatchRunCreator"/>.
+    /// </summary>
+    public static DispatchRunCreationService CreateMinimalRunCreator(
+        IConfigurationStore? configStore = null,
+        IProviderFactory? providerFactory = null,
+        PipelineRunLifecycleService? lifecycle = null,
+        Serilog.ILogger? logger = null,
+        IPipelineRunHistoryService? historyService = null,
+        IOrchestratorRunService? runService = null)
+    {
+        logger ??= Serilog.Log.Logger;
+        historyService ??= new NullHistoryService();
+        var store = configStore ?? throw new ArgumentNullException(nameof(configStore), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object");
+
+        return new DispatchRunCreationService(
+            lifecycle ?? new PipelineRunLifecycleService(historyService, runService, logger),
+            store,
+            providerFactory ?? throw new ArgumentNullException(nameof(providerFactory), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
+            logger);
+    }
+
     // TODO: CreateDefaultExecutionFacade uses real AgentPhaseExecutor/QualityGateExecutor — tests using
     // CreateMinimal() without explicit facade mocks exercise real internal wiring rather than isolated behavior.
     // If a test relied on verifying interactions via Mock.Verify(), the switch to CreateMinimal silently drops that.

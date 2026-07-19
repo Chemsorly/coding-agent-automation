@@ -123,8 +123,15 @@ public static class ServiceCollectionExtensions
             Log.Logger));
         services.AddSingleton<Pipeline.Interfaces.IOrchestrationShutdownAction>(sp =>
             sp.GetRequiredService<PipelineOrchestrationService>());
+        // TODO: Register DispatchRunCreationService as a concrete singleton so the DI container
+        // can track it for disposal if IAsyncDisposable is added later. Currently the factory lambda
+        // means the container won't call Dispose/DisposeAsync on shutdown.
         services.AddSingleton<Pipeline.Interfaces.IDispatchRunCreator>(sp =>
-            sp.GetRequiredService<PipelineOrchestrationService>());
+            new DispatchRunCreationService(
+                sp.GetRequiredService<PipelineRunLifecycleService>(),
+                sp.GetRequiredService<IProviderConfigStore>(),
+                sp.GetRequiredService<IProviderFactory>(),
+                Log.Logger));
         services.AddSingleton<Pipeline.Interfaces.IChangeNotifier>(sp =>
             sp.GetRequiredService<PipelineOrchestrationService>());
 
