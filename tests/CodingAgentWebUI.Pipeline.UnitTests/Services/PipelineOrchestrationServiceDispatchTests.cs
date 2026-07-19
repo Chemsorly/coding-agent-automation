@@ -93,7 +93,7 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
 
         // Assert
         run.Should().NotBeNull();
-        run!.IssueIdentifier.Should().Be("42");
+        run!.IssueIdentifier.Value.Should().Be("42");
         run.CurrentStep.Should().Be(PipelineStep.Created);
         run.AgentId.Should().Be("agent-container-1");
         run.RepositoryName.Should().Be("owner/repo");
@@ -136,7 +136,7 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         // Assert
         run.Should().NotBeNull();
         run!.AgentId.Should().BeNull();
-        run.IssueIdentifier.Should().Be("42");
+        run.IssueIdentifier.Value.Should().Be("42");
     }
 
     public void Dispose()

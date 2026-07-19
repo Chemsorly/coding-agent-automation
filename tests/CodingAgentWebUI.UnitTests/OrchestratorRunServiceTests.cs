@@ -67,7 +67,7 @@ public class OrchestratorRunServiceTests
         service.AddRun(run2); // duplicate — should be ignored
 
         service.ActiveRunCount.Should().Be(1);
-        service.GetRun("run-1")!.IssueIdentifier.Should().Be("issue-A");
+        service.GetRun("run-1")!.IssueIdentifier.Value.Should().Be("issue-A");
     }
 
     [Fact]

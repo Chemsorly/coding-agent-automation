@@ -171,7 +171,7 @@ public sealed class PipelineRun
     }
 
     public required string RunId { get; init; }
-    public required string IssueIdentifier { get; init; }
+    public required IssueIdentifier IssueIdentifier { get; init; }
     // NOTE: Semantically set-once (populated after construction from fetched issue title). Cannot be init-only without restructuring call sites.
     public required string IssueTitle { get; set; }
     public required string IssueProviderConfigId { get; init; }

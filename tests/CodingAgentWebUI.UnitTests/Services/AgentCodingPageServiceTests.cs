@@ -694,7 +694,7 @@ public class AgentCodingPageServiceTests
         _service.IssueProviders.Add(MakeProvider("ip-1"));
         SetupMockIssueProvider();
 
-        var expectedSet = new HashSet<(string, ProviderConfigId)> { ("42", "ip-1") };
+        var expectedSet = new HashSet<(IssueIdentifier, ProviderConfigId)> { ("42", "ip-1") };
         _mockWorkDistributor.Setup(w => w.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedSet);
 

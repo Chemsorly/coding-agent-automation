@@ -63,7 +63,7 @@ public sealed class ActiveRunRehydrationTests : IDisposable
 
         var dispatchedRun = _runService.GetRun(dispatchedRunId);
         dispatchedRun.Should().NotBeNull();
-        dispatchedRun!.IssueIdentifier.Should().Be("owner/repo#1");
+        dispatchedRun!.IssueIdentifier.Value.Should().Be("owner/repo#1");
         dispatchedRun.IssueTitle.Should().Be("Fix bug");
         dispatchedRun.AgentId.Should().BeNull();
         // TODO: Assert StartedAtOffset matches the InsertWorkItem's DispatchedAt/CreatedAt value
@@ -72,7 +72,7 @@ public sealed class ActiveRunRehydrationTests : IDisposable
 
         var runningRun = _runService.GetRun(runningRunId);
         runningRun.Should().NotBeNull();
-        runningRun!.IssueIdentifier.Should().Be("owner/repo#2");
+        runningRun!.IssueIdentifier.Value.Should().Be("owner/repo#2");
         runningRun.IssueTitle.Should().Be("Add feature");
         runningRun.AgentId.Should().BeNull();
     }

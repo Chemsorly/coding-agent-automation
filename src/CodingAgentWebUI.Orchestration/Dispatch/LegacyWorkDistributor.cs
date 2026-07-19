@@ -147,7 +147,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
         => Task.FromResult(JobDistributionStatus.Unknown);
 
     /// <inheritdoc />
-    public Task<bool> IsIssueDistributedAsync(string issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct)
+    public Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct)
         => Task.FromResult(_jobDispatcher.IsIssueBeingProcessedOrQueued(issueIdentifier, issueProviderConfigId.Value));
 
     /// <inheritdoc />
@@ -155,9 +155,9 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
     /// Combines in-memory state from <see cref="JobDispatcherService"/> (queued issues)
     /// and <see cref="IOrchestratorRunService"/> (actively running issues).
     /// </remarks>
-    public Task<HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
+    public Task<HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
     {
-        var result = new HashSet<(string, ProviderConfigId)>();
+        var result = new HashSet<(IssueIdentifier, ProviderConfigId)>();
 
         // Add identifiers from queued jobs
         foreach (var job in _dispatcherService.GetQueuedJobs())

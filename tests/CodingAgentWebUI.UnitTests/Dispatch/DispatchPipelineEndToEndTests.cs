@@ -211,7 +211,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         // Assert: hub can find the run by jobId (simulates RequestTokenRefresh lookup)
         var foundRun = _runService.GetRun(runId);
         foundRun.Should().NotBeNull("hub must find PipelineRun by the same jobId the agent uses");
-        foundRun!.IssueIdentifier.Should().Be("org/repo#42");
+        foundRun!.IssueIdentifier.Value.Should().Be("org/repo#42");
     }
 
     [Fact]

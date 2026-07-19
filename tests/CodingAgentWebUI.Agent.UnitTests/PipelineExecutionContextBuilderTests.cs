@@ -116,7 +116,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
             proxy, _connection, _batcher, null, CancellationToken.None);
 
         result.Run.RunId.Should().Be("job-123");
-        result.Run.IssueIdentifier.Should().Be("test/repo#42");
+        result.Run.IssueIdentifier.Value.Should().Be("test/repo#42");
         result.Run.RunType.Should().Be(PipelineRunType.Implementation);
         result.Run.RepositoryName.Should().Be("test/my-repo");
         result.Run.InitiatedBy.Should().Be("test-user");

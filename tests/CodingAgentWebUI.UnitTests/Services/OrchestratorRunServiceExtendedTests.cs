@@ -130,7 +130,7 @@ public class OrchestratorRunServiceExtendedTests
         _service.AddRun(run2); // Should log warning, not overwrite
 
         var result = _service.GetRun("run-1");
-        result!.IssueIdentifier.Should().Be("org/repo#1"); // Original preserved
+        result!.IssueIdentifier.Value.Should().Be("org/repo#1"); // Original preserved
     }
 
     [Fact]
