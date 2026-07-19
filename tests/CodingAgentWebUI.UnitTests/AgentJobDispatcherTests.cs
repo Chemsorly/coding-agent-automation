@@ -296,6 +296,10 @@ public class AgentJobDispatcherTests : IDisposable
         var result = await dispatcher.TryDispatchAsync(
             "issue-fail", "ip", "rp", null, null, "user", CancellationToken.None);
 
+        // TODO: This test never actually hits the AssignJobAsync exception path — it returns false
+        // earlier because the issue provider config is not set up. The SafeDispatchAsync catch-revert
+        // flow is NOT exercised here. See DispatchToAgentAsync_ExceptionDuringDispatch_ResetsAgentAndRevertsLabel
+        // for a test that correctly exercises the exception handling path.
         // Dispatch fails due to issue provider config not found (returns false before reaching comm)
         // The important thing is it doesn't throw and handles the error gracefully
         result.Should().BeFalse();

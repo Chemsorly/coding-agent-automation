@@ -73,6 +73,8 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     /// transitions that cannot be cleanly parameterized without making the helper overly complex.</item>
     /// <item><c>AgentPhaseExecutor.Analysis</c> — has its own retry loop with AnalysisIncompleteException handling
     /// and post-execution file validation that is fundamentally different from the simple execute-and-record pattern.</item>
+    /// <item><c>AgentPhaseExecutor.CodeReview</c> (ExecuteFollowUpAsync, GenerateReviewSummarySafeAsync) — consolidated
+    /// into <see cref="ExecuteAgentRawAsync"/> which handles the subset pattern without history recording or exception absorption.</item>
     /// </list>
     /// </remarks>
     /// <returns>The <see cref="AgentResult"/> on success, or <c>null</c> if a non-cancellation exception was caught and absorbed.</returns>
@@ -130,6 +132,47 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
             });
             return null;
         }
+    }
+
+    /// <summary>
+    /// Executes an agent prompt with stall monitoring and token accumulation, without recording
+    /// output to ChatHistory or absorbing exceptions. Suitable for call sites where the caller
+    /// handles output processing and exception semantics independently.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="ExecuteAgentAndRecordAsync"/>, this method:
+    /// <list type="bullet">
+    /// <item>Always sets <c>UseResume = false</c> (fresh prompt, no session resume)</item>
+    /// <item>Does NOT record output to <c>run.ChatHistory</c></item>
+    /// <item>Does NOT catch or absorb exceptions — all exceptions propagate to the caller</item>
+    /// </list>
+    /// Used by <c>ExecuteFollowUpAsync</c> and <c>GenerateReviewSummarySafeAsync</c> in the CodeReview partial.
+    /// </remarks>
+    internal static async Task<AgentResult> ExecuteAgentRawAsync(
+        IAgentProvider agentProvider,
+        string prompt,
+        PipelineRun run,
+        PipelineConfiguration config,
+        string description,
+        Action? onChange,
+        Serilog.ILogger logger,
+        CancellationToken ct,
+        Action<string>? onOutputLine = null,
+        string? phase = null)
+    {
+        var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
+            agentProvider,
+            new AgentRequest
+            {
+                Prompt = prompt,
+                WorkspacePath = run.WorkspacePath!,
+                Timeout = config.AgentTimeout,
+                UseResume = false
+            },
+            run, config, description, onChange, logger, ct, onOutputLine);
+
+        run.AccumulateTokenUsage(agentResult, phase: phase);
+        return agentResult;
     }
 
     /// <summary>

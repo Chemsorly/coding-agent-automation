@@ -26,9 +26,7 @@ public sealed class AgentJobSlotManager
 
     private volatile CancellationTokenSource? _jobCts;
     private Task? _activeJobTask;
-    // TODO: _activeJobId is read outside _busyLock (via ActiveJobId/IsBusy properties) from other threads.
-    // Consider declaring volatile or adding lock to the read path to guarantee cross-thread visibility.
-    private string? _activeJobId;
+    private volatile string? _activeJobId;
     private JobAssignmentMessage? _activeJobAssignment;
     private DateTimeOffset? _activeJobStartedAt;
     private PipelineRunType _activeJobRunType;
@@ -223,6 +221,23 @@ public sealed class AgentJobSlotManager
         var oldCts = Interlocked.Exchange(ref _chatCts, null);
 #pragma warning restore 0420
         oldCts?.Dispose();
+    }
+
+    /// <summary>
+    /// Returns an atomic snapshot of the chat slot state for cancel coordination.
+    /// All fields are read under <see cref="_busyLock"/> to prevent TOCTOU races
+    /// where ReleaseChatSlot() could clear state between individual property reads.
+    /// </summary>
+    // TODO: Atomicity guarantee for _activeChatTask is weaker than documented — SetActiveChatTask()
+    // writes without _busyLock or a memory barrier, so on ARM64 the snapshot could return a stale
+    // null for Task even after SetActiveChatTask was called from another thread. See TODO on
+    // SetActiveChatTask for the underlying synchronization gap.
+    public (string? SessionId, Task? Task, CancellationTokenSource? Cts) GetChatSlotSnapshot()
+    {
+        lock (_busyLock)
+        {
+            return (_activeChatSessionId, _activeChatTask, _chatCts);
+        }
     }
 
     /// <summary>
