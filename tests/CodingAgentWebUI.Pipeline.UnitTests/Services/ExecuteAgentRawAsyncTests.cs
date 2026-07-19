@@ -76,7 +76,6 @@ public class ExecuteAgentRawAsyncTests
         // Assert
         result.Should().BeSameAs(agentResult);
         _run.TotalTokens.Should().Be(150);
-        // TODO: Also assert that _run.Metrics.PhaseBreakdown contains an entry for "test_phase" with expected token count to verify phase is actually recorded
     }
 
     [Fact]
