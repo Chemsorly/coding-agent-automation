@@ -33,6 +33,9 @@ public sealed record AgentEntry
     [IgnoreMember]
     public object SyncRoot => _syncRoot;
 
+    // TODO: Change property type from string to AgentId value type to complete the Phase 1 refactoring
+    // (issue requirement: "Update AgentEntry.AgentId property type"). Deferred to avoid cascade to
+    // all consumers of AgentEntry in this PR.
     public required string AgentId { get; init; }
 
     /// <summary>SignalR connection ID — mutable to support reconnection with the same agentId.</summary>

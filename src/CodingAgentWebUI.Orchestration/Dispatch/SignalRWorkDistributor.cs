@@ -201,6 +201,9 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
             if (cancelledRun is not null)
             {
                 // Send cancel signal to the agent (best-effort)
+                // TODO: cancelledRun.AgentId is string? — implicit conversion to AgentId wraps null
+                // without warning. The IsNullOrEmpty guard above makes this safe at runtime, but
+                // consider adding nullable annotation to AgentId's implicit operator or explicit cast.
                 if (!string.IsNullOrEmpty(cancelledRun.AgentId) && _cancellationSender is not null)
                     await _cancellationSender.SendCancelJobAsync(cancelledRun.AgentId, jobId, ct);
                 return true;
