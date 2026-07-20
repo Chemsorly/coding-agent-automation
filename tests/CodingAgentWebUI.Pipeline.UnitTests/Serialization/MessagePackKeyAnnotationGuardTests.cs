@@ -89,4 +89,47 @@ public class MessagePackKeyAnnotationGuardTests
         violations.Should().BeEmpty(
             $"duplicate [Key(N)] indices found: {string.Join("; ", violations)}");
     }
+
+    /// <summary>
+    /// PipelineConfiguration-specific Key validation: unique indices and no large gaps.
+    /// PipelineConfiguration is the highest-churn model with 63 Key-annotated properties
+    /// spanning indices 0-69. Large gaps between consecutive used keys indicate accidental
+    /// key reuse from copy-paste errors.
+    /// </summary>
+    [Fact]
+    public void PipelineConfiguration_KeyIndices_AreUniqueAndHaveNoLargeGaps()
+    {
+        const int maxAllowedGap = 10;
+
+        var keys = typeof(PipelineConfiguration)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Select(p => new { p.Name, Key = p.GetCustomAttribute<KeyAttribute>() })
+            .Where(x => x.Key is not null)
+            .OrderBy(x => x.Key!.IntKey)
+            .ToList();
+
+        // TODO: Add keys.Should().NotBeEmpty() (or a minimum-count threshold like 30) to guard
+        // against vacuous pass if PipelineConfiguration is accidentally stripped of [Key] attributes.
+
+        // Uniqueness check (defense-in-depth for the highest-churn model)
+        var duplicates = keys
+            .GroupBy(x => x.Key!.IntKey)
+            .Where(g => g.Count() > 1)
+            .ToList();
+
+        duplicates.Should().BeEmpty(
+            $"PipelineConfiguration has duplicate [Key] indices: " +
+            string.Join(", ", duplicates.Select(g => $"Key({g.Key}) on [{string.Join(", ", g.Select(x => x.Name))}]")));
+
+        // Gap check: no consecutive used keys should differ by more than maxAllowedGap.
+        // Current largest gap: Key(56) → Key(63) = 7 (image properties block).
+        for (var i = 1; i < keys.Count; i++)
+        {
+            var gap = keys[i].Key!.IntKey - keys[i - 1].Key!.IntKey;
+            gap.Should().BeLessThanOrEqualTo(maxAllowedGap,
+                $"gap between Key({keys[i - 1].Key!.IntKey}) [{keys[i - 1].Name}] and " +
+                $"Key({keys[i].Key!.IntKey}) [{keys[i].Name}] is {gap}, which exceeds {maxAllowedGap}. " +
+                "This may indicate accidental key reuse from copy-paste.");
+        }
+    }
 }
