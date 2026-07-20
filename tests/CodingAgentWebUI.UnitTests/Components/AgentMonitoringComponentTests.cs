@@ -52,7 +52,7 @@ public class AgentMonitoringComponentTests : BunitContext
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(_pipelineService);
-        Services.AddSingleton(new JobDispatcherService(registry, mockLogger.Object));
+        Services.AddSingleton(new JobDeduplicationGuardService(registry, mockLogger.Object));
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton(mockStore.Object);
         Services.AddSingleton(mockHistory.Object);
@@ -65,7 +65,7 @@ public class AgentMonitoringComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
         Services.AddSingleton(Mock.Of<IRunLifecycleManager>());
         Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
-            Services.BuildServiceProvider().GetRequiredService<JobDispatcherService>()));
+            Services.BuildServiceProvider().GetRequiredService<JobDeduplicationGuardService>()));
 
         // TODO: Tests that use FakeTimeProvider add a second registration that shadows this one (last-wins DI behavior); consider a more explicit replacement pattern
         Services.AddSingleton(TimeProvider.System);
@@ -227,7 +227,7 @@ public class AgentMonitoringComponentTests : BunitContext
     [Fact]
     public void JobQueue_ProjectColumn_RendersNameWhenSet()
     {
-        var dispatcher = Services.GetRequiredService<JobDispatcherService>();
+        var dispatcher = Services.GetRequiredService<JobDeduplicationGuardService>();
         dispatcher.EnqueueJob(new PendingJob
         {
             IssueIdentifier = "org/repo#99",
@@ -246,7 +246,7 @@ public class AgentMonitoringComponentTests : BunitContext
     [Fact]
     public void JobQueue_ProjectColumn_RendersDashWhenNull()
     {
-        var dispatcher = Services.GetRequiredService<JobDispatcherService>();
+        var dispatcher = Services.GetRequiredService<JobDeduplicationGuardService>();
         dispatcher.EnqueueJob(new PendingJob
         {
             IssueIdentifier = "org/repo#99",
@@ -269,7 +269,7 @@ public class AgentMonitoringComponentTests : BunitContext
     public void RemoveFromQueue_Button_RemovesJobAndUpdatesUI()
     {
         // Arrange: enqueue a job
-        var dispatcher = Services.GetRequiredService<JobDispatcherService>();
+        var dispatcher = Services.GetRequiredService<JobDeduplicationGuardService>();
         dispatcher.EnqueueJob(new PendingJob
         {
             IssueIdentifier = "org/repo#42",
@@ -302,7 +302,7 @@ public class AgentMonitoringComponentTests : BunitContext
     public void RemoveFromQueue_Button_RemovesCorrectJob_WhenMultipleQueued()
     {
         // Arrange: enqueue two jobs
-        var dispatcher = Services.GetRequiredService<JobDispatcherService>();
+        var dispatcher = Services.GetRequiredService<JobDeduplicationGuardService>();
         dispatcher.EnqueueJob(new PendingJob
         {
             IssueIdentifier = "org/repo#10",

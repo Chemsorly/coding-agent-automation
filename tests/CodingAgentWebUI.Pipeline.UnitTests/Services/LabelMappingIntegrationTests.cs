@@ -343,7 +343,7 @@ public class LabelMappingIntegrationTests
         var pipelineConfig = new PipelineConfiguration();
 
         // Act
-        var labels = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var labels = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         // Assert
         labels.Should().HaveCount(3);
@@ -373,7 +373,7 @@ public class LabelMappingIntegrationTests
         };
 
         // Act
-        var resolved = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var resolved = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         // Assert: Falls back to pipeline default
         resolved.Should().BeEquivalentTo(new[] { "kiro", "dotnet" });
@@ -392,7 +392,7 @@ public class LabelMappingIntegrationTests
         var pipelineConfig = new PipelineConfiguration();
 
         // Act
-        var resolved = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var resolved = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         // Assert: Empty — any agent matches
         resolved.Should().BeEmpty();
@@ -583,7 +583,7 @@ public class LabelMappingIntegrationTests
         };
     }
 
-    private static JobDispatcherService CreateDispatcherWithAgents(params AgentEntry[] agents)
+    private static JobDeduplicationGuardService CreateDispatcherWithAgents(params AgentEntry[] agents)
     {
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);
@@ -601,7 +601,7 @@ public class LabelMappingIntegrationTests
             entry.Disabled = agent.Disabled;
         }
 
-        return new JobDispatcherService(registry, mockLogger.Object);
+        return new JobDeduplicationGuardService(registry, mockLogger.Object);
     }
 
     #endregion

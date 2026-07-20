@@ -1,7 +1,7 @@
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// Shared label matching logic used by <see cref="JobDispatcherService"/> and dispatch services.
+/// Shared label matching logic used by <see cref="JobDeduplicationGuardService"/> and dispatch services.
 /// </summary>
 internal static class LabelMatchHelper
 {

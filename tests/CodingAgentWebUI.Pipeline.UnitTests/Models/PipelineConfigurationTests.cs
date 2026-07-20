@@ -332,7 +332,7 @@ public class PipelineConfigurationTests
         var orderValues = orderedAttributes.Select(x => x.Order).ToList();
         orderValues.Should().OnlyHaveUniqueItems(
             "duplicate [ProjectOverridable(Order = N)] values produce non-deterministic " +
-            "iteration which breaks partial-apply-on-exception semantics");
+            "iteration which breaks consistent logging and override application order");
 
         // Order values should be strictly ascending (validates that the sorted order
         // used by BuildOverrideMappings produces a deterministic sequence)
@@ -400,7 +400,7 @@ public class PipelineConfigurationTests
     }
 
     [Fact]
-    public void ApplyProjectOverrides_ArgumentOutOfRange_PartialApplySemantics()
+    public void ApplyProjectOverrides_ArgumentOutOfRange_ReturnsOriginalConfig()
     {
         var config = TestPipelineConfig.Default() with
         {
@@ -409,7 +409,8 @@ public class PipelineConfigurationTests
         };
 
         // MaxRetries (Order=1) is valid; MaxDecompositionSubIssues (Order=18) is out of range 1-20.
-        // Since Order=1 < Order=18, MaxRetries should be applied before the exception occurs.
+        // On validation error, the entire partially-mutated clone is discarded and the original
+        // config is returned unchanged.
         var project = TestPipelineConfig.WithProject() with
         {
             MaxRetries = 7,
@@ -419,18 +420,12 @@ public class PipelineConfigurationTests
         // Should NOT throw — the catch clause handles TargetInvocationException
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
-        // MaxRetries (Order=1) was applied before the failing property (Order=18).
-        // TODO: This comment describes clone-mutation persistence, not a transactional partial-apply
-        // guarantee. The test is correct but the framing could be misleading. Additionally, if the
-        // validation range for MaxDecompositionSubIssues changes (e.g., 1-30), value 25 would pass
-        // via normal override logic and this test would silently pass without exercising partial-apply
-        // semantics. Consider asserting result.MaxDecompositionSubIssues != 25 explicitly, or testing
-        // at the boundary (e.g., 21) to be more resilient to validation range changes.
-        result.MaxRetries.Should().Be(7);
-
-        // MaxDecompositionSubIssues retains the value from the clone (copied from original)
-        // because the exception prevented this property from being set
+        // Original config returned unchanged — no overrides applied (including valid ones)
+        result.MaxRetries.Should().Be(3);
         result.MaxDecompositionSubIssues.Should().Be(10);
+
+        // Verify referential identity — same object as input, not a clone
+        result.Should().BeSameAs(config);
     }
 
     // ── ApplyProjectOverrides — Previously untested properties ─────────────────

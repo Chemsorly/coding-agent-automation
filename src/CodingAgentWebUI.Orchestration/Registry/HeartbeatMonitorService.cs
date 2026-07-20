@@ -25,7 +25,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
     private readonly IAgentRegistryService _registry;
     private readonly IOrchestratorRunService _runService;
     private readonly IPipelineRunHistoryService _historyService;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly ILabelService _labelService;
     private readonly IConfigurationStore _configStore;
     private readonly IConsolidationService? _consolidationService;
@@ -36,7 +36,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         IAgentRegistryService registry,
         IOrchestratorRunService runService,
         IPipelineRunHistoryService historyService,
-        JobDispatcherService dispatcher,
+        JobDeduplicationGuardService dispatcher,
         ILabelService labelService,
         IConfigurationStore configStore,
         ILogger logger,

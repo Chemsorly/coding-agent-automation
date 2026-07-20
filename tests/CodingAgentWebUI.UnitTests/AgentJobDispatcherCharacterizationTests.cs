@@ -23,7 +23,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
 {
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly AgentRegistryService _registry;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly OrchestratorRunService _runService;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProviderFactory> _mockProviderFactory;
@@ -38,7 +38,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
     public AgentJobDispatcherCharacterizationTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _mockConfigStore = new Mock<IConfigurationStore>();
         _mockProviderFactory = new Mock<IProviderFactory>();

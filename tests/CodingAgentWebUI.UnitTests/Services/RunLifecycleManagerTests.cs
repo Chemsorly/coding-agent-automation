@@ -21,14 +21,14 @@ public sealed class RunLifecycleManagerTests
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly RunLifecycleManager _sut;
 
     public RunLifecycleManagerTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
-        _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
 
         _sut = new RunLifecycleManager(
             _runService,
@@ -395,14 +395,14 @@ public sealed class RunLifecycleManagerResilienceTests
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly RunLifecycleManager _sut;
 
     public RunLifecycleManagerResilienceTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
-        _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
 
         _sut = new RunLifecycleManager(
             _runService,
