@@ -135,8 +135,8 @@ public sealed partial class AgentJobDispatcher
         PipelineProject project,
         CancellationToken ct)
     {
-        var providerConfigs = await PrepareProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct);
+        var providerConfigs = await _infra.ProviderConfigBuilder.PrepareProviderConfigsAsync(
+            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, _logger, ct);
 
         var config = await PipelineConfigurationResolver.ResolveAsync(
             _infra.Resolution.ConfigStore.LoadPipelineConfigAsync,
@@ -545,8 +545,8 @@ public sealed partial class AgentJobDispatcher
                 .Select(r => r.RepoProviderId)
                 .Where(id => !string.IsNullOrEmpty(id))
                 .Cast<string>();
-            var providerConfigs = await PrepareProviderConfigsAsync(
-                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, ct, additionalRepoProviderIds);
+            var providerConfigs = await _infra.ProviderConfigBuilder.PrepareProviderConfigsAsync(
+                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, _logger, ct, additionalRepoProviderIds);
 
             // Settings resolution: apply Project → Template overrides to the pre-loaded config
             config = await PipelineConfigurationResolver.ResolveAsync(
@@ -726,82 +726,6 @@ public sealed partial class AgentJobDispatcher
         }
 
         return linkedIssueContexts.AsReadOnly();
-    }
-
-    /// <summary>
-    /// Builds the provider configs list and prepares tokens via the token vending service.
-    /// </summary>
-    private async Task<IReadOnlyList<ProviderConfig>> PrepareProviderConfigsAsync(
-        string repoProviderId,
-        string agentProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        CancellationToken ct,
-        IEnumerable<string>? additionalRepoProviderIds = null)
-    {
-        var rawConfigs = await BuildAgentProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, ct, additionalRepoProviderIds);
-        return await _infra.TokenVending.PrepareAgentConfigsAsync(rawConfigs, repoProviderId, ct);
-    }
-
-    /// <summary>
-    /// Builds the list of provider configs to send to the agent.
-    /// Excludes issue provider configs (agents don't get issue access).
-    /// </summary>
-    private async Task<IReadOnlyList<ProviderConfig>> BuildAgentProviderConfigsAsync(
-        string repoProviderId, string agentProviderId,
-        string? brainProviderId, string? pipelineProviderId,
-        CancellationToken ct,
-        IEnumerable<string>? additionalRepoProviderIds = null)
-    {
-        var configs = new List<ProviderConfig>();
-        var store = _infra.Resolution.ConfigStore;
-
-        var repoConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-        var repoConfig = await ProviderConfigResolver.ResolveAsync(
-            store, repoProviderId, ProviderKind.Repository, repoConfigs, required: true, _logger, ct);
-        configs.Add(repoConfig!);
-
-        // Include additional repo provider configs for cross-repo decomposition.
-        // These are needed so the agent can clone secondary repos for code exploration.
-        if (additionalRepoProviderIds is not null)
-        {
-            var addedIds = new HashSet<string> { repoProviderId }; // primary already added
-            foreach (var additionalId in additionalRepoProviderIds)
-            {
-                if (string.IsNullOrEmpty(additionalId) || !addedIds.Add(additionalId))
-                    continue; // skip null/empty or duplicates
-
-                var additionalConfig = await ProviderConfigResolver.ResolveAsync(
-                    store, additionalId, ProviderKind.Repository, repoConfigs, required: false, _logger, ct);
-                if (additionalConfig is not null)
-                    configs.Add(additionalConfig);
-            }
-        }
-
-        var agentConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
-        var agentConfig = await ProviderConfigResolver.ResolveAsync(
-            store, agentProviderId, ProviderKind.Agent, agentConfigs, required: true, _logger, ct);
-        configs.Add(agentConfig!);
-
-        if (!string.IsNullOrEmpty(brainProviderId))
-        {
-            var brainConfig = await ProviderConfigResolver.ResolveAsync(
-                store, brainProviderId, ProviderKind.Repository, repoConfigs, required: false, _logger, ct);
-            if (brainConfig is not null)
-                configs.Add(brainConfig);
-        }
-
-        if (!string.IsNullOrEmpty(pipelineProviderId))
-        {
-            var pipelineConfigs = await store.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
-            var pipelineConfig = await ProviderConfigResolver.ResolveAsync(
-                store, pipelineProviderId, ProviderKind.Pipeline, pipelineConfigs, required: false, _logger, ct);
-            if (pipelineConfig is not null)
-                configs.Add(pipelineConfig);
-        }
-
-        return configs.AsReadOnly();
     }
 
     internal static Dictionary<string, string>? CaptureTraceContext() =>

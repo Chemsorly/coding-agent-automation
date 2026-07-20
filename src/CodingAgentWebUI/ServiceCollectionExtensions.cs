@@ -265,11 +265,16 @@ public static class ServiceCollectionExtensions
             sp.GetRequiredService<IConfigurationStore>(),
             Log.Logger));
 
+        services.AddSingleton(sp => new ProviderConfigBuilder(
+            sp.GetRequiredService<IConfigurationStore>(),
+            sp.GetRequiredService<ITokenVendingService>()));
+
         services.AddSingleton(sp => new DispatchInfrastructure(
             sp.GetRequiredService<ITokenVendingService>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<DispatchResolutionService>()));
+            sp.GetRequiredService<DispatchResolutionService>(),
+            sp.GetRequiredService<ProviderConfigBuilder>()));
 
         services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
             sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));

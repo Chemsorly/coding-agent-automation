@@ -257,14 +257,16 @@ public class PipelineRunInstrumentationTests : IDisposable
         instrumentation.StopTiming();
 
         var frozenTime = Stopwatch.GetTimestamp();
-        Thread.Sleep(50); // Simulate expensive cleanup after StopTiming
+        Thread.Sleep(500); // Simulate expensive cleanup after StopTiming
 
         instrumentation.Dispose();
 
         var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
         duration.Should().HaveCount(1);
-        // Duration should be much less than the total elapsed time (should not include the 50ms sleep)
-        duration[0].Value.Should().BeLessThan(0.05);
+        // Duration should be much less than the total elapsed time (should not include the 500ms sleep).
+        // Use a generous threshold (0.5s) to tolerate CI jitter on the initial segment,
+        // while still proving the timer froze (unfrozen would be > 0.5s).
+        duration[0].Value.Should().BeLessThan(0.5);
     }
 
     // TODO: This test does not truly verify idempotency of timing freeze. The assertion BeGreaterThan(0)
