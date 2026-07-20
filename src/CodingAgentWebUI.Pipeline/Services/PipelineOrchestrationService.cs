@@ -1,4 +1,5 @@
-﻿﻿﻿using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog.Context;
 
@@ -134,7 +135,15 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
         // Label swap requires the active issue provider (orchestration concern)
         if (_providerManager.ActiveIssueProvider != null || run.RunType == PipelineRunType.Review)
-            await SwapAgentLabelAsync(run, run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
+        {
+            _logger.Information(
+                "Pipeline {RunId} CancelPipelineAsync: {IssueIdentifier} → {Label} (runType={RunType}, step={CurrentStep})",
+                run.RunId, run.IssueIdentifier, AgentLabels.Cancelled, run.RunType, run.CurrentStep);
+            // TODO: Behavioral change — original SwapAgentLabelAsync caught ALL exceptions including
+            // OperationCanceledException. TrySwapLabelAsync lets OCE propagate. Unlikely with CancellationToken.None
+            // but possible if internal HttpClient times out.
+            await _labelSwapper.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "PipelineOrchestrationService.CancelPipelineAsync", CancellationToken.None);
+        }
 
         // Delegate state transitions to lifecycle
         await _lifecycle.CancelPipelineAsync();
@@ -172,10 +181,10 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
 
         foreach (var run in allRuns)
         {
-            var targetKind = run.LabelTargetKind;
-
-            await _labelSwapper.SwapLabelAsync(
-                run.ProviderConfigIdForLabel, run.IssueIdentifier, AgentLabels.Cancelled, targetKind, CancellationToken.None);
+            // TODO: Behavioral change — original code called SwapLabelAsync directly (exceptions would abort loop).
+            // TrySwapLabelAsync swallows non-cancellation exceptions, so all runs are now attempted regardless of
+            // individual failures. More resilient but changes exception propagation behavior.
+            await _labelSwapper.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "PipelineOrchestrationService.CancelActiveAgentRunsAsync", CancellationToken.None);
         }
 
         // Delegate state changes to lifecycle — returns cancelled issue identifiers
@@ -194,36 +203,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// <summary>Returns the run history.</summary>
     public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
         => _completionFacade.HistoryService.GetRunHistoryAsync(ct);
-
-    // --- Private helpers ---
-    // TODO: Add unit test that exercises SwapAgentLabelAsync for Implementation runs during normal pipeline execution
-    // (existing tests use TestPipelineRunner which bypasses ILabelService and doesn't validate this code path).
-    private async Task SwapAgentLabelAsync(PipelineRun run, string issueId, string newLabel, CancellationToken ct)
-    {
-        _logger.Information(
-            "Pipeline {RunId} SwapAgentLabelAsync: {IssueIdentifier} → {Label} (runType={RunType}, step={CurrentStep})",
-            run.RunId, issueId, newLabel, run.RunType, run.CurrentStep);
-        try
-        {
-            var targetKind = run.LabelTargetKind;
-
-            await _labelSwapper.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, newLabel, targetKind, ct);
-        }
-        catch (Exception ex) { _logger.Warning(ex, "Failed to swap agent label to {Label} on {Identifier}", newLabel, issueId); }
-    }
-
-    // TODO: Add unit test that validates RemoveAllAgentLabelsAsync routes through ILabelService with string.Empty,
-    // selecting the correct providerConfigId and targetKind for Implementation runs.
-    internal async Task RemoveAllAgentLabelsAsync(PipelineRun run, string issueId, CancellationToken ct)
-    {
-        try
-        {
-            var targetKind = run.LabelTargetKind;
-
-            await _labelSwapper.SwapLabelAsync(run.ProviderConfigIdForLabel, issueId, string.Empty, targetKind, ct);
-        }
-        catch (Exception ex) { _logger.Warning(ex, "Failed to remove agent labels from {Identifier}", issueId); }
-    }
 
     public async ValueTask DisposeAsync()
     {

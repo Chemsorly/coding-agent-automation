@@ -3608,6 +3608,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
         mockHistoryService.Verify(h => h.AddRunToHistoryAsync(agentRun, It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify label swap was attempted (RemoveLabelAsync + AddLabelAsync)
+        // TODO: Missing test for behavioral change — TrySwapLabelAsync now swallows exceptions in the loop,
+        // so all runs are attempted even if one label swap fails. Add a test with a failing label swap mid-iteration
+        // to validate this new resilient behavior.
         _mockIssueProvider.Verify(
             p => p.RemoveLabelAsync("99", It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.AtLeastOnce);
