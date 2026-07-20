@@ -15,10 +15,6 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 /// Covers null → inherit, non-null → override, REPLACE semantics for nested objects,
 /// and resolution order (Global → Project → ProviderConfig blacklist).
 /// </summary>
-// TODO: Add test for ArgumentOutOfRangeException handling via TargetInvocationException unwrapping
-// and partial-apply semantics (properties applied before the failing one are retained in the clone).
-// TODO: Add test validating that all [ProjectOverridable] Order values are unique — duplicate Order
-// values produce non-deterministic iteration which breaks partial-apply-on-exception semantics.
 // TODO: Add dedicated override tests for AcceptanceCriteriaEnabled, CiNotStartedTimeout,
 // CiNotStartedMaxRetries, and AnalysisCommitThreshold — drift-detection verifies mapping exists
 // but not that the override actually works at runtime for these properties.
@@ -34,6 +30,34 @@ public class ApplyProjectOverridesTests
         var config = TestPipelineConfig.Default();
 
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, null);
+
+        result.Should().BeSameAs(config);
+    }
+
+    // TODO: This test is a strict subset of PipelineConfigurationTests.ApplyProjectOverrides_ArgumentOutOfRange_ReturnsOriginalConfig
+    // (same setup, same project values). The PipelineConfigurationTests version also asserts property values, making this redundant.
+    // Consider removing this test or consolidating into a single location.
+    // TODO: This test only asserts BeSameAs (referential identity) but does not assert that valid override values
+    // (e.g., MaxRetries=7) did NOT leak through. Add assertions like `result.MaxRetries.Should().Be(3)` to confirm
+    // no valid overrides were partially applied before the failure, unlike the PipelineConfigurationTests version which does.
+    [Fact]
+    public void ArgumentOutOfRange_ReturnsOriginalConfigReference()
+    {
+        var config = TestPipelineConfig.Default() with
+        {
+            MaxRetries = 3,
+            MaxDecompositionSubIssues = 10,
+        };
+
+        // MaxDecompositionSubIssues=25 is out of range (1-20) — triggers ArgumentOutOfRangeException.
+        // On error, the original config is returned unchanged (no partial overrides applied).
+        var project = TestPipelineConfig.WithProject() with
+        {
+            MaxRetries = 7,
+            MaxDecompositionSubIssues = 25,
+        };
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.Should().BeSameAs(config);
     }
