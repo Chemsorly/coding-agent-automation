@@ -809,6 +809,96 @@ public class PromptBuilderTests
 
     #endregion
 
+    #region ReviewCalibrationFooter
+
+    [Fact]
+    public void BuildReviewPrompt_ContainsCalibrationFooter()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain("## Calibration");
+        result.Should().Contain("SEVERITY GUIDELINES:");
+        result.Should().Contain("ACCURACY OVER THOROUGHNESS:");
+        result.Should().Contain("Judge the CODE DIFF only");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_CalibrationAppliesToCustomPrompt()
+    {
+        var customPrompt = "Only check for SQL injection vulnerabilities.";
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("CustomAgent");
+        var result = PromptBuilder.BuildReviewPrompt(customPrompt, CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain(customPrompt);
+        result.Should().Contain("## Calibration");
+        result.Should().Contain("SEVERITY GUIDELINES:");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_CalibrationContainsConcurrencyCarveOut()
+    {
+        var findingsPath = AgentWorkspacePaths.GetReviewFindingsFilePath("TestAgent");
+        var result = PromptBuilder.BuildReviewPrompt("Review this code", CreateIssue(), CreateParsedIssue(), findingsPath);
+        result.Should().Contain("specific interleaving that produces inconsistent state");
+    }
+
+    [Fact]
+    public void BuildAcceptanceCriteriaPrompt_DoesNotContainCalibrationFooter()
+    {
+        var result = PromptBuilder.BuildAcceptanceCriteriaPrompt("Evaluate compliance");
+        result.Should().NotContain("## Calibration");
+        result.Should().NotContain("SEVERITY GUIDELINES:");
+        result.Should().NotContain("ACCURACY OVER THOROUGHNESS:");
+    }
+
+    [Fact]
+    public void BuildAnalysisPrompt_DoesNotContainCalibrationFooter()
+    {
+        var result = PromptBuilder.BuildAnalysisPrompt("Analyze carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().NotContain("## Calibration");
+        result.Should().NotContain("SEVERITY GUIDELINES:");
+        result.Should().NotContain("ACCURACY OVER THOROUGHNESS:");
+    }
+
+    [Fact]
+    public void BuildAnalysisReviewPrompt_DoesNotContainCalibrationFooter()
+    {
+        var result = PromptBuilder.BuildAnalysisReviewPrompt("Review carefully", CreateIssue(), CreateParsedIssue());
+        result.Should().NotContain("## Calibration");
+        result.Should().NotContain("SEVERITY GUIDELINES:");
+        result.Should().NotContain("ACCURACY OVER THOROUGHNESS:");
+    }
+
+    // TODO: Convert to [Theory]/[InlineData] or add .Because() context so that failures
+    // identify which specific prompt (CodeReview vs SecurityReview, etc.) is the offender
+    // without requiring a debugger re-run.
+    [Fact]
+    public void DefaultPrompts_ReviewPrompts_ContainFocusAreas()
+    {
+        var reviewPrompts = new[]
+        {
+            DefaultPrompts.CodeReview,
+            DefaultPrompts.CorrectnessReview,
+            DefaultPrompts.DotNetSpecialistReview,
+            DefaultPrompts.SecurityReview,
+            DefaultPrompts.TestQualityReview
+        };
+
+        foreach (var prompt in reviewPrompts)
+        {
+            prompt.Should().Contain("FOCUS AREAS (flag only when a concrete defect exists):");
+            prompt.Should().NotContain("CHECK FOR:");
+        }
+    }
+
+    [Fact]
+    public void DefaultPrompts_AnalysisReview_RetainsCheckFor()
+    {
+        DefaultPrompts.AnalysisReview.Should().Contain("CHECK FOR:");
+        DefaultPrompts.AnalysisReview.Should().NotContain("FOCUS AREAS");
+    }
+
+    #endregion
+
     #region ScopeFences
 
     [Fact]

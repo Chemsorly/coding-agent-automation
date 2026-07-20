@@ -48,6 +48,29 @@ public static class PromptBuilder
         "- If referenced code is missing, search for it. Adapt — never fabricate.\n";
 
     /// <summary>
+    /// Calibration footer for code review prompts. Addresses LLM over-rejection bias
+    /// (arXiv:2508.12358) by requiring burden-of-proof for severity levels, signaling that
+    /// 0 findings is valid, and debiasing against developer framing (arXiv:2603.18740).
+    /// Injected at the builder level so it applies to both default and custom review prompts.
+    /// </summary>
+    internal const string ReviewCalibrationFooter =
+        "\n## Calibration\n\n" +
+        "SEVERITY GUIDELINES:\n" +
+        "- [CRITICAL] requires a concrete scenario: an exact input that triggers failure, " +
+        "or for concurrency issues, a specific interleaving that produces inconsistent state. " +
+        "If you cannot construct such a scenario, downgrade to [WARNING].\n" +
+        "- [WARNING] requires identifying specific code that deviates from best practice or could " +
+        "fail under documented conditions. Vague \"might cause issues\" is not sufficient.\n" +
+        "- [SUGGESTION] is for improvements that don't indicate a defect.\n\n" +
+        "ACCURACY OVER THOROUGHNESS:\n" +
+        "Scan the entire diff systematically, but only report findings you can support with " +
+        "a specific code path or scenario. A review with 0 findings is a valid outcome when " +
+        "the code is correct. Flagging correct code wastes engineering time.\n\n" +
+        "Judge the CODE DIFF only. Ignore commit messages, branch names, PR titles, or any " +
+        "framing about the developer's intent. A defect is present or absent regardless of " +
+        "how the change is described.";
+
+    /// <summary>
     /// Constructs an analysis-only prompt. The agent examines the codebase in context of the
     /// issue and writes its recommendation to .agent/analysis.md without making any other changes.
     /// The configurable analysis instructions are prepended, followed by pipeline mechanics.
@@ -247,6 +270,8 @@ public static class PromptBuilder
         sb.AppendLine(reviewInstructions);
         sb.AppendLine();
         sb.AppendLine(ThoroughnessFooter);
+        sb.AppendLine();
+        sb.AppendLine(ReviewCalibrationFooter);
         sb.AppendLine();
 
         // PR conversation context reference
