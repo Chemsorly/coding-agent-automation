@@ -611,4 +611,61 @@ public class AgentMonitoringComponentTests : BunitContext
         Assert.Contains("freshness-warning", indicator.ClassName);
         Assert.Contains("(refresh failed)", cut.Markup);
     }
+
+    /// <summary>
+    /// Regression test: RefreshTick must poll consolidation run status so completed runs
+    /// disappear from Active Runs without a full page reload.
+    /// Before the fix, RefreshTick called RefreshDataAsync(includeConsolidation: false),
+    /// leaving stale consolidation runs visible indefinitely.
+    /// </summary>
+    [Fact]
+    public async Task RefreshTick_RemovesCompletedConsolidationRuns_FromActiveDisplay()
+    {
+        // Arrange: register a consolidation service mock that initially returns a Running run
+        var consolidationMock = new Mock<IConsolidationService>();
+        var runningRun = new ConsolidationRun
+        {
+            RunId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "tmpl-1",
+            TemplateName = "TestTemplate",
+            StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5),
+            Status = ConsolidationRunStatus.Running
+        };
+
+        consolidationMock.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ConsolidationRun> { runningRun });
+
+        // Override the default Mock.Of registration with our controllable mock
+        Services.AddSingleton<IConsolidationService>(consolidationMock.Object);
+
+        var cut = Render<AgentMonitoring>();
+
+        // Assert: the running consolidation run appears in active runs on initial load
+        Assert.Contains("consolidation", cut.Markup.ToLowerInvariant());
+        Assert.Contains(runningRun.RunId[..8], cut.Markup);
+
+        // Act: simulate run completion — mock now returns Succeeded status
+        runningRun.Status = ConsolidationRunStatus.Succeeded;
+        runningRun.CompletedAtUtc = DateTimeOffset.UtcNow;
+
+        // Wait for the real timer to fire (1s initial delay, then 5s interval).
+        // Poll until the consolidation run disappears from markup.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var disappeared = false;
+        while (DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(500));
+            if (!cut.Markup.Contains(runningRun.RunId[..8]))
+            {
+                disappeared = true;
+                break;
+            }
+        }
+
+        // Assert: the completed consolidation run is no longer shown as active
+        Assert.True(disappeared,
+            "Completed consolidation run should disappear from Active Runs after RefreshTick polls — " +
+            "indicates RefreshTick includes consolidation state in its polling cycle.");
+    }
 }

@@ -959,7 +959,7 @@
             await InvokeAsync(async () =>
             {
                 if (_disposed) return;
-                await RefreshDataAsync();
+                await RefreshDataAsync(includeConsolidation: true);
                 _lastSuccessfulRefresh = Clock.GetUtcNow();
                 _lastRefreshFailed = false;
                 StateHasChanged();
