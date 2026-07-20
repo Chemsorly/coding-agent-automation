@@ -209,7 +209,7 @@ public sealed class ConsolidationService : IConsolidationService
                 _runningRuns.TryRemove(key, out _);
                 DeletePersistedRun(run.RunId);
                 ClearFeedbackDataForRun(run.RunId);
-                return null;
+                throw; // Re-throw so caller can distinguish dispatch failure from concurrency guard rejection
             }
         }
 

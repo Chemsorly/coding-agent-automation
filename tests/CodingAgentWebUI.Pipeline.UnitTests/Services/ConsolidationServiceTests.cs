@@ -583,10 +583,10 @@ public sealed class ConsolidationServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task TriggerAsync_WhenDispatcherThrows_RollsBackRunningRunsAndReturnsNull()
+    public async Task TriggerAsync_WhenDispatcherThrows_RollsBackRunningRunsAndRethrows()
     {
         // Validates: Requirement 8.1 — When dispatcher throws, TriggerAsync removes
-        // the entry from _runningRuns and returns null.
+        // the entry from _runningRuns and re-throws so the caller can display the real error.
 
         var mockDispatcher = new Mock<IConsolidationDispatcher>();
         mockDispatcher
@@ -608,10 +608,11 @@ public sealed class ConsolidationServiceTests : IDisposable
             new FileSystemHarnessSuggestionStore(_suggestionsPath),
             mockDispatcher.Object);
 
-        // TriggerAsync catches the exception, rolls back, and returns null
-        var result = await sut.TriggerAsync(
+        // TriggerAsync cleans up state and re-throws the dispatch exception
+        var act = () => sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
-        result.Should().BeNull();
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Simulated dispatch failure");
 
         // Verify rollback: a subsequent trigger for the same type+template succeeds
         mockDispatcher

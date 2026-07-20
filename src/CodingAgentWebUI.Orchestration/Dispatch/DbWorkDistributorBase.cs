@@ -97,16 +97,17 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
         // Look up the original enqueue time from prior WorkItems for this issue.
         // This preserves the true "time in queue" across re-dispatches.
         DateTimeOffset? originalEnqueuedAt = null;
-        // TODO: request.IssueIdentifier is now the IssueIdentifier value type. The implicit conversion to string
-        // is evaluated client-side here, but for safety against EF Core expression tree translation issues,
-        // consider extracting .Value to a local variable before the LINQ expression (consistent with IsIssueDistributedAsync pattern).
-        if (!string.IsNullOrEmpty(request.IssueIdentifier) && !string.IsNullOrEmpty(request.IssueProviderConfigId))
+        // Extract .Value to local variables before the LINQ expression to avoid EF Core
+        // expression tree translation failures with value types (consistent with IsIssueDistributedAsync).
+        var issueIdentifierValue = request.IssueIdentifier.Value;
+        var issueProviderConfigIdValue = request.IssueProviderConfigId;
+        if (!string.IsNullOrEmpty(issueIdentifierValue) && !string.IsNullOrEmpty(issueProviderConfigIdValue))
         {
             await using var lookupDb = await _dbFactory.CreateDbContextAsync(ct);
             originalEnqueuedAt = await lookupDb.WorkItems
                 .AsNoTracking()
-                .Where(w => w.IssueIdentifier == request.IssueIdentifier
-                         && w.IssueProviderConfigId == request.IssueProviderConfigId)
+                .Where(w => w.IssueIdentifier == issueIdentifierValue
+                         && w.IssueProviderConfigId == issueProviderConfigIdValue)
                 .OrderBy(w => w.CreatedAt)
                 .Select(w => w.OriginalEnqueuedAt ?? w.CreatedAt)
                 .FirstOrDefaultAsync(ct);

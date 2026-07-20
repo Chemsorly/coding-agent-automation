@@ -253,6 +253,7 @@ select option { background: var(--surface); color: var(--text); }
 .clear-button,
 .btn-save,
 .btn-cancel,
+.btn-cancel-run,
 .btn-edit,
 .btn-delete,
 .btn-add,
@@ -1217,8 +1218,8 @@ select option { background: var(--surface); color: var(--text); }
 .btn-trigger { padding: 6px 14px; border-radius: var(--radius); border: 1px solid var(--accent); background: transparent; color: var(--accent-light); font-size: 0.8rem; font-weight: 500; cursor: pointer; transition: background 0.15s, color 0.15s; }
 .btn-trigger:hover:not(:disabled) { background: var(--accent); color: white; }
 .btn-trigger:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-cancel { padding: 4px 10px; border-radius: var(--radius); border: 1px solid var(--error, #dc3545); background: transparent; color: var(--error, #dc3545); font-size: 0.75rem; cursor: pointer; transition: background 0.15s, color 0.15s; }
-.btn-cancel:hover { background: var(--error, #dc3545); color: white; }
+.btn-cancel-run { padding: 4px 10px; border-radius: var(--radius); border: 1px solid var(--error, #dc3545); background: transparent; color: var(--error, #dc3545); font-size: 0.75rem; cursor: pointer; transition: background 0.15s, color 0.15s; }
+.btn-cancel-run:hover { background: var(--error, #dc3545); color: white; }
 
 .consolidation-status { font-size: 0.78rem; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
 .consolidation-status-running { background: var(--bg-info); color: var(--accent-light); }
@@ -1239,6 +1240,16 @@ select option { background: var(--surface); color: var(--text); }
 .consolidation-status-message { margin: 12px 20px; padding: 10px 14px; border-radius: var(--radius); font-size: 0.85rem; }
 .consolidation-status-info { background: var(--bg-info); color: var(--accent-light); border-left: 3px solid var(--accent); }
 .consolidation-status-error { background: var(--bg-error); color: var(--error); border-left: 3px solid var(--error); }
+
+/* Refactoring Modal — Label Badges & Params */
+.refactoring-modal-labels { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
+.label-badge { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 12px; font-size: 0.78rem; font-weight: 600; font-family: 'Cascadia Code', 'Fira Code', monospace; }
+.label-badge-static { background: var(--surface-alt); color: var(--text-muted); border: 1px solid var(--border); }
+.label-badge-optional { background: var(--bg-success); color: var(--success); border: 1px solid rgba(34, 197, 94, 0.3); }
+.refactoring-modal-params { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
+.refactoring-modal-param { display: flex; align-items: center; gap: 8px; font-size: 0.85rem; }
+.refactoring-modal-param-label { color: var(--text-muted); font-weight: 500; min-width: 150px; }
+.refactoring-modal-param-value { color: var(--text); font-weight: 600; }
 
 .sidebar-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: white; font-size: 0.65rem; font-weight: 700; margin-left: auto; }
 
