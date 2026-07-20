@@ -358,7 +358,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         // Step 2: HeartbeatMonitor fires during the dispatch window
         var registry = new AgentRegistryService(_mockLogger.Object);
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        var dispatcher = new JobDispatcherService(registry, _mockLogger.Object);
+        var dispatcher = new JobDeduplicationGuardService(registry, _mockLogger.Object);
         var monitor = new HeartbeatMonitorService(
             registry, _runService, mockHistoryService.Object, dispatcher,
             _mockLabelService.Object, _mockConfigStore.Object, _mockLogger.Object,

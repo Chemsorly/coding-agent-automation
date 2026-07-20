@@ -34,7 +34,7 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
     private ResettablePipelineOrchestrationService? _orchestration;
     private AgentRegistryService? _registry;
     private OrchestratorRunService? _runService;
-    private JobDispatcherService? _dispatcher;
+    private JobDeduplicationGuardService? _dispatcher;
 
     /// <summary>Exposes the agent registry for test assertions and wait helpers.</summary>
     public AgentRegistryService AgentRegistry => _registry ?? throw new InvalidOperationException("Not initialized");
@@ -95,9 +95,9 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
         services.AddSingleton(_runService);
         services.AddSingleton<IOrchestratorRunService>(_runService);
 
-        // JobDispatcherService — sealed, uses internal Reset()
-        _dispatcher = new JobDispatcherService(_registry, Serilog.Log.Logger);
-        RemoveService<JobDispatcherService>(services);
+        // JobDeduplicationGuardService — sealed, uses internal Reset()
+        _dispatcher = new JobDeduplicationGuardService(_registry, Serilog.Log.Logger);
+        RemoveService<JobDeduplicationGuardService>(services);
         services.AddSingleton(_dispatcher);
 
         // PipelineOrchestrationService → ResettablePipelineOrchestrationService

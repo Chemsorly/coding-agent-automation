@@ -29,7 +29,7 @@ public class EpicDeduplicationPropertyTests
     /// Avoids state leaking between FsCheck iterations since we cannot access
     /// internal Reset() from this test project.
     /// </summary>
-    private static (AgentJobDispatcher Dispatcher, OrchestratorRunService RunService, JobDispatcherService JobService, List<IDisposable> Disposables)
+    private static (AgentJobDispatcher Dispatcher, OrchestratorRunService RunService, JobDeduplicationGuardService JobService, List<IDisposable> Disposables)
         CreateFreshServices()
     {
         var mockLogger = new Mock<ILogger>();
@@ -39,7 +39,7 @@ public class EpicDeduplicationPropertyTests
         var mockAgentComm = new Mock<IAgentCommunication>();
 
         var registry = new AgentRegistryService(mockLogger.Object);
-        var jobService = new JobDispatcherService(registry, mockLogger.Object);
+        var jobService = new JobDeduplicationGuardService(registry, mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
 
         mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))

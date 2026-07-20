@@ -161,7 +161,7 @@ public sealed class DbModeE2EWebApplicationFactory : WebApplicationFactory<Progr
         runService.Reset();
 
         // Reset job dispatcher
-        var dispatcher = Services.GetRequiredService<JobDispatcherService>();
+        var dispatcher = Services.GetRequiredService<JobDeduplicationGuardService>();
         dispatcher.Reset();
 
         // Reset consolidation badge

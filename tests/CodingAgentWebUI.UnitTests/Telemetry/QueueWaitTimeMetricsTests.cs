@@ -17,7 +17,7 @@ public class QueueWaitTimeMetricsTests : IDisposable
     private readonly MeterListener _listener = new();
     private readonly System.Collections.Concurrent.ConcurrentBag<double> _recordedWaitTimes = [];
     private readonly AgentRegistryService _registry;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly JobQueueDrainService _drainService;
     private readonly Mock<IJobDispatcher> _mockJobDispatcher;
 
@@ -39,7 +39,7 @@ public class QueueWaitTimeMetricsTests : IDisposable
 
         var logger = new Mock<ILogger>().Object;
         _registry = new AgentRegistryService(logger);
-        _dispatcher = new JobDispatcherService(_registry, logger);
+        _dispatcher = new JobDeduplicationGuardService(_registry, logger);
         _mockJobDispatcher = new Mock<IJobDispatcher>();
 
         _mockJobDispatcher.Setup(d => d.DispatchToAgentDirectAsync(

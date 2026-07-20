@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 public sealed class LegacyWorkDistributor : IWorkDistributor
 {
     private readonly IJobDispatcher _jobDispatcher;
-    private readonly JobDispatcherService _dispatcherService;
+    private readonly JobDeduplicationGuardService _dispatcherService;
     private readonly IOrchestratorRunService _runService;
     private readonly Lazy<IConsolidationDispatcher>? _consolidationDispatcher;
     private readonly ILogger _logger;
@@ -29,7 +29,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
 
     internal LegacyWorkDistributor(
         IJobDispatcher jobDispatcher,
-        JobDispatcherService dispatcherService,
+        JobDeduplicationGuardService dispatcherService,
         IOrchestratorRunService runService,
         ILogger logger,
         Lazy<IConsolidationDispatcher>? consolidationDispatcher = null)
@@ -153,7 +153,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
 
     /// <inheritdoc />
     /// <remarks>
-    /// Combines in-memory state from <see cref="JobDispatcherService"/> (queued issues)
+    /// Combines in-memory state from <see cref="JobDeduplicationGuardService"/> (queued issues)
     /// and <see cref="IOrchestratorRunService"/> (actively running issues).
     /// </remarks>
     public Task<HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)

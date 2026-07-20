@@ -22,7 +22,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
 {
     private readonly IAgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly JobQueueDrainService _drainService;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IConfigurationStore _configStore;
@@ -35,7 +35,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     public AgentHubFacade(
         IAgentRegistryService registry,
         OrchestratorRunService runService,
-        JobDispatcherService dispatcher,
+        JobDeduplicationGuardService dispatcher,
         JobQueueDrainService drainService,
         IPipelineRunHistoryService historyService,
         IConfigurationStore configStore,

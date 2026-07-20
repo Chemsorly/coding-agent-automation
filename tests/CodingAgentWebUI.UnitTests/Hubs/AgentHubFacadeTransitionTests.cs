@@ -46,7 +46,7 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
-        var dispatcher = new JobDispatcherService(registry, mockLogger.Object);
+        var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
         var drainService = new JobQueueDrainService(
             dispatcher, registry, Mock.Of<IJobDispatcher>(),
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatcher>(),
@@ -102,7 +102,7 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         var mockLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockLogger.Object);
         var runService = new OrchestratorRunService(mockLogger.Object);
-        var dispatcher = new JobDispatcherService(registry, mockLogger.Object);
+        var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
         var drainService = new JobQueueDrainService(
             dispatcher, registry, Mock.Of<IJobDispatcher>(),
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatcher>(),

@@ -5,13 +5,13 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Legacy-mode implementation of <see cref="IPendingWorkQuery"/>.
-/// Delegates to the in-memory <see cref="JobDispatcherService"/> queue.
+/// Delegates to the in-memory <see cref="JobDeduplicationGuardService"/> queue.
 /// </summary>
 public sealed class LegacyPendingWorkQuery : IPendingWorkQuery
 {
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
 
-    public LegacyPendingWorkQuery(JobDispatcherService dispatcher)
+    public LegacyPendingWorkQuery(JobDeduplicationGuardService dispatcher)
     {
         ArgumentNullException.ThrowIfNull(dispatcher);
         _dispatcher = dispatcher;

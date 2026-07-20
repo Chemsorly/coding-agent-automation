@@ -18,7 +18,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
 {
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly AgentRegistryService _registry;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
@@ -35,7 +35,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     public ConsolidationDispatcherTests()
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
         _tempDir = Path.Combine(Path.GetTempPath(), $"cds-test-{Guid.NewGuid():N}");
 
         _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))

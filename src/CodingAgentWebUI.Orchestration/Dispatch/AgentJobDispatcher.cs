@@ -8,7 +8,7 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// Coordinates between <see cref="JobDispatcherService"/>, <see cref="AgentRegistryService"/>,
+/// Coordinates between <see cref="JobDeduplicationGuardService"/>, <see cref="AgentRegistryService"/>,
 /// <see cref="IDispatchRunCreator"/>, and the <c>AgentHub</c>
 /// to dispatch pipeline jobs to remote agents.
 /// </summary>
@@ -21,7 +21,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </remarks>
 public sealed partial class AgentJobDispatcher : IJobDispatcher
 {
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly IAgentRegistryService _registry;
     private readonly IOrchestratorRunService _runService;
     private readonly IDispatchRunCreator _orchestration;
@@ -33,7 +33,7 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
     private readonly ILogger _logger;
 
     public AgentJobDispatcher(
-        JobDispatcherService dispatcher,
+        JobDeduplicationGuardService dispatcher,
         IAgentRegistryService registry,
         IOrchestratorRunService runService,
         IDispatchRunCreator orchestration,
