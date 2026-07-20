@@ -7,6 +7,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
@@ -53,7 +54,9 @@ public class AgentMonitoringComponentTests : BunitContext
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(_pipelineService);
         Services.AddSingleton(new JobDeduplicationGuardService(registry, mockLogger.Object));
-        Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
+        var runService = new OrchestratorRunService(mockLogger.Object);
+        Services.AddSingleton(runService);
+        Services.AddSingleton<IOrchestratorRunService>(runService);
         Services.AddSingleton(mockStore.Object);
         Services.AddSingleton(mockHistory.Object);
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
@@ -69,6 +72,9 @@ public class AgentMonitoringComponentTests : BunitContext
 
         // TODO: Tests that use FakeTimeProvider add a second registration that shadows this one (last-wins DI behavior); consider a more explicit replacement pattern
         Services.AddSingleton(TimeProvider.System);
+
+        // Page service — resolved via DI with all dependencies above
+        Services.AddScoped<AgentMonitoringPageService>();
     }
 
     [Fact]
@@ -438,7 +444,7 @@ public class AgentMonitoringComponentTests : BunitContext
         mockClient.Setup(c => c.CancelJob("run-connected-1")).Returns(Task.CompletedTask);
 
         mockLifecycleManager
-            .Setup(l => l.CancelRunAsync("run-connected-1", It.IsAny<CancellationToken>()))
+            .Setup(l => l.CancelRunAsync("run-connected-1", It.IsAny<CancellationToken>(), It.IsAny<string?>()))
             .ReturnsAsync((PipelineRun?)null); // Return value not checked by component
 
         // Override DI registrations (last-wins in bUnit)
@@ -448,6 +454,7 @@ public class AgentMonitoringComponentTests : BunitContext
         // Create an OrchestratorRunService and use it both in DI and inside PipelineOrchestrationService
         var runService = new OrchestratorRunService(Mock.Of<ILogger>());
         Services.AddSingleton(runService);
+        Services.AddSingleton<IOrchestratorRunService>(runService);
 
         // Rebuild PipelineOrchestrationService with the same runService so GetAllActiveRuns() can find it
         var mockStore = new Mock<IConfigurationStore>();
@@ -517,7 +524,7 @@ public class AgentMonitoringComponentTests : BunitContext
 
         // Assert: CancelRunAsync was called to immediately persist the cancelled state
         mockLifecycleManager.Verify(
-            l => l.CancelRunAsync("run-connected-1", It.IsAny<CancellationToken>()),
+            l => l.CancelRunAsync("run-connected-1", It.IsAny<CancellationToken>(), It.IsAny<string?>()),
             Times.Once,
             "CancelRunAsync must be called to immediately persist PipelineStep.Cancelled");
     }

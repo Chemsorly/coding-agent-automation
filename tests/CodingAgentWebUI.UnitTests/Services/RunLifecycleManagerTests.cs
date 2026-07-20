@@ -358,6 +358,45 @@ public sealed class RunLifecycleManagerTests
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task CancelRunAsync_WithFailureReason_SetsReasonOnRun()
+    {
+        // Arrange
+        var run = CreateRun("run-cancel-reason", PipelineRunType.Implementation);
+        run.AgentId = "agent-1";
+        _runService.AddRun(run);
+
+        RegisterAgent("agent-1");
+
+        // Act
+        var result = await _sut.CancelRunAsync("run-cancel-reason", CancellationToken.None, "Cancelled — agent not available");
+
+        // Assert
+        result.Should().NotBeNull();
+        result!.FailureReason.Should().Be("Cancelled — agent not available");
+        result.CurrentStep.Should().Be(PipelineStep.Cancelled);
+    }
+
+    [Fact]
+    public async Task CancelRunAsync_WithoutFailureReason_LeavesExistingReason()
+    {
+        // Arrange
+        var run = CreateRun("run-cancel-no-reason", PipelineRunType.Implementation);
+        run.AgentId = "agent-1";
+        run.FailureReason = "Pre-existing reason";
+        _runService.AddRun(run);
+
+        RegisterAgent("agent-1");
+
+        // Act — no failureReason passed (uses default null)
+        var result = await _sut.CancelRunAsync("run-cancel-no-reason", CancellationToken.None);
+
+        // Assert: existing reason preserved
+        result.Should().NotBeNull();
+        result!.FailureReason.Should().Be("Pre-existing reason");
+        result.CurrentStep.Should().Be(PipelineStep.Cancelled);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static PipelineRun CreateRun(string runId, PipelineRunType runType)
