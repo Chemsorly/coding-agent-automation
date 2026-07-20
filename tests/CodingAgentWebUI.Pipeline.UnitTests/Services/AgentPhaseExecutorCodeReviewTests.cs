@@ -655,4 +655,208 @@ public class AgentPhaseExecutorCodeReviewTests : IDisposable
     }
 
     #endregion
+
+    #region Diff Re-computation and Findings Deletion Tests
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task CodeReview_DiffArtifacts_RecomputedPerIteration()
+    {
+        // Arrange: Create a real git repo so PreComputeDiffArtifactsAsync produces actual artifacts
+        var gitWorkspace = Path.Combine(Path.GetTempPath(), $"test-diff-recompute-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(gitWorkspace);
+        try
+        {
+            InitGitRepo(gitWorkspace);
+
+            // Create an initial untracked file so first diff has content
+            File.WriteAllText(Path.Combine(gitWorkspace, "feature.txt"), "initial implementation\n");
+
+            var run = new PipelineRun
+            {
+                RunId = "test-run-diff-recompute",
+                IssueIdentifier = "99",
+                IssueTitle = "Test Issue",
+                IssueProviderConfigId = "ip-1",
+                RepoProviderConfigId = "rp-1",
+                WorkspacePath = gitWorkspace
+            };
+
+            var config = _config with
+            {
+                CodeReview = new CodeReviewConfiguration
+                {
+                    MaxIterations = 2,
+                    FixPrompt = "Fix the critical issues"
+                }
+            };
+
+            string? diffStatAfterIteration1 = null;
+            var callCount = 0;
+
+            _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+                .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+                {
+                    callCount++;
+                    if (callCount == 1)
+                    {
+                        // Iteration 1: review agent — capture current diff stat and write critical findings
+                        diffStatAfterIteration1 = File.ReadAllText(
+                            Path.Combine(gitWorkspace, AgentWorkspacePaths.DiffStatFilePath));
+                        WriteFindingsFileAt(gitWorkspace, "correctness", "[CRITICAL] Bug found");
+                    }
+                    else if (callCount == 2)
+                    {
+                        // Fix agent — simulate a code fix by adding + committing a new file
+                        File.WriteAllText(Path.Combine(gitWorkspace, "fix.txt"), "bug fix\n");
+                        RunGitSync(gitWorkspace, "add .");
+                        RunGitSync(gitWorkspace, "commit -m \"fix bug\"");
+                    }
+                    // callCount == 3: iteration 2 review agent — diff artifacts should be fresh
+                })
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+            var context = new AgentPhaseContext
+            {
+                Run = run,
+                Config = config,
+                AgentProvider = _mockAgent.Object,
+                IssueOps = _mockIssueOps.Object,
+                Callbacks = _mockCallbacks.Object,
+                OrchestratorCts = null,
+                Issue = new IssueDetail { Identifier = "99", Title = "Test Issue", Description = "Test", Labels = new[] { "bug" } },
+                ParsedIssue = new ParsedIssue { RequirementsSection = "Requirements", AcceptanceCriteria = new[] { "AC1" } }
+            };
+
+            // Act
+            await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
+
+            // Assert: diff stat after iteration 2 should include the fix file (proving re-computation)
+            // TODO: Capture diffStatAfterIteration2 inside callCount==3 callback (like diffStatAfterIteration1 at callCount==1)
+            // to prove correct temporal ordering — that re-computation happens BEFORE the review agent runs in iteration 2.
+            var diffStatAfterIteration2 = File.ReadAllText(
+                Path.Combine(gitWorkspace, AgentWorkspacePaths.DiffStatFilePath));
+
+            diffStatAfterIteration1.Should().NotBeNull();
+            diffStatAfterIteration1.Should().Contain("feature.txt");
+            diffStatAfterIteration1.Should().NotContain("fix.txt");
+
+            diffStatAfterIteration2.Should().Contain("fix.txt", "diff artifacts should be re-computed after fix commit");
+            diffStatAfterIteration2.Should().Contain("feature.txt");
+        }
+        finally
+        {
+            try { Directory.Delete(gitWorkspace, recursive: true); } catch { }
+        }
+    }
+
+    [Fact]
+    public async Task CodeReview_ConsolidatedFindings_DeletedBeforeEachIteration()
+    {
+        // Arrange: Create a workspace with a .git directory (to pass the guard) and pre-write stale findings
+        // TODO: Use InitGitRepo (real git repo) instead of a bare .git directory for robustness.
+        // Also consider a multi-iteration variant (maxIterations=2) where iteration 1 writes findings
+        // and iteration 2's callback verifies they're gone — directly testing inter-iteration cleanup.
+        var gitWorkspace = Path.Combine(Path.GetTempPath(), $"test-findings-delete-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(gitWorkspace);
+        Directory.CreateDirectory(Path.Combine(gitWorkspace, ".git")); // minimal — just needs to exist for guard
+
+        try
+        {
+            var agentDir = Path.Combine(gitWorkspace, AgentWorkspacePaths.MetadataDirectory);
+            Directory.CreateDirectory(agentDir);
+
+            // Pre-write a stale consolidated findings file (simulating leftovers from prior iteration)
+            var consolidatedPath = Path.Combine(gitWorkspace, AgentWorkspacePaths.ReviewFindingsFilePath);
+            File.WriteAllText(consolidatedPath, "[CRITICAL] Stale finding from previous iteration");
+
+            var run = new PipelineRun
+            {
+                RunId = "test-run-findings-delete",
+                IssueIdentifier = "100",
+                IssueTitle = "Test Issue",
+                IssueProviderConfigId = "ip-1",
+                RepoProviderConfigId = "rp-1",
+                WorkspacePath = gitWorkspace
+            };
+
+            var config = _config with
+            {
+                CodeReview = new CodeReviewConfiguration
+                {
+                    MaxIterations = 1,
+                    FixPrompt = null
+                }
+            };
+
+            var findingsExistedDuringReview = true;
+
+            _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
+                .Callback<AgentRequest, CancellationToken, Action<string>?>((req, ct, _) =>
+                {
+                    // At the point the review agent runs, the consolidated findings file should NOT exist
+                    findingsExistedDuringReview = File.Exists(consolidatedPath);
+                })
+                .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
+
+            var context = new AgentPhaseContext
+            {
+                Run = run,
+                Config = config,
+                AgentProvider = _mockAgent.Object,
+                IssueOps = _mockIssueOps.Object,
+                Callbacks = _mockCallbacks.Object,
+                OrchestratorCts = null,
+                Issue = new IssueDetail { Identifier = "100", Title = "Test Issue", Description = "Test", Labels = new[] { "bug" } },
+                ParsedIssue = new ParsedIssue { RequirementsSection = "Requirements", AcceptanceCriteria = new[] { "AC1" } }
+            };
+
+            // Act
+            await _executor.ExecuteCodeReviewAsync(context, CancellationToken.None, CreateReviewers("Correctness"));
+
+            // Assert: the consolidated findings file was deleted BEFORE the review agent ran
+            findingsExistedDuringReview.Should().BeFalse(
+                "consolidated findings from prior iteration should be deleted before review agents run");
+        }
+        finally
+        {
+            try { Directory.Delete(gitWorkspace, recursive: true); } catch { }
+        }
+    }
+
+    private static void WriteFindingsFileAt(string workspace, string agentName, string content)
+    {
+        var relativePath = AgentWorkspacePaths.GetReviewFindingsFilePath(agentName);
+        var fullPath = Path.Combine(workspace, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(fullPath, content);
+    }
+
+    private static void InitGitRepo(string workspace)
+    {
+        RunGitSync(workspace, "init");
+        RunGitSync(workspace, "config user.email \"test@test.com\"");
+        RunGitSync(workspace, "config user.name \"Test\"");
+        File.WriteAllText(Path.Combine(workspace, "README.md"), "init\n");
+        RunGitSync(workspace, "add .");
+        RunGitSync(workspace, "commit -m \"initial\"");
+        RunGitSync(workspace, "update-ref refs/remotes/origin/main HEAD");
+    }
+
+    private static void RunGitSync(string workspace, string args)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("git", args)
+        {
+            WorkingDirectory = workspace,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        using var p = System.Diagnostics.Process.Start(psi)!;
+        p.WaitForExit(10_000);
+        if (p.ExitCode != 0)
+            throw new InvalidOperationException($"git {args} failed: {p.StandardError.ReadToEnd()}");
+    }
+
+    #endregion
 }
