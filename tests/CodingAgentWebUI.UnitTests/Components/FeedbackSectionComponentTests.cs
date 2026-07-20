@@ -7,6 +7,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
@@ -68,6 +69,8 @@ public class FeedbackSectionComponentTests : BunitContext
             Services.BuildServiceProvider().GetRequiredService<JobDispatcherService>()));
 
         Services.AddSingleton(TimeProvider.System);
+        Services.AddSingleton<IOrchestratorRunService>(sp => sp.GetRequiredService<OrchestratorRunService>());
+        Services.AddScoped<AgentMonitoringPageService>();
     }
 
     private static PipelineRunSummary CreateSummaryWithFeedback(RunFeedback? feedback)

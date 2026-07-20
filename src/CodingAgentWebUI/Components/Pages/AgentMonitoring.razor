@@ -9,22 +9,8 @@
 @using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
 @using Serilog
-@inject IActiveRunQueryService ActiveRunQuery
-@inject AgentRegistryService Registry
-@inject JobDispatcherService Dispatcher
-@inject OrchestratorRunService RunService
-@inject PipelineOrchestrationService PipelineService
-@inject IConfigurationStore ConfigStore
-@inject IConsolidationService ConsolidationService
-@inject IPendingWorkQuery PendingWorkQuery
-@inject IWorkDistributor WorkDistributor
-@inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
-@inject ILabelService LabelService
-@inject IPipelineRunHistoryService HistoryService
-@inject IRunLifecycleManager LifecycleManager
+@inject AgentMonitoringPageService PageService
 @inject IJSRuntime JS
-@inject TimeProvider Clock
-@using Microsoft.AspNetCore.SignalR
 
 <PageTitle>Agent Monitoring - Coding Agent</PageTitle>
 
@@ -32,38 +18,38 @@
     <header class="agent-header">
         <h1>Agent Monitoring</h1>
         @{
-            var isStale = _lastRefreshFailed || (Clock.GetUtcNow() - _lastSuccessfulRefresh).TotalSeconds > 30;
+            var isStale = PageService.LastRefreshFailed || (PageService.LastSuccessfulRefresh != default && (PageService.GetUtcNow() - PageService.LastSuccessfulRefresh).TotalSeconds > 30);
         }
         <span class="freshness-indicator @(isStale ? "freshness-warning" : "")">
             @if (isStale)
             {
-                <text><Icon Name="alert-triangle" Size="14" /> Last updated: @FormatTimeAgo(_lastSuccessfulRefresh)@(_lastRefreshFailed ? " (refresh failed)" : " (stale)")</text>
+                <text><Icon Name="alert-triangle" Size="14" /> Last updated: @FormatTimeAgo(PageService.LastSuccessfulRefresh)@(PageService.LastRefreshFailed ? " (refresh failed)" : " (stale)")</text>
             }
             else
             {
-                <text>Last updated: @FormatTimeAgo(_lastSuccessfulRefresh) · Refreshing every 5s</text>
+                <text>Last updated: @FormatTimeAgo(PageService.LastSuccessfulRefresh) · Refreshing every 5s</text>
             }
         </span>
     </header>
 
-    <RunHistoryStats Runs="_runHistory" Agents="Registry.GetAllAgents()" QueueLength="_queuedJobs.Count" ShowAgentStats="true" />
+    <RunHistoryStats Runs="PageService.RunHistory" Agents="PageService.Agents" QueueLength="PageService.QueuedJobs.Count" ShowAgentStats="true" />
 
     <!-- Active Runs -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2><Icon Name="refresh-cw" Size="16" /> Active Runs (@(_activeRuns.Count + _activeConsolidationRuns.Count))</h2>
+        <h2><Icon Name="refresh-cw" Size="16" /> Active Runs (@(PageService.ActiveRuns.Count + PageService.ActiveConsolidationRuns.Count))</h2>
         @{
-            var implRuns = _activeRuns.Count(r => r.RunType == PipelineRunType.Implementation);
-            var reviewRuns = _activeRuns.Count(r => r.RunType == PipelineRunType.Review);
-            var decompRuns = _activeRuns.Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
-            var consolidationRuns = _activeConsolidationRuns.Count;
+            var implRuns = PageService.ActiveRuns.Count(r => r.RunType == PipelineRunType.Implementation);
+            var reviewRuns = PageService.ActiveRuns.Count(r => r.RunType == PipelineRunType.Review);
+            var decompRuns = PageService.ActiveRuns.Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
+            var consolidationRuns = PageService.ActiveConsolidationRuns.Count;
         }
-        @if (_activeRuns.Count + _activeConsolidationRuns.Count > 0)
+        @if (PageService.ActiveRuns.Count + PageService.ActiveConsolidationRuns.Count > 0)
         {
             <div class="monitoring-run-counts" style="margin-bottom: 8px; font-size: 0.85rem; color: var(--text-muted);">
                 <Icon Name="hammer" Size="14" /> @implRuns implementation · <Icon Name="search" Size="14" /> @reviewRuns review · <Icon Name="puzzle" Size="14" /> @decompRuns decomposition · <Icon Name="brain" Size="14" /> @consolidationRuns consolidation
             </div>
         }
-        @if (_activeRuns.Count == 0 && _activeConsolidationRuns.Count == 0)
+        @if (PageService.ActiveRuns.Count == 0 && PageService.ActiveConsolidationRuns.Count == 0)
         {
             <div class="monitoring-empty">No active pipeline runs.</div>
         }
@@ -85,7 +71,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var run in _activeRuns)
+                        @foreach (var run in PageService.ActiveRuns)
                         {
                             var elapsed = DateTimeOffset.UtcNow - run.StartedAt;
                             <tr class="monitoring-row-clickable"
@@ -136,10 +122,10 @@
                                 </td>
                             </tr>
                         }
-                        @foreach (var cRun in _activeConsolidationRuns)
+                        @foreach (var cRun in PageService.ActiveConsolidationRuns)
                         {
                             var cElapsed = DateTime.UtcNow - cRun.StartedAtUtc;
-                            var cAgent = _agents.FirstOrDefault(a => a.ActiveJobId == cRun.RunId);
+                            var cAgent = PageService.Agents.FirstOrDefault(a => a.ActiveJobId == cRun.RunId);
                             <tr>
                                 <td class="monitoring-mono" title="@cRun.RunId">@cRun.RunId</td>
                                 <td>
@@ -168,10 +154,10 @@
     @* ── Run Detail Modal ── *@
     @if (_showRunDetailModal)
     {
-        var modalRun = PipelineService.GetAllActiveRuns().FirstOrDefault(r => r.RunId == _selectedRunId);
+        var modalRun = PageService.GetFullRun(_selectedRunId!);
         if (modalRun != null)
         {
-            var modalAgent = modalRun.AgentId != null ? Registry.GetByAgentId(modalRun.AgentId) : null;
+            var modalAgent = modalRun.AgentId != null ? PageService.GetAgentByAgentId(modalRun.AgentId) : null;
             <div class="modal-overlay" tabindex="-1" @ref="_modalOverlayRef" @onclick="DismissRunDetailModal" @onkeydown="HandleModalKeyDown">
                 <div class="modal-card modal-card-wide" @onclick:stopPropagation="true"
                      role="dialog" aria-modal="true" aria-labelledby="run-detail-title">
@@ -183,28 +169,28 @@
                         <div class="modal-column-left">
                             <div class="modal-provider-list">
                                 <h4 style="font-size: 0.85rem; margin: 0 0 6px;">Providers</h4>
-                                @{ var issueConfig = ResolveProvider(modalRun.IssueProviderConfigId); }
+                                @{ var issueConfig = PageService.ResolveProvider(modalRun.IssueProviderConfigId); }
                                 <div><strong>Issue:</strong> @(issueConfig?.DisplayName ?? "Unknown") (@(issueConfig?.ProviderType ?? "—"))</div>
-                                @{ var repoConfig = ResolveProvider(modalRun.RepoProviderConfigId); }
+                                @{ var repoConfig = PageService.ResolveProvider(modalRun.RepoProviderConfigId); }
                                 <div><strong>Repository:</strong> @(repoConfig?.DisplayName ?? modalRun.RepositoryName ?? "Unknown") (@(repoConfig?.ProviderType ?? "—"))</div>
                                 @{
-                                    var agentProviderConfig = ResolveProvider(modalRun.AgentProviderConfigId);
+                                    var agentProviderConfig = PageService.ResolveProvider(modalRun.AgentProviderConfigId);
                                 }
                                 <div><strong>Agent:</strong> @(agentProviderConfig?.DisplayName ?? modalRun.AgentId ?? "—") (@(agentProviderConfig?.ProviderType ?? "—")) — Model: @(modalRun.ModelName ?? "—")</div>
                                 @if (modalRun.BrainProviderConfigId != null)
                                 {
-                                    var brainConfig = ResolveProvider(modalRun.BrainProviderConfigId);
+                                    var brainConfig = PageService.ResolveProvider(modalRun.BrainProviderConfigId);
                                     <div><strong>Brain:</strong> @(brainConfig?.DisplayName ?? "Unknown")</div>
                                 }
                                 @if (modalRun.PipelineProviderConfigId != null)
                                 {
-                                    var pipelineConfig = ResolveProvider(modalRun.PipelineProviderConfigId);
+                                    var pipelineConfig = PageService.ResolveProvider(modalRun.PipelineProviderConfigId);
                                     <div><strong>Pipeline:</strong> @(pipelineConfig?.DisplayName ?? "Unknown") (@(pipelineConfig?.ProviderType ?? "—"))</div>
                                 }
                             </div>
 
                             <div class="monitoring-detail-grid">
-                                <div><strong>Retries:</strong> @modalRun.RetryCount/@_maxRetries</div>
+                                <div><strong>Retries:</strong> @modalRun.RetryCount/@PageService.MaxRetries</div>
                                 @if (modalRun.TotalCost is not null and > 0m)
                                 {
                                     <div><strong>Cost:</strong> @CostFormatter.FormatCost(modalRun.TotalCost)</div>
@@ -219,11 +205,11 @@
                                 }
                                 @if (!string.IsNullOrEmpty(modalRun.ResolvedProfileId))
                                 {
-                                    <div><strong>Profile:</strong> @ResolveProfileName(modalRun.ResolvedProfileId)</div>
+                                    <div><strong>Profile:</strong> @PageService.ResolveProfileName(modalRun.ResolvedProfileId)</div>
                                 }
                                 @if (modalRun.ResolvedQualityGateConfigIds.Count > 0)
                                 {
-                                    <div><strong>Quality Gates:</strong> @string.Join(", ", modalRun.ResolvedQualityGateConfigIds.Select(ResolveQgcName))</div>
+                                    <div><strong>Quality Gates:</strong> @string.Join(", ", modalRun.ResolvedQualityGateConfigIds.Select(PageService.ResolveQgcName))</div>
                                 }
                             </div>
 
@@ -320,7 +306,7 @@
                             </div>
 
                             @{
-                                var buffer = RunService.GetOutputBuffer(modalRun.RunId);
+                                var buffer = PageService.GetOutputBuffer(modalRun.RunId);
                                 var outputLines = buffer.GetAll();
                             }
                             @if (outputLines.Count > 0)
@@ -338,7 +324,7 @@
                         </div>
 
                         <div class="modal-column-right">
-                            <PipelineSidebar Run="modalRun" IsRunning="true" MaxRetries="@_maxRetries"
+                            <PipelineSidebar Run="modalRun" IsRunning="true" MaxRetries="@PageService.MaxRetries"
                                              OnCancel="() => CancelAgentRun(modalRun)" />
 
                             @* ── Feedback Section ── *@
@@ -363,8 +349,8 @@
 
     <!-- Registered Agents -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2><Icon Name="bot" Size="16" /> Registered Agents (@_agents.Count)</h2>
-        @if (_agents.Count == 0)
+        <h2><Icon Name="bot" Size="16" /> Registered Agents (@PageService.Agents.Count)</h2>
+        @if (PageService.Agents.Count == 0)
         {
             <div class="monitoring-empty">No agents registered. Start agent containers to connect.</div>
         }
@@ -383,7 +369,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var agent in _agents)
+                        @foreach (var agent in PageService.Agents)
                         {
                             <tr class="monitoring-row-@agent.Status.ToString().ToLowerInvariant() @(agent.Disabled ? "monitoring-row-disabled" : "") monitoring-row-clickable"
                                 @onclick="() => SelectAgent(agent.AgentId)">
@@ -416,8 +402,8 @@
 
     <!-- Job Queue -->
     <section class="settings-section" style="margin: 16px 20px;">
-        <h2><Icon Name="clipboard-list" Size="16" /> Job Queue (@(_queuedJobs.Count + _queuedConsolidationRuns.Count))</h2>
-        @if (_queuedJobs.Count == 0 && _queuedConsolidationRuns.Count == 0)
+        <h2><Icon Name="clipboard-list" Size="16" /> Job Queue (@(PageService.QueuedJobs.Count + PageService.QueuedConsolidationRuns.Count))</h2>
+        @if (PageService.QueuedJobs.Count == 0 && PageService.QueuedConsolidationRuns.Count == 0)
         {
             <div class="monitoring-empty">No pending jobs in queue.</div>
         }
@@ -440,7 +426,7 @@
                     </thead>
                     <tbody>
                         @{ var position = 1; }
-                        @foreach (var job in _queuedJobs)
+                        @foreach (var job in PageService.QueuedJobs)
                         {
                             var waitTime = DateTimeOffset.UtcNow - job.EnqueuedAt;
                             <tr>
@@ -495,7 +481,7 @@
                             </tr>
                             position++;
                         }
-                        @foreach (var cRun in _queuedConsolidationRuns)
+                        @foreach (var cRun in PageService.QueuedConsolidationRuns)
                         {
                             var cWaitTime = DateTime.UtcNow - cRun.StartedAtUtc;
                             <tr>
@@ -541,7 +527,7 @@
     <section class="settings-section" style="margin: 16px 20px;">
         <div class="monitoring-section-toggle" @onclick="() => _historyExpanded = !_historyExpanded"
              role="button" tabindex="0">
-            <h2><Icon Name="scroll-text" Size="16" /> Recent Runs (@_runHistory.Count)</h2>
+            <h2><Icon Name="scroll-text" Size="16" /> Recent Runs (@PageService.RunHistory.Count)</h2>
             <span class="monitoring-toggle-icon">@(_historyExpanded ? "▾" : "▸")</span>
         </div>
         <div style="margin: 8px 0;">
@@ -554,7 +540,7 @@
         </div>
         @if (_historyExpanded)
         {
-            @if (_runHistory.Count == 0)
+            @if (PageService.RunHistory.Count == 0)
             {
                 <div class="monitoring-empty">No completed runs yet.</div>
             }
@@ -578,7 +564,7 @@
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var run in _runHistory.Take(20))
+                            @foreach (var run in PageService.RunHistory.Take(20))
                             {
                                 <tr class="monitoring-row-clickable"
                                     @onclick="() => OpenHistoryRunDetail(run)">
@@ -806,16 +792,6 @@
     private const string JsScrollToBottom = "scrollToBottom";
     private const string JsScrollActiveStep = "scrollActiveStepIntoView";
 
-    private IReadOnlyList<ActiveRunSummary> _activeRuns = [];
-    private IReadOnlyList<AgentEntry> _agents = [];
-    private IReadOnlyList<PendingJob> _queuedJobs = [];
-    private IReadOnlyList<ConsolidationRun> _activeConsolidationRuns = [];
-    private IReadOnlyList<ConsolidationRun> _queuedConsolidationRuns = [];
-    private Dictionary<string, ProviderConfig> _providerConfigLookup = new();
-    private Dictionary<string, AgentProfile> _profileLookup = new();
-    private Dictionary<string, QualityGateConfiguration> _qgcLookup = new();
-    private IReadOnlyList<PipelineRunSummary> _runHistory = [];
-    private bool _historyExpanded = true;
     private string? _selectedRunId;
     private bool _showRunDetailModal;
     private bool _scrollModalOnNextRender;
@@ -825,64 +801,13 @@
     private bool _showHistoryDetailModal;
     private ElementReference _historyModalOverlayRef;
     private bool _disposed;
-    private Timer? _refreshTimer;
-    private int _maxRetries = 3;
     private bool _showDisconnectConfirm;
-    private DateTimeOffset _lastSuccessfulRefresh;
-    private bool _lastRefreshFailed;
+    private bool _historyExpanded = true;
 
     protected override async Task OnInitializedAsync()
     {
-        _lastSuccessfulRefresh = Clock.GetUtcNow();
-        PipelineService.OnChange += HandleStateChanged;
-        ConsolidationService.OnChange += HandleStateChanged;
-
-        // Refresh every 5 seconds for heartbeat/elapsed updates
-        _refreshTimer = new Timer(RefreshTick, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(5));
-
-        try
-        {
-            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
-            _maxRetries = config.MaxRetries;
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to load pipeline config, using defaults");
-        }
-
-        try
-        {
-            var allConfigs = new List<ProviderConfig>();
-            foreach (var kind in Enum.GetValues<ProviderKind>())
-                allConfigs.AddRange(await ConfigStore.LoadProviderConfigsAsync(kind, CancellationToken.None));
-            _providerConfigLookup = allConfigs.DistinctBy(c => c.Id).ToDictionary(c => c.Id);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to load provider configs");
-        }
-
-        try
-        {
-            var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
-            _profileLookup = profiles.ToDictionary(p => p.Id);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to load agent profiles");
-        }
-
-        try
-        {
-            var qgcs = await ConfigStore.LoadQualityGateConfigsAsync(CancellationToken.None);
-            _qgcLookup = qgcs.ToDictionary(q => q.Id);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to load quality gate configs");
-        }
-
-        await RefreshDataAsync(includeConsolidation: true);
+        PageService.OnStateChanged += HandlePageServiceStateChanged;
+        await PageService.InitializeAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -907,93 +832,6 @@
                 await _modalOverlayRef.FocusAsync();
             }
             catch (Exception ex) { Log.Debug(ex, "Modal focus failed"); }
-        }
-    }
-
-    private async Task RefreshDataAsync(bool includeConsolidation = false)
-    {
-        _activeRuns = (await ActiveRunQuery.GetActiveRunsAsync())
-            .Where(r => !string.IsNullOrEmpty(r.AgentId))
-            .ToList();
-        _agents = Registry.GetAllAgents();
-        _runHistory = await PipelineService.GetRunHistoryAsync();
-        var allQueuedJobs = await PendingWorkQuery.GetPendingJobsAsync();
-        var consolidationJobs = allQueuedJobs.Where(j => j.IsConsolidation).ToList();
-        _queuedJobs = allQueuedJobs.Where(j => !j.IsConsolidation).ToList();
-
-        if (consolidationJobs.Count > 0)
-        {
-            Log.Debug("AgentMonitoring: {Total} pending jobs, {Consolidation} consolidation (filtered out), {Pipeline} pipeline shown. " +
-                "Consolidation IDs: [{Ids}]",
-                allQueuedJobs.Count, consolidationJobs.Count, _queuedJobs.Count,
-                string.Join(", ", consolidationJobs.Select(j => $"{j.WorkItemId}(type={j.ConsolidationRunType})")));
-        }
-
-        if (includeConsolidation)
-            await RefreshConsolidationAsync();
-    }
-
-    private async Task RefreshConsolidationAsync()
-    {
-        try
-        {
-            var allConsolidationRuns = await ConsolidationService.GetRunHistoryAsync(CancellationToken.None);
-            _activeConsolidationRuns = allConsolidationRuns
-                .Where(r => r.Status == ConsolidationRunStatus.Running)
-                .ToList();
-            _queuedConsolidationRuns = allConsolidationRuns
-                .Where(r => r.Status == ConsolidationRunStatus.Queued)
-                .ToList();
-        }
-        catch (Exception ex)
-        {
-            Log.Debug(ex, "Failed to load consolidation runs for monitoring page");
-        }
-    }
-
-    private async void RefreshTick(object? state)
-    {
-        if (_disposed) return;
-        try
-        {
-            await InvokeAsync(async () =>
-            {
-                if (_disposed) return;
-                await RefreshDataAsync();
-                _lastSuccessfulRefresh = Clock.GetUtcNow();
-                _lastRefreshFailed = false;
-                StateHasChanged();
-            });
-        }
-        catch (ObjectDisposedException) { }
-        catch
-        {
-            // TODO: This runs outside InvokeAsync (on timer thread), bypassing Blazor's sync context.
-            // TODO: No StateHasChanged() call means UI won't show warning until next successful tick.
-            _lastRefreshFailed = true;
-        }
-    }
-
-    private async void HandleStateChanged()
-    {
-        if (_disposed) return;
-        try
-        {
-            await InvokeAsync(async () =>
-            {
-                if (_disposed) return;
-                await RefreshDataAsync(includeConsolidation: true);
-                _lastSuccessfulRefresh = Clock.GetUtcNow();
-                _lastRefreshFailed = false;
-                StateHasChanged();
-            });
-        }
-        catch (ObjectDisposedException) { }
-        catch
-        {
-            // TODO: This runs outside InvokeAsync (on timer thread), bypassing Blazor's sync context.
-            // TODO: No StateHasChanged() call means UI won't show warning until next successful tick.
-            _lastRefreshFailed = true;
         }
     }
 
@@ -1035,211 +873,40 @@
             DismissRunDetailModal();
     }
 
-    private async Task CancelAgentRunById(string runId)
-    {
-        var run = PipelineService.GetAllActiveRuns().FirstOrDefault(r => r.RunId == runId);
-        if (run != null)
-        {
-            await CancelAgentRun(run);
-            return;
-        }
+    private async Task CancelAgentRunById(string runId) =>
+        await PageService.CancelAgentRunByIdAsync(runId);
 
-        // Run not in-memory (DB mode after restart) — cancel WorkItem directly
-        try
-        {
-            var cancelled = await WorkDistributor.CancelJobAsync(runId, CancellationToken.None);
-            if (cancelled)
-            {
-                Log.Information("Cancelled WorkItem {RunId} via IWorkDistributor", runId);
-            }
-            else
-            {
-                // WorkItem might already be terminal (Failed/Succeeded) — just log
-                Log.Information("WorkItem {RunId} could not be cancelled (already terminal or not found) — refreshing UI", runId);
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to cancel WorkItem {RunId} via IWorkDistributor", runId);
-        }
+    private async Task CancelAgentRun(PipelineRun run) =>
+        await PageService.CancelAgentRunAsync(run);
 
-        await RefreshDataAsync();
-        StateHasChanged();
-    }
+    private async Task RemoveFromQueue(string issueIdentifier, string issueProviderId) =>
+        await PageService.RemoveFromQueueAsync(issueIdentifier, issueProviderId);
 
-    private async Task CancelAgentRun(PipelineRun run)
-    {
-        var agent = run.AgentId is not null ? Registry.GetByAgentId(run.AgentId) : null;
-
-        // If agent not found (disconnected, never registered, or null),
-        // fail the run directly — there's no agent to send CancelJob to.
-        if (agent == null)
-        {
-            Log.Information("Cancel: agent '{AgentId}' not found for run {RunId}, removing run directly", run.AgentId, run.RunId);
-            run.FailureReason = "Cancelled — agent not available";
-            run.MarkCompleted();
-            run.CurrentStep = PipelineStep.Cancelled;
-
-            await HistoryService.AddRunToHistoryAsync(run); // TODO: Pass CancellationToken
-            RunService.RemoveRun(run.RunId);
-            Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-
-            // Also cancel the WorkItem in the DB (DB+SignalR mode)
-            try { await WorkDistributor.CancelJobAsync(run.RunId, CancellationToken.None); }
-            catch (Exception ex) { Log.Warning(ex, "Failed to cancel WorkItem for run {RunId}", run.RunId); }
-
-            try
-            {
-                await LabelService.SwapLabelAsync(
-                    run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled,
-                    run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue,
-                    CancellationToken.None);
-            }
-            catch (Exception ex) { Log.Warning(ex, "Failed to swap label for cancelled run {RunId}", run.RunId); }
-
-            await RefreshDataAsync();
-            StateHasChanged();
-            return;
-        }
-
-        // Short-circuit: if the run is orphan-restored (agent crashed and lost its state),
-        // the agent can't act on CancelJob — fail the run immediately on the orchestrator side.
-        if (agent.OrphanRestoredAt is not null)
-        {
-            Log.Information("Cancel short-circuit: run {RunId} is orphan-restored, failing immediately on orchestrator", run.RunId);
-            run.FailureReason = "Cancelled — agent lost job state (container restart)";
-            run.MarkCompleted();
-            run.CurrentStep = PipelineStep.Cancelled;
-
-            await HistoryService.AddRunToHistoryAsync(run); // TODO: Pass CancellationToken
-            RunService.RemoveRun(run.RunId);
-            Dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-
-            lock (agent.SyncRoot)
-            {
-                agent.ActiveJobId = null;
-                agent.OrphanRestoredAt = null;
-            }
-            Registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-
-            try
-            {
-                await LabelService.SwapLabelAsync(
-                    run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled,
-                    run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue,
-                    CancellationToken.None);
-            }
-            catch (Exception ex) { Log.Warning(ex, "Failed to swap label for cancelled orphan run {RunId}", run.RunId); }
-
-            await RefreshDataAsync();
-            StateHasChanged();
-            return;
-        }
-
-        try
-        {
-            await HubContext.Clients.Client(agent.ConnectionId).CancelJob(run.RunId);
-        }
-        catch (Exception ex) { Log.Warning(ex, "Failed to send CancelJob to agent {AgentId}", run.AgentId); }
-
-        // Set FailureReason BEFORE CancelRunAsync — it calls RemoveRun which returns this same
-        // object reference, then persists it. The reason must be on the object before persist.
-        run.FailureReason = "Cancelled by user";
-
-        // Immediately persist cancelled state — don't wait for agent confirmation
-        // TODO: Log when CancelRunAsync returns null (race with concurrent ReportJobCompleted) so operators
-        // can see that cancellation was handled by the agent's completion path rather than the explicit cancel.
-        await LifecycleManager.CancelRunAsync(run.RunId, CancellationToken.None);
-
-        await RefreshDataAsync();
-        StateHasChanged();
-    }
-
-    private async Task RemoveFromQueue(string issueIdentifier, string issueProviderId)
-    {
-        // In DB/K8s mode, pending jobs are WorkItem rows — cancel via WorkDistributor.
-        // Find the WorkItemId from the cached queue data.
-        var job = _queuedJobs.FirstOrDefault(j => j.IssueIdentifier == issueIdentifier && j.IssueProviderId == issueProviderId);
-        if (job?.WorkItemId is not null)
-        {
-            try
-            {
-                await WorkDistributor.CancelJobAsync(job.WorkItemId, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "Failed to cancel pending WorkItem {WorkItemId} for issue {IssueIdentifier}", job.WorkItemId, issueIdentifier);
-            }
-        }
-        else
-        {
-            // Legacy in-memory mode fallback
-            Dispatcher.RemoveFromQueue(issueIdentifier, issueProviderId);
-        }
-
-        await RefreshDataAsync();
-        StateHasChanged();
-    }
-
-    private async Task CancelConsolidationRun(string runId)
-    {
-        await ConsolidationService.CancelQueuedRunAsync(runId, CancellationToken.None);
-        await RefreshDataAsync(includeConsolidation: true);
-        StateHasChanged();
-    }
+    private async Task CancelConsolidationRun(string runId) =>
+        await PageService.CancelConsolidationRunAsync(runId);
 
     private void SelectAgent(string agentId)
     {
-        // Find the active run for this agent and open the run detail modal
-        var run = _activeRuns.FirstOrDefault(r => r.AgentId == agentId);
+        var run = PageService.ActiveRuns.FirstOrDefault(r => r.AgentId == agentId);
         if (run != null)
         {
             OpenRunDetail(run.RunId);
         }
     }
 
-    private void EnableAgent(AgentEntry agent) => agent.Disabled = false;
+    private void EnableAgent(AgentEntry agent) => PageService.EnableAgent(agent);
 
-    private void DisableAgent(AgentEntry agent) => agent.Disabled = true;
+    private void DisableAgent(AgentEntry agent) => PageService.DisableAgent(agent);
 
     private void ShowDisconnectConfirm() => _showDisconnectConfirm = true;
 
     private async Task ForceDisconnect(AgentEntry agent)
     {
-        try
-        {
-            if (agent.Status != AgentStatus.Disconnected)
-            {
-                try { await HubContext.Clients.Client(agent.ConnectionId).ForceDisconnect(); }
-                catch (Exception ex) { Log.Warning(ex, "Agent {AgentId} did not respond to force disconnect", agent.AgentId); }
-            }
-
-            if (agent.ActiveJobId != null)
-            {
-                var activeRun = PipelineService.GetAllActiveRuns()
-                    .FirstOrDefault(r => r.RunId == agent.ActiveJobId);
-                if (activeRun != null)
-                {
-                    activeRun.FailureReason = "Force disconnected by operator";
-                    activeRun.CurrentStep = PipelineStep.Failed;
-                    // TODO: Original code only set CompletedAt (not CompletedAtOffset). MarkCompleted() now sets both — verify no downstream logic relies on CompletedAtOffset==null for force-disconnected runs.
-                    activeRun.MarkCompleted();
-                }
-            }
-
-            Registry.Deregister(agent.AgentId);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Force disconnect failed for agent {AgentId}", agent.AgentId);
-        }
-
+        await PageService.ForceDisconnectAsync(agent);
         _showDisconnectConfirm = false;
         DismissRunDetailModal();
     }
 
-    // TODO: CSS classes text-success, text-warning, text-danger are not defined in any stylesheet.
-    // These need to be added to app.css (e.g. .text-success { color: var(--success); }) or provided by dependency #906.
     private static string GetStatusColorClass(AgentStatus status) => status switch
     {
         AgentStatus.Idle => "text-success",
@@ -1297,29 +964,23 @@
         return local.ToString("yyyy-MM-dd HH:mm");
     }
 
-    private ProviderConfig? ResolveProvider(string? configId)
+    private async void HandlePageServiceStateChanged()
     {
-        if (string.IsNullOrEmpty(configId)) return null;
-        return _providerConfigLookup.GetValueOrDefault(configId);
-    }
-
-    private string ResolveProfileName(string profileId)
-    {
-        var profile = _profileLookup.GetValueOrDefault(profileId);
-        return profile != null ? profile.DisplayName : $"{Truncate(profileId, 8)} (deleted)";
-    }
-
-    private string ResolveQgcName(string qgcId)
-    {
-        var qgc = _qgcLookup.GetValueOrDefault(qgcId);
-        return qgc != null ? qgc.DisplayName : $"{Truncate(qgcId, 8)} (deleted)";
+        if (_disposed) return;
+        try
+        {
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
     }
 
     public void Dispose()
     {
         _disposed = true;
-        _refreshTimer?.Dispose();
-        PipelineService.OnChange -= HandleStateChanged;
-        ConsolidationService.OnChange -= HandleStateChanged;
+        PageService.OnStateChanged -= HandlePageServiceStateChanged;
+        // TODO: PageService is Scoped and will also be disposed by DI when the circuit ends.
+        // Current Dispose impl is idempotent, but future non-idempotent logic could break.
+        // Consider removing explicit Dispose or adding a disposed guard in the service.
+        PageService.Dispose();
     }
 }
