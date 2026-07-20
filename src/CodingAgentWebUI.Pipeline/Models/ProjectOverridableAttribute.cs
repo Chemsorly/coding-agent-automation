@@ -19,10 +19,8 @@ internal sealed class ProjectOverridableAttribute : Attribute
     public bool DeepMerge { get; init; }
 
     /// <summary>
-    /// Explicit ordering for deterministic iteration. Must match the original
-    /// ApplyProjectOverrides source order to preserve partial-apply-on-exception semantics.
-    /// When an <see cref="ArgumentOutOfRangeException"/> is thrown mid-iteration, all
-    /// properties with lower Order values are retained in the returned config.
+    /// Explicit ordering for deterministic iteration. Ensures consistent logging
+    /// (which property triggers an error first) and predictable override application.
     /// </summary>
     public int Order { get; init; }
 }

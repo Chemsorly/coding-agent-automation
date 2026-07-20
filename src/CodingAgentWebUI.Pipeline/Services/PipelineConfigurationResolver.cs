@@ -62,17 +62,13 @@ public static class PipelineConfigurationResolver
         }
         catch (TargetInvocationException ex) when (ex.InnerException is ArgumentOutOfRangeException rangeEx)
         {
-            // INVARIANT: Partial-apply is safe because all validated init setters
-            // (CiNotStartedMaxRetries, MaxInfrastructureRetries, MaxDecompositionSubIssues) use
-            // fail-fast patterns (ternary throw or ThrowIf) that either fully assign or throw
-            // without leaving partial state. If a future setter mutates state before validation,
-            // add a per-property try/catch instead.
-            // TODO: Log message says "falling back to global defaults" but returns partially-mutated clone.
-            // This matches original behavior but is misleading — consider "retaining partially-applied overrides".
+            // On validation failure, discard the partially-mutated clone and return the original
+            // config unchanged. This is consistent with the null-project early return (line above)
+            // and ensures the log message ("falling back to global defaults") is accurate.
             Log.Warning(
                 "Project '{ProjectName}' (ID: {ProjectId}) has out-of-range override values — falling back to global defaults. {ErrorMessage}",
                 project.Name, project.Id, rangeEx.Message);
-            return clone;
+            return config;
         }
 
         return clone;
