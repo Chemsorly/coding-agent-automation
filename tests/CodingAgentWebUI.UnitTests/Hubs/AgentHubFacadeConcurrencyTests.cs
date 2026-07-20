@@ -29,7 +29,7 @@ public class AgentHubFacadeConcurrencyTests
         var mockLogger = new Mock<ILogger>();
         _registry = new AgentRegistryService(mockLogger.Object);
         _runService = new OrchestratorRunService(mockLogger.Object);
-        var dispatcher = new JobDispatcherService(_registry, mockLogger.Object);
+        var dispatcher = new JobDeduplicationGuardService(_registry, mockLogger.Object);
         var drainService = new JobQueueDrainService(
             dispatcher, _registry, Mock.Of<IJobDispatcher>(),
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatcher>(),

@@ -5,18 +5,18 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Resolves a SignalR connection ID for an agent matching the requested labels.
-/// Wraps <see cref="AgentRegistryService"/> and <see cref="JobDispatcherService"/> to
+/// Wraps <see cref="AgentRegistryService"/> and <see cref="JobDeduplicationGuardService"/> to
 /// select an idle, label-compatible agent and reserve it atomically.
 /// Registered as singleton in SignalR mode.
 /// </summary>
 public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributorAgentResolver
 {
     private readonly IAgentRegistryService _registry;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
 
     public SignalRWorkDistributorAgentResolver(
         IAgentRegistryService registry,
-        JobDispatcherService dispatcher)
+        JobDeduplicationGuardService dispatcher)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(dispatcher);

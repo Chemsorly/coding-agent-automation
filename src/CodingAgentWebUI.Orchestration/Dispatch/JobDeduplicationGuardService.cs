@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// <see cref="ConcurrentDictionary{TKey,TValue}"/> for duplicate issue detection.
 /// Registered as a singleton in DI.
 /// </summary>
-public sealed class JobDispatcherService : IJobDeduplicationGuard
+public sealed class JobDeduplicationGuardService : IJobDeduplicationGuard
 {
     private readonly IAgentRegistryService _registry;
 
@@ -29,7 +29,7 @@ public sealed class JobDispatcherService : IJobDeduplicationGuard
     /// <summary>Serializes agent selection to prevent double-booking. See docs/architecture/concurrency-model.md</summary>
     private readonly object _selectionLock = new();
 
-    public JobDispatcherService(IAgentRegistryService registry, ILogger logger)
+    public JobDeduplicationGuardService(IAgentRegistryService registry, ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(logger);

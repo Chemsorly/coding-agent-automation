@@ -15,7 +15,7 @@ public partial class AgentCoding : IDisposable
     [Inject] private IPipelineLoopService LoopService { get; set; } = default!;
     [Inject] private OrchestratorRunService RunService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
-    [Inject] private JobDispatcherService Dispatcher { get; set; } = default!;
+    [Inject] private JobDeduplicationGuardService Dispatcher { get; set; } = default!;
     [Inject] private AgentCodingPageService PageService { get; set; } = default!;
     [CascadingParameter] private MainLayout? Layout { get; set; }
 

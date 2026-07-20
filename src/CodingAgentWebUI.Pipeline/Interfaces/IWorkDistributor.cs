@@ -56,7 +56,7 @@ public interface IWorkDistributor
     /// Returns all currently active (non-terminal) issue identifiers as a set.
     /// Used by PipelineLoopService to batch-load dedup state at cycle start,
     /// avoiding N+1 DB queries in the per-issue dispatch loop.
-    /// In Legacy mode: delegates to in-memory OrchestratorRunService + JobDispatcherService.
+    /// In Legacy mode: delegates to in-memory OrchestratorRunService + JobDeduplicationGuardService.
     /// In DB mode: single SQL query loading all non-terminal (IssueIdentifier, IssueProviderConfigId) pairs.
     /// </summary>
     /// <param name="ct">Cancellation token.</param>

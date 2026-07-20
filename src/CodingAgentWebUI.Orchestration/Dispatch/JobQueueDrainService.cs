@@ -30,7 +30,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </summary>
 public sealed class JobQueueDrainService : BackgroundService
 {
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly IAgentRegistryService _registry;
     private readonly IJobDispatcher _jobDispatcher;
     private readonly IConfigurationStore _configStore;
@@ -47,7 +47,7 @@ public sealed class JobQueueDrainService : BackgroundService
     internal static readonly TimeSpan DefaultDrainInterval = TimeSpan.FromSeconds(10);
 
     internal JobQueueDrainService(
-        JobDispatcherService dispatcher,
+        JobDeduplicationGuardService dispatcher,
         IAgentRegistryService registry,
         IJobDispatcher jobDispatcher,
         IConfigurationStore configStore,
@@ -286,7 +286,7 @@ public sealed class JobQueueDrainService : BackgroundService
         var pipelineConfig = await _configStore.LoadPipelineConfigAsync(ct);
         var repoConfig = await _configStore.GetProviderConfigByIdAsync(
             job.RepoProviderId, Pipeline.Models.ProviderKind.Repository, ct);
-        return JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        return JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
     }
 
 }

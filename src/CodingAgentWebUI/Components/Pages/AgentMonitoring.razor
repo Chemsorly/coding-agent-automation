@@ -11,7 +11,7 @@
 @using Serilog
 @inject IActiveRunQueryService ActiveRunQuery
 @inject AgentRegistryService Registry
-@inject JobDispatcherService Dispatcher
+@inject JobDeduplicationGuardService Dispatcher
 @inject OrchestratorRunService RunService
 @inject PipelineOrchestrationService PipelineService
 @inject IConfigurationStore ConfigStore

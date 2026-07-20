@@ -46,7 +46,7 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
         var mockSerilogLogger = new Mock<ILogger>();
         var registry = new AgentRegistryService(mockSerilogLogger.Object);
         var runService = new OrchestratorRunService(mockSerilogLogger.Object);
-        var dispatcher = new JobDispatcherService(registry, mockSerilogLogger.Object);
+        var dispatcher = new JobDeduplicationGuardService(registry, mockSerilogLogger.Object);
         var drainService = new JobQueueDrainService(dispatcher, registry, Mock.Of<IJobDispatcher>(),
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatcher>(), new ShutdownSignal(), mockSerilogLogger.Object);
 

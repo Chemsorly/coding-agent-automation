@@ -19,7 +19,7 @@ public sealed class AgentHubFacadeTests
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly Mock<IPipelineRunHistoryService> _mockHistory = new();
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
@@ -31,7 +31,7 @@ public sealed class AgentHubFacadeTests
     {
         _registry = new AgentRegistryService(_mockLogger.Object);
         _runService = new OrchestratorRunService(_mockLogger.Object);
-        _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
         _drainService = new JobQueueDrainService(_dispatcher, _registry, Mock.Of<IJobDispatcher>(),
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatcher>(), new ShutdownSignal(), _mockLogger.Object);
 

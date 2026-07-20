@@ -111,7 +111,7 @@ public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
     private readonly Mock<IJobDispatcher> _mockJobDispatcher = new();
     private readonly Mock<IOrchestratorRunService> _mockRunService = new();
     private readonly AgentRegistryService _registry;
-    private readonly JobDispatcherService _dispatcherService;
+    private readonly JobDeduplicationGuardService _dispatcherService;
     private readonly HashSet<(string IssueIdentifier, string IssueProviderConfigId)> _distributedIssues = new();
 
     public LegacyWorkDistributorContractTests()
@@ -129,7 +129,7 @@ public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
             },
             connectionId: "conn-contract-1");
 
-        _dispatcherService = new JobDispatcherService(_registry, logger);
+        _dispatcherService = new JobDeduplicationGuardService(_registry, logger);
 
         // Stateful mock: TryDispatchAsync records the issue, IsIssueBeingProcessedOrQueued checks recorded set
         // TODO: TryDispatchAsync unconditionally returns true — this test asserts mock return value rather than
@@ -443,7 +443,7 @@ public class WorkDistributorAdditionalTests
             .Returns(false);
         var logger = Mock.Of<ILogger>();
         var registry = new AgentRegistryService(logger);
-        var dispatcherService = new JobDispatcherService(registry, logger);
+        var dispatcherService = new JobDeduplicationGuardService(registry, logger);
         var mockRunService = new Mock<IOrchestratorRunService>();
         mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun>());
 

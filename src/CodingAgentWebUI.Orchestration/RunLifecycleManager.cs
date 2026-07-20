@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Orchestration;
 /// - Agent registry (IAgentRegistryService)
 /// - Labels (ILabelService)
 /// - History (IPipelineRunHistoryService)
-/// - Dedup tracker (JobDispatcherService)
+/// - Dedup tracker (JobDeduplicationGuardService)
 /// </summary>
 public sealed class RunLifecycleManager : IRunLifecycleManager
 {
@@ -26,7 +26,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IAgentRegistryService _registry;
     private readonly ILabelService _labelService;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly ILogger _logger;
     private readonly IJobCleanupStrategy? _jobCleanup;
 
@@ -35,7 +35,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         IPipelineRunHistoryService historyService,
         IAgentRegistryService registry,
         ILabelService labelService,
-        JobDispatcherService dispatcher,
+        JobDeduplicationGuardService dispatcher,
         ILogger logger,
         WorkItemTransitionService? workItemTransition = null,
         IJobCleanupStrategy? jobCleanup = null)

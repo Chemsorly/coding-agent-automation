@@ -86,7 +86,7 @@ public sealed class ActiveRunRehydrationIntegrationTests : IDisposable
         rehydratedRun.AgentId.Should().BeNull();
 
         // Create HeartbeatMonitor with real services
-        var dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+        var dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
         var mockLabelService = new Mock<ILabelService>();
         var mockConfigStore = new Mock<IConfigurationStore>();
