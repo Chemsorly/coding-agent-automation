@@ -95,7 +95,10 @@ public class DispatchOrchestrationServiceTests
                 _mockTokenVending.Object,
                 _mockProviderFactory.Object,
                 _mockLabelService.Object,
-                _resolution),
+                _resolution,
+                new ProviderConfigBuilder(
+                    _mockConfigStore.Object,
+                    _mockTokenVending.Object)),
             runCreator,
             _runService,
             _mockWorkDistributor.Object,
@@ -961,7 +964,10 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
         _service = new DispatchOrchestrationService(
             new DispatchInfrastructure(
                 mockTokenVending.Object, mockProviderFactory.Object,
-                _mockLabelService.Object, resolution),
+                _mockLabelService.Object, resolution,
+                new ProviderConfigBuilder(
+                    mockConfigStore.Object,
+                    mockTokenVending.Object)),
             runCreator,
             _runService,
             new Mock<IWorkDistributor>().Object,
@@ -1122,7 +1128,10 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
         _service = new DispatchOrchestrationService(
             new DispatchInfrastructure(
                 mockTokenVending.Object, mockProviderFactory.Object,
-                _mockLabelService.Object, resolution),
+                _mockLabelService.Object, resolution,
+                new ProviderConfigBuilder(
+                    mockConfigStore.Object,
+                    mockTokenVending.Object)),
             runCreator,
             _runService,
             _mockWorkDistributor.Object,

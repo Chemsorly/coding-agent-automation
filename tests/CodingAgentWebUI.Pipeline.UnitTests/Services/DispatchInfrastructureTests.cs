@@ -30,11 +30,16 @@ public class DispatchInfrastructureTests
             _mockConfigStore.Object,
             new Mock<ILogger>().Object);
 
+        var providerConfigBuilder = new ProviderConfigBuilder(
+            _mockConfigStore.Object,
+            _mockTokenVending.Object);
+
         return new DispatchInfrastructure(
             _mockTokenVending.Object,
             _mockProviderFactory.Object,
             _mockLabelService.Object,
-            resolution);
+            resolution,
+            providerConfigBuilder);
     }
 
     // ── Construction ──
@@ -45,9 +50,10 @@ public class DispatchInfrastructureTests
         var resolution = new DispatchResolutionService(
             new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
             _mockConfigStore.Object, new Mock<ILogger>().Object);
+        var builder = new ProviderConfigBuilder(_mockConfigStore.Object, _mockTokenVending.Object);
 
         var act = () => new DispatchInfrastructure(
-            null!, _mockProviderFactory.Object, _mockLabelService.Object, resolution);
+            null!, _mockProviderFactory.Object, _mockLabelService.Object, resolution, builder);
 
         act.Should().Throw<ArgumentNullException>();
     }
@@ -58,9 +64,10 @@ public class DispatchInfrastructureTests
         var resolution = new DispatchResolutionService(
             new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
             _mockConfigStore.Object, new Mock<ILogger>().Object);
+        var builder = new ProviderConfigBuilder(_mockConfigStore.Object, _mockTokenVending.Object);
 
         var act = () => new DispatchInfrastructure(
-            _mockTokenVending.Object, null!, _mockLabelService.Object, resolution);
+            _mockTokenVending.Object, null!, _mockLabelService.Object, resolution, builder);
 
         act.Should().Throw<ArgumentNullException>();
     }
@@ -71,9 +78,10 @@ public class DispatchInfrastructureTests
         var resolution = new DispatchResolutionService(
             new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
             _mockConfigStore.Object, new Mock<ILogger>().Object);
+        var builder = new ProviderConfigBuilder(_mockConfigStore.Object, _mockTokenVending.Object);
 
         var act = () => new DispatchInfrastructure(
-            _mockTokenVending.Object, _mockProviderFactory.Object, null!, resolution);
+            _mockTokenVending.Object, _mockProviderFactory.Object, null!, resolution, builder);
 
         act.Should().Throw<ArgumentNullException>();
     }
@@ -81,8 +89,23 @@ public class DispatchInfrastructureTests
     [Fact]
     public void Constructor_NullResolution_Throws()
     {
+        var builder = new ProviderConfigBuilder(_mockConfigStore.Object, _mockTokenVending.Object);
+
         var act = () => new DispatchInfrastructure(
-            _mockTokenVending.Object, _mockProviderFactory.Object, _mockLabelService.Object, null!);
+            _mockTokenVending.Object, _mockProviderFactory.Object, _mockLabelService.Object, null!, builder);
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
+    public void Constructor_NullProviderConfigBuilder_Throws()
+    {
+        var resolution = new DispatchResolutionService(
+            new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(),
+            _mockConfigStore.Object, new Mock<ILogger>().Object);
+
+        var act = () => new DispatchInfrastructure(
+            _mockTokenVending.Object, _mockProviderFactory.Object, _mockLabelService.Object, resolution, null!);
 
         act.Should().Throw<ArgumentNullException>();
     }
@@ -98,6 +121,7 @@ public class DispatchInfrastructureTests
         infra.ProviderFactory.Should().BeSameAs(_mockProviderFactory.Object);
         infra.LabelService.Should().BeSameAs(_mockLabelService.Object);
         infra.Resolution.Should().NotBeNull();
+        infra.ProviderConfigBuilder.Should().NotBeNull();
     }
 
     // ── ConfigStore convenience accessor ──
