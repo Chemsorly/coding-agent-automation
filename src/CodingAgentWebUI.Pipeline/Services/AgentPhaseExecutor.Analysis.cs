@@ -262,7 +262,7 @@ public partial class AgentPhaseExecutor
             if (isNotReady)
             {
                 context.Callbacks.TransitionTo(PipelineStep.PostingAnalysis);
-                await PostAnalysisCommentAsync(run, context.Issue, context.IssueOps, assessment, ct);
+                await PostAnalysisCommentAsync(run, context.Issue, context.IssueOps, assessment, issueComments, ct);
 
                 var abortComment = BuildNotReadyComment(assessment!);
                 try { await context.IssueOps.PostCommentAsync(run.IssueIdentifier, abortComment, ct); }
@@ -277,7 +277,7 @@ public partial class AgentPhaseExecutor
             if (isWontDo)
             {
                 context.Callbacks.TransitionTo(PipelineStep.PostingAnalysis);
-                await PostAnalysisCommentAsync(run, context.Issue, context.IssueOps, assessment, ct);
+                await PostAnalysisCommentAsync(run, context.Issue, context.IssueOps, assessment, issueComments, ct);
 
                 var wontDoComment = BuildWontDoComment(assessment!);
                 try { await context.IssueOps.PostCommentAsync(run.IssueIdentifier, wontDoComment, ct); }
@@ -291,7 +291,7 @@ public partial class AgentPhaseExecutor
 
             // Ready path — post analysis and continue
             context.Callbacks.TransitionTo(PipelineStep.PostingAnalysis);
-            await PostAnalysisCommentAsync(run, context.Issue, context.IssueOps, assessment, ct);
+            await PostAnalysisCommentAsync(run, context.Issue, context.IssueOps, assessment, issueComments, ct);
         }
 
         return true;
@@ -336,7 +336,8 @@ public partial class AgentPhaseExecutor
 
     private async Task PostAnalysisCommentAsync(
         PipelineRun run, IssueDetail issue,
-        IAgentIssueOperations issueOps, AnalysisAssessment? assessment, CancellationToken ct)
+        IAgentIssueOperations issueOps, AnalysisAssessment? assessment,
+        IReadOnlyList<IssueComment> issueComments, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(run.AnalysisContent))
         {
@@ -353,11 +354,27 @@ public partial class AgentPhaseExecutor
             var bodyHash = AnalysisBodyHash.Compute(issue.Description);
             markdown += $"\n<!-- agent:analysis-body-hash:{bodyHash} -->";
 
-            await issueOps.PostCommentAsync(run.IssueIdentifier, markdown, ct);
-            _logger.Information("Pipeline {RunId} posted analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
+            var existingComment = issueComments
+                .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
+                .OrderByDescending(c => c.CreatedAt)
+                .FirstOrDefault();
+
+            if (existingComment is not null)
+            {
+                await issueOps.UpdateCommentAsync(run.IssueIdentifier, existingComment.Id, markdown, ct);
+                _logger.Information("Pipeline {RunId} updated existing analysis comment on issue {IssueIdentifier}",
+                    run.RunId, run.IssueIdentifier);
+            }
+            else
+            {
+                await issueOps.PostCommentAsync(run.IssueIdentifier, markdown, ct);
+                _logger.Information("Pipeline {RunId} posted new analysis comment on issue {IssueIdentifier}",
+                    run.RunId, run.IssueIdentifier);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
+            // TODO: Distinguish between post and update failures in this log message (currently always says "failed to post")
             _logger.Warning(ex, "Pipeline {RunId} failed to post analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
         }
     }
