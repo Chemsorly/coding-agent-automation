@@ -431,8 +431,6 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine("### Step 3.5: Evidence Quality Gate");
         sb.AppendLine();
-        // TODO: "Before ranking" wording is inconsistent with placement after Step 3's "Rank descending. Take top N."
-        // Consider rewording to "After scoring but before final selection" to avoid contradictory instructions.
         sb.AppendLine("Before ranking, reject proposals that fail evidence quality:");
         sb.AppendLine("- Categories `refactoring`, `bug`, `dead-code`: MUST have at least one evidence source");
         sb.AppendLine("  that is NOT \"code-reading:\" only. If all sources are \"code-reading:\", DROP the proposal.");

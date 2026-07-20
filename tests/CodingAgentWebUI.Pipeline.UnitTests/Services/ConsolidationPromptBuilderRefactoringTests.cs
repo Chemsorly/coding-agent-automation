@@ -261,10 +261,6 @@ public class ConsolidationPromptBuilderRefactoringTests
         result.Should().Contain("single agent in one run");
     }
 
-    // TODO: These evidence quality gate tests are substring checks only. They cannot detect if the section
-    // is placed in the wrong location (e.g., after Step 4). Consider adding a structural ordering test that
-    // asserts "Evidence Quality Gate" appears after "Step 3" and before "Step 4" in the output.
-    // Also consider adding a negative/regression test to validate intent rather than exact wording.
     [Fact]
     public void BuildRefactoringAggregationPrompt_IncludesEvidenceQualityGateSection()
     {
