@@ -138,11 +138,11 @@ public class WorkDistributionRegistrationTests
         var services = new ServiceCollection();
         services.AddLogging();
 
-        // Legacy mode needs IJobDispatcher, JobDispatcherService, IOrchestratorRunService
+        // Legacy mode needs IJobDispatcher, JobDeduplicationGuardService, IOrchestratorRunService
         var logger = Serilog.Log.Logger;
         var registry = new AgentRegistryService(logger);
         services.AddSingleton(Mock.Of<CodingAgentWebUI.Pipeline.Interfaces.IJobDispatcher>());
-        services.AddSingleton(new JobDispatcherService(registry, logger));
+        services.AddSingleton(new JobDeduplicationGuardService(registry, logger));
         services.AddSingleton(Mock.Of<CodingAgentWebUI.Pipeline.Interfaces.IOrchestratorRunService>());
 
         // Act — should not throw about mode validation (legacy mode skips it)

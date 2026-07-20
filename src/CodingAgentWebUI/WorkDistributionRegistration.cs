@@ -51,7 +51,7 @@ public static class WorkDistributionRegistration
             // IWorkDistributor wraps existing AgentJobDispatcher.
             services.AddSingleton<IWorkDistributor>(sp => new LegacyWorkDistributor(
                 sp.GetRequiredService<IJobDispatcher>(),
-                sp.GetRequiredService<JobDispatcherService>(),
+                sp.GetRequiredService<JobDeduplicationGuardService>(),
                 sp.GetRequiredService<IOrchestratorRunService>(),
                 Log.Logger,
                 new Lazy<IConsolidationDispatcher>(() => sp.GetRequiredService<IConsolidationDispatcher>())));
@@ -67,9 +67,9 @@ public static class WorkDistributionRegistration
                 new Pipeline.Services.FileSystemHarnessSuggestionStore(
                     Pipeline.Models.PipelineConstants.HarnessSuggestionsPath));
             services.AddDistributedLockProvider(null);
-            // Queue visibility: wraps in-memory JobDispatcherService
+            // Queue visibility: wraps in-memory JobDeduplicationGuardService
             services.AddSingleton<IPendingWorkQuery>(sp =>
-                new LegacyPendingWorkQuery(sp.GetRequiredService<JobDispatcherService>()));
+                new LegacyPendingWorkQuery(sp.GetRequiredService<JobDeduplicationGuardService>()));
             // RunLifecycleManager (Legacy — no WorkItemTransitionService, no K8s cleanup)
             services.AddSingleton<IJobCleanupStrategy>(new NoOpJobCleanup());
             services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
@@ -77,7 +77,7 @@ public static class WorkDistributionRegistration
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
                 sp.GetRequiredService<AgentRegistryService>(),
                 sp.GetRequiredService<ILabelService>(),
-                sp.GetRequiredService<JobDispatcherService>(),
+                sp.GetRequiredService<JobDeduplicationGuardService>(),
                 Log.Logger,
                 workItemTransition: null,
                 jobCleanup: sp.GetRequiredService<IJobCleanupStrategy>()));
@@ -163,7 +163,7 @@ public static class WorkDistributionRegistration
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<AgentRegistryService>(),
             sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<JobDispatcherService>(),
+            sp.GetRequiredService<JobDeduplicationGuardService>(),
             Log.Logger,
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetService<IJobCleanupStrategy>()));
@@ -332,7 +332,7 @@ public static class WorkDistributionRegistration
         // Agent resolver (singleton — selects idle label-compatible agent for SignalR push)
         services.AddSingleton<ISignalRWorkDistributorAgentResolver>(sp => new SignalRWorkDistributorAgentResolver(
             sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<JobDispatcherService>()));
+            sp.GetRequiredService<JobDeduplicationGuardService>()));
 
         // Work distributor (singleton — uses IDbContextFactory for context-per-operation)
         services.AddSingleton<IWorkDistributor>(sp => new SignalRWorkDistributor(

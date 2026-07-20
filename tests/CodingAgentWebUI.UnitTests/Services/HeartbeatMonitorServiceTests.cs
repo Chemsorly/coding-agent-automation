@@ -75,7 +75,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
                 });
             });
 
-        var dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+        var dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
 
         _monitor = new HeartbeatMonitorService(
             _registry,
@@ -1049,7 +1049,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
         // Arrange: Agent is busy with a consolidation run that has exceeded the progress timeout.
         // The consolidation service should be called to fail the timed-out run.
         var mockConsolidationService = new Mock<IConsolidationService>();
-        var dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+        var dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
 
         _mockConfigStore
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
@@ -1106,7 +1106,7 @@ public class HeartbeatMonitorServiceTests : IDisposable
     {
         // Arrange: Agent is busy with a consolidation run that is within the progress timeout.
         var mockConsolidationService = new Mock<IConsolidationService>();
-        var dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+        var dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
 
         _mockConfigStore
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))

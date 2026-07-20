@@ -16,14 +16,14 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 public class SignalRWorkDistributorAgentResolverTests
 {
     private readonly AgentRegistryService _registry;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly SignalRWorkDistributorAgentResolver _resolver;
 
     public SignalRWorkDistributorAgentResolverTests()
     {
         var logger = new Mock<ILogger>().Object;
         _registry = new AgentRegistryService(logger);
-        _dispatcher = new JobDispatcherService(_registry, logger);
+        _dispatcher = new JobDeduplicationGuardService(_registry, logger);
         _resolver = new SignalRWorkDistributorAgentResolver(_registry, _dispatcher);
     }
 

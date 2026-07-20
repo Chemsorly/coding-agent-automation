@@ -10,7 +10,7 @@ public sealed record AgentResolveResult(string ConnectionId, string AgentId);
 /// <summary>
 /// Resolves the SignalR connection ID for an agent matching the given selector labels.
 /// Implemented by the WebUI project using <see cref="Registry.AgentRegistryService"/>
-/// and <see cref="JobDispatcherService"/> to select and reserve an idle, label-compatible agent.
+/// and <see cref="JobDeduplicationGuardService"/> to select and reserve an idle, label-compatible agent.
 /// </summary>
 public interface ISignalRWorkDistributorAgentResolver
 {

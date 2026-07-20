@@ -50,9 +50,9 @@ public sealed class AgentJobSlotManager
     }
 
     // TODO: Inconsistent thread-safety contract — ActiveChatSessionId acquires _busyLock for its
-    // read, but ActiveJobId, IsBusy, CurrentStep, ActiveJobTask, ActiveChatTask, JobCts, and ChatCts
-    // do not. Consider making all property reads consistently use locks (or volatile) to establish
-    // a clear thread-safety contract for callers.
+    // read, but ActiveJobId, IsBusy, CurrentStep, JobCts, and ChatCts do not. Consider making all
+    // property reads consistently use locks (or volatile) to establish a clear thread-safety contract
+    // for callers.
     /// <summary>Whether the agent is currently executing a job.</summary>
     public bool IsBusy => _activeJobId is not null;
 
@@ -69,10 +69,10 @@ public sealed class AgentJobSlotManager
     }
 
     /// <summary>The active job task, or null if no job is running.</summary>
-    public Task? ActiveJobTask => _activeJobTask;
+    public Task? ActiveJobTask => Volatile.Read(ref _activeJobTask);
 
     /// <summary>The active chat task, or null if no chat is running.</summary>
-    public Task? ActiveChatTask => _activeChatTask;
+    public Task? ActiveChatTask => Volatile.Read(ref _activeChatTask);
 
     /// <summary>The job CTS for cancellation by event handlers.</summary>
     // TODO: Exposing CancellationTokenSource via public properties breaks the encapsulation goal
@@ -158,22 +158,17 @@ public sealed class AgentJobSlotManager
     /// <summary>
     /// Sets the active job task reference (for shutdown/cancel-wait patterns).
     /// </summary>
-    // TODO: _activeJobTask is written here without synchronization but read from other threads
-    // (HandleCancelChatAsync, ShutdownAsync). Consider using Volatile.Write/Read or acquiring
-    // _busyLock to guarantee cross-thread visibility on ARM64.
     public void SetActiveJobTask(Task task)
     {
-        _activeJobTask = task;
+        Volatile.Write(ref _activeJobTask, task);
     }
 
     /// <summary>
     /// Sets the active chat task reference (for shutdown/cancel-wait patterns).
     /// </summary>
-    // TODO: Same synchronization concern as SetActiveJobTask — _activeChatTask is read
-    // from other threads without a lock or memory barrier.
     public void SetActiveChatTask(Task task)
     {
-        _activeChatTask = task;
+        Volatile.Write(ref _activeChatTask, task);
     }
 
     /// <summary>
@@ -228,10 +223,6 @@ public sealed class AgentJobSlotManager
     /// All fields are read under <see cref="_busyLock"/> to prevent TOCTOU races
     /// where ReleaseChatSlot() could clear state between individual property reads.
     /// </summary>
-    // TODO: Atomicity guarantee for _activeChatTask is weaker than documented — SetActiveChatTask()
-    // writes without _busyLock or a memory barrier, so on ARM64 the snapshot could return a stale
-    // null for Task even after SetActiveChatTask was called from another thread. See TODO on
-    // SetActiveChatTask for the underlying synchronization gap.
     public (string? SessionId, Task? Task, CancellationTokenSource? Cts) GetChatSlotSnapshot()
     {
         lock (_busyLock)
@@ -247,15 +238,19 @@ public sealed class AgentJobSlotManager
     // TODO: No test verifies that ForceReleaseJobSlot does NOT invoke the signalReady callback,
     // which is the key behavioral difference between it and ReleaseJobSlotAndSignalReadyAsync.
     // Add a negative test asserting signalReady is never called.
-    // TODO: ForceReleaseJobSlot does not clear _activeJobAssignment, _activeJobStartedAt, or
-    // _activeJobRunType. While BuildActiveJobState() short-circuits on null _activeJobId, stale
-    // assignment data remains in memory until the next successful slot acquisition overwrites it.
-    // Consider clearing all assignment state here for consistency with ReleaseJobSlotAndSignalReadyAsync.
+    // TODO: No test verifies that ForceReleaseJobSlot clears _activeJobAssignment,
+    // _activeJobStartedAt, _activeJobRunType, or _currentStep. Add a test that sets all fields,
+    // calls ForceReleaseJobSlot, then asserts BuildActiveJobState() returns null to validate the
+    // clearing logic end-to-end and catch regressions.
     public void ForceReleaseJobSlot()
     {
         lock (_busyLock)
         {
             _activeJobId = null;
+            _activeJobAssignment = null;
+            _activeJobStartedAt = null;
+            _activeJobRunType = default;
+            _currentStep = null;
         }
 
 #pragma warning disable 0420 // volatile field passed by reference to Interlocked — safe by design

@@ -1,5 +1,6 @@
 @page "/agent-monitoring"
 @implements IDisposable
+@using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
@@ -11,7 +12,7 @@
 @using Serilog
 @inject IActiveRunQueryService ActiveRunQuery
 @inject AgentRegistryService Registry
-@inject JobDispatcherService Dispatcher
+@inject JobDeduplicationGuardService Dispatcher
 @inject OrchestratorRunService RunService
 @inject PipelineOrchestrationService PipelineService
 @inject IConfigurationStore ConfigStore
@@ -1088,14 +1089,10 @@
             try { await WorkDistributor.CancelJobAsync(run.RunId, CancellationToken.None); }
             catch (Exception ex) { Log.Warning(ex, "Failed to cancel WorkItem for run {RunId}", run.RunId); }
 
-            try
-            {
-                await LabelService.SwapLabelAsync(
-                    run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled,
-                    run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue,
-                    CancellationToken.None);
-            }
-            catch (Exception ex) { Log.Warning(ex, "Failed to swap label for cancelled run {RunId}", run.RunId); }
+            // TODO: Behavioral change for Review runs — now routes via run.ProviderConfigIdForLabel (RepoProviderConfigId)
+            // instead of the original run.IssueProviderConfigId. Aligns with RunLifecycleManager but changes
+            // which provider handles the label swap on PR-type runs.
+            await LabelService.TrySwapLabelAsync(run, AgentLabels.Cancelled, Log.Logger, "AgentMonitoring.CancelRun", CancellationToken.None);
 
             await RefreshDataAsync();
             StateHasChanged();
@@ -1122,14 +1119,9 @@
             }
             Registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
-            try
-            {
-                await LabelService.SwapLabelAsync(
-                    run.IssueProviderConfigId, run.IssueIdentifier, AgentLabels.Cancelled,
-                    run.RunType == PipelineRunType.Review ? LabelTargetKind.PullRequest : LabelTargetKind.Issue,
-                    CancellationToken.None);
-            }
-            catch (Exception ex) { Log.Warning(ex, "Failed to swap label for cancelled orphan run {RunId}", run.RunId); }
+            // TODO: Same behavioral change as above — Review runs now route via run.ProviderConfigIdForLabel
+            // (RepoProviderConfigId) instead of the original run.IssueProviderConfigId.
+            await LabelService.TrySwapLabelAsync(run, AgentLabels.Cancelled, Log.Logger, "AgentMonitoring.CancelRun", CancellationToken.None);
 
             await RefreshDataAsync();
             StateHasChanged();

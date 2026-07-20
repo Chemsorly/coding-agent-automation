@@ -18,7 +18,7 @@ namespace CodingAgentWebUI.Services;
 public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 {
     private readonly IAgentRegistryService _registry;
-    private readonly JobDispatcherService _jobDispatcher;
+    private readonly JobDeduplicationGuardService _jobDispatcher;
     private readonly IAgentCommunication _agentComm;
     private readonly IConfigurationStore _configStore;
     private readonly IProjectStore _projectStore;
@@ -32,7 +32,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     public ConsolidationDispatcher(
         IAgentRegistryService registry,
-        JobDispatcherService jobDispatcher,
+        JobDeduplicationGuardService jobDispatcher,
         IAgentCommunication agentComm,
         IConfigurationStore configStore,
         IProjectStore projectStore,
@@ -352,14 +352,14 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     internal async Task<IReadOnlyList<string>> ResolveRequiredLabelsAsync(string? templateId, CancellationToken ct)
     {
         if (templateId is null)
-            return JobDispatcherService.ResolveRequiredLabels(null, _config);
+            return JobDeduplicationGuardService.ResolveRequiredLabels(null, _config);
 
         var template = await ResolveTemplateAsync(templateId, ct);
         if (template is null)
-            return JobDispatcherService.ResolveRequiredLabels(null, _config);
+            return JobDeduplicationGuardService.ResolveRequiredLabels(null, _config);
 
         var repoConfig = await _configStore.GetProviderConfigByIdAsync(template.RepoProviderId, ProviderKind.Repository, ct);
-        return JobDispatcherService.ResolveRequiredLabels(repoConfig, _config);
+        return JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, _config);
     }
 
     /// <summary>

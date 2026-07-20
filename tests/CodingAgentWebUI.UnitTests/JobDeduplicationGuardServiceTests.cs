@@ -12,14 +12,14 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="JobDispatcherService"/>.
+/// Unit tests for <see cref="JobDeduplicationGuardService"/>.
 /// </summary>
-public class JobDispatcherServiceTests
+public class JobDeduplicationGuardServiceTests
 {
     private static AgentRegistryService CreateRegistry() =>
         new(new Mock<ILogger>().Object);
 
-    private static JobDispatcherService CreateService(AgentRegistryService? registry = null) =>
+    private static JobDeduplicationGuardService CreateService(AgentRegistryService? registry = null) =>
         new(registry ?? CreateRegistry(), new Mock<ILogger>().Object);
 
     private static PendingJob CreateJob(string issueId = "issue-1", IReadOnlyList<string>? labels = null) => new()
@@ -427,7 +427,7 @@ public class JobDispatcherServiceTests
         };
         var pipelineConfig = new PipelineConfiguration();
 
-        var labels = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var labels = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
         labels.Should().BeEquivalentTo(new[] { "dotnet", "linux" });
     }
 
@@ -447,7 +447,7 @@ public class JobDispatcherServiceTests
             DefaultRequiredAgentLabels = "kiro, agent"
         };
 
-        var labels = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var labels = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
         labels.Should().BeEquivalentTo(new[] { "kiro", "agent" });
     }
 
@@ -464,7 +464,7 @@ public class JobDispatcherServiceTests
         };
         var pipelineConfig = new PipelineConfiguration();
 
-        var labels = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var labels = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
         labels.Should().BeEmpty();
     }
 
@@ -476,7 +476,7 @@ public class JobDispatcherServiceTests
             DefaultRequiredAgentLabels = "default-label"
         };
 
-        var labels = JobDispatcherService.ResolveRequiredLabels(null, pipelineConfig);
+        var labels = JobDeduplicationGuardService.ResolveRequiredLabels(null, pipelineConfig);
         labels.Should().BeEquivalentTo(new[] { "default-label" });
     }
 

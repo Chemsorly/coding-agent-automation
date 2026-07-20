@@ -19,9 +19,9 @@ All services listed below are registered as singletons in DI and share mutable s
 through `ConcurrentDictionary` and `ConcurrentQueue` collections, with additional locks
 for compound operations.
 
-## JobDispatcherService
+## JobDeduplicationGuardService
 
-**File:** `src/CodingAgentWebUI.Orchestration/Dispatch/JobDispatcherService.cs`
+**File:** `src/CodingAgentWebUI.Orchestration/Dispatch/JobDeduplicationGuardService.cs`
 
 ### Data structures
 
@@ -106,14 +106,14 @@ intentional design tradeoff — the alternative (routing all mutations through
 | Service | File | Usage |
 |---------|------|-------|
 | `AgentRegistryService` | `Orchestration/Registry/AgentRegistryService.cs` | `Register()`, `UpdateHeartbeat()`, `TransitionStatus()` |
-| `JobDispatcherService` | `Orchestration/Dispatch/JobDispatcherService.cs` | `SelectAgent()` — nested inside `_selectionLock` |
+| `JobDeduplicationGuardService` | `Orchestration/Dispatch/JobDeduplicationGuardService.cs` | `SelectAgent()` — nested inside `_selectionLock` |
 | `HeartbeatMonitorService` | `Orchestration/Registry/HeartbeatMonitorService.cs` | Status transitions, orphan detection and cleanup |
 | `RunLifecycleManager` | `Orchestration/RunLifecycleManager.cs` | `ActiveJobId` mutation on job assignment/completion |
 | `SignalRWorkDistributorAgentResolver` | `Orchestration/Dispatch/SignalRWorkDistributorAgentResolver.cs` | `AssignJob()`, `ReleaseAgent()` |
 
 ### Key invariant
 
-Only `JobDispatcherService.SelectAgent()` nests `SyncRoot` inside another lock
+Only `JobDeduplicationGuardService.SelectAgent()` nests `SyncRoot` inside another lock
 (`_selectionLock`). All other consumers acquire `SyncRoot` in isolation — never nested
 inside another lock. This is critical for deadlock freedom (see Lock Ordering below).
 
@@ -125,7 +125,7 @@ The established lock ordering is:
 _selectionLock → entry.SyncRoot
 ```
 
-This ordering is enforced in `JobDispatcherService.SelectAgent()`, which is the **only**
+This ordering is enforced in `JobDeduplicationGuardService.SelectAgent()`, which is the **only**
 code path that holds two locks simultaneously. The code comment at the nesting site reads:
 
 > Lock ordering: _selectionLock (already held) → entry.SyncRoot (no deadlock risk).

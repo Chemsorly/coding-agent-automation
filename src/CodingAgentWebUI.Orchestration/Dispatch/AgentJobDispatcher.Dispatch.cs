@@ -168,7 +168,7 @@ public sealed partial class AgentJobDispatcher
 
         var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
         var repoConfig = await _infra.Resolution.ConfigStore.GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
-        var requiredLabels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
+        var requiredLabels = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, config);
 
         var agent = _dispatcher.SelectAgent(requiredLabels);
 
