@@ -50,7 +50,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
         Services.AddSingleton(pipelineService);
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
-        Services.AddSingleton(new JobDispatcherService(registry, mockLogger.Object));
+        Services.AddSingleton(new JobDeduplicationGuardService(registry, mockLogger.Object));
         Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockHistoryService.Object);
@@ -64,7 +64,7 @@ public class AgentMonitoringPageComponentTests : BunitContext
         Services.AddSingleton(Mock.Of<IWorkDistributor>());
         Services.AddSingleton(Mock.Of<IRunLifecycleManager>());
         Services.AddSingleton<IPendingWorkQuery>(new LegacyPendingWorkQuery(
-            Services.BuildServiceProvider().GetRequiredService<JobDispatcherService>()));
+            Services.BuildServiceProvider().GetRequiredService<JobDeduplicationGuardService>()));
 
         Services.AddSingleton(TimeProvider.System);
     }

@@ -340,7 +340,7 @@ if (!string.IsNullOrEmpty(dbConnectionString))
 // (registered in WorkDistributionRegistration.AddWorkDistribution for DB mode).
 
 // Register observable gauges for dispatch queue and agent concurrency metrics
-var dispatcher = app.Services.GetRequiredService<JobDispatcherService>();
+var dispatcher = app.Services.GetRequiredService<JobDeduplicationGuardService>();
 var agentRegistry = app.Services.GetRequiredService<IAgentRegistryService>();
 var pendingWorkQuery = app.Services.GetRequiredService<IPendingWorkQuery>();
 _ = PipelineTelemetry.Meter.CreateObservableGauge("dispatch.queue.depth",

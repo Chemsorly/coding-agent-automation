@@ -129,7 +129,7 @@ public class AgentRegistryServicePropertyTests
     {
         var count = Math.Min(agentCount.Get, 10);
         var registry = CreateRegistry();
-        var dispatcher = new JobDispatcherService(registry, new Mock<ILogger>().Object);
+        var dispatcher = new JobDeduplicationGuardService(registry, new Mock<ILogger>().Object);
 
         // Register agents with staggered LastJobCompletedAt
         for (var i = 0; i < count; i++)

@@ -13,14 +13,14 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.UnitTests;
 
 /// <summary>
-/// Property-based tests for JobDispatcherService: queuing, dequeuing, and duplicate prevention.
+/// Property-based tests for JobDeduplicationGuardService: queuing, dequeuing, and duplicate prevention.
 /// </summary>
-public class JobDispatcherPropertyTests
+public class JobDeduplicationGuardPropertyTests
 {
-    private static (AgentRegistryService Registry, JobDispatcherService Dispatcher) CreateServices()
+    private static (AgentRegistryService Registry, JobDeduplicationGuardService Dispatcher) CreateServices()
     {
         var registry = new AgentRegistryService(new Mock<ILogger>().Object);
-        var dispatcher = new JobDispatcherService(registry, new Mock<ILogger>().Object);
+        var dispatcher = new JobDeduplicationGuardService(registry, new Mock<ILogger>().Object);
         return (registry, dispatcher);
     }
 

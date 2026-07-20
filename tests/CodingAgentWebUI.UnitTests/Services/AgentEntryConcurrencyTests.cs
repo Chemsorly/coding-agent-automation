@@ -10,19 +10,19 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// <summary>
 /// Concurrent mutation tests for AgentEntry thread safety (Req 4.5).
 /// Exercises the lock-based synchronization added to AgentEntry.SyncRoot,
-/// AgentRegistryService mutations, and JobDispatcherService.SelectAgent.
+/// AgentRegistryService mutations, and JobDeduplicationGuardService.SelectAgent.
 /// </summary>
 public class AgentEntryConcurrencyTests
 {
     private readonly AgentRegistryService _registry;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly Mock<ILogger> _mockLogger;
 
     public AgentEntryConcurrencyTests()
     {
         _mockLogger = new Mock<ILogger>();
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
     }
 
     // ── Test 1: Multiple threads mutating same AgentEntry don't produce torn reads ──
@@ -176,7 +176,7 @@ public class AgentEntryConcurrencyTests
             // Fresh registry per iteration to avoid state leakage
             var logger = new Mock<ILogger>().Object;
             var registry = new AgentRegistryService(logger);
-            var dispatcher = new JobDispatcherService(registry, logger);
+            var dispatcher = new JobDeduplicationGuardService(registry, logger);
 
             // Register a single agent
             var agentId = $"agent-race-{i}";
@@ -259,7 +259,7 @@ public class AgentEntryConcurrencyTests
         {
             var logger = new Mock<ILogger>().Object;
             var registry = new AgentRegistryService(logger);
-            var dispatcher = new JobDispatcherService(registry, logger);
+            var dispatcher = new JobDeduplicationGuardService(registry, logger);
 
             var agentId = $"agent-{Guid.NewGuid():N}";
             registry.Register(new AgentRegistrationMessage

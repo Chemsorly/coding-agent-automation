@@ -35,7 +35,7 @@ public class HubAuthorizationTests
             registry,
             runService,
             new Mock<IPipelineRunHistoryService>().Object,
-            new JobDispatcherService(registry, new Mock<ILogger>().Object),
+            new JobDeduplicationGuardService(registry, new Mock<ILogger>().Object),
             new Mock<ILabelService>().Object,
             mockConfigStore.Object,
             new Mock<ILogger>().Object,
