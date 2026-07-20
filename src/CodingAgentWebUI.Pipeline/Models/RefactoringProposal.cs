@@ -23,4 +23,10 @@ public sealed class RefactoringProposal
     /// "usage-search:" (reference count). Multi-source = higher confidence.
     /// </summary>
     public IReadOnlyList<string>? EvidenceSources { get; init; }
+
+    /// <summary>
+    /// Title-based references to other proposals in the same batch that this proposal depends on.
+    /// Resolved to "Depends on #N" lines during sequential issue creation via <see cref="CodingAgentWebUI.Pipeline.Services.DependencyResolver"/>.
+    /// </summary>
+    public IReadOnlyList<string>? DependsOn { get; init; }
 }

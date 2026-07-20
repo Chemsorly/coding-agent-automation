@@ -112,7 +112,8 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
                     TaskType = WorkItemTaskType.Consolidation,
                     ConsolidationRunType = request.ConsolidationRunType,
                     ConsolidationTemplateId = request.ConsolidationTemplateId,
-                    ConsolidationWorkspacePath = request.ConsolidationWorkspacePath
+                    ConsolidationWorkspacePath = request.ConsolidationWorkspacePath,
+                    AutoDispatch = request.AutoDispatch
                 };
 
                 var enqueued = _dispatcherService.EnqueueJob(consolidationPendingJob);

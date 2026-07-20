@@ -429,6 +429,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
             return; // Skip — stale state from shared ConsolidationService singleton
 
         await page.ClickRefactoringScanAsync("Refactoring Dispatch Template");
+        await page.ConfirmRefactoringModalAsync();
 
         // Wait for the agent to receive the consolidation job
         var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));
@@ -467,6 +468,7 @@ public sealed class ConsolidationPageTests : E2ETestBase, IClassFixture<E2EFixtu
             return;
 
         await page.ClickRefactoringScanAsync("Refactoring Configs Template");
+        await page.ConfirmRefactoringModalAsync();
 
         // Wait for the agent to receive the consolidation job
         var assignment = await fakeAgent.ConsolidationJobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(30));

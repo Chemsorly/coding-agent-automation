@@ -49,10 +49,15 @@ public class AgentCodingPageComponentTests : BunitContext
 
         SetupDefaults();
 
+        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
+            configStore: _mockStore.Object,
+            providerFactory: _mockFactory.Object,
+            historyService: mockHistoryService.Object);
+
         Services.AddSingleton(_pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(_pipelineService, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, mockLogger.Object));
+        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(runCreator, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, mockLogger.Object));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 
         _mockProjectStore = new Mock<IProjectStore>();

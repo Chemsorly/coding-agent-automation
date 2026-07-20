@@ -74,7 +74,11 @@ public class AgentJobDispatcherTests : IDisposable
                 historyService: _mockHistoryService.Object,
                 runService: _runService);
             _orchestrationInstances.Add(realOrchestration);
-            orchestration = realOrchestration;
+            orchestration = TestOrchestrationFactory.CreateMinimalRunCreator(
+                configStore: _mockConfigStore.Object,
+                providerFactory: _mockProviderFactory.Object,
+                historyService: _mockHistoryService.Object,
+                runService: _runService);
         }
 
         return new AgentJobDispatcher(

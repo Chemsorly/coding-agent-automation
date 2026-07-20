@@ -12,6 +12,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     private readonly Mock<IProviderFactory> _mockFactory;
     private readonly Mock<IIssueProvider> _mockIssueProvider;
     private readonly Mock<Serilog.ILogger> _mockLogger;
+    private readonly DispatchRunCreationService _runCreator;
     private readonly PipelineOrchestrationService _orchestration;
     private PipelineLoopService? _loopService;
 
@@ -23,6 +24,11 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockLogger = new Mock<Serilog.ILogger>();
 
         _orchestration = TestOrchestrationFactory.CreateMinimal(
+            configStore: _mockStore.Object,
+            providerFactory: _mockFactory.Object,
+            logger: _mockLogger.Object);
+
+        _runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockStore.Object,
             providerFactory: _mockFactory.Object,
             logger: _mockLogger.Object);
@@ -77,7 +83,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
     private PipelineLoopService CreateService(IWorkDistributor? workDistributor = null)
     {
-        _loopService = new PipelineLoopService(_orchestration, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, _mockLogger.Object, workDistributor);
+        _loopService = new PipelineLoopService(_runCreator, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, _mockLogger.Object, workDistributor);
         return _loopService;
     }
 

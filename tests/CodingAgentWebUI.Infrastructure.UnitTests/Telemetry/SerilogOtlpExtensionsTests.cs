@@ -163,6 +163,30 @@ public class SerilogOtlpExtensionsTests : IDisposable
         Assert.Equal("serviceName", ex.ParamName);
     }
 
+    [Theory]
+    [InlineData("http/protobuf", "http://localhost:4318")]
+    [InlineData("grpc", "http://localhost:4317")]
+    [InlineData(null, "http://localhost:4317")]
+    public void WriteToOtlpIfConfigured_RespectsProtocolEnvVar(string? protocol, string endpoint)
+    {
+        SetEnvVar("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
+        SetEnvVar("OTEL_EXPORTER_OTLP_PROTOCOL", protocol);
+        try
+        {
+            // Should build without error regardless of protocol
+            var logger = new LoggerConfiguration()
+                .WriteToOtlpIfConfigured("test-service", "Test")
+                .CreateLogger();
+
+            logger.Information("Test message");
+            logger.Dispose();
+        }
+        finally
+        {
+            SetEnvVar("OTEL_EXPORTER_OTLP_PROTOCOL", null);
+        }
+    }
+
     private static void SetEnvVar(string name, string? value) =>
         Environment.SetEnvironmentVariable(name, value);
 }

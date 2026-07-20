@@ -110,7 +110,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
                 ConsolidationRunType = type,
                 ConsolidationTemplateId = templateId,
                 ConsolidationWorkspacePath = workspacePath,
-                RunId = run.RunId
+                RunId = run.RunId,
+                AutoDispatch = run.AutoDispatch
             };
 
             var result = await _workDistributor.DistributeAsync(distributionRequest, ct);
@@ -260,7 +261,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
             LastSuccessfulRunUtc = lastSuccessfulRunUtc?.UtcDateTime,
             FeedbackDataJson = feedbackDataJson,
             WorkspacePath = workspacePath,
-            TraceContext = CaptureTraceContext()
+            TraceContext = CaptureTraceContext(),
+            AutoDispatch = run.AutoDispatch
         };
 
         // Assign the job to the agent
@@ -391,7 +393,6 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         return profile.MatchLabels;
     }
 
-    /// <summary>
     /// <summary>
     /// Gets the CompletedAtUtc of the last successful run for the given type and template.
     /// </summary>

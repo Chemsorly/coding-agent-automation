@@ -52,6 +52,13 @@ public sealed record PendingJob
     public string? ConsolidationWorkspacePath { get; init; }
 
     /// <summary>
+    /// When true, created refactoring issues will receive both <c>agent:generated</c> and
+    /// <c>agent:next</c> labels. Propagated from <see cref="JobDistributionRequest.AutoDispatch"/>.
+    /// Defaults to <c>false</c> for backward compatibility.
+    /// </summary>
+    public bool AutoDispatch { get; init; }
+
+    /// <summary>
     /// Whether this pending job is a consolidation job.
     /// Uses TaskType as the primary discriminator (stored on the WorkItem row, always reliable),
     /// with ConsolidationRunType.HasValue as a secondary indicator for legacy in-memory mode.

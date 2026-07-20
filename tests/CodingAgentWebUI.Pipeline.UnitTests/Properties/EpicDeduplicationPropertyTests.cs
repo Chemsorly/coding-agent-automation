@@ -61,11 +61,18 @@ public class EpicDeduplicationPropertyTests
             historyService: mockHistoryService.Object,
             runService: runService);
 
+        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
+            configStore: mockConfigStore.Object,
+            providerFactory: mockProviderFactory.Object,
+            logger: mockLogger.Object,
+            historyService: mockHistoryService.Object,
+            runService: runService);
+
         var dispatcher = new AgentJobDispatcher(
             jobService,
             registry,
             runService,
-            orchestration,
+            runCreator,
             new DispatchInfrastructure(
                 tokenVending,
                 mockProviderFactory.Object,

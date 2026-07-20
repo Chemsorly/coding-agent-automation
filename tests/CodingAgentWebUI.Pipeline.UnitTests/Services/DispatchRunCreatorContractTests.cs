@@ -4,7 +4,6 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.TestUtilities;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
@@ -13,7 +12,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// for dispatch services that previously depended on the concrete
 /// <see cref="PipelineOrchestrationService"/>. These tests prove:
 /// 1. The interface contract covers all dispatch-path needs.
-/// 2. PipelineOrchestrationService correctly implements the interface.
+/// 2. DispatchRunCreationService correctly implements the interface.
 /// 3. A mock of the interface can fully replace the concrete dependency.
 /// </summary>
 public class DispatchRunCreatorContractTests : IDisposable
@@ -22,7 +21,7 @@ public class DispatchRunCreatorContractTests : IDisposable
     private readonly Mock<IProviderFactory> _mockFactory;
     private readonly Mock<IRepositoryProvider> _mockRepoProvider;
     private readonly Mock<Serilog.ILogger> _mockLogger;
-    private readonly PipelineOrchestrationService _service;
+    private readonly DispatchRunCreationService _service;
 
     public DispatchRunCreatorContractTests()
     {
@@ -31,8 +30,6 @@ public class DispatchRunCreatorContractTests : IDisposable
         _mockRepoProvider = new Mock<IRepositoryProvider>();
         _mockLogger = new Mock<Serilog.ILogger>();
 
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.Default());
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
@@ -54,25 +51,25 @@ public class DispatchRunCreatorContractTests : IDisposable
         _mockRepoProvider.Setup(p => p.RepositoryFullName).Returns("owner/repo");
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(_mockRepoProvider.Object);
 
-        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>().AsReadOnly());
-
         // Use a real OrchestratorRunService — lifecycle tests need actual state tracking
         // (mock can't track AddRun→IsIssueBeingProcessed correlation)
         var realRunService = new OrchestratorRunService(_mockLogger.Object);
+        var mockHistoryService = new Mock<IPipelineRunHistoryService>();
+        mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>().AsReadOnly());
 
-        _service = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockConfigStore.Object,
-            providerFactory: _mockFactory.Object,
-            logger: _mockLogger.Object,
-            historyService: mockHistoryService.Object,
-            runService: realRunService);
+        var lifecycle = new PipelineRunLifecycleService(mockHistoryService.Object, realRunService, _mockLogger.Object);
+
+        _service = new DispatchRunCreationService(
+            lifecycle,
+            _mockConfigStore.Object,
+            _mockFactory.Object,
+            _mockLogger.Object);
     }
 
-    // ── Contract Test 1: PipelineOrchestrationService implements IDispatchRunCreator ──
+    // ── Contract Test 1: DispatchRunCreationService implements IDispatchRunCreator ──
 
     [Fact]
-    public void PipelineOrchestrationService_Implements_IDispatchRunCreator()
+    public void DispatchRunCreationService_Implements_IDispatchRunCreator()
     {
         // The concrete service must be assignable to the interface.
         // This test fails if the interface doesn't exist or the service doesn't implement it.
@@ -209,7 +206,7 @@ public class DispatchRunCreatorContractTests : IDisposable
 
     public void Dispose()
     {
-        _service.Dispose();
+        // DispatchRunCreationService has no IDisposable — no cleanup needed
     }
 
     // ── Contract Test 6: ReserveRunIdAsync reserves ID and activates dedup guard ──

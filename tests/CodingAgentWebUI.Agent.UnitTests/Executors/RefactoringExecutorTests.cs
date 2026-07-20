@@ -557,4 +557,109 @@ public class RefactoringExecutorTests : IDisposable
             Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task ExecuteAsync_AutoDispatchTrue_CreatesIssuesWithAgentNextLabel()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = new ConsolidationJobMessage
+        {
+            JobId = Guid.NewGuid().ToString(),
+            Type = ConsolidationRunType.RefactoringDetection,
+            TemplateId = "template-1",
+            TemplateName = "Test Template",
+            ProviderConfigs = [],
+            PipelineConfiguration = new PipelineConfiguration(),
+            AutoDispatch = true
+        };
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Extract validation helper",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Shared logic.",
+                    "rationale": "DRY."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((path, _) =>
+            {
+                var agentDir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        IReadOnlyList<string>? capturedLabels = null;
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>?, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "10", Url = "https://github.com/t/r/issues/10" });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        capturedLabels.Should().NotBeNull();
+        capturedLabels.Should().Contain("agent:generated");
+        capturedLabels.Should().Contain("agent:next");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_AutoDispatchFalse_CreatesIssuesWithOnlyGeneratedLabel()
+    {
+        // Arrange
+        var executor = CreateExecutor();
+        var job = CreateJob(); // AutoDispatch defaults to false
+
+        var proposalsJson = """
+            [
+                {
+                    "title": "Inline helper method",
+                    "affectedFiles": ["src/B.cs"],
+                    "description": "Unused abstraction.",
+                    "rationale": "Simplicity."
+                }
+            ]
+            """;
+
+        _mockRepoProvider
+            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, CancellationToken>((path, _) =>
+            {
+                var agentDir = Path.Combine(path, ".agent");
+                Directory.CreateDirectory(agentDir);
+                File.WriteAllText(Path.Combine(agentDir, "refactoring-proposals.json"), proposalsJson);
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockAgentProvider
+            .Setup(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), null))
+            .ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = ["Done."] });
+
+        IReadOnlyList<string>? capturedLabels = null;
+        _mockIssueProvider
+            .Setup(x => x.CreateIssueAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, IReadOnlyList<string>?, CancellationToken>((_, _, labels, _) => capturedLabels = labels)
+            .ReturnsAsync(new CreatedIssueResult { Identifier = "11", Url = "https://github.com/t/r/issues/11" });
+
+        // Act
+        await executor.ExecuteAsync(
+            job, _mockRepoProvider.Object, null, _mockIssueProvider.Object, _mockAgentProvider.Object, CancellationToken.None);
+
+        // Assert
+        capturedLabels.Should().NotBeNull();
+        capturedLabels.Should().Contain("agent:generated");
+        capturedLabels.Should().NotContain("agent:next");
+    }
 }

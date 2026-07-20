@@ -37,7 +37,16 @@ public static class SerilogOtlpExtensions
         return loggerConfiguration.WriteTo.OpenTelemetry(options =>
         {
             options.Endpoint = endpoint;
-            options.Protocol = OtlpProtocol.Grpc;
+            var protocol = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL");
+            if (!string.IsNullOrEmpty(protocol)
+                && !string.Equals(protocol, "http/protobuf", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(protocol, "grpc", StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Warning("Unrecognized OTEL_EXPORTER_OTLP_PROTOCOL value '{Protocol}', falling back to gRPC. Expected 'http/protobuf' or 'grpc'", protocol);
+            }
+            options.Protocol = string.Equals(protocol, "http/protobuf", StringComparison.OrdinalIgnoreCase)
+                ? OtlpProtocol.HttpProtobuf
+                : OtlpProtocol.Grpc;
             options.ResourceAttributes = new Dictionary<string, object>
             {
                 ["service.name"] = serviceName,

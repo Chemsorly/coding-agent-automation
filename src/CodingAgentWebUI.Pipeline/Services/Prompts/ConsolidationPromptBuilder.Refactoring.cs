@@ -462,6 +462,7 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("    \"rationale\": \"Why — referencing concrete evidence from the sub-agent findings\",");
         sb.AppendLine("    \"evidenceSources\": [\"tool:IDE0051\", \"hotspot:18-changes\", \"code-reading:File.cs:L42\"],");
         sb.AppendLine("    \"prerequisites\": [\"Add characterization tests for X before refactoring\"],");
+        sb.AppendLine("    \"dependsOn\": [\"Exact title of another proposal this depends on\"],");
         sb.AppendLine("    \"estimatedEffort\": \"small|medium|large\",");
         sb.AppendLine("    \"riskLevel\": \"low|medium|high\",");
         sb.AppendLine("    \"technique\": \"Extract Method|Inline Class|Rename|Introduce Value Type|etc.\"");
@@ -475,7 +476,11 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("  `tool:` (linter/compiler output), `hotspot:` (git frequency), `code-reading:` (manual inspection),");
         sb.AppendLine("  `grep:` (pattern search), `usage-search:` (reference count). Multi-source proposals are higher quality.");
         sb.AppendLine("- **prerequisites** — prep work needed. If affected files lack test coverage, MUST include");
-        sb.AppendLine("  \"Add characterization tests for X before refactoring\".");
+        sb.AppendLine("  \"Add characterization tests for X before refactoring\". Do NOT reference other proposals by number");
+        sb.AppendLine("  (e.g., \"proposal #1\") — GitHub will autolink #N to wrong issues.");
+        sb.AppendLine("- **dependsOn** — titles of other proposals in this batch that must be completed first.");
+        sb.AppendLine("  Use the EXACT title string of the dependency. These are resolved to `Depends on #N` during issue creation.");
+        sb.AppendLine("  Do NOT use `#N` notation anywhere — it creates wrong GitHub autolinks.");
         sb.AppendLine("- **estimatedEffort** — `small` (<5 files), `medium` (5-15 files), `large` (15-30 files).");
         sb.AppendLine("- **riskLevel** — `low` (rename/move), `medium` (extract/restructure), `high` (interface changes).");
         sb.AppendLine("- **technique** — named refactoring pattern if applicable.");
@@ -488,6 +493,14 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("- Each phase must leave the codebase buildable");
         sb.AppendLine("- Prefer mechanical, low-risk changes over sweeping architectural ones");
         sb.AppendLine("- Do NOT propose changes spanning serialization boundaries simultaneously");
+        sb.AppendLine();
+        sb.AppendLine("## Dependency Ordering");
+        sb.AppendLine();
+        sb.AppendLine("When splitting work into phases, express ordering via `dependsOn`:");
+        sb.AppendLine("- List proposals in dependency order: independent proposals first, dependent ones later");
+        sb.AppendLine("- If proposal B requires proposal A to be completed first, add A's EXACT title to B's `dependsOn` array");
+        sb.AppendLine("- Do NOT use `#N`, `proposal #1`, or any numeric issue references in any text field");
+        sb.AppendLine("- The system resolves title references to proper GitHub issue links during creation");
         sb.AppendLine();
         sb.AppendLine("## Also Produce");
         sb.AppendLine();

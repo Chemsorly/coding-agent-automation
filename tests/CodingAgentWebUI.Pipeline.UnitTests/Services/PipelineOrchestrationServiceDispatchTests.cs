@@ -3,20 +3,13 @@ using Moq;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.TestUtilities;
-using CodingAgentWebUI.Pipeline; // TODO: Redundant — namespace is implicitly accessible from child namespace CodingAgentWebUI.Pipeline.UnitTests
+using CodingAgentWebUI.Orchestration;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
 /// <summary>
-/// Unit tests for PipelineOrchestrationService.CreateDispatchedRunAsync.
+/// Unit tests for DispatchRunCreationService.CreateDispatchedRunAsync.
 /// </summary>
-// TODO: Implement IAsyncLifetime (or IDisposable) to dispose PipelineOrchestrationService instances — they implement IDisposable/IAsyncDisposable for provider cleanup.
-// TODO: Add characterization tests for IDispatchRunCreator implementations (prerequisite from issue).
-// Verify that CreateDispatchedRunAsync correctly rejects duplicate issues, creates valid runs,
-// and resolves providers. Also add tests validating the transposition-prevention guarantee —
-// e.g., that passing a repo provider ID where an issue provider ID is expected produces
-// distinguishable runtime behavior.
 public class PipelineOrchestrationServiceDispatchTests : IDisposable
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore;
@@ -25,7 +18,7 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
     private readonly Mock<IRepositoryProvider> _mockRepoProvider;
     private readonly Mock<IOrchestratorRunService> _mockRunService;
     private readonly Mock<Serilog.ILogger> _mockLogger;
-    private readonly PipelineOrchestrationService _service;
+    private readonly DispatchRunCreationService _service;
 
     public PipelineOrchestrationServiceDispatchTests()
     {
@@ -36,8 +29,6 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         _mockRunService = new Mock<IOrchestratorRunService>();
         _mockLogger = new Mock<Serilog.ILogger>();
 
-        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(TestPipelineConfig.Default());
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>
             {
@@ -65,6 +56,8 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         _mockFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>())).Returns(_mockRepoProvider.Object);
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(_mockIssueProvider.Object);
 
+        // TODO: This mocks IsIssueBeingProcessed to always return false, so CreateDispatchedRunAsync_Success
+        // would pass even if RegisterDispatchedRun was broken. Add a Verify call to confirm AddRun is invoked.
         _mockRunService.Setup(r => r.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
 
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
@@ -73,12 +66,13 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         var mockAgentProvider = new Mock<IAgentProvider>();
         _mockFactory.Setup(f => f.CreateAgentProvider(It.IsAny<ProviderConfig>())).Returns(mockAgentProvider.Object);
 
-        _service = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockConfigStore.Object,
-            providerFactory: _mockFactory.Object,
-            logger: _mockLogger.Object,
-            historyService: mockHistoryService.Object,
-            runService: _mockRunService.Object);
+        var lifecycle = new PipelineRunLifecycleService(mockHistoryService.Object, _mockRunService.Object, _mockLogger.Object);
+
+        _service = new DispatchRunCreationService(
+            lifecycle,
+            _mockConfigStore.Object,
+            _mockFactory.Object,
+            _mockLogger.Object);
     }
 
     // --- CreateDispatchedRunAsync tests ---
@@ -141,6 +135,6 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
 
     public void Dispose()
     {
-        _service.Dispose();
+        // DispatchRunCreationService has no IDisposable — no cleanup needed
     }
 }

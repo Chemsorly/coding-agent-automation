@@ -42,8 +42,13 @@ public class AgentCodingPageServiceTests
             providerFactory: _mockProviderFactory.Object,
             historyService: mockHistoryService.Object);
 
+        var runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
+            configStore: _mockConfigStore.Object,
+            providerFactory: _mockProviderFactory.Object,
+            historyService: mockHistoryService.Object);
+
         _loopService = new PipelineLoopService(
-            orchestration, _mockProviderFactory.Object, _mockConfigStore.Object,
+            runCreator, _mockProviderFactory.Object, _mockConfigStore.Object,
             _mockConfigStore.Object, _mockConfigStore.Object, mockLogger.Object);
 
         var mockAgentRegistry = new AgentRegistryService(mockLogger.Object);

@@ -241,6 +241,14 @@ public sealed record JobAssignmentMessage
     /// <summary>Number of prior analysis refreshes for this issue (for OpenTelemetry).</summary>
     [Key(37)]
     public int AnalysisRefreshCount { get; init; }
+
+    /// <summary>
+    /// When true, created refactoring issues will receive both <c>agent:generated</c> and
+    /// <c>agent:next</c> labels. Propagated from <see cref="ConsolidationRun.AutoDispatch"/>
+    /// through the K8s/DB dispatch path. Defaults to <c>false</c> for backward compatibility.
+    /// </summary>
+    [Key(38)]
+    public bool AutoDispatch { get; init; }
 }
 
 /// <summary>
