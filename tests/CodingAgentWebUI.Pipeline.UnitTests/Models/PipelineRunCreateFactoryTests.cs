@@ -16,7 +16,7 @@ public class PipelineRunCreateFactoryTests
             repoProviderConfigId: "rp-1");
 
         run.RunId.Should().Be("r1");
-        run.IssueIdentifier.Should().Be("org/repo#1");
+        run.IssueIdentifier.Value.Should().Be("org/repo#1");
         run.IssueTitle.Should().Be("Fix bug");
         run.IssueProviderConfigId.Should().Be("ip-1");
         run.RepoProviderConfigId.Should().Be("rp-1");

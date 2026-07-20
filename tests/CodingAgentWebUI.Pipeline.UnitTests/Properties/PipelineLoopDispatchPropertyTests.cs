@@ -65,7 +65,7 @@ public class PipelineLoopDispatchPropertyTests
                 lock (dispatchCalls) { dispatchCalls.Add((request.IssueIdentifier, request.IssueProviderConfigId, request.RepoProviderConfigId, request.BrainProviderConfigId, request.PipelineProviderConfigId)); }
                 return Task.FromResult(new DistributionResult(true, null, null));
             });
-        mockDispatcher.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new HashSet<(string, ProviderConfigId)>());
+        mockDispatcher.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new HashSet<(IssueIdentifier, ProviderConfigId)>());
 
         var svc = CreateService(mockStore, mockFactory, mockDispatcher.Object);
         using var cts = new CancellationTokenSource();
@@ -152,7 +152,7 @@ public class PipelineLoopDispatchPropertyTests
                 }
                 return Task.FromResult(new DistributionResult(true, null, null));
             });
-        mockDispatcher.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new HashSet<(string, ProviderConfigId)>());
+        mockDispatcher.Setup(d => d.GetActiveIssueIdentifiersAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new HashSet<(IssueIdentifier, ProviderConfigId)>());
 
         var svc = CreateService(mockStore, mockFactory, mockDispatcher.Object);
         using var cts = new CancellationTokenSource();

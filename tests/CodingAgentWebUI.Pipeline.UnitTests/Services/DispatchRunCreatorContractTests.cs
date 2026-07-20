@@ -114,7 +114,7 @@ public class DispatchRunCreatorContractTests : IDisposable
             initiatedBy: "test");
 
         run.Should().NotBeNull();
-        run!.IssueIdentifier.Should().Be("55");
+        run!.IssueIdentifier.Value.Should().Be("55");
         run.AgentId.Should().Be("agent-container-1");
         run.RepositoryName.Should().Be("owner/repo");
     }

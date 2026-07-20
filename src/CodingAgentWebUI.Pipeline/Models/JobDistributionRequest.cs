@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 public record JobDistributionRequest
 {
     /// <summary>Issue identifier (e.g., "owner/repo#123").</summary>
-    public required string IssueIdentifier { get; init; }
+    public required IssueIdentifier IssueIdentifier { get; init; }
 
     /// <summary>ID of the issue provider config used to fetch this issue.</summary>
     public required string IssueProviderConfigId { get; init; }

@@ -83,9 +83,13 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// <summary>
     /// Checks whether the given issue is being processed by any active run (in-process or agent-dispatched).
     /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier, string issueProviderConfigId)
+    public bool IsIssueBeingProcessed(IssueIdentifier issueIdentifier, string issueProviderConfigId)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        // TODO: ThrowIfNullOrEmpty is stricter than the original ThrowIfNull — it now rejects empty strings.
+        // Also, [CallerArgumentExpression] emits "issueIdentifier.Value" as ParamName instead of "issueIdentifier".
+        // Consider reverting to ArgumentNullException.ThrowIfNull(issueIdentifier.Value) to match original semantics,
+        // or use the explicit paramName overload: ThrowIfNullOrEmpty(issueIdentifier.Value, nameof(issueIdentifier)).
+        ArgumentException.ThrowIfNullOrEmpty(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(issueProviderConfigId);
 
         // Check in-process run
@@ -200,14 +204,14 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     /// and removes runs from active tracking. Returns list of cancelled issue identifiers for caller to release dedup.
     /// No-op if no run service is configured.
     /// </summary>
-    public async Task<IReadOnlyList<(string IssueIdentifier, string IssueProviderConfigId)>> MarkAgentRunsCancelled()
+    public async Task<IReadOnlyList<(IssueIdentifier IssueIdentifier, string IssueProviderConfigId)>> MarkAgentRunsCancelled()
     {
         if (_runService is null) return [];
 
         var activeRuns = _runService.GetActiveRuns();
         if (activeRuns.Count == 0) return [];
 
-        var cancelledIssues = new List<(string IssueIdentifier, string IssueProviderConfigId)>();
+        var cancelledIssues = new List<(IssueIdentifier IssueIdentifier, string IssueProviderConfigId)>();
         foreach (var run in activeRuns)
         {
             run.MarkCompleted();

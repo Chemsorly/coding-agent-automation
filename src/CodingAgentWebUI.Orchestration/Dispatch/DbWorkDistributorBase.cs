@@ -97,6 +97,9 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
         // Look up the original enqueue time from prior WorkItems for this issue.
         // This preserves the true "time in queue" across re-dispatches.
         DateTimeOffset? originalEnqueuedAt = null;
+        // TODO: request.IssueIdentifier is now the IssueIdentifier value type. The implicit conversion to string
+        // is evaluated client-side here, but for safety against EF Core expression tree translation issues,
+        // consider extracting .Value to a local variable before the LINQ expression (consistent with IsIssueDistributedAsync pattern).
         if (!string.IsNullOrEmpty(request.IssueIdentifier) && !string.IsNullOrEmpty(request.IssueProviderConfigId))
         {
             await using var lookupDb = await _dbFactory.CreateDbContextAsync(ct);
@@ -189,17 +192,18 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     // ── Shared: Dedup ─────────────────────────────────────────────────────
 
     /// <inheritdoc />
-    public virtual async Task<bool> IsIssueDistributedAsync(string issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct)
+    public virtual async Task<bool> IsIssueDistributedAsync(IssueIdentifier issueIdentifier, ProviderConfigId issueProviderConfigId, CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
+        var issueIdentifierValue = issueIdentifier.Value;
         var issueProviderConfigIdValue = issueProviderConfigId.Value;
 
         // Check for active (non-terminal) WorkItems
         var hasActive = await db.WorkItems
             .AsNoTracking()
             .AnyAsync(w =>
-                w.IssueIdentifier == issueIdentifier &&
+                w.IssueIdentifier == issueIdentifierValue &&
                 w.IssueProviderConfigId == issueProviderConfigIdValue &&
                 ActiveStatuses.Contains(w.Status),
                 ct);
@@ -215,7 +219,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
         return await db.WorkItems
             .AsNoTracking()
             .AnyAsync(w =>
-                w.IssueIdentifier == issueIdentifier &&
+                w.IssueIdentifier == issueIdentifierValue &&
                 w.IssueProviderConfigId == issueProviderConfigIdValue &&
                 !ActiveStatuses.Contains(w.Status) &&
                 w.CompletedAt != null &&
@@ -224,7 +228,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
     }
 
     /// <inheritdoc />
-    public virtual async Task<HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
+    public virtual async Task<HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> GetActiveIssueIdentifiersAsync(CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -249,7 +253,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
 
         var result = activePairs
             .Concat(recentTerminalPairs)
-            .Select(p => (p.IssueIdentifier, (ProviderConfigId)p.IssueProviderConfigId))
+            .Select(p => ((IssueIdentifier)p.IssueIdentifier, (ProviderConfigId)p.IssueProviderConfigId))
             .ToHashSet();
 
         return result;

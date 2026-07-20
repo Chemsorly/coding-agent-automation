@@ -208,7 +208,7 @@ public class DispatchOrchestrationServiceTests
         result!.ResolvedProfile.Id.Should().Be("profile-1");
         result.IssueDetail.Title.Should().Be("Test Issue Title");
         result.CreatedRun.Should().NotBeNull();
-        result.CreatedRun.IssueIdentifier.Should().Be("issue-42");
+        result.CreatedRun.IssueIdentifier.Value.Should().Be("issue-42");
         result.Project.Id.Should().Be("proj-1");
         result.PipelineConfiguration.Should().NotBeNull();
     }
@@ -328,7 +328,7 @@ public class DispatchOrchestrationServiceTests
             ct: CancellationToken.None);
 
         result.Should().NotBeNull();
-        result!.CreatedRun.IssueIdentifier.Should().Be("issue-42");
+        result!.CreatedRun.IssueIdentifier.Value.Should().Be("issue-42");
         result.CreatedRun.ProjectId.Should().Be("proj-1");
         result.CreatedRun.ProjectName.Should().Be("TestProject");
         // Run should be tracked
@@ -418,7 +418,7 @@ public class DispatchOrchestrationServiceTests
             ct: CancellationToken.None);
 
         request.Should().NotBeNull();
-        request!.IssueIdentifier.Should().Be("issue-42");
+        request!.IssueIdentifier.Value.Should().Be("issue-42");
         request.RepoProviderConfigId.Should().Be("repo-1");
         request.InitiatedBy.Should().Be("test-user");
         request.TaskType.Should().Be(WorkItemTaskType.Implementation);
@@ -709,7 +709,7 @@ public class DispatchOrchestrationServiceTests
         result!.TaskType.Should().Be(WorkItemTaskType.Decomposition);
         result.RunType.Should().Be(PipelineRunType.Decomposition);
         result.DecompositionSource.Should().Be("https://github.com/org/repo/issues/100");
-        result.IssueIdentifier.Should().Be("epic-1");
+        result.IssueIdentifier.Value.Should().Be("epic-1");
     }
 
     [Fact]

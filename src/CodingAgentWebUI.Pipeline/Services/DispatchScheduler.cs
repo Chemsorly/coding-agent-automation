@@ -71,7 +71,7 @@ internal sealed class DispatchScheduler
         IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> flattenedTemplates,
         PipelineConfiguration config,
         int maxRunsPerCycle,
-        HashSet<(string IssueIdentifier, ProviderConfigId IssueProviderConfigId)> activeIssueIdentifiers,
+        HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> activeIssueIdentifiers,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
         Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
