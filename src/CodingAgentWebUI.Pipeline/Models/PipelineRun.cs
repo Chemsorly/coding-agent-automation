@@ -4,172 +4,26 @@ using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Pipeline.Models;
 
-public sealed class PipelineRun
+/// <summary>
+/// Represents a single pipeline run — the unit of work from issue dispatch through PR creation.
+/// </summary>
+/// <remarks>
+/// <para>This is a partial class split by concern:</para>
+/// <list type="bullet">
+///   <item><c>PipelineRun.cs</c> — properties, computed members, and <see cref="ToSummary"/></item>
+///   <item><c>PipelineRun.Factory.cs</c> — static factory methods (<see cref="CreateImplementation"/>, <see cref="CreateReview"/>, <see cref="CreateDecomposition"/>)</item>
+///   <item><c>PipelineRun.Lifecycle.cs</c> — state mutation methods (<see cref="MarkCompleted()"/>, <see cref="ResetStartedAt"/>, <see cref="AddCodeReviewCounts"/>, <see cref="SetCodeReviewCounts"/>)</item>
+/// </list>
+/// <para><b>Thread-safety contract:</b></para>
+/// <list type="bullet">
+///   <item><b>Volatile fields:</b> <see cref="CurrentStep"/>, <see cref="AgentId"/> — single-word atomic read/write via <see cref="Volatile"/>.</item>
+///   <item><b>Interlocked fields:</b> <see cref="LastStepChangeAt"/>, <see cref="CodeReviewCriticalCount"/>/<see cref="CodeReviewWarningCount"/>/<see cref="CodeReviewSuggestionCount"/> — atomic increment/exchange via <see cref="Interlocked"/>.</item>
+///   <item><b>Concurrent collections:</b> <see cref="CodeReviewAgentFindings"/>, <see cref="RetryErrors"/>, <see cref="ChatHistory"/>, <see cref="OutputLines"/>, <see cref="QualityGateHistory"/> — thread-safe containers.</item>
+///   <item><b>Unprotected mutable properties:</b> everything else — callers must synchronize externally or ensure single-writer semantics.</item>
+/// </list>
+/// </remarks>
+public sealed partial class PipelineRun
 {
-    /// <summary>
-    /// Creates a new <see cref="PipelineRun"/> with invariant defaults and all init-only properties.
-    /// Mutable properties (RepositoryName, ModelName, ProjectId, etc.) should be set after construction.
-    /// </summary>
-    /// <remarks>
-    /// Prefer the variant-specific factory methods (<see cref="CreateImplementation"/>, <see cref="CreateReview"/>,
-    /// <see cref="CreateDecomposition"/>) when the run type is known at compile time. This method remains
-    /// available for call sites that determine run type at runtime.
-    /// </remarks>
-    [Obsolete("Use CreateImplementation, CreateReview, or CreateDecomposition when the run type is known at compile time.")]
-    public static PipelineRun Create(
-        string runId,
-        string issueIdentifier,
-        string issueTitle,
-        string issueProviderConfigId,
-        string repoProviderConfigId,
-        PipelineRunType runType = PipelineRunType.Implementation,
-        DateTimeOffset? startedAt = null,
-        string initiatedBy = "manual",
-        string? agentId = null,
-        string? agentProviderConfigId = null,
-        string? brainProviderConfigId = null,
-        string? reviewPrBranchName = null,
-        string? reviewPrTargetBranch = null,
-        string? reviewPrUrl = null,
-        string? reviewPrDescription = null,
-        string? reviewPrAuthor = null,
-        IReadOnlyList<LinkedIssueContext>? linkedIssueContexts = null,
-        string? decompositionSource = null)
-    {
-        return CreateCore(
-            runId, issueIdentifier, issueTitle, issueProviderConfigId, repoProviderConfigId,
-            runType, startedAt, initiatedBy, agentId, agentProviderConfigId, brainProviderConfigId,
-            reviewPrBranchName, reviewPrTargetBranch, reviewPrUrl, reviewPrDescription, reviewPrAuthor,
-            linkedIssueContexts, decompositionSource);
-    }
-
-    /// <summary>
-    /// Creates a new <see cref="PipelineRun"/> for an implementation (issue → code → PR) workflow.
-    /// </summary>
-    public static PipelineRun CreateImplementation(
-        string runId,
-        string issueIdentifier,
-        string issueTitle,
-        string issueProviderConfigId,
-        string repoProviderConfigId,
-        DateTimeOffset? startedAt = null,
-        string initiatedBy = "manual",
-        string? agentId = null,
-        string? agentProviderConfigId = null,
-        string? brainProviderConfigId = null)
-    {
-        return CreateCore(
-            runId, issueIdentifier, issueTitle, issueProviderConfigId, repoProviderConfigId,
-            PipelineRunType.Implementation, startedAt, initiatedBy, agentId, agentProviderConfigId, brainProviderConfigId);
-    }
-
-    /// <summary>
-    /// Creates a new <see cref="PipelineRun"/> for a PR review (PR → code review → comment) workflow.
-    /// </summary>
-    public static PipelineRun CreateReview(
-        string runId,
-        string issueIdentifier,
-        string issueTitle,
-        string issueProviderConfigId,
-        string repoProviderConfigId,
-        string reviewPrBranchName,
-        string reviewPrTargetBranch,
-        DateTimeOffset? startedAt = null,
-        string initiatedBy = "manual",
-        string? agentId = null,
-        string? agentProviderConfigId = null,
-        string? brainProviderConfigId = null,
-        string? reviewPrUrl = null,
-        string? reviewPrDescription = null,
-        string? reviewPrAuthor = null,
-        IReadOnlyList<LinkedIssueContext>? linkedIssueContexts = null)
-    {
-        return CreateCore(
-            runId, issueIdentifier, issueTitle, issueProviderConfigId, repoProviderConfigId,
-            PipelineRunType.Review, startedAt, initiatedBy, agentId, agentProviderConfigId, brainProviderConfigId,
-            reviewPrBranchName, reviewPrTargetBranch, reviewPrUrl, reviewPrDescription, reviewPrAuthor,
-            linkedIssueContexts);
-    }
-
-    /// <summary>
-    /// Creates a new <see cref="PipelineRun"/> for a decomposition (epic → sub-issues) workflow.
-    /// </summary>
-    /// <param name="phaseType">Must be <see cref="PipelineRunType.DecompositionAnalysis"/> or <see cref="PipelineRunType.Decomposition"/>.</param>
-    public static PipelineRun CreateDecomposition(
-        string runId,
-        string issueIdentifier,
-        string issueTitle,
-        string issueProviderConfigId,
-        string repoProviderConfigId,
-        PipelineRunType phaseType,
-        DateTimeOffset? startedAt = null,
-        string initiatedBy = "manual",
-        string? agentId = null,
-        string? agentProviderConfigId = null,
-        string? brainProviderConfigId = null,
-        string? decompositionSource = null)
-    {
-        if (phaseType != PipelineRunType.DecompositionAnalysis && phaseType != PipelineRunType.Decomposition)
-            throw new ArgumentOutOfRangeException(nameof(phaseType), phaseType, "Must be DecompositionAnalysis or Decomposition.");
-
-        return CreateCore(
-            runId, issueIdentifier, issueTitle, issueProviderConfigId, repoProviderConfigId,
-            phaseType, startedAt, initiatedBy, agentId, agentProviderConfigId, brainProviderConfigId,
-            decompositionSource: decompositionSource);
-    }
-
-    // TODO: Consider converting CreateCore parameters to a required-then-optional pattern (or a struct/record for optional fields) to reduce risk of accidentally omitting positional arguments if parameter order shifts during maintenance. Named arguments at call sites mitigate this today.
-    /// <summary>Shared construction logic for all factory methods.</summary>
-    private static PipelineRun CreateCore(
-        string runId,
-        string issueIdentifier,
-        string issueTitle,
-        string issueProviderConfigId,
-        string repoProviderConfigId,
-        PipelineRunType runType,
-        DateTimeOffset? startedAt = null,
-        string initiatedBy = "manual",
-        string? agentId = null,
-        string? agentProviderConfigId = null,
-        string? brainProviderConfigId = null,
-        string? reviewPrBranchName = null,
-        string? reviewPrTargetBranch = null,
-        string? reviewPrUrl = null,
-        string? reviewPrDescription = null,
-        string? reviewPrAuthor = null,
-        IReadOnlyList<LinkedIssueContext>? linkedIssueContexts = null,
-        string? decompositionSource = null)
-    {
-        var now = startedAt ?? DateTimeOffset.UtcNow;
-#pragma warning disable CS0618
-        return new PipelineRun
-        {
-            RunId = runId,
-            IssueIdentifier = issueIdentifier,
-            IssueTitle = issueTitle,
-            IssueProviderConfigId = issueProviderConfigId,
-            RepoProviderConfigId = repoProviderConfigId,
-            StartedAt = now.UtcDateTime,
-            StartedAtOffset = now,
-            // TODO: LastStepChangeAt is intentionally set independently from `now` — when startedAt is provided, these will differ (matches original AgentJobDispatcher behavior).
-            LastStepChangeAt = DateTimeOffset.UtcNow,
-            CurrentStep = PipelineStep.Created,
-            InitiatedBy = initiatedBy,
-            RunType = runType,
-            AgentId = agentId,
-            AgentProviderConfigId = agentProviderConfigId,
-            BrainProviderConfigId = brainProviderConfigId,
-            ReviewPrBranchName = reviewPrBranchName,
-            ReviewPrTargetBranch = reviewPrTargetBranch,
-            ReviewPrUrl = reviewPrUrl,
-            ReviewPrDescription = reviewPrDescription,
-            ReviewPrAuthor = reviewPrAuthor,
-            LinkedIssueContexts = linkedIssueContexts,
-            DecompositionSource = decompositionSource
-        };
-#pragma warning restore CS0618
-    }
-
     public required string RunId { get; init; }
     public required IssueIdentifier IssueIdentifier { get; init; }
     // NOTE: Semantically set-once (populated after construction from fetched issue title). Cannot be init-only without restructuring call sites.
@@ -202,42 +56,6 @@ public sealed class PipelineRun
 
     /// <summary>Timezone-safe shadow of <see cref="CompletedAt"/>. Set alongside the original property.</summary>
     public DateTimeOffset? CompletedAtOffset { get; set; }
-
-    /// <summary>Atomically sets both <see cref="CompletedAt"/> and <see cref="CompletedAtOffset"/> to the current UTC time.</summary>
-    public void MarkCompleted()
-    {
-        var now = DateTimeOffset.UtcNow;
-#pragma warning disable CS0618
-        CompletedAt = now.UtcDateTime;
-#pragma warning restore CS0618
-        CompletedAtOffset = now;
-    }
-
-    /// <summary>Atomically sets both <see cref="CompletedAt"/> and <see cref="CompletedAtOffset"/> from the provided timestamp.</summary>
-    public void MarkCompleted(DateTimeOffset timestamp)
-    {
-#pragma warning disable CS0618
-        CompletedAt = timestamp.UtcDateTime;
-#pragma warning restore CS0618
-        CompletedAtOffset = timestamp;
-    }
-
-    /// <summary>
-    /// Resets StartedAt to the actual agent dispatch time. Called when a queued
-    /// WorkItem transitions Pending→Dispatched, replacing the preparation-time
-    /// timestamp with the true agent start time.
-    /// </summary>
-    // TODO: ResetStartedAt writes StartedAt and StartedAtOffset non-atomically without synchronization.
-    // The class uses Interlocked for LastStepChangeAt (analogous concurrent-read pattern). Consider
-    // adding a lock or Interlocked pattern here for consistency, especially since this is called from
-    // DispatchService background thread while UI threads may read StartedAtOffset concurrently.
-    public void ResetStartedAt(DateTimeOffset actualStart)
-    {
-#pragma warning disable CS0618
-        StartedAt = actualStart.UtcDateTime;
-#pragma warning restore CS0618
-        StartedAtOffset = actualStart;
-    }
 
     /// <summary>
     /// Last time the pipeline step changed (set via ReportStepTransition).
@@ -297,22 +115,6 @@ public sealed class PipelineRun
 
     /// <summary>Number of [SUGGESTION] findings detected across all review iterations. Thread-safe read via Volatile.Read.</summary>
     public int CodeReviewSuggestionCount => Volatile.Read(ref _codeReviewSuggestionCount);
-
-    /// <summary>Atomically adds to the code review severity counters. Use when accumulating counts from concurrent review agents.</summary>
-    public void AddCodeReviewCounts(int critical, int warning, int suggestion)
-    {
-        Interlocked.Add(ref _codeReviewCriticalCount, critical);
-        Interlocked.Add(ref _codeReviewWarningCount, warning);
-        Interlocked.Add(ref _codeReviewSuggestionCount, suggestion);
-    }
-
-    /// <summary>Atomically replaces the code review severity counters. Use when setting absolute values from a completion payload.</summary>
-    public void SetCodeReviewCounts(int critical, int warning, int suggestion)
-    {
-        Interlocked.Exchange(ref _codeReviewCriticalCount, critical);
-        Interlocked.Exchange(ref _codeReviewWarningCount, warning);
-        Interlocked.Exchange(ref _codeReviewSuggestionCount, suggestion);
-    }
 
     /// <summary>Number of inline comments successfully submitted in this review.</summary>
     public int InlineCommentsPosted { get; set; }
