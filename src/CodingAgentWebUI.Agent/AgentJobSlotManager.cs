@@ -238,15 +238,19 @@ public sealed class AgentJobSlotManager
     // TODO: No test verifies that ForceReleaseJobSlot does NOT invoke the signalReady callback,
     // which is the key behavioral difference between it and ReleaseJobSlotAndSignalReadyAsync.
     // Add a negative test asserting signalReady is never called.
-    // TODO: ForceReleaseJobSlot does not clear _activeJobAssignment, _activeJobStartedAt, or
-    // _activeJobRunType. While BuildActiveJobState() short-circuits on null _activeJobId, stale
-    // assignment data remains in memory until the next successful slot acquisition overwrites it.
-    // Consider clearing all assignment state here for consistency with ReleaseJobSlotAndSignalReadyAsync.
+    // TODO: No test verifies that ForceReleaseJobSlot clears _activeJobAssignment,
+    // _activeJobStartedAt, _activeJobRunType, or _currentStep. Add a test that sets all fields,
+    // calls ForceReleaseJobSlot, then asserts BuildActiveJobState() returns null to validate the
+    // clearing logic end-to-end and catch regressions.
     public void ForceReleaseJobSlot()
     {
         lock (_busyLock)
         {
             _activeJobId = null;
+            _activeJobAssignment = null;
+            _activeJobStartedAt = null;
+            _activeJobRunType = default;
+            _currentStep = null;
         }
 
 #pragma warning disable 0420 // volatile field passed by reference to Interlocked — safe by design
