@@ -261,6 +261,53 @@ public class ConsolidationPromptBuilderRefactoringTests
         result.Should().Contain("single agent in one run");
     }
 
+    // TODO: These evidence quality gate tests are substring checks only. They cannot detect if the section
+    // is placed in the wrong location (e.g., after Step 4). Consider adding a structural ordering test that
+    // asserts "Evidence Quality Gate" appears after "Step 3" and before "Step 4" in the output.
+    // Also consider adding a negative/regression test to validate intent rather than exact wording.
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_IncludesEvidenceQualityGateSection()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("Evidence Quality Gate");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_RejectsCodeReadingOnlyForHardCategories()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("DROP the proposal");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_ExemptsSimplificationAndDocumentation()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("may use \"code-reading:\" alone");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_CapsEvidenceScoreForExemptedCategories()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("capped evidence score of 1");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_ListsValidNonCodeReadingSources()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("\"hotspot:\"");
+        result.Should().Contain("\"grep:\"");
+        result.Should().Contain("\"usage-search:\"");
+        result.Should().Contain("\"tool:\"");
+    }
+
     // ─── Review Prompt (Strengthened) ────────────────────────────────────
 
     [Fact]
