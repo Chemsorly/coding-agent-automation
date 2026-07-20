@@ -187,7 +187,7 @@
                                 <td>
                                     @if (run.Status == ConsolidationRunStatus.Queued)
                                     {
-                                        <button class="btn-cancel" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
+                                        <button class="btn-cancel-run" @onclick="() => CancelQueuedRun(run.RunId)">Cancel</button>
                                     }
                                 </td>
                             </tr>
@@ -414,8 +414,8 @@
             {
                 _statusMessage = type switch
                 {
-                    ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running/queued.",
-                    ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running/queued.",
+                    ConsolidationRunType.BrainConsolidation => $"Brain consolidation rejected for {templateName} — already running/queued or template not found.",
+                    ConsolidationRunType.RefactoringDetection => $"Refactoring scan rejected for {templateName} — already running/queued or template not found.",
                     ConsolidationRunType.HarnessSuggestions => "Harness suggestions rejected — already running/queued.",
                     _ => "Consolidation rejected."
                 };
@@ -435,7 +435,7 @@
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to trigger consolidation {Type} for template {TemplateId}", type, templateId);
-            _statusMessage = $"Error triggering consolidation: {ex.Message}";
+            _statusMessage = $"{FormatRunType(type)} dispatch failed — check orchestrator logs for details.";
             _statusIsError = true;
         }
     }
