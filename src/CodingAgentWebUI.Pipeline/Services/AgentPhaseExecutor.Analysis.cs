@@ -374,7 +374,6 @@ public partial class AgentPhaseExecutor
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            // TODO: Distinguish between post and update failures in this log message (currently always says "failed to post")
             _logger.Warning(ex, "Pipeline {RunId} failed to post analysis comment on issue {IssueIdentifier}", run.RunId, run.IssueIdentifier);
         }
     }

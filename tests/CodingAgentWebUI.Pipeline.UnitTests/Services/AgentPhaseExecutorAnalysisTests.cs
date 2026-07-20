@@ -241,9 +241,6 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     public async Task Analysis_ForceRefresh_ExistingComment_UpdatesInsteadOfPosting()
     {
         // Existing analysis comment present + force-refresh → should update, not post new
-        // TODO: Add additional tests for force-refresh with not-ready/won't-do assessments (update path is also hit on those branches)
-        // TODO: Verify ExecuteAsync is called on the agent provider (to confirm force-refresh bypasses the skip-analysis logic)
-        // TODO: Add boundary test with multiple existing analysis comments to verify only the most recent one's ID is passed to UpdateCommentAsync
         var comments = new[]
         {
             new IssueComment { Id = "comment-42", Body = $"{CommentMarkers.AnalysisHeader}\nOld analysis content", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-1) }
