@@ -19,7 +19,7 @@ namespace CodingAgentWebUI.UnitTests;
 public class JobQueueDrainServiceTests
 {
     private readonly AgentRegistryService _registry;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly Mock<IJobDispatcher> _mockJobDispatcher;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IConsolidationDispatcher> _mockConsolidationDispatcher;
@@ -29,7 +29,7 @@ public class JobQueueDrainServiceTests
     {
         var logger = new Mock<ILogger>().Object;
         _registry = new AgentRegistryService(logger);
-        _dispatcher = new JobDispatcherService(_registry, logger);
+        _dispatcher = new JobDeduplicationGuardService(_registry, logger);
         _mockJobDispatcher = new Mock<IJobDispatcher>();
         _mockConfigStore = new Mock<IConfigurationStore>();
         _mockConfigStore

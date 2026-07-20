@@ -306,7 +306,7 @@ public class WorkDistributionModeResolutionTests
         var logger = Serilog.Log.Logger;
         var registry = new AgentRegistryService(logger);
         services.AddSingleton(Mock.Of<IJobDispatcher>());
-        services.AddSingleton(new JobDispatcherService(registry, logger));
+        services.AddSingleton(new JobDeduplicationGuardService(registry, logger));
         services.AddSingleton(Mock.Of<IOrchestratorRunService>());
         services.AddSingleton(Mock.Of<IPipelineRunHistoryService>());
         services.AddSingleton(registry);

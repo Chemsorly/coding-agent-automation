@@ -14,13 +14,13 @@ public class DispatchMetricsRegistrationTests : IDisposable
     private readonly MeterListener _listener = new();
     private readonly Dictionary<string, int> _gaugeValues = new();
     private readonly AgentRegistryService _registry;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
 
     public DispatchMetricsRegistrationTests()
     {
         var logger = new Mock<ILogger>().Object;
         _registry = new AgentRegistryService(logger);
-        _dispatcher = new JobDispatcherService(_registry, logger);
+        _dispatcher = new JobDeduplicationGuardService(_registry, logger);
 
         // Register gauges (same pattern as Program.cs)
         _ = PipelineTelemetry.Meter.CreateObservableGauge("dispatch.queue.depth",

@@ -40,7 +40,7 @@ public class LabelRoutingFallbackPropertyTests
             DefaultRequiredAgentLabels = "fallback-label"
         };
 
-        var resolved = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var resolved = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         resolved.Should().Contain(l1);
         resolved.Should().Contain(l2);
@@ -70,7 +70,7 @@ public class LabelRoutingFallbackPropertyTests
             DefaultRequiredAgentLabels = label
         };
 
-        var resolved = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var resolved = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         resolved.Should().Contain(label);
     }
@@ -91,7 +91,7 @@ public class LabelRoutingFallbackPropertyTests
 
         var pipelineConfig = new PipelineConfiguration();
 
-        var resolved = JobDispatcherService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+        var resolved = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
 
         resolved.Should().BeEmpty();
     }
@@ -109,7 +109,7 @@ public class LabelRoutingFallbackPropertyTests
             .ToList();
 
         var registry = new AgentRegistryService(new Moq.Mock<Serilog.ILogger>().Object);
-        var dispatcher = new JobDispatcherService(registry, new Moq.Mock<Serilog.ILogger>().Object);
+        var dispatcher = new JobDeduplicationGuardService(registry, new Moq.Mock<Serilog.ILogger>().Object);
 
         registry.Register(new AgentRegistrationMessage
         {
@@ -139,7 +139,7 @@ public class LabelRoutingFallbackPropertyTests
         var agentLabels = new[] { "kiro" }; // Missing the second required label
 
         var registry = new AgentRegistryService(new Moq.Mock<Serilog.ILogger>().Object);
-        var dispatcher = new JobDispatcherService(registry, new Moq.Mock<Serilog.ILogger>().Object);
+        var dispatcher = new JobDeduplicationGuardService(registry, new Moq.Mock<Serilog.ILogger>().Object);
 
         registry.Register(new AgentRegistrationMessage
         {

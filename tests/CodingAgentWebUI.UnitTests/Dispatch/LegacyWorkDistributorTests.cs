@@ -17,14 +17,14 @@ public class LegacyWorkDistributorTests
 {
     private readonly Mock<IJobDispatcher> _mockJobDispatcher = new();
     private readonly Mock<IOrchestratorRunService> _mockRunService = new();
-    private readonly JobDispatcherService _dispatcherService;
+    private readonly JobDeduplicationGuardService _dispatcherService;
     private readonly LegacyWorkDistributor _sut;
 
     public LegacyWorkDistributorTests()
     {
         var logger = Mock.Of<ILogger>();
         var registry = new CodingAgentWebUI.Orchestration.Registry.AgentRegistryService(logger);
-        _dispatcherService = new JobDispatcherService(registry, logger);
+        _dispatcherService = new JobDeduplicationGuardService(registry, logger);
 
         _sut = new LegacyWorkDistributor(
             _mockJobDispatcher.Object,
@@ -236,7 +236,7 @@ public class LegacyWorkDistributorTests
     // ── Consolidation ─────────────────────────────────────────────────────
 
     [Fact]
-    public async Task DistributeAsync_Consolidation_EnqueuesIntoJobDispatcherService()
+    public async Task DistributeAsync_Consolidation_EnqueuesIntoJobDeduplicationGuardService()
     {
         var request = new JobDistributionRequest
         {

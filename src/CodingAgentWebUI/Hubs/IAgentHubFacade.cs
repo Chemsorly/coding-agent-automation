@@ -14,7 +14,7 @@ namespace CodingAgentWebUI.Hubs;
 /// <para>
 /// The facade absorbs: <see cref="CodingAgentWebUI.Orchestration.Registry.AgentRegistryService"/>,
 /// <see cref="CodingAgentWebUI.Orchestration.OrchestratorRunService"/>,
-/// <see cref="CodingAgentWebUI.Orchestration.Dispatch.JobDispatcherService"/>,
+/// <see cref="CodingAgentWebUI.Orchestration.Dispatch.JobDeduplicationGuardService"/>,
 /// <see cref="CodingAgentWebUI.Orchestration.Dispatch.JobQueueDrainService"/>,
 /// <see cref="IPipelineRunHistoryService"/>, <see cref="IConfigurationStore"/>,
 /// and <see cref="IProviderFactory"/>.

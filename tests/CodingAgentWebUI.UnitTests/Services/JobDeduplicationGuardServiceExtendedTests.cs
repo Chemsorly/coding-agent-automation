@@ -11,20 +11,20 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.UnitTests.Services;
 
 /// <summary>
-/// Extended unit tests for JobDispatcherService — covers queue operations,
+/// Extended unit tests for JobDeduplicationGuardService — covers queue operations,
 /// agent selection, label matching, and edge cases.
 /// </summary>
-public class JobDispatcherServiceExtendedTests
+public class JobDeduplicationGuardServiceExtendedTests
 {
     private readonly AgentRegistryService _registry;
-    private readonly JobDispatcherService _dispatcher;
+    private readonly JobDeduplicationGuardService _dispatcher;
     private readonly Mock<ILogger> _mockLogger;
 
-    public JobDispatcherServiceExtendedTests()
+    public JobDeduplicationGuardServiceExtendedTests()
     {
         _mockLogger = new Mock<ILogger>();
         _registry = new AgentRegistryService(_mockLogger.Object);
-        _dispatcher = new JobDispatcherService(_registry, _mockLogger.Object);
+        _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
     }
 
     // ── SelectAgent ─────────────────────────────────────────────────────
@@ -302,7 +302,7 @@ public class JobDispatcherServiceExtendedTests
     {
         var config = new PipelineConfiguration();
 
-        var labels = JobDispatcherService.ResolveRequiredLabels(null, config);
+        var labels = JobDeduplicationGuardService.ResolveRequiredLabels(null, config);
 
         labels.Should().NotBeNull();
     }
@@ -321,7 +321,7 @@ public class JobDispatcherServiceExtendedTests
         };
         var config = new PipelineConfiguration();
 
-        var labels = JobDispatcherService.ResolveRequiredLabels(repoConfig, config);
+        var labels = JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, config);
 
         labels.Should().Contain("custom-label");
     }

@@ -199,11 +199,11 @@ public static class ServiceCollectionExtensions
     {
         services.AddSingleton(sp => new AgentRegistryService(Log.Logger));
         services.AddSingleton<IAgentRegistryService>(sp => sp.GetRequiredService<AgentRegistryService>());
-        services.AddSingleton(sp => new JobDispatcherService(
+        services.AddSingleton(sp => new JobDeduplicationGuardService(
             sp.GetRequiredService<IAgentRegistryService>(),
             Log.Logger));
         services.AddSingleton<Pipeline.Interfaces.IJobDeduplicationGuard>(sp =>
-            sp.GetRequiredService<JobDispatcherService>());
+            sp.GetRequiredService<JobDeduplicationGuardService>());
 
         services.AddHttpClient("TokenVending")
             .AddStandardResilienceHandler();
@@ -228,7 +228,7 @@ public static class ServiceCollectionExtensions
                 sp.GetRequiredService<IAgentRegistryService>(),
                 sp.GetRequiredService<IOrchestratorRunService>(),
                 sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<JobDispatcherService>(),
+                sp.GetRequiredService<JobDeduplicationGuardService>(),
                 sp.GetRequiredService<ILabelService>(),
                 sp.GetRequiredService<IConfigurationStore>(),
                 Log.Logger,
@@ -240,7 +240,7 @@ public static class ServiceCollectionExtensions
         // but only registered as hosted service (active background loop) in Legacy mode.
         // In DB modes (SignalR/K8s), work distribution via IWorkDistributor — in-memory queue unused.
         services.AddSingleton(sp => new JobQueueDrainService(
-            sp.GetRequiredService<JobDispatcherService>(),
+            sp.GetRequiredService<JobDeduplicationGuardService>(),
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IJobDispatcher>(),
             sp.GetRequiredService<IConfigurationStore>(),
@@ -292,7 +292,7 @@ public static class ServiceCollectionExtensions
         // AgentJobDispatcher: registered as singleton (internal class).
         // Consumed by JobQueueDrainService and LegacyWorkDistributor within the same assembly scope.
         services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
-            sp.GetRequiredService<JobDispatcherService>(),
+            sp.GetRequiredService<JobDeduplicationGuardService>(),
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
@@ -305,7 +305,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAgentHubFacade>(sp => new AgentHubFacade(
             sp.GetRequiredService<AgentRegistryService>(),
             sp.GetRequiredService<OrchestratorRunService>(),
-            sp.GetRequiredService<JobDispatcherService>(),
+            sp.GetRequiredService<JobDeduplicationGuardService>(),
             sp.GetRequiredService<JobQueueDrainService>(),
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IConfigurationStore>(),
@@ -351,7 +351,7 @@ public static class ServiceCollectionExtensions
 
         services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatcher(
             sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<JobDispatcherService>(),
+            sp.GetRequiredService<JobDeduplicationGuardService>(),
             sp.GetRequiredService<IAgentCommunication>(),
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IProjectStore>(),
