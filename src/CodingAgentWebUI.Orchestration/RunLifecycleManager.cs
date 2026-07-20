@@ -95,7 +95,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         ClearAgentState(run.AgentId);
 
         // 6. Swap label to error
-        await TrySwapLabelAsync(run, AgentLabels.Error, ct);
+        await _labelService.TrySwapLabelAsync(run, AgentLabels.Error, _logger, "RunLifecycleManager", ct);
 
         _logger.Information(
             "RunLifecycleManager.FailRunAsync: run {RunId} failed (reason={Reason}, agent={AgentId})",
@@ -190,7 +190,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         ClearAgentState(run.AgentId);
 
         // 6. Swap label
-        await TrySwapLabelAsync(run, AgentLabels.Cancelled, ct);
+        await _labelService.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "RunLifecycleManager", ct);
 
         // 7. Delete K8s Job to prevent pod retries (backoffLimit)
         // TODO: Consider making _jobCleanup non-nullable and using GetRequiredService in all DI registrations
@@ -238,7 +238,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         var targetKind = runType == PipelineRunType.Review
             ? LabelTargetKind.PullRequest
             : LabelTargetKind.Issue;
-        await TrySwapLabelAsync(issueIdentifier, providerForLabel, targetKind, AgentLabels.InProgress, ct);
+        await _labelService.TrySwapLabelAsync(providerForLabel, issueIdentifier, AgentLabels.InProgress, targetKind, _logger, "RunLifecycleManager", ct);
 
         _logger.Information(
             "RunLifecycleManager.AgentAcceptedRunAsync: agent {AgentId} accepted run {RunId} for issue {IssueIdentifier}",
@@ -333,31 +333,4 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         _registry.TransitionStatus(agentId, AgentStatus.Idle);
     }
 
-    private async Task TrySwapLabelAsync(PipelineRun run, string label, CancellationToken ct)
-    {
-        try
-        {
-            var targetKind = run.LabelTargetKind;
-
-            await _labelService.SwapLabelAsync(run.ProviderConfigIdForLabel, run.IssueIdentifier, label, targetKind, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.Warning(ex, "RunLifecycleManager: label swap to {Label} failed for run {RunId} (non-fatal)", label, run.RunId);
-        }
-    }
-
-    private async Task TrySwapLabelAsync(string issueIdentifier, string providerConfigId,
-        LabelTargetKind targetKind, string label, CancellationToken ct)
-    {
-        try
-        {
-            await _labelService.SwapLabelAsync(providerConfigId, issueIdentifier, label, targetKind, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.Warning(ex, "RunLifecycleManager: label swap to {Label} failed for issue {IssueIdentifier} (non-fatal)",
-                label, issueIdentifier);
-        }
-    }
 }
