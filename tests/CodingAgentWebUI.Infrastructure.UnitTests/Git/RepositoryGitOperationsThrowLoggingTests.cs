@@ -10,6 +10,7 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Git;
 /// Verifies that logging is emitted before throw statements in RepositoryGitOperations.
 /// Covers: CheckoutRemoteBranch, CommitAll (no changes), Push error, MergeFromBase (base branch not found).
 /// </summary>
+[Collection("StaticLogger")]
 public class RepositoryGitOperationsThrowLoggingTests : IDisposable
 {
     private readonly CollectingSink _sink;
