@@ -50,12 +50,12 @@ internal sealed class NpgsqlAdvisoryLockConnection : IAdvisoryLockConnection
         return result is true;
     }
 
-    public async Task ReleaseLockAsync(long lockKey)
+    public async Task ReleaseLockAsync(long lockKey, CancellationToken ct = default)
     {
         await using var cmd = _connection.CreateCommand();
         cmd.CommandText = "SELECT pg_advisory_unlock(@key)";
         cmd.Parameters.AddWithValue("key", lockKey);
-        await cmd.ExecuteNonQueryAsync();
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     public async Task CloseAsync()
