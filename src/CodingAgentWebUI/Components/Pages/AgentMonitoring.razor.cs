@@ -110,9 +110,11 @@ public partial class AgentMonitoring : IDisposable
         catch (ObjectDisposedException) { }
         catch
         {
-            // TODO: This runs outside InvokeAsync (on timer thread), bypassing Blazor's sync context.
-            // TODO: No StateHasChanged() call means UI won't show warning until next successful tick.
-            _lastRefreshFailed = true;
+            try
+            {
+                await InvokeAsync(() => { _lastRefreshFailed = true; StateHasChanged(); });
+            }
+            catch (ObjectDisposedException) { }
         }
     }
 
@@ -133,9 +135,11 @@ public partial class AgentMonitoring : IDisposable
         catch (ObjectDisposedException) { }
         catch
         {
-            // TODO: This runs outside InvokeAsync (on timer thread), bypassing Blazor's sync context.
-            // TODO: No StateHasChanged() call means UI won't show warning until next successful tick.
-            _lastRefreshFailed = true;
+            try
+            {
+                await InvokeAsync(() => { _lastRefreshFailed = true; StateHasChanged(); });
+            }
+            catch (ObjectDisposedException) { }
         }
     }
 
