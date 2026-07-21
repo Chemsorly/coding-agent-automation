@@ -353,8 +353,6 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     public async Task AddRunToHistoryAsync_NonTerminalStep_ForcedToFailed()
     {
         // Arrange: run with non-terminal step (should never happen, but defense-in-depth catches it)
-        // TODO: [BUG-12] Verify that the warning log is emitted (acceptance criteria: "logged warning + corrected").
-        // Currently the logger mock is unverified — the warning could be removed without failing this test.
         var runId = Guid.NewGuid().ToString();
         var run = PipelineRun.Create(runId, "owner/repo#99", "Bug fix",
             "ip-1", "rp-1");
@@ -365,6 +363,34 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         await _sut.AddRunToHistoryAsync(run);
 
         // Assert: persisted with FinalStep corrected to Failed
+        using var db = new InMemoryPipelineDbContext(_dbOptions);
+        var entity = db.PipelineRuns.Single();
+        entity.FinalStep.Should().Be(PipelineStep.Failed);
+
+        // Assert: caller's reference is NOT mutated
+        run.CurrentStep.Should().Be(PipelineStep.RunningQualityGates,
+            "AddRunToHistoryAsync must not mutate the caller's PipelineRun.CurrentStep");
+    }
+
+    // TODO: This test is functionally identical to AddRunToHistoryAsync_NonTerminalStep_ForcedToFailed above — consider removing one to reduce maintenance burden.
+    [Fact]
+    public async Task AddRunToHistoryAsync_NonTerminalStep_DoesNotMutateCallerReference()
+    {
+        // Arrange: run with non-terminal step
+        var runId = Guid.NewGuid().ToString();
+        var run = PipelineRun.Create(runId, "owner/repo#102", "Mutation test",
+            "ip-1", "rp-1");
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+        run.MarkCompleted();
+
+        // Act
+        await _sut.AddRunToHistoryAsync(run);
+
+        // Assert: caller's reference is unchanged
+        run.CurrentStep.Should().Be(PipelineStep.RunningQualityGates,
+            "AddRunToHistoryAsync must not mutate the caller's PipelineRun.CurrentStep");
+
+        // Assert: DB still gets Failed
         using var db = new InMemoryPipelineDbContext(_dbOptions);
         var entity = db.PipelineRuns.Single();
         entity.FinalStep.Should().Be(PipelineStep.Failed);
@@ -393,7 +419,6 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     public async Task AddRunToHistory_NonTerminalStep_ForcedToFailed()
     {
         // Arrange: non-terminal step via sync (obsolete) method
-        // TODO: [BUG-12] Verify that the warning log is emitted (same gap as async variant above).
         var runId = Guid.NewGuid().ToString();
         var run = PipelineRun.Create(runId, "owner/repo#101", "Sync test",
             "ip-1", "rp-1");
@@ -407,6 +432,10 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         using var db = new InMemoryPipelineDbContext(_dbOptions);
         var entity = db.PipelineRuns.Single();
         entity.FinalStep.Should().Be(PipelineStep.Failed);
+
+        // Assert: caller's reference is NOT mutated
+        run.CurrentStep.Should().Be(PipelineStep.ReviewingCode,
+            "AddRunToHistoryAsync must not mutate the caller's PipelineRun.CurrentStep");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

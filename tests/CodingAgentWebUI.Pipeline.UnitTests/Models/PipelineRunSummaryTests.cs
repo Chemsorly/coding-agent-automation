@@ -173,4 +173,44 @@ public class PipelineRunSummaryTests
     // a pre-feature PipelineRunSummary (without PhaseBreakdown property) and assert PhaseBreakdown is null.
     // TODO: Add backward-compatibility deserialization test for ProjectId — deserialize a JSON payload
     // from before this fix (lacking ProjectId field) into PipelineRunSummary and assert ProjectId is null without errors.
+
+    [Fact]
+    public void ToSummary_WithFinalStepOverride_UsesOverrideInsteadOfCurrentStep()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Override test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+        run.CurrentStep = PipelineStep.RunningQualityGates;
+
+        var summary = run.ToSummary(finalStepOverride: PipelineStep.Failed);
+
+        summary.FinalStep.Should().Be(PipelineStep.Failed);
+        run.CurrentStep.Should().Be(PipelineStep.RunningQualityGates,
+            "ToSummary must not mutate the caller's PipelineRun.CurrentStep");
+    }
+
+    [Fact]
+    public void ToSummary_WithNullFinalStepOverride_UsesCurrentStep()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Null override test",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+        run.CurrentStep = PipelineStep.Completed;
+
+        var summary = run.ToSummary(finalStepOverride: null);
+
+        summary.FinalStep.Should().Be(PipelineStep.Completed);
+    }
 }

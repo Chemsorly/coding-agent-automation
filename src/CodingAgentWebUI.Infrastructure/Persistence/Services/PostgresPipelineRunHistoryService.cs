@@ -47,18 +47,16 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
         // Defense-in-depth: ensure terminal CurrentStep before persisting to history.
         // Non-terminal steps indicate a mid-pipeline state that should never be the final persisted value.
-        // TODO: [BUG-12] This mutates run.CurrentStep on the caller's PipelineRun reference as a side effect.
-        // Document this mutation contract on IPipelineRunHistoryService.AddRunToHistoryAsync, or clone before mutating,
-        // so direct callers are aware their object may be modified.
+        PipelineStep? finalStepOverride = null;
         if (!run.CurrentStep.IsTerminal())
         {
             _logger.Warning(
                 "AddRunToHistoryAsync: run {RunId} has non-terminal CurrentStep={Step}, forcing to Failed",
                 run.RunId, run.CurrentStep);
-            run.CurrentStep = PipelineStep.Failed;
+            finalStepOverride = PipelineStep.Failed;
         }
 
-        var summary = run.ToSummary();
+        var summary = run.ToSummary(finalStepOverride);
 
         try
         {
