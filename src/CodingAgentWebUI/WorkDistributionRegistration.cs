@@ -101,17 +101,31 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<WorkItemTransitionService>());
 
         // ── DispatchOrchestrationService (DB modes only — null in Legacy mode) ──
-        services.AddSingleton<IDispatchOrchestrationService>(sp => new DispatchOrchestrationService(
-            sp.GetRequiredService<DispatchInfrastructure>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IWorkDistributor>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IAgentProfileStore>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IConfigurationStore>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IPipelineConfigStore>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IProjectStore>(),
-            Log.Logger,
-            sp.GetRequiredService<Pipeline.Interfaces.IWorkItemQueryService>()));
+        // TODO: StalenessDetector is set here as a side-effect on the shared DispatchInfrastructure
+        // singleton. This creates an implicit DI resolution ordering dependency: if AgentJobDispatcher
+        // dispatches before IDispatchOrchestrationService is first resolved, staleness detection will
+        // silently no-op. Consider registering AnalysisStalenessDetector as its own singleton and
+        // injecting it into DispatchInfrastructure's constructor to make the dependency explicit.
+        services.AddSingleton<IDispatchOrchestrationService>(sp =>
+        {
+            var infra = sp.GetRequiredService<DispatchInfrastructure>();
+            var workItemQuery = sp.GetRequiredService<Pipeline.Interfaces.IWorkItemQueryService>();
+
+            // Construct shared staleness detector and attach to DispatchInfrastructure.
+            // Both DispatchOrchestrationService and AgentJobDispatcher use _infra.StalenessDetector.
+            infra.StalenessDetector = new Orchestration.Dispatch.AnalysisStalenessDetector(workItemQuery, Log.Logger);
+
+            return new DispatchOrchestrationService(
+                infra,
+                sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
+                sp.GetRequiredService<IOrchestratorRunService>(),
+                sp.GetRequiredService<Pipeline.Interfaces.IWorkDistributor>(),
+                sp.GetRequiredService<Pipeline.Interfaces.IAgentProfileStore>(),
+                sp.GetRequiredService<Pipeline.Interfaces.IConfigurationStore>(),
+                sp.GetRequiredService<Pipeline.Interfaces.IPipelineConfigStore>(),
+                sp.GetRequiredService<Pipeline.Interfaces.IProjectStore>(),
+                Log.Logger);
+        });
 
         // ── IRunLifecycleManager (DB mode — coordinates in-memory + DB transitions) ──
         // TODO: Use GetRequiredService<IJobCleanupStrategy>() instead of GetService to fail fast on

@@ -86,10 +86,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
                     new QualityGateResolver(),
                     new ReviewerResolver(),
                     _mockConfigStore.Object,
-                    _mockLogger.Object),
-                new ProviderConfigBuilder(
-                    _mockConfigStore.Object,
-                    _tokenVending)),
+                    _mockLogger.Object)),
             _mockAgentComm.Object,
             new ShutdownSignal(),
             _mockLogger.Object);
