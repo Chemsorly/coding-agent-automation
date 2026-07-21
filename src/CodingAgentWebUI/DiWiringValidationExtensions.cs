@@ -1,7 +1,6 @@
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Services;
-using Serilog;
 
 namespace CodingAgentWebUI;
 
