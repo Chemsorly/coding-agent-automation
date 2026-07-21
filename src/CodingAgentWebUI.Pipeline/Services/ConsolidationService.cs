@@ -279,6 +279,19 @@ public sealed class ConsolidationService : IConsolidationService
                 return;
             }
 
+            // Guard: never overwrite a terminal status. The progress timeout monitor fires on a
+            // wall-clock schedule (startedAt + limit) and can race with the completion handler.
+            // Without this guard, a late-firing timeout overwrites Succeeded → Failed.
+            if (run.Status is ConsolidationRunStatus.Succeeded
+                or ConsolidationRunStatus.Failed
+                or ConsolidationRunStatus.Cancelled)
+            {
+                _logger.Debug(
+                    "Skipping update for consolidation run {RunId}: already in terminal status {CurrentStatus} (requested: {RequestedStatus})",
+                    runId, run.Status, status);
+                return;
+            }
+
             // Update mutable fields
             run.Status = status;
             run.Summary = summary;
@@ -505,8 +518,8 @@ public sealed class ConsolidationService : IConsolidationService
 
     private async Task PersistRunAsync(ConsolidationRun run, CancellationToken ct)
     {
-        _runHistoryCache = null; // Invalidate before write — prevents serving stale data if write fails
         await _runStore.SaveRunAsync(run, ct);
+        _runHistoryCache = null; // Invalidate after write — prevents stale cache from concurrent reads during the write window
     }
 
     /// <summary>
