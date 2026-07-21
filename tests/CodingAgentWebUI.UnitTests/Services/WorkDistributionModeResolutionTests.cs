@@ -208,6 +208,14 @@ public class WorkDistributionModeResolutionTests
         descriptor.Should().BeNull("Legacy mode relies on externally registered JsonConfigurationStore");
     }
 
+    // TODO: Add an integration test (or unit test with full ServiceProvider build) covering the Legacy
+    // mode path that verifies config store sub-interfaces (IPipelineConfigStore, IProviderConfigStore,
+    // IAgentProfileStore, IQualityGateConfigStore, IReviewerConfigStore, IProjectStore) all resolve to
+    // the same JsonConfigurationStore instance. The existing AllConfigStoreInterfaces_ResolveTo_SameInstance
+    // test only covers DB mode via DbModeWebApplicationFactory. If IConfigurationStore registration were
+    // missing or overwritten before sub-interface resolution in Legacy mode, this would throw at runtime
+    // and no existing test would detect it.
+
     // ── Order-independence (IPipelineRunHistoryService) ────────────────
 
     // TODO: DB mode tests below only verify descriptor count (HaveCount(1)), not the resolved

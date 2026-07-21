@@ -4,20 +4,23 @@ using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using Serilog;
 
 namespace CodingAgentWebUI.UnitTests.Dispatch;
 
 /// <summary>
-/// Unit tests for <see cref="ProviderConfigBuilder"/> — the shared provider config
-/// building and token vending logic extracted from AgentJobDispatcher and DispatchOrchestrationService.
+/// Unit tests for provider config building and token vending logic
+/// on <see cref="DispatchInfrastructure"/>.
 /// </summary>
 public class ProviderConfigBuilderTests
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
+    private readonly Mock<IProviderFactory> _mockProviderFactory = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly ILogger _logger = new Mock<ILogger>().Object;
-    private readonly ProviderConfigBuilder _builder;
+    private readonly DispatchInfrastructure _infra;
 
     private const string RepoProviderId = "repo-1";
     private const string AgentProviderId = "agent-1";
@@ -26,7 +29,18 @@ public class ProviderConfigBuilderTests
 
     public ProviderConfigBuilderTests()
     {
-        _builder = new ProviderConfigBuilder(_mockConfigStore.Object, _mockTokenVending.Object);
+        var resolution = new DispatchResolutionService(
+            new ProfileResolver(),
+            new QualityGateResolver(),
+            new ReviewerResolver(),
+            _mockConfigStore.Object,
+            _logger);
+
+        _infra = new DispatchInfrastructure(
+            _mockTokenVending.Object,
+            _mockProviderFactory.Object,
+            _mockLabelService.Object,
+            resolution);
     }
 
     private ProviderConfig CreateConfig(string id, ProviderKind kind) => new()
@@ -53,22 +67,6 @@ public class ProviderConfigBuilderTests
             .ReturnsAsync(new[] { pipelineConfig });
     }
 
-    // ── Construction ──
-
-    [Fact]
-    public void Constructor_NullConfigStore_Throws()
-    {
-        var act = () => new ProviderConfigBuilder(null!, _mockTokenVending.Object);
-        act.Should().Throw<ArgumentNullException>();
-    }
-
-    [Fact]
-    public void Constructor_NullTokenVending_Throws()
-    {
-        var act = () => new ProviderConfigBuilder(_mockConfigStore.Object, null!);
-        act.Should().Throw<ArgumentNullException>();
-    }
-
     // ── BuildAgentProviderConfigsAsync ──
 
     [Fact]
@@ -76,7 +74,7 @@ public class ProviderConfigBuilderTests
     {
         SetupConfigStore();
 
-        var result = await _builder.BuildAgentProviderConfigsAsync(
+        var result = await _infra.BuildAgentProviderConfigsAsync(
             RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None);
 
         result.Should().HaveCount(2);
@@ -89,7 +87,7 @@ public class ProviderConfigBuilderTests
     {
         SetupConfigStore();
 
-        var result = await _builder.BuildAgentProviderConfigsAsync(
+        var result = await _infra.BuildAgentProviderConfigsAsync(
             RepoProviderId, AgentProviderId, BrainProviderId, null, _logger, CancellationToken.None);
 
         result.Should().HaveCount(3);
@@ -101,7 +99,7 @@ public class ProviderConfigBuilderTests
     {
         SetupConfigStore();
 
-        var result = await _builder.BuildAgentProviderConfigsAsync(
+        var result = await _infra.BuildAgentProviderConfigsAsync(
             RepoProviderId, AgentProviderId, null, PipelineProviderId, _logger, CancellationToken.None);
 
         result.Should().HaveCount(3);
@@ -113,7 +111,7 @@ public class ProviderConfigBuilderTests
     {
         SetupConfigStore();
 
-        var result = await _builder.BuildAgentProviderConfigsAsync(
+        var result = await _infra.BuildAgentProviderConfigsAsync(
             RepoProviderId, AgentProviderId, BrainProviderId, PipelineProviderId, _logger, CancellationToken.None);
 
         result.Should().HaveCount(4);
@@ -134,7 +132,7 @@ public class ProviderConfigBuilderTests
         _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new[] { CreateConfig(AgentProviderId, ProviderKind.Agent) });
 
-        var result = await _builder.BuildAgentProviderConfigsAsync(
+        var result = await _infra.BuildAgentProviderConfigsAsync(
             RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None,
             additionalRepoProviderIds: new[] { additionalRepoId });
 
@@ -148,7 +146,7 @@ public class ProviderConfigBuilderTests
         SetupConfigStore();
 
         // Pass the primary repo ID again as an additional — should be deduplicated
-        var result = await _builder.BuildAgentProviderConfigsAsync(
+        var result = await _infra.BuildAgentProviderConfigsAsync(
             RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None,
             additionalRepoProviderIds: new[] { RepoProviderId, RepoProviderId });
 
@@ -166,7 +164,7 @@ public class ProviderConfigBuilderTests
     {
         SetupConfigStore();
 
-        var result = await _builder.BuildAgentProviderConfigsAsync(
+        var result = await _infra.BuildAgentProviderConfigsAsync(
             RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None,
             additionalRepoProviderIds: new[] { null!, "", "  " });
 
@@ -186,7 +184,7 @@ public class ProviderConfigBuilderTests
         _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync(BrainProviderId, ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
 
-        var result = await _builder.BuildAgentProviderConfigsAsync(
+        var result = await _infra.BuildAgentProviderConfigsAsync(
             RepoProviderId, AgentProviderId, BrainProviderId, null, _logger, CancellationToken.None);
 
         // Brain is optional (required:false) — should gracefully exclude it
@@ -203,7 +201,7 @@ public class ProviderConfigBuilderTests
         _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync(RepoProviderId, ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
 
-        var act = () => _builder.BuildAgentProviderConfigsAsync(
+        var act = () => _infra.BuildAgentProviderConfigsAsync(
             RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>();
@@ -229,7 +227,7 @@ public class ProviderConfigBuilderTests
             .Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), RepoProviderId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(vendedConfigs);
 
-        var result = await _builder.PrepareProviderConfigsAsync(
+        var result = await _infra.PrepareProviderConfigsAsync(
             RepoProviderId, AgentProviderId, null, null, _logger, CancellationToken.None);
 
         // Should return the token-vended configs, not the raw ones
