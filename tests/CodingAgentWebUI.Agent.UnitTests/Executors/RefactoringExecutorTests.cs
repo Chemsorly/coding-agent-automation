@@ -733,4 +733,104 @@ public class RefactoringExecutorTests : IDisposable
         capturedLabels.Should().Contain("agent:generated");
         capturedLabels.Should().NotContain("agent:next");
     }
+
+    // TODO: This test verifies each criterion appears as a checkbox but does not assert positional ordering
+    // (i.e., that criteria appear under the "## Acceptance Criteria" heading and before "---"). A section-
+    // ordering bug could cause criteria to render in the wrong section without failing this test.
+    [Fact]
+    public void FormatIssueBody_WithPopulatedAcceptanceCriteria_RendersAllItemsAsCheckboxes()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            AcceptanceCriteria = ["Criterion A", "Criterion B", "Criterion C"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- [ ] Criterion A");
+        body.Should().Contain("- [ ] Criterion B");
+        body.Should().Contain("- [ ] Criterion C");
+        body.Should().NotContain("Refactoring applied without changing observable behavior");
+        body.Should().NotContain("All existing tests continue to pass");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNullAcceptanceCriteria_RendersFallbackAC()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            AcceptanceCriteria = null
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- [ ] Refactoring applied without changing observable behavior");
+        body.Should().Contain("- [ ] All existing tests continue to pass");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithEmptyAcceptanceCriteria_RendersFallbackAC()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            AcceptanceCriteria = []
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- [ ] Refactoring applied without changing observable behavior");
+        body.Should().Contain("- [ ] All existing tests continue to pass");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNullEntriesInAcceptanceCriteria_SkipsNulls()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            AcceptanceCriteria = ["valid one", null!, "another valid"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- [ ] valid one");
+        body.Should().Contain("- [ ] another valid");
+    }
+
+    // TODO: No test verifies the boundary condition where AcceptanceCriteria contains exactly 1 item or
+    // more than 4 items. The issue specifies "Range: 2-4 criteria per proposal" but the rendering logic
+    // doesn't enforce this range. Consider adding tests documenting that single-item lists render correctly
+    // without falling through to the fallback.
+    [Fact]
+    public void FormatIssueBody_SanitizesAcceptanceCriteriaEntries()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            AcceptanceCriteria = ["@admin injection", "<script>xss</script>"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- [ ] @\u200Badmin injection");
+        body.Should().Contain("- [ ] &lt;script>xss&lt;/script>");
+    }
 }
