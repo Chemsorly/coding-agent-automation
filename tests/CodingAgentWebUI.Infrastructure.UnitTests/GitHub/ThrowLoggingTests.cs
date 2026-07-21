@@ -13,6 +13,7 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.GitHub;
 /// Verifies that logging is emitted before throw statements in GitHub provider classes.
 /// Tests cover: ParseIssueIdentifier, ValidateAsync, and rate-limit wrapping paths.
 /// </summary>
+[Collection("StaticLogger")]
 public class ThrowLoggingTests : IDisposable
 {
     private readonly CollectingSink _sink;

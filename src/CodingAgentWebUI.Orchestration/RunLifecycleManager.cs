@@ -155,7 +155,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task<PipelineRun?> CancelRunAsync(RunId runId, CancellationToken ct)
+    public async Task<PipelineRun?> CancelRunAsync(RunId runId, CancellationToken ct, string? failureReason = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(runId.Value);
 
@@ -167,6 +167,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         }
 
         // 1. Mark the run as cancelled
+        if (failureReason is not null)
+            run.FailureReason = failureReason;
         run.MarkCompleted();
         run.CurrentStep = PipelineStep.Cancelled;
 

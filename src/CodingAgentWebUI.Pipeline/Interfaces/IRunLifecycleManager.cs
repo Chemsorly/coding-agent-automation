@@ -47,7 +47,7 @@ public interface IRunLifecycleManager
 
     /// <summary>
     /// Atomically cancels a run. Performs in order:
-    /// 1. Marks the PipelineRun as Cancelled (CompletedAt, CurrentStep)
+    /// 1. Marks the PipelineRun as Cancelled (sets FailureReason if provided, CompletedAt, CurrentStep)
     /// 2. Removes from in-memory active runs
     /// 3. Transitions the DB WorkItem to Cancelled (DB mode only)
     /// 4. Persists to run history
@@ -57,7 +57,7 @@ public interface IRunLifecycleManager
     ///
     /// Returns the removed PipelineRun, or null if not found.
     /// </summary>
-    Task<PipelineRun?> CancelRunAsync(RunId runId, CancellationToken ct);
+    Task<PipelineRun?> CancelRunAsync(RunId runId, CancellationToken ct, string? failureReason = null);
 
     /// <summary>
     /// Signals that an agent has accepted a run. Performs in order:
