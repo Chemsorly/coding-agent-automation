@@ -147,6 +147,37 @@ public sealed partial class AgentJobDispatcher
     }
 
     /// <summary>
+    /// Builds a synthetic <see cref="IssueDetail"/> and <see cref="ParsedIssue"/> from metadata
+    /// (e.g., PR title/description or epic title). Used by review and decomposition dispatch paths
+    /// which don't have a real issue to fetch from the provider.
+    /// </summary>
+    private static (IssueDetail IssueDetail, ParsedIssue ParsedIssue) BuildSyntheticIssueContext(
+        string identifier, string title, string? description)
+    {
+        var desc = description ?? string.Empty;
+        var issueDetail = new IssueDetail
+        {
+            Identifier = identifier,
+            Title = title,
+            Description = desc,
+            Labels = Array.Empty<string>()
+        };
+        var parsedIssue = new IssueDescriptionParser().Parse(desc);
+        return (issueDetail, parsedIssue);
+    }
+
+    /// <summary>
+    /// Sets common project and profile metadata on a <see cref="PipelineRun"/>.
+    /// Shared extraction point used by all three dispatch paths.
+    /// </summary>
+    private static void ApplyRunMetadata(PipelineRun run, PipelineProject project, AgentProfile profile)
+    {
+        run.ProjectId = project.Id;
+        run.ProjectName = project.Name;
+        run.ResolvedProfileId = profile.Id;
+    }
+
+    /// <summary>
     /// Shared prologue for all dispatch paths: ensures a non-null project, resolves the agent profile,
     /// and extracts the agent provider config ID. Returns <c>null</c> if profile resolution fails.
     /// </summary>
@@ -243,9 +274,7 @@ public sealed partial class AgentJobDispatcher
             }
 
             // Set project context and resolved metadata on the run
-            run.ProjectId = proj.Id;
-            run.ProjectName = proj.Name;
-            run.ResolvedProfileId = profile.Id;
+            ApplyRunMetadata(run, proj, profile);
             run.ResolvedQualityGateConfigIds = resolvedQgcs.Select(q => q.Id).ToList().AsReadOnly();
             run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
             run.IssueTitle = issueContext.IssueDetail.Title;
@@ -339,8 +368,7 @@ public sealed partial class AgentJobDispatcher
                 linkedIssueContexts: linkedIssueContexts.Count > 0 ? linkedIssueContexts : null);
             run.RepositoryName = reservation.RepositoryName;
             run.ModelName = reservation.ModelName;
-            run.ProjectId = proj.Id;
-            run.ProjectName = proj.Name;
+            ApplyRunMetadata(run, proj, profile);
             run.LinkedPullRequest = new LinkedPullRequest
             {
                 Number = int.TryParse(request.PrIdentifier, out var prNum) ? prNum : 0,
@@ -352,8 +380,7 @@ public sealed partial class AgentJobDispatcher
             // Atomically replace the sentinel with the fully-populated run
             _orchestration.RegisterDispatchedRun(run);
 
-            // Populate resolved profile and reviewer config IDs on the run
-            run.ResolvedProfileId = profile.Id;
+            // Populate resolved reviewer config IDs on the run
             run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
 
             // Build and prepare provider configs for the agent
@@ -365,14 +392,8 @@ public sealed partial class AgentJobDispatcher
             // This ensures the label only changes when an agent actually accepts the job.
 
             // Build a synthetic IssueDetail and ParsedIssue from PR metadata for the job assignment
-            var syntheticIssueDetail = new IssueDetail
-            {
-                Identifier = request.PrIdentifier,
-                Title = request.PrTitle,
-                Description = request.PrDescription ?? string.Empty,
-                Labels = Array.Empty<string>()
-            };
-            var syntheticParsedIssue = new IssueDescriptionParser().Parse(request.PrDescription ?? string.Empty);
+            var (syntheticIssueDetail, syntheticParsedIssue) = BuildSyntheticIssueContext(
+                request.PrIdentifier, request.PrTitle, request.PrDescription);
 
             await BuildAndSendAsync(
                 agent, run, profile,
@@ -465,24 +486,14 @@ public sealed partial class AgentJobDispatcher
             run.RepositoryName = reservation.RepositoryName;
             run.ModelName = reservation.ModelName;
             run.WorkspacePath = workspacePath;
-            run.ProjectId = proj.Id;
-            run.ProjectName = proj.Name;
+            ApplyRunMetadata(run, proj, profile);
 
             // Atomically replace the sentinel with the fully-populated run
             _orchestration.RegisterDispatchedRun(run);
 
-            // Populate resolved profile ID on the run
-            run.ResolvedProfileId = profile.Id;
-
             // Build a synthetic IssueDetail from epic metadata for the job assignment
-            var syntheticIssueDetail = new IssueDetail
-            {
-                Identifier = epicIdentifier,
-                Title = epicTitle,
-                Description = string.Empty,
-                Labels = Array.Empty<string>()
-            };
-            var syntheticParsedIssue = new IssueDescriptionParser().Parse(string.Empty);
+            var (syntheticIssueDetail, syntheticParsedIssue) = BuildSyntheticIssueContext(
+                epicIdentifier, epicTitle, null);
 
             // Build DecompositionProjectContext for cross-repo decomposition (project-level epics only).
             // Per-template decomposition (EpicIssueProviderId is null) should NOT get project context.
