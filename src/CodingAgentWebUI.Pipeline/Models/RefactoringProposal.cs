@@ -29,4 +29,11 @@ public sealed class RefactoringProposal
     /// Resolved to "Depends on #N" lines during sequential issue creation via <see cref="CodingAgentWebUI.Pipeline.Services.DependencyResolver"/>.
     /// </summary>
     public IReadOnlyList<string>? DependsOn { get; init; }
+
+    /// <summary>
+    /// Proposal-specific acceptance criteria validated by the review agent.
+    /// Each entry becomes a checkbox in the GitHub issue body.
+    /// Must be verifiable from the PR diff — no subjective or unmeasurable claims.
+    /// </summary>
+    public IReadOnlyList<string>? AcceptanceCriteria { get; init; }
 }

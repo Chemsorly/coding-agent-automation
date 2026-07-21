@@ -7,6 +7,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
+using CodingAgentWebUI.Services;
 using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.DependencyInjection;
@@ -52,7 +53,9 @@ public class FeedbackSectionComponentTests : BunitContext
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(new JobDeduplicationGuardService(registry, mockLogger.Object));
-        Services.AddSingleton(new OrchestratorRunService(mockLogger.Object));
+        var runService = new OrchestratorRunService(mockLogger.Object);
+        Services.AddSingleton(runService);
+        Services.AddSingleton<IOrchestratorRunService>(runService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockHistoryService.Object);
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
@@ -68,6 +71,9 @@ public class FeedbackSectionComponentTests : BunitContext
             Services.BuildServiceProvider().GetRequiredService<JobDeduplicationGuardService>()));
 
         Services.AddSingleton(TimeProvider.System);
+
+        // Page service — resolved via DI with all dependencies above
+        Services.AddScoped<AgentMonitoringPageService>();
     }
 
     private static PipelineRunSummary CreateSummaryWithFeedback(RunFeedback? feedback)
