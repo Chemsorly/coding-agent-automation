@@ -237,6 +237,38 @@ public sealed class ConsolidationServiceTests : IDisposable
         second.Should().NotBeNull();
     }
 
+    [Theory]
+    [InlineData(ConsolidationRunStatus.Succeeded)]
+    [InlineData(ConsolidationRunStatus.Failed)]
+    [InlineData(ConsolidationRunStatus.Cancelled)]
+    public async Task UpdateRunAsync_TerminalStatus_RejectsSubsequentOverwrite(ConsolidationRunStatus terminalStatus)
+    {
+        // Reproduces production bug: progress timeout monitor calls UpdateRunAsync(Failed)
+        // after the run has already been marked Succeeded by the completion handler.
+        // UpdateRunAsync must guard against overwriting terminal statuses.
+        var sut = CreateSut();
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.RefactoringDetection, "tmpl-1", CancellationToken.None);
+        run.Should().NotBeNull();
+
+        // Mark as terminal
+        await sut.UpdateRunAsync(
+            run!.RunId, terminalStatus, "Completed normally", CancellationToken.None);
+
+        // Attempt to overwrite with a different status (simulates timeout monitor firing late)
+        await sut.UpdateRunAsync(
+            run.RunId, ConsolidationRunStatus.Failed, "Timeout exceeded", CancellationToken.None);
+
+        // Assert: original terminal status is preserved, NOT overwritten
+        var history = await sut.GetRunHistoryAsync(CancellationToken.None);
+        var persisted = history.First(r => r.RunId == run.RunId);
+        persisted.Status.Should().Be(terminalStatus,
+            "UpdateRunAsync must not overwrite a terminal status — the progress timeout fired after completion");
+        persisted.Summary.Should().Be("Completed normally",
+            "Summary must not be overwritten once the run reaches a terminal state");
+    }
+
     #endregion
 
     #region GetRunHistoryAsync — returns ordered results

@@ -620,6 +620,38 @@ public class AgentMonitoringComponentTests : BunitContext
     }
 
     /// <summary>
+    /// Verifies that when RefreshTick throws, the component automatically re-renders
+    /// to show the staleness warning without external StateHasChanged calls.
+    /// Unlike FreshnessIndicator_ShowsRefreshFailed_WhenExceptionOccurs (which manually
+    /// triggers StateHasChanged via reflection), this test proves the fix works end-to-end.
+    /// </summary>
+    [Fact]
+    public async Task FreshnessIndicator_RendersWarningAutomatically_WhenRefreshFails()
+    {
+        // FakeTimeProvider registered for consistency with other freshness tests in this class.
+        // The System.Threading.Timer uses real wall-clock time (not injected TimeProvider),
+        // so this doesn't affect timer firing — it only controls Clock.GetUtcNow() in the render path.
+        var fakeTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        Services.AddSingleton<TimeProvider>(fakeTime);
+
+        var cut = Render<AgentMonitoring>();
+
+        // After init succeeds, make subsequent refreshes throw
+        _mockActiveRunQuery.Setup(s => s.GetActiveRunsAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("connection lost"));
+
+        // Wait for the timer to fire and the component to self-render with the failure state.
+        // We do NOT manually invoke StateHasChanged via reflection — the fix should make
+        // the component re-render itself.
+        cut.WaitForAssertion(() =>
+        {
+            var indicator = cut.Find(".freshness-indicator");
+            Assert.Contains("freshness-warning", indicator.ClassName);
+            Assert.Contains("(refresh failed)", cut.Markup);
+        }, timeout: TimeSpan.FromSeconds(10));
+    }
+
+    /// <summary>
     /// Regression test: RefreshTick must poll consolidation run status so completed runs
     /// disappear from Active Runs without a full page reload.
     /// Before the fix, RefreshTick called RefreshDataAsync(includeConsolidation: false),
