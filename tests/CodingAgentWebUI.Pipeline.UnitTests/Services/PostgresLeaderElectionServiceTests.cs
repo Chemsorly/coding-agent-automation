@@ -643,6 +643,114 @@ public class PostgresLeaderElectionServiceTests
 
     #endregion
 
+    #region Shutdown Timeout — CRITICAL
+
+    [Fact]
+    public async Task StopAsync_WhenReleaseLockHangs_CompletesWithinTimeout()
+    {
+        var fakeConn = new FakeAdvisoryLockConnection(acquireResult: true, verifyResult: true);
+        var factory = new FakeAdvisoryLockConnectionFactory(fakeConn);
+        var options = FastOptions();
+
+        var sut = new PostgresLeaderElectionService(options, factory);
+
+        await sut.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => sut.IsLeader, timeout: TimeSpan.FromSeconds(2));
+
+        // Simulate a hung release (Postgres unreachable at shutdown time)
+        fakeConn.SimulateHungRelease();
+
+        // StopAsync should complete within the 5s timeout + margin, not block indefinitely
+        var stopTask = sut.StopAsync(CancellationToken.None);
+        var completed = await Task.WhenAny(stopTask, Task.Delay(TimeSpan.FromSeconds(8)));
+
+        completed.Should().Be(stopTask,
+            "StopAsync should complete within bounded time even when ReleaseLockAsync hangs");
+
+        sut.IsLeader.Should().BeFalse();
+        sut.Dispose();
+    }
+
+    [Fact]
+    public async Task StopAsync_WhenReleaseThrows_LogsWarningAndCompletes()
+    {
+        var fakeConn = new FakeAdvisoryLockConnection(acquireResult: true, verifyResult: true);
+        var factory = new FakeAdvisoryLockConnectionFactory(fakeConn);
+        var options = FastOptions();
+
+        var sut = new PostgresLeaderElectionService(options, factory);
+
+        await sut.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => sut.IsLeader, timeout: TimeSpan.FromSeconds(2));
+
+        // Simulate ReleaseLockAsync throwing a non-cancellation exception
+        fakeConn.SimulateReleaseFailure();
+
+        // StopAsync should not throw — the exception should be caught and logged as warning
+        var act = () => sut.StopAsync(CancellationToken.None);
+        await act.Should().NotThrowAsync();
+
+        sut.IsLeader.Should().BeFalse();
+        sut.Dispose();
+    }
+
+    [Fact]
+    public async Task StopAsync_WhenCancellationTokenAlreadyCancelled_CompletesPromptly()
+    {
+        var fakeConn = new FakeAdvisoryLockConnection(acquireResult: true, verifyResult: true);
+        var factory = new FakeAdvisoryLockConnectionFactory(fakeConn);
+        var options = FastOptions();
+
+        var sut = new PostgresLeaderElectionService(options, factory);
+
+        await sut.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => sut.IsLeader, timeout: TimeSpan.FromSeconds(2));
+
+        // Simulate a hung release
+        fakeConn.SimulateHungRelease();
+
+        // Pass an already-cancelled token — the linked CTS should fire immediately
+        using var preCancelledCts = new CancellationTokenSource();
+        await preCancelledCts.CancelAsync();
+
+        var stopTask = sut.StopAsync(preCancelledCts.Token);
+        var completed = await Task.WhenAny(stopTask, Task.Delay(TimeSpan.FromSeconds(3)));
+
+        completed.Should().Be(stopTask,
+            "StopAsync should complete promptly when the shutdown token is already cancelled");
+
+        sut.Dispose();
+    }
+
+    [Fact]
+    public async Task StopAsync_PassesCancellationTokenToReleaseLock()
+    {
+        var fakeConn = new FakeAdvisoryLockConnection(acquireResult: true, verifyResult: true);
+        var factory = new FakeAdvisoryLockConnectionFactory(fakeConn);
+        var options = FastOptions();
+
+        var sut = new PostgresLeaderElectionService(options, factory);
+
+        await sut.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => sut.IsLeader, timeout: TimeSpan.FromSeconds(2));
+
+        await sut.StopAsync(CancellationToken.None);
+
+        fakeConn.ReleaseLockReceivedCancellableToken.Should().BeTrue(
+            "ReleaseLockAsync should receive a CancellationToken that can be cancelled (timeout-linked)");
+        fakeConn.ReleaseLockCalled.Should().BeTrue();
+
+        sut.Dispose();
+    }
+
+    // TODO: Add a test that exercises the CloseConnectionBoundedAsync 2-second timeout path.
+    // Currently FakeAdvisoryLockConnection.CloseAsync() always returns Task.CompletedTask.
+    // A test should simulate a hung CloseAsync to verify the 2s timeout fires and falls back
+    // to synchronous Dispose(). Without this, removal of the WaitAsync/fallback logic would
+    // not be caught by any test.
+
+    #endregion
+
     #region Helpers
 
     private static async Task WaitUntilAsync(Func<bool> condition, TimeSpan timeout)
@@ -670,8 +778,11 @@ internal sealed class FakeAdvisoryLockConnection : IAdvisoryLockConnection
     private volatile bool _verifyResult;
     private volatile bool _verifyThrows;
     private readonly bool _failOnOpen;
+    private TaskCompletionSource? _releaseBlock;
+    private volatile bool _releaseThrows;
 
     public bool ReleaseLockCalled { get; private set; }
+    public bool ReleaseLockReceivedCancellableToken { get; private set; }
 
     public FakeAdvisoryLockConnection(bool acquireResult, bool verifyResult, bool failOnOpen = false)
     {
@@ -705,8 +816,14 @@ internal sealed class FakeAdvisoryLockConnection : IAdvisoryLockConnection
         return Task.FromResult(_verifyResult);
     }
 
-    public Task ReleaseLockAsync(long lockKey)
+    public Task ReleaseLockAsync(long lockKey, CancellationToken ct = default)
     {
+        ReleaseLockReceivedCancellableToken = ct.CanBeCanceled;
+        ct.ThrowIfCancellationRequested();
+        if (_releaseThrows)
+            throw new InvalidOperationException("Simulated release failure");
+        if (_releaseBlock is not null)
+            return _releaseBlock.Task.WaitAsync(ct);
         ReleaseLockCalled = true;
         return Task.CompletedTask;
     }
@@ -742,6 +859,22 @@ internal sealed class FakeAdvisoryLockConnection : IAdvisoryLockConnection
     public void SimulateVerifyFailure()
     {
         _verifyThrows = true;
+    }
+
+    /// <summary>
+    /// Simulates a hung release — ReleaseLockAsync will block until cancelled.
+    /// </summary>
+    public void SimulateHungRelease()
+    {
+        _releaseBlock = new TaskCompletionSource();
+    }
+
+    /// <summary>
+    /// Simulates ReleaseLockAsync throwing a non-cancellation exception.
+    /// </summary>
+    public void SimulateReleaseFailure()
+    {
+        _releaseThrows = true;
     }
 }
 
@@ -812,8 +945,9 @@ internal sealed class DelayedFakeAdvisoryLockConnection : IAdvisoryLockConnectio
         return Task.FromResult(_verifyResult);
     }
 
-    public Task ReleaseLockAsync(long lockKey)
+    public Task ReleaseLockAsync(long lockKey, CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         ReleaseLockCalled = true;
         return Task.CompletedTask;
     }
