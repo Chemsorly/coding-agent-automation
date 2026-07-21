@@ -9,7 +9,7 @@ public static class DefaultPrompts
     public const string CodeReview =
         "Review the changes against the original issue requirements. Use a sub-agent for the review.\n" +
         "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
-        "CHECK FOR:\n" +
+        "FOCUS AREAS (flag only when a concrete defect exists):\n" +
         "- Unhandled null references and exception paths\n" +
         "- Off-by-one errors in loops and collections\n" +
         "- Race conditions in async/concurrent code\n" +
@@ -38,7 +38,7 @@ public static class DefaultPrompts
     public const string CorrectnessReview =
         "Review the changes against the original issue requirements. Use a sub-agent for the review. " +
         "Output findings as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
-        "CHECK FOR:\n" +
+        "FOCUS AREAS (flag only when a concrete defect exists):\n" +
         "- Unhandled null references and exception paths\n" +
         "- Off-by-one errors in loops and collections\n" +
         "- Race conditions in async code\n" +
@@ -58,7 +58,7 @@ public static class DefaultPrompts
     public const string DotNetSpecialistReview =
         "Review the changes for .NET-specific issues. Output findings as a numbered list " +
         "with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
-        "CHECK FOR:\n" +
+        "FOCUS AREAS (flag only when a concrete defect exists):\n" +
         "- IDisposable resources not properly disposed (missing using/await using)\n" +
         "- Async/await deadlock patterns (sync-over-async, .Result, .Wait())\n" +
         "- DI lifetime mismatches (scoped service injected into singleton)\n" +
@@ -78,7 +78,7 @@ public static class DefaultPrompts
     public const string SecurityReview =
         "Review the changes for security issues. Output findings as a numbered list with " +
         "severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
-        "CHECK FOR:\n" +
+        "FOCUS AREAS (flag only when a concrete defect exists):\n" +
         "- Hardcoded credentials, API keys, connection strings, or tokens\n" +
         "- SQL injection (string concatenation or interpolation in queries)\n" +
         "- Path traversal (user input used in file paths without validation)\n" +
@@ -104,7 +104,7 @@ public static class DefaultPrompts
         "Review the changes for test quality issues. Focus exclusively on whether tests are " +
         "meaningful, effective, and actually validate the intended behavior. Output findings " +
         "as a numbered list with severity [CRITICAL], [WARNING], or [SUGGESTION].\n\n" +
-        "CHECK FOR:\n" +
+        "FOCUS AREAS (flag only when a concrete defect exists):\n" +
         "- Tautological tests (assertions that pass regardless of implementation, e.g. Assert.True(true), asserting the mock returns what you told it to return)\n" +
         "- Tests that don't exercise the changed behavior (test exists but wouldn't fail if the fix were reverted)\n" +
         "- Assertions that are too weak (checking only non-null or collection non-empty when specific values matter)\n" +
