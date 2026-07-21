@@ -5,21 +5,14 @@ using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Infrastructure.Persistence.Stores;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
-using k8s;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Resilience;
-using Polly;
-using Polly.CircuitBreaker;
 using Polly.Registry;
-using Polly.Retry;
 using Serilog;
 using StackExchange.Redis;
 
@@ -31,7 +24,7 @@ namespace CodingAgentWebUI;
 /// - DB + SignalR mode → PostgresConfigurationStore + SignalRWorkDistributor
 /// - DB + Kubernetes mode → full K8s services with DispatchService + ReconciliationService
 /// </summary>
-public static class WorkDistributionRegistration
+public static partial class WorkDistributionRegistration
 {
     /// <summary>
     /// Configures work distribution mode and registers all mode-dependent services.
@@ -46,42 +39,7 @@ public static class WorkDistributionRegistration
 
         if (string.IsNullOrEmpty(connectionString))
         {
-            // Legacy mode — no DB. All current behavior preserved.
-            // IConfigurationStore already registered via AddInfrastructureServices.
-            // IWorkDistributor wraps existing AgentJobDispatcher.
-            services.AddSingleton<IWorkDistributor>(sp => new LegacyWorkDistributor(
-                sp.GetRequiredService<IJobDispatcher>(),
-                sp.GetRequiredService<JobDeduplicationGuardService>(),
-                sp.GetRequiredService<IOrchestratorRunService>(),
-                Log.Logger,
-                new Lazy<IConsolidationDispatcher>(() => sp.GetRequiredService<IConsolidationDispatcher>())));
-            services.AddSingleton<IActiveRunQueryService>(sp => new InMemoryActiveRunQueryService(
-                sp.GetRequiredService<IOrchestratorRunService>()));
-            services.AddSingleton<IConsolidationRunStore>(sp =>
-                new Pipeline.Services.FileSystemConsolidationRunStore(
-                    Pipeline.Models.PipelineConstants.ConsolidationRunsDirectory));
-            services.AddSingleton<ILoopStateStore>(sp =>
-                new Pipeline.Services.FileSystemLoopStateStore(
-                    Path.Combine(Pipeline.Models.PipelineConstants.ConfigBaseDirectory, "loop-state.json")));
-            services.AddSingleton<IHarnessSuggestionStore>(sp =>
-                new Pipeline.Services.FileSystemHarnessSuggestionStore(
-                    Pipeline.Models.PipelineConstants.HarnessSuggestionsPath));
-            services.AddDistributedLockProvider(null);
-            // Queue visibility: wraps in-memory JobDeduplicationGuardService
-            services.AddSingleton<IPendingWorkQuery>(sp =>
-                new LegacyPendingWorkQuery(sp.GetRequiredService<JobDeduplicationGuardService>()));
-            // RunLifecycleManager (Legacy — no WorkItemTransitionService, no K8s cleanup)
-            services.AddSingleton<IJobCleanupStrategy>(new NoOpJobCleanup());
-            services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
-                sp.GetRequiredService<IOrchestratorRunService>(),
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<AgentRegistryService>(),
-                sp.GetRequiredService<ILabelService>(),
-                sp.GetRequiredService<JobDeduplicationGuardService>(),
-                Log.Logger,
-                workItemTransition: null,
-                jobCleanup: sp.GetRequiredService<IJobCleanupStrategy>()));
-            Log.Information("WorkDistribution: Legacy mode (no database). Using JsonConfigurationStore + LegacyWorkDistributor");
+            RegisterLegacyMode(services);
             return services;
         }
 
@@ -189,12 +147,7 @@ public static class WorkDistributionRegistration
         // Internal MemoryCache + _pipelineConfigCache only work correctly as singleton.
         services.AddSingleton<IConfigurationStore>(sp =>
             new PostgresConfigurationStore(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
-        services.AddSingleton<IPipelineConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
-        services.AddSingleton<IProviderConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
-        services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<IConfigurationStore>());
-        services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
-        services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
-        services.AddSingleton<IProjectStore>(sp => sp.GetRequiredService<IConfigurationStore>());
+        RegisterConfigStoreSubInterfaces(services);
 
         // ── Consolidation run persistence (DB-backed) ───────────────────────
         services.AddSingleton<IConsolidationRunStore>(sp =>
@@ -251,194 +204,26 @@ public static class WorkDistributionRegistration
         return services;
     }
 
-    private static void RegisterKubernetesMode(IServiceCollection services, IConfiguration configuration)
-    {
-        // K8s client
-        services.AddSingleton<IKubernetes>(_ =>
-        {
-            var config = KubernetesClientConfiguration.InClusterConfig();
-            return new Kubernetes(config);
-        });
-
-        // Leader election
-        services.Configure<LeaderElectionOptions>(configuration.GetSection(LeaderElectionOptions.SectionName));
-        services.AddSingleton<LeaderElectionService>();
-        services.AddSingleton<ILeaderElectionService>(sp => sp.GetRequiredService<LeaderElectionService>());
-        services.AddHostedService(sp => sp.GetRequiredService<LeaderElectionService>());
-
-        // Work distributor (singleton — uses IDbContextFactory for context-per-operation)
-        services.AddSingleton<IWorkDistributor>(sp => new KubernetesWorkDistributor(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<KubernetesWorkDistributor>>()));
-
-        // Dispatch + Reconciliation (under leader election)
-        services.AddSingleton<IKubernetesJobClient>(sp => new KubernetesJobClient(sp.GetRequiredService<IKubernetes>()));
-        services.AddSingleton<IJobCleanupStrategy>(sp => new KubernetesJobCleanup(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<IKubernetesJobClient>(),
-            configuration.GetValue<string>("WorkDistribution:Namespace")
-                ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
-                ?? "default",
-            Log.Logger));
-        services.AddHostedService(sp => new DispatchService(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<ILeaderElectionService>(),
-            sp.GetRequiredService<IKubernetesJobClient>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<IConfiguration>(),
-            sp.GetService<ILabelService>(),
-            sp.GetService<ITokenVendingService>(),
-            sp.GetService<IConsolidationRunStore>(),
-            sp.GetService<IConsolidationService>(),
-            sp.GetService<IProviderConfigStore>(),
-            sp.GetService<IAgentProfileStore>(),
-            sp.GetService<IProjectStore>(),
-            sp.GetService<IPipelineConfigStore>(),
-            sp.GetService<IConsolidationJobPreparationService>(),
-            sp.GetService<IOrchestratorRunService>()));
-        services.AddHostedService(sp => new ReconciliationService(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<ILeaderElectionService>(),
-            sp.GetRequiredService<IKubernetes>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<IConfiguration>(),
-            sp.GetService<ILabelService>(),
-            sp.GetService<IRunLifecycleManager>(),
-            sp.GetService<IConsolidationService>(),
-            sp.GetService<IConfigurationStore>(),
-            sp.GetService<IJobDeduplicationGuard>()));
-
-        // HeartbeatMonitorService NOT registered in K8s mode (agent liveness via ReconciliationService)
-        // JobQueueDrainService NOT registered (work distribution via IWorkDistributor)
-
-        // Queue visibility: queries WorkItems table for Pending status
-        services.AddSingleton<IPendingWorkQuery>(sp =>
-            new DbPendingWorkQuery(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
-
-        Log.Information("WorkDistribution: Kubernetes mode — DispatchService + ReconciliationService + LeaderElection registered");
-    }
-
-    private static void RegisterSignalRMode(IServiceCollection services, IConfiguration configuration)
-    {
-        // No K8s Jobs in SignalR mode — register no-op cleanup strategy
-        services.AddSingleton<IJobCleanupStrategy>(new NoOpJobCleanup());
-
-        // ── Postgres advisory lock leader election (multi-replica safety) ────
-        // TODO: No ILeaderElectionService fallback registered in SignalR mode when connectionString
-        // is null/empty. If SignalR mode is active without a DB connection string, any service that
-        // resolves ILeaderElectionService will fail at runtime. Consider registering a no-op
-        // implementation as a fallback (single-instance assumed).
-        var connectionString = Services.DatabaseConnectionResolver.Resolve(configuration);
-        if (!string.IsNullOrEmpty(connectionString))
-        {
-            services.Configure<PostgresLeaderElectionOptions>(
-                configuration.GetSection(PostgresLeaderElectionOptions.SectionName));
-            services.AddSingleton<PostgresLeaderElectionService>(sp =>
-                new PostgresLeaderElectionService(
-                    connectionString,
-                    sp.GetRequiredService<IOptions<PostgresLeaderElectionOptions>>()));
-            services.AddSingleton<ILeaderElectionService>(sp =>
-                sp.GetRequiredService<PostgresLeaderElectionService>());
-            services.AddHostedService(sp => sp.GetRequiredService<PostgresLeaderElectionService>());
-        }
-
-        // Agent resolver (singleton — selects idle label-compatible agent for SignalR push)
-        services.AddSingleton<ISignalRWorkDistributorAgentResolver>(sp => new SignalRWorkDistributorAgentResolver(
-            sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<JobDeduplicationGuardService>()));
-
-        // Work distributor (singleton — uses IDbContextFactory for context-per-operation)
-        services.AddSingleton<IWorkDistributor>(sp => new SignalRWorkDistributor(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<IAgentCommunication>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>(),
-            sp.GetService<Pipeline.Interfaces.IRunLifecycleManager>(),
-            sp.GetService<Pipeline.Interfaces.IAgentCancellationSender>()));
-
-        // HeartbeatMonitorService remains registered (handled by AddOrchestrationServices)
-        // Queue visibility: queries WorkItems table for Pending status
-        services.AddSingleton<IPendingWorkQuery>(sp =>
-            new DbPendingWorkQuery(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
-
-        // PendingWorkItemDrainService: drains Pending WorkItems to idle agents
-        services.AddSingleton<PendingWorkItemDrainService>(sp => new PendingWorkItemDrainService(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
-            sp.GetRequiredService<IAgentCommunication>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<IPendingWorkQuery>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>(),
-            sp.GetService<IProjectStore>(),
-            sp.GetRequiredService<IConsolidationDispatcher>(),
-            sp.GetRequiredService<IConsolidationRunStore>()));
-        services.AddHostedService(sp => sp.GetRequiredService<PendingWorkItemDrainService>());
-
-        Log.Information("WorkDistribution: SignalR mode — SignalRWorkDistributor + PendingWorkItemDrainService registered");
-    }
-
     /// <summary>
-    /// Registers two Polly resilience pipelines for DB operations:
-    /// - "db-request": 3 retries, 500ms exponential+jitter (~3.5s total) — for HTTP API endpoints
-    /// - "db-background": 5 retries, 1s→16s exponential (~31s total) — for DispatchService/ReconciliationService
-    /// Both include circuit breaker: open after 5 consecutive failures, half-open after 30s.
+    /// Registers all IConfigurationStore sub-interface forwarding registrations.
+    /// Ensures both JSON and Postgres paths register the same set of sub-interfaces.
+    /// MUST be called AFTER IConfigurationStore itself is registered.
     /// </summary>
-    private static void RegisterResiliencePipelines(IServiceCollection services)
+    internal static void RegisterConfigStoreSubInterfaces(IServiceCollection services)
     {
-        services.AddResiliencePipeline("db-request", builder =>
-        {
-            builder
-                .AddRetry(new RetryStrategyOptions
-                {
-                    MaxRetryAttempts = 3,
-                    Delay = TimeSpan.FromMilliseconds(500),
-                    BackoffType = DelayBackoffType.Exponential,
-                    UseJitter = true,
-                    ShouldHandle = new PredicateBuilder().Handle<Exception>(IsTransientDbException)
-                })
-                .AddCircuitBreaker(new CircuitBreakerStrategyOptions
-                {
-                    FailureRatio = 1.0, // open on 5 consecutive failures
-                    SamplingDuration = TimeSpan.FromSeconds(30),
-                    MinimumThroughput = 5,
-                    BreakDuration = TimeSpan.FromSeconds(30),
-                    ShouldHandle = new PredicateBuilder().Handle<Exception>(IsTransientDbException)
-                });
-        });
-
-        services.AddResiliencePipeline("db-background", builder =>
-        {
-            builder
-                .AddRetry(new RetryStrategyOptions
-                {
-                    MaxRetryAttempts = 5,
-                    Delay = TimeSpan.FromSeconds(1),
-                    MaxDelay = TimeSpan.FromSeconds(16),
-                    BackoffType = DelayBackoffType.Exponential,
-                    UseJitter = false,
-                    ShouldHandle = new PredicateBuilder().Handle<Exception>(IsTransientDbException)
-                })
-                .AddCircuitBreaker(new CircuitBreakerStrategyOptions
-                {
-                    FailureRatio = 1.0,
-                    SamplingDuration = TimeSpan.FromSeconds(30),
-                    MinimumThroughput = 5,
-                    BreakDuration = TimeSpan.FromSeconds(30),
-                    ShouldHandle = new PredicateBuilder().Handle<Exception>(IsTransientDbException)
-                });
-        });
+        services.AddSingleton<IPipelineConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
+        services.AddSingleton<IProviderConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
+        services.AddSingleton<IAgentProfileStore>(sp => sp.GetRequiredService<IConfigurationStore>());
+        services.AddSingleton<IQualityGateConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
+        services.AddSingleton<IReviewerConfigStore>(sp => sp.GetRequiredService<IConfigurationStore>());
+        services.AddSingleton<IProjectStore>(sp => sp.GetRequiredService<IConfigurationStore>());
     }
 
     /// <summary>
     /// Wires SignalR Redis backplane when SignalR:Redis:ConnectionString is configured.
     /// Without Redis, uses default in-memory transport (single replica / docker-compose).
+    /// Called for both DB modes (SignalR and Kubernetes) since the Redis backplane is for
+    /// the SignalR hub used by the web UI, not the work distribution mode.
     /// </summary>
     private static void ConfigureSignalRRedisBackplane(IServiceCollection services, IConfiguration configuration)
     {

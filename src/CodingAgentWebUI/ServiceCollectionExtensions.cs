@@ -35,12 +35,7 @@ public static class ServiceCollectionExtensions
         PipelineConfiguration pipelineConfig)
     {
         services.AddSingleton<IConfigurationStore>(configStore);
-        services.AddSingleton<IPipelineConfigStore>(configStore);
-        services.AddSingleton<IProviderConfigStore>(configStore);
-        services.AddSingleton<IAgentProfileStore>(configStore);
-        services.AddSingleton<IQualityGateConfigStore>(configStore);
-        services.AddSingleton<IReviewerConfigStore>(configStore);
-        services.AddSingleton<IProjectStore>(configStore);
+        WorkDistributionRegistration.RegisterConfigStoreSubInterfaces(services);
 
         services.AddSingleton<IProviderFactory>(sp => new ProviderFactory(sp.GetRequiredService<IPipelineConfigStore>()));
 
