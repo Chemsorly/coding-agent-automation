@@ -423,90 +423,19 @@ public sealed class DispatchService : BackgroundService
         }
 
         // Create K8s Job via JobSpecBuilder
-        try
-        {
-            var buildCtx = new JobSpecBuilder.BuildContext
-            {
-                WorkItemId = item.Id,
-                AgentSelector = item.AgentSelector,
-                TimeoutSeconds = item.TimeoutSeconds,
-                JobName = jobName,
-                ClaimedPvc = claimedPvc,
-                OrchestratorUrl = _options.OrchestratorUrl,
-                AgentApiKeySecretName = _options.AgentApiKeySecretName,
-                AgentServiceAccountName = _options.AgentServiceAccountName,
-                Namespace = _options.Namespace,
-                OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
-                ProjectSecrets = projectSecrets
-            };
-            var job = JobSpecBuilder.Build(template, buildCtx);
-            await _kubeClient.CreateJobAsync(job, _options.Namespace, ct);
-        }
-        catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
-        {
-            // 409 Conflict = Job already exists = success (idempotent)
-            Log.Information("DispatchService: K8s Job {JobName} already exists (409 Conflict), treating as success", jobName);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "DispatchService: failed to create K8s Job {JobName} for WorkItem {WorkItemId}", jobName, item.Id);
-            if (claimedPvc is not null)
-            {
-                workItem.ClaimedPvcName = null;
-                availablePvcs.Add(claimedPvc);
-                // TODO: SaveChangesAsync can throw DbUpdateConcurrencyException if another process modified
-                // the work item concurrently, which would bypass FailWorkItem. Window is narrow and this is
-                // strictly better than the prior behavior (permanent PVC orphan), but consider wrapping in try-catch.
-                await db.SaveChangesAsync(ct);
-            }
-            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
+        if (!await CreateK8sJobAsync(db, item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, "", ct))
             return;
-        }
 
         // Create per-job K8s Secret if project has secrets
-        if (projectSecrets is not null && projectSecrets.Count > 0)
-        {
-            try
-            {
-                await CreateJobSecretAsync(jobName, item.Id, projectSecrets, ct);
-            }
-            catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
-            {
-                // Secret already exists — idempotent
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "DispatchService: failed to create project-secrets K8s Secret for Job {JobName}", jobName);
-                // Non-fatal: job can still run without project secrets in degraded mode
-            }
-        }
+        await CreateJobSecretIfNeededAsync(jobName, item.Id, projectSecrets, "", ct);
 
         // Update to Dispatched — clear change tracker first to get fresh state
         // (avoids stale entity if another service modified the item during K8s API call)
-        db.ChangeTracker.Clear();
-        workItem = await db.WorkItems.FindAsync([item.Id], ct);
-        if (workItem is null || workItem.Status != WorkItemStatus.Pending)
-        {
-            // Race condition: another process transitioned the work item while we were creating the K8s Job.
-            // Release the claimed PVC back to the pool and attempt to delete the orphaned Job.
-            // The per-job K8s Secret (if created) has an OwnerReference to the Job,
-            // so K8s garbage collection will automatically delete it when the Job is deleted.
-            if (claimedPvc is not null)
-                availablePvcs.Add(claimedPvc);
-
-            try
-            {
-                await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
-                Log.Information("DispatchService: deleted orphaned K8s Job {JobName} — WorkItem {WorkItemId} no longer Pending", jobName, item.Id);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "DispatchService: failed to delete orphaned K8s Job {JobName} for WorkItem {WorkItemId}", jobName, item.Id);
-            }
-
+        var (shouldContinue, reloadedWorkItem) = await HandleOrphanedJobIfRaceDetectedAsync(db, item.Id, jobName, claimedPvc, availablePvcs, "", ct);
+        if (!shouldContinue)
             return;
-        }
 
+        workItem = reloadedWorkItem!;
         workItem.Status = WorkItemStatus.Dispatched;
         workItem.DispatchedAt = DateTimeOffset.UtcNow;
 
@@ -726,86 +655,18 @@ public sealed class DispatchService : BackgroundService
         }
 
         // Create K8s Job
-        try
-        {
-            var buildCtx = new JobSpecBuilder.BuildContext
-            {
-                WorkItemId = item.Id,
-                AgentSelector = item.AgentSelector ?? "",
-                TimeoutSeconds = item.TimeoutSeconds,
-                JobName = jobName,
-                ClaimedPvc = claimedPvc,
-                OrchestratorUrl = _options.OrchestratorUrl,
-                AgentApiKeySecretName = _options.AgentApiKeySecretName,
-                AgentServiceAccountName = _options.AgentServiceAccountName,
-                Namespace = _options.Namespace,
-                OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
-                ProjectSecrets = projectSecrets
-            };
-            var job = JobSpecBuilder.Build(template, buildCtx);
-            await _kubeClient.CreateJobAsync(job, _options.Namespace, ct);
-        }
-        catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
-        {
-            Log.Information("DispatchService: K8s Job {JobName} already exists (409 Conflict), treating as success", jobName);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "DispatchService: failed to create K8s Job {JobName} for consolidation WorkItem {WorkItemId}", jobName, item.Id);
-            if (claimedPvc is not null)
-            {
-                workItem.ClaimedPvcName = null;
-                availablePvcs.Add(claimedPvc);
-                // TODO: SaveChangesAsync can throw DbUpdateConcurrencyException if another process modified
-                // the work item concurrently, which would bypass FailWorkItem. Window is narrow and this is
-                // strictly better than the prior behavior (permanent PVC orphan), but consider wrapping in try-catch.
-                await db.SaveChangesAsync(ct);
-            }
-            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
+        if (!await CreateK8sJobAsync(db, item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, "consolidation ", ct))
             return;
-        }
 
         // Create per-job K8s Secret if project has secrets
-        if (projectSecrets is not null && projectSecrets.Count > 0)
-        {
-            try
-            {
-                await CreateJobSecretAsync(jobName, item.Id, projectSecrets, ct);
-            }
-            catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
-            {
-                // Secret already exists — idempotent
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "DispatchService: failed to create project-secrets K8s Secret for consolidation Job {JobName}", jobName);
-                // Non-fatal: job can still run without project secrets in degraded mode
-            }
-        }
+        await CreateJobSecretIfNeededAsync(jobName, item.Id, projectSecrets, "consolidation ", ct);
 
         // Transition to Dispatched
-        db.ChangeTracker.Clear();
-        workItem = await db.WorkItems.FindAsync([item.Id], ct);
-        if (workItem is null || workItem.Status != WorkItemStatus.Pending)
-        {
-            // Race condition: another process transitioned the work item while we were creating the K8s Job.
-            // Release the claimed PVC back to the pool and attempt to delete the orphaned Job.
-            if (claimedPvc is not null)
-                availablePvcs.Add(claimedPvc);
-
-            try
-            {
-                await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
-                Log.Information("DispatchService: deleted orphaned K8s Job {JobName} — consolidation WorkItem {WorkItemId} no longer Pending", jobName, item.Id);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "DispatchService: failed to delete orphaned K8s Job {JobName} for consolidation WorkItem {WorkItemId}", jobName, item.Id);
-            }
-
+        var (shouldContinue, reloadedWorkItem) = await HandleOrphanedJobIfRaceDetectedAsync(db, item.Id, jobName, claimedPvc, availablePvcs, "consolidation ", ct);
+        if (!shouldContinue)
             return;
-        }
 
+        workItem = reloadedWorkItem!;
         workItem.Status = WorkItemStatus.Dispatched;
         workItem.DispatchedAt = DateTimeOffset.UtcNow;
 
@@ -838,6 +699,139 @@ public sealed class DispatchService : BackgroundService
         // ConsolidationRun remains Queued — a state inconsistency. Document recovery path or consider
         // reconciliation logic.
         await TransitionConsolidationRunToRunningAsync(updatedRequest, ct);
+    }
+
+    // ── Shared K8s Job Dispatch Lifecycle Helpers ────────────────────────
+
+    /// <summary>
+    /// Creates a K8s Job via JobSpecBuilder. Handles 409 Conflict (idempotent) and general failures
+    /// (releases PVC, fails WorkItem). Returns true if job creation succeeded (or 409), false if the
+    /// caller should return early due to an error.
+    /// </summary>
+    private async Task<bool> CreateK8sJobAsync(
+        PipelineDbContext db,
+        PendingWorkItemProjection item,
+        WorkItemEntity workItem,
+        JobTemplate template,
+        string jobName,
+        string? claimedPvc,
+        List<string> availablePvcs,
+        Dictionary<string, string>? projectSecrets,
+        string logPrefix,
+        CancellationToken ct)
+    {
+        try
+        {
+            var buildCtx = new JobSpecBuilder.BuildContext
+            {
+                WorkItemId = item.Id,
+                AgentSelector = item.AgentSelector,
+                TimeoutSeconds = item.TimeoutSeconds,
+                JobName = jobName,
+                ClaimedPvc = claimedPvc,
+                OrchestratorUrl = _options.OrchestratorUrl,
+                AgentApiKeySecretName = _options.AgentApiKeySecretName,
+                AgentServiceAccountName = _options.AgentServiceAccountName,
+                Namespace = _options.Namespace,
+                OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
+                ProjectSecrets = projectSecrets
+            };
+            var job = JobSpecBuilder.Build(template, buildCtx);
+            await _kubeClient.CreateJobAsync(job, _options.Namespace, ct);
+        }
+        catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            // 409 Conflict = Job already exists = success (idempotent)
+            Log.Information("DispatchService: K8s Job {JobName} already exists (409 Conflict), treating as success", jobName);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "DispatchService: failed to create K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", jobName, logPrefix, item.Id);
+            if (claimedPvc is not null)
+            {
+                workItem.ClaimedPvcName = null;
+                availablePvcs.Add(claimedPvc);
+                // TODO: SaveChangesAsync can throw DbUpdateConcurrencyException if another process modified
+                // the work item concurrently, which would bypass FailWorkItem. Window is narrow and this is
+                // strictly better than the prior behavior (permanent PVC orphan), but consider wrapping in try-catch.
+                await db.SaveChangesAsync(ct);
+            }
+            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Creates a per-job K8s Secret if the project has secrets. Handles 409 Conflict (idempotent)
+    /// and treats all other failures as non-fatal warnings.
+    /// </summary>
+    private async Task CreateJobSecretIfNeededAsync(
+        string jobName,
+        Guid workItemId,
+        Dictionary<string, string>? projectSecrets,
+        string logPrefix,
+        CancellationToken ct)
+    {
+        if (projectSecrets is null || projectSecrets.Count == 0)
+            return;
+
+        try
+        {
+            await CreateJobSecretAsync(jobName, workItemId, projectSecrets, ct);
+        }
+        catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            // Secret already exists — idempotent
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "DispatchService: failed to create project-secrets K8s Secret for {LogPrefix}Job {JobName}", logPrefix, jobName);
+            // Non-fatal: job can still run without project secrets in degraded mode
+        }
+    }
+
+    /// <summary>
+    /// Clears the change tracker, re-fetches the WorkItem, and checks for race conditions.
+    /// If the WorkItem is no longer Pending, releases the PVC and deletes the orphaned K8s Job.
+    /// Returns (true, reloadedWorkItem) if the caller should continue, or (false, null) if the caller
+    /// should return early due to a detected race condition.
+    /// </summary>
+    private async Task<(bool shouldContinue, WorkItemEntity? reloadedWorkItem)> HandleOrphanedJobIfRaceDetectedAsync(
+        PipelineDbContext db,
+        Guid workItemId,
+        string jobName,
+        string? claimedPvc,
+        List<string> availablePvcs,
+        string logPrefix,
+        CancellationToken ct)
+    {
+        db.ChangeTracker.Clear();
+        var workItem = await db.WorkItems.FindAsync([workItemId], ct);
+        if (workItem is null || workItem.Status != WorkItemStatus.Pending)
+        {
+            // Race condition: another process transitioned the work item while we were creating the K8s Job.
+            // Release the claimed PVC back to the pool and attempt to delete the orphaned Job.
+            // The per-job K8s Secret (if created) has an OwnerReference to the Job,
+            // so K8s garbage collection will automatically delete it when the Job is deleted.
+            if (claimedPvc is not null)
+                availablePvcs.Add(claimedPvc);
+
+            try
+            {
+                await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
+                Log.Information("DispatchService: deleted orphaned K8s Job {JobName} — {LogPrefix}WorkItem {WorkItemId} no longer Pending", jobName, logPrefix, workItemId);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DispatchService: failed to delete orphaned K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", jobName, logPrefix, workItemId);
+            }
+
+            return (false, null);
+        }
+
+        return (true, workItem);
     }
 
     /// <summary>
