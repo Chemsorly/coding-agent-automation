@@ -1,21 +1,14 @@
-using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.GitLab;
 using CodingAgentWebUI.Infrastructure.Persistence;
-using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
-using Microsoft.AspNetCore.SignalR;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Http.Resilience;
-using Microsoft.Extensions.Logging;
 using Serilog;
 
 namespace CodingAgentWebUI;
@@ -24,7 +17,7 @@ namespace CodingAgentWebUI;
 /// Extension methods for registering domain services in the DI container.
 /// Extracted from Program.cs to reduce file size and group related registrations.
 /// </summary>
-public static class ServiceCollectionExtensions
+public static partial class ServiceCollectionExtensions
 {
     /// <summary>
     /// Registers infrastructure services: configuration store interfaces, provider factory, and validation services.
@@ -69,116 +62,17 @@ public static class ServiceCollectionExtensions
     /// </summary>
     public static IServiceCollection AddPipelineCoreServices(this IServiceCollection services, bool isDatabaseMode = false)
     {
-        services.AddSingleton<IOpenIssueContextWriter>(sp => new OpenIssueContextWriter(Log.Logger));
+        // ── Lifecycle ──────────────────────────────────────────────────────
+        RegisterPipelineLifecycle(services, isDatabaseMode);
 
-        if (!isDatabaseMode)
-        {
-            services.AddSingleton<IPipelineRunHistoryService>(sp => new PipelineRunHistoryService(Log.Logger));
-        }
+        // ── Facades ────────────────────────────────────────────────────────
+        RegisterPipelineFacades(services);
 
-        // TODO: In DB mode (isDatabaseMode: true), IPipelineRunHistoryService is not registered here —
-        // it depends on AddWorkDistribution being called separately. If AddWorkDistribution is ever
-        // removed or conditionalized, this GetRequiredService call will fail at runtime.
-        services.AddSingleton(sp => new PipelineRunLifecycleService(
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            Log.Logger));
-        services.AddSingleton<Pipeline.Interfaces.ILifecycleShutdownAction>(sp =>
-            sp.GetRequiredService<PipelineRunLifecycleService>());
+        // ── Shutdown ───────────────────────────────────────────────────────
+        RegisterPipelineShutdown(services);
 
-        services.AddSingleton<IBrainSyncService>(sp => new BrainSyncService(
-            sp.GetRequiredService<IBrainUpdateService>(), Log.Logger));
-
-        services.AddSingleton<Pipeline.Interfaces.IPipelineExecutionFacade>(sp => new PipelineExecutionFacade(
-            sp.GetRequiredService<IAgentPhaseExecutor>(),
-            sp.GetRequiredService<IQualityGateExecutor>(),
-            sp.GetRequiredService<IQualityGateValidator>(),
-            sp.GetRequiredService<IBrainSyncService>()));
-
-        services.AddSingleton<Pipeline.Interfaces.IPipelineCompletionFacade>(sp => new PipelineCompletionFacade(
-            new PullRequestOrchestrator(Log.Logger),
-            sp.GetRequiredService<PullRequestFinalizationService>(),
-            sp.GetRequiredService<FeedbackService>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>()));
-
-        services.AddSingleton<Pipeline.Interfaces.IPipelineCancellationFacade>(sp => new PipelineCancellationFacade(
-            sp.GetRequiredService<Pipeline.Interfaces.IJobDeduplicationGuard>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IAgentCancellationSender>()));
-
-        services.AddSingleton(sp => new PipelineOrchestrationService(
-            sp.GetRequiredService<IPipelineConfigStore>(),
-            sp.GetRequiredService<IConfigurationStore>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<IssueDescriptionParser>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IPipelineExecutionFacade>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IPipelineCompletionFacade>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IPipelineCancellationFacade>(),
-            sp.GetRequiredService<PipelineRunLifecycleService>(),
-            sp.GetRequiredService<ILabelService>(),
-            Log.Logger));
-        services.AddSingleton<Pipeline.Interfaces.IOrchestrationShutdownAction>(sp =>
-            sp.GetRequiredService<PipelineOrchestrationService>());
-        // TODO: Register DispatchRunCreationService as a concrete singleton so the DI container
-        // can track it for disposal if IAsyncDisposable is added later. Currently the factory lambda
-        // means the container won't call Dispose/DisposeAsync on shutdown.
-        services.AddSingleton<Pipeline.Interfaces.IDispatchRunCreator>(sp =>
-            new DispatchRunCreationService(
-                sp.GetRequiredService<PipelineRunLifecycleService>(),
-                sp.GetRequiredService<IProviderConfigStore>(),
-                sp.GetRequiredService<IProviderFactory>(),
-                Log.Logger));
-        services.AddSingleton<Pipeline.Interfaces.IChangeNotifier>(sp =>
-            sp.GetRequiredService<PipelineOrchestrationService>());
-
-        // Shutdown signal: cooperative flag to prevent dispatch-during-shutdown races
-        services.AddSingleton<Pipeline.Interfaces.IShutdownSignal>(new Pipeline.Services.ShutdownSignal());
-
-        // Graceful shutdown via IHostedLifecycleService (async, 15s timeout, non-blocking)
-        services.AddHostedService(sp => new ShutdownService(
-            sp.GetRequiredService<Pipeline.Interfaces.ILifecycleShutdownAction>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IOrchestrationShutdownAction>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
-            Log.Logger));
-
-        // Readiness drain: marks /readyz as 503 during shutdown, then waits for endpoint removal.
-        // Registered AFTER ShutdownService — StoppingAsync fires in REVERSE order,
-        // so drain runs FIRST (flips readiness, waits), THEN ShutdownService cancels work.
-        services.AddSingleton<ReadinessState>();
-        services.AddHostedService(sp => new ReadinessDrainService(
-            sp.GetRequiredService<ReadinessState>(),
-            Log.Logger));
-
-        services.AddHostedService(sp => new OrphanedLabelRecoveryService(
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<IProviderConfigStore>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<IPipelineConfigStore>(),
-            Log.Logger));
-
-        services.AddSingleton<IDependencyChecker>(sp => new DependencyChecker(Log.Logger));
-        services.AddSingleton<PipelineLoopService>(sp => new PipelineLoopService(
-            sp.GetRequiredService<IDispatchRunCreator>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<IPipelineConfigStore>(),
-            sp.GetRequiredService<IProviderConfigStore>(),
-            sp.GetRequiredService<IProjectStore>(),
-            Log.Logger,
-            sp.GetService<IWorkDistributor>(),
-            sp.GetService<IDispatchOrchestrationService>(),
-            sp.GetRequiredService<IDependencyChecker>()));
-        services.AddSingleton<IPipelineLoopService>(sp => sp.GetRequiredService<PipelineLoopService>());
-        services.AddHostedService(sp => sp.GetRequiredService<PipelineLoopService>());
-
-        // Loop state persistence: auto-resumes loop after pod restart if previously active
-        services.AddSingleton(sp => new LoopStatePersistenceService(
-            sp.GetRequiredService<IPipelineLoopService>(),
-            Log.Logger,
-            sp.GetRequiredService<ILoopStateStore>()));
-        services.AddHostedService(sp => sp.GetRequiredService<LoopStatePersistenceService>());
-
-        services.AddTransient<IssueDescriptionParser>();
+        // ── Background Services ────────────────────────────────────────────
+        RegisterPipelineBackgroundServices(services);
 
         return services;
     }
@@ -192,136 +86,20 @@ public static class ServiceCollectionExtensions
         PipelineConfiguration pipelineConfig,
         string? workDistributionMode = null)
     {
-        services.AddSingleton(sp => new AgentRegistryService(Log.Logger));
-        services.AddSingleton<IAgentRegistryService>(sp => sp.GetRequiredService<AgentRegistryService>());
-        services.AddSingleton(sp => new JobDeduplicationGuardService(
-            sp.GetRequiredService<IAgentRegistryService>(),
-            Log.Logger));
-        services.AddSingleton<Pipeline.Interfaces.IJobDeduplicationGuard>(sp =>
-            sp.GetRequiredService<JobDeduplicationGuardService>());
+        // ── Agent Registry ─────────────────────────────────────────────────
+        RegisterAgentRegistry(services);
 
-        services.AddHttpClient("TokenVending")
-            .AddStandardResilienceHandler();
-        services.AddSingleton<ITokenVendingService>(sp => new TokenVendingService(Log.Logger, sp.GetRequiredService<IHttpClientFactory>()));
+        // ── Token Vending & Run Services ───────────────────────────────────
+        RegisterTokenAndRunServices(services, pipelineConfig);
 
-        services.AddSingleton(sp => new OrchestratorRunService(
-            Log.Logger,
-            pipelineConfig.OutputBufferCapacity));
-        services.AddSingleton<IOrchestratorRunService>(sp => sp.GetRequiredService<OrchestratorRunService>());
+        // ── Conditional Background Services ────────────────────────────────
+        RegisterOrchestrationBackgroundServices(services, workDistributionMode);
 
-        services.AddSingleton<ILabelService>(sp => new LabelService(
-            sp.GetRequiredService<IConfigurationStore>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            Log.Logger));
+        // ── Job Dispatching ────────────────────────────────────────────────
+        RegisterJobDispatching(services);
 
-        // HeartbeatMonitorService: registered in Legacy and SignalR modes only.
-        // In K8s mode, agent liveness is handled by ReconciliationService.
-        var isKubernetesMode = string.Equals(workDistributionMode, "Kubernetes", StringComparison.OrdinalIgnoreCase);
-        if (!isKubernetesMode)
-        {
-            services.AddHostedService(sp => new HeartbeatMonitorService(
-                sp.GetRequiredService<IAgentRegistryService>(),
-                sp.GetRequiredService<IOrchestratorRunService>(),
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<JobDeduplicationGuardService>(),
-                sp.GetRequiredService<ILabelService>(),
-                sp.GetRequiredService<IConfigurationStore>(),
-                Log.Logger,
-                sp.GetRequiredService<IRunLifecycleManager>(),
-                sp.GetService<IConsolidationService>()));
-        }
-
-        // JobQueueDrainService: registered as singleton always (AgentHubFacade depends on it),
-        // but only registered as hosted service (active background loop) in Legacy mode.
-        // In DB modes (SignalR/K8s), work distribution via IWorkDistributor — in-memory queue unused.
-        services.AddSingleton(sp => new JobQueueDrainService(
-            sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<IAgentRegistryService>(),
-            sp.GetRequiredService<IJobDispatcher>(),
-            sp.GetRequiredService<IConfigurationStore>(),
-            sp.GetRequiredService<IConsolidationDispatcher>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
-            Log.Logger,
-            sp.GetService<IConsolidationRunStore>()));
-        var hasDatabase = !string.IsNullOrEmpty(workDistributionMode);
-        if (!hasDatabase)
-        {
-            services.AddHostedService(sp => sp.GetRequiredService<JobQueueDrainService>());
-        }
-
-        services.AddSingleton<ProfileResolver>();
-        services.AddSingleton<QualityGateResolver>();
-        services.AddSingleton<ReviewerResolver>();
-
-        services.AddSingleton(sp => new DispatchResolutionService(
-            sp.GetRequiredService<ProfileResolver>(),
-            sp.GetRequiredService<QualityGateResolver>(),
-            sp.GetRequiredService<ReviewerResolver>(),
-            sp.GetRequiredService<IConfigurationStore>(),
-            Log.Logger));
-
-        services.AddSingleton(sp => new DispatchInfrastructure(
-            sp.GetRequiredService<ITokenVendingService>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<DispatchResolutionService>()));
-
-        services.AddSingleton<IAgentCommunication>(sp => new SignalRAgentCommunication(
-            sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>()));
-
-        services.AddSingleton<Pipeline.Interfaces.IAgentCancellationSender>(sp => new AgentCancellationSender(
-            sp.GetRequiredService<IAgentRegistryService>(),
-            sp.GetRequiredService<IAgentCommunication>(),
-            Log.Logger));
-
-        services.AddSingleton<ModelFetchService>(sp => new ModelFetchService(
-            sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<IAgentCommunication>(),
-            Log.Logger));
-
-        // AgentJobDispatcher: registered as singleton (internal class).
-        // Consumed by JobQueueDrainService and LegacyWorkDistributor within the same assembly scope.
-        services.AddSingleton<IJobDispatcher>(sp => new AgentJobDispatcher(
-            sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<IAgentRegistryService>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
-            sp.GetRequiredService<DispatchInfrastructure>(),
-            sp.GetRequiredService<IAgentCommunication>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IShutdownSignal>(),
-            Log.Logger,
-            sp.GetService<IRunLifecycleManager>()));
-
-        services.AddSingleton<IAgentHubFacade>(sp => new AgentHubFacade(
-            sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<OrchestratorRunService>(),
-            sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<JobQueueDrainService>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IConfigurationStore>(),
-            sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILogger<AgentHubFacade>>(),
-            sp.GetService<WorkItemTransitionService>(),
-            sp.GetService<PendingWorkItemDrainService>(),
-            sp.GetService<IDbContextFactory<PipelineDbContext>>()));
-
-        services.AddSingleton<IHubIssueOperations>(sp => new AgentIssueOperations(
-            sp.GetRequiredService<IAgentHubFacade>(),
-            sp.GetRequiredService<ILabelService>(),
-            Log.Logger));
-
-        services.AddSingleton<IAgentOrphanRecoveryService>(sp => new AgentOrphanRecoveryService(
-            sp.GetRequiredService<IAgentHubFacade>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IChangeNotifier>(),
-            Log.Logger));
-
-        services.AddSingleton<IAgentJobLifecycleService>(sp => new AgentJobLifecycleService(
-            sp.GetRequiredService<IAgentHubFacade>(),
-            sp.GetRequiredService<IRunLifecycleManager>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<IHubIssueOperations>(),
-            sp.GetRequiredService<Pipeline.Interfaces.IChangeNotifier>(),
-            Log.Logger));
+        // ── Agent Hub Services ─────────────────────────────────────────────
+        RegisterAgentHubServices(services);
 
         return services;
     }
