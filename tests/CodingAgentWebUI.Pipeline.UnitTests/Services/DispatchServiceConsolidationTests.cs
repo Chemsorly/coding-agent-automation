@@ -745,6 +745,200 @@ public class DispatchServiceConsolidationTests : IDisposable
         }
     }
 
+    // ── Project Secrets ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_WithProjectSecrets_CreatesK8sSecret()
+    {
+        // Arrange: consolidation work item with template that belongs to a project
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+        var projectId = Guid.NewGuid();
+
+        await InsertConsolidationWorkItem(workItemId, runId, "kiro,dotnet");
+
+        // Seed ProjectEntity with secrets in Settings JSON
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = projectId,
+                Name = "Test Project",
+                Enabled = true,
+                TemplateIds = [TestTemplateId],
+                Settings = JsonSerializer.Serialize(new { Secrets = new Dictionary<string, string> { ["MY_SECRET"] = "secret-value", ["API_KEY"] = "key-123" } })
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Mock _projectStore.LoadProjectsAsync to return a project owning the template
+        _mockProjectStore
+            .Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = projectId.ToString(), Name = "Test Project", Enabled = true, TemplateIds = [TestTemplateId] }
+            });
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockKubeClient
+            .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockKubeClient
+            .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "job-uid-123" } });
+
+        var service = CreateService();
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: WorkItem transitioned to Dispatched
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Dispatched);
+        }
+
+        // Assert: K8s Secret was created with the project secrets
+        _mockKubeClient.Verify(
+            k => k.CreateSecretAsync(
+                It.Is<V1Secret>(s =>
+                    s.StringData != null &&
+                    s.StringData.ContainsKey("MY_SECRET") &&
+                    s.StringData["MY_SECRET"] == "secret-value" &&
+                    s.StringData.ContainsKey("API_KEY") &&
+                    s.StringData["API_KEY"] == "key-123"),
+                "default",
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Assert: Job spec includes the project-secrets volume mount
+        _mockKubeClient.Verify(
+            k => k.CreateJobAsync(
+                It.Is<V1Job>(j =>
+                    j.Spec.Template.Spec.Volumes.Any(v => v.Name == "project-secrets") &&
+                    j.Spec.Template.Spec.Containers[0].VolumeMounts.Any(vm => vm.Name == "project-secrets")),
+                "default",
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_WithProjectId_NoSecrets_SkipsSecretCreation()
+    {
+        // Arrange: consolidation work item with a project that has no secrets
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+        var projectId = Guid.NewGuid();
+
+        await InsertConsolidationWorkItem(workItemId, runId, "kiro,dotnet");
+
+        // Seed ProjectEntity WITHOUT secrets (empty Settings)
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = projectId,
+                Name = "No-Secrets Project",
+                Enabled = true,
+                TemplateIds = [TestTemplateId],
+                Settings = JsonSerializer.Serialize(new { MaxRetries = 3 })
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Mock _projectStore.LoadProjectsAsync to return the project
+        _mockProjectStore
+            .Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = projectId.ToString(), Name = "No-Secrets Project", Enabled = true, TemplateIds = [TestTemplateId] }
+            });
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateService();
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: WorkItem transitioned to Dispatched
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Dispatched);
+        }
+
+        // Assert: CreateSecretAsync was NOT called
+        _mockKubeClient.Verify(
+            k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_CreateSecretFails_JobStillDispatched()
+    {
+        // Arrange: consolidation work item with project secrets, but secret creation fails
+        var workItemId = Guid.NewGuid();
+        var runId = workItemId.ToString();
+        var projectId = Guid.NewGuid();
+
+        await InsertConsolidationWorkItem(workItemId, runId, "kiro,dotnet");
+
+        // Seed ProjectEntity with secrets
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.Projects.Add(new ProjectEntity
+            {
+                Id = projectId,
+                Name = "Secrets Project",
+                Enabled = true,
+                TemplateIds = [TestTemplateId],
+                Settings = JsonSerializer.Serialize(new { Secrets = new Dictionary<string, string> { ["TOKEN"] = "abc" } })
+            });
+            await db.SaveChangesAsync();
+        }
+
+        _mockProjectStore
+            .Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = projectId.ToString(), Name = "Secrets Project", Enabled = true, TemplateIds = [TestTemplateId] }
+            });
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockKubeClient
+            .Setup(k => k.ReadJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new V1Job { Metadata = new V1ObjectMeta { Uid = "job-uid-456" } });
+        _mockKubeClient
+            .Setup(k => k.CreateSecretAsync(It.IsAny<V1Secret>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Simulated secret creation failure"));
+
+        var service = CreateService();
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: WorkItem still transitions to Dispatched (secret failure is non-fatal)
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var item = await db.WorkItems.FindAsync(workItemId);
+            item!.Status.Should().Be(WorkItemStatus.Dispatched,
+                "Secret creation failure should be non-fatal — job still dispatches");
+        }
+
+        // Assert: Job was still created
+        _mockKubeClient.Verify(
+            k => k.CreateJobAsync(It.IsAny<V1Job>(), "default", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private void SetupDefaultMocks()
