@@ -57,6 +57,7 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             ReplaceService<IAgentProfileStore>(services, configStore);
             ReplaceService<IQualityGateConfigStore>(services, configStore);
             ReplaceService<IReviewerConfigStore>(services, configStore);
+            ReplaceService<IProjectStore>(services, configStore);
 
             // Replace IProviderFactory with a mock
             ReplaceService<IProviderFactory>(services, new Mock<IProviderFactory>().Object);
@@ -83,6 +84,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             .ReturnsAsync(new PipelineConfiguration());
         mock.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<ProviderConfig>());
+        mock.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+        mock.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
         return mock.Object;
     }
 
