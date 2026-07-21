@@ -238,6 +238,45 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
     }
 
     [Fact]
+    public async Task Analysis_ForceRefresh_ExistingComment_UpdatesInsteadOfPosting()
+    {
+        // Existing analysis comment present + force-refresh → should update, not post new
+        var comments = new[]
+        {
+            new IssueComment { Id = "comment-42", Body = $"{CommentMarkers.AnalysisHeader}\nOld analysis content", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-1) }
+        };
+
+        SetupAgentWithValidAnalysis("ready");
+        _mockIssueOps.Setup(o => o.UpdateCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), comments, forceRefreshFromDispatch: true, CancellationToken.None);
+
+        result.Should().BeTrue();
+        _mockIssueOps.Verify(o => o.UpdateCommentAsync(
+            "42", "comment-42",
+            It.Is<string>(body => body.Contains("<!-- agent:analysis-body-hash:")),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockIssueOps.Verify(o => o.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Analysis_NoExistingComment_PostsNewComment()
+    {
+        // No existing analysis comment → should post new, not update
+        SetupAgentWithValidAnalysis("ready");
+
+        var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), Array.Empty<IssueComment>(), false, CancellationToken.None);
+
+        result.Should().BeTrue();
+        _mockIssueOps.Verify(o => o.PostCommentAsync(
+            "42",
+            It.Is<string>(body => body.Contains("<!-- agent:analysis-body-hash:")),
+            It.IsAny<CancellationToken>()), Times.Once);
+        _mockIssueOps.Verify(o => o.UpdateCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Analysis_Cancellation_ThrowsOperationCancelledException()
     {
         using var cts = new CancellationTokenSource();

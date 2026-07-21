@@ -444,14 +444,20 @@ public class RefactoringExecutorTests : IDisposable
     [Fact]
     public void ParseHotspotOutput_WithValidOutput_ReturnsFormattedSummary()
     {
-        var gitOutput = "src/File1.cs\nsrc/File2.cs\nsrc/File1.cs\nsrc/File1.cs\nsrc/File2.cs\n";
+        var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var gitOutput = "COMMIT_DATE:2026-07-19 14:00:00 +0000\nsrc/File1.cs\nsrc/File2.cs\nCOMMIT_DATE:2026-07-18 10:00:00 +0000\nsrc/File1.cs\nsrc/File1.cs\nsrc/File2.cs\n";
 
-        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90));
+        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
 
         result.Should().NotBeNull();
-        result.Should().Contain("3 changes — src/File1.cs");
-        result.Should().Contain("2 changes — src/File2.cs");
+        result.Should().Contain("src/File1.cs");
+        result.Should().Contain("3 changes");
+        result.Should().Contain("src/File2.cs");
+        result.Should().Contain("2 changes");
         result.Should().Contain("last 90 days");
+        result.Should().Contain("time-decay weighted");
+        result.Should().Contain("avg");
+        result.Should().Contain("days ago");
     }
 
     [Fact]
@@ -473,32 +479,97 @@ public class RefactoringExecutorTests : IDisposable
     [Fact]
     public void ParseHotspotOutput_CapsAtThirtyFiles()
     {
+        var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
         var sb = new System.Text.StringBuilder();
+        sb.AppendLine("COMMIT_DATE:2026-07-19 10:00:00 +0000");
         for (int i = 0; i < 50; i++)
             sb.AppendLine($"src/File{i:D2}.cs");
 
-        var result = RefactoringExecutor.ParseHotspotOutput(sb.ToString(), TimeSpan.FromDays(90));
+        var result = RefactoringExecutor.ParseHotspotOutput(sb.ToString(), TimeSpan.FromDays(90), referenceTime);
 
         result.Should().NotBeNull();
-        // Each file appears once, so 30 lines of "1 changes — ..."
+        // Each file appears once, so 30 lines with score data
         var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Where(l => l.Contains("changes —")).ToList();
+            .Where(l => l.Contains("changes,")).ToList();
         lines.Should().HaveCount(30);
     }
 
     [Fact]
-    public void ParseHotspotOutput_SortsDescendingByCount()
+    public void ParseHotspotOutput_SortsDescendingByScore()
     {
-        var gitOutput = "src/Rare.cs\nsrc/Common.cs\nsrc/Common.cs\nsrc/Common.cs\nsrc/Medium.cs\nsrc/Medium.cs\n";
+        // Common.cs has 3 recent changes (high score), Medium.cs has 2 recent changes, Rare.cs has 1
+        var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var gitOutput = "COMMIT_DATE:2026-07-19 10:00:00 +0000\nsrc/Rare.cs\nsrc/Common.cs\nsrc/Common.cs\nsrc/Common.cs\nsrc/Medium.cs\nsrc/Medium.cs\n";
 
-        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90));
+        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
 
         result.Should().NotBeNull();
         var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Where(l => l.Contains("changes —")).ToList();
+            .Where(l => l.Contains("changes,")).ToList();
         lines[0].Should().Contain("src/Common.cs");
         lines[1].Should().Contain("src/Medium.cs");
         lines[2].Should().Contain("src/Rare.cs");
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_RecentChangesScoreHigherThanOldChangesWithSameCount()
+    {
+        // Both files have 3 changes, but RecentFile's changes are 1 day old vs OldFile's 80 days old
+        var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var gitOutput =
+            "COMMIT_DATE:2026-07-19 12:00:00 +0000\nsrc/RecentFile.cs\nsrc/RecentFile.cs\nsrc/RecentFile.cs\n" +
+            "COMMIT_DATE:2026-05-01 12:00:00 +0000\nsrc/OldFile.cs\nsrc/OldFile.cs\nsrc/OldFile.cs\n";
+
+        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
+
+        result.Should().NotBeNull();
+        var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => l.Contains("changes,")).ToList();
+        // RecentFile should rank first (higher score due to recency)
+        lines[0].Should().Contain("src/RecentFile.cs");
+        lines[1].Should().Contain("src/OldFile.cs");
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_FewerRecentChangesOutrankManyOldChanges()
+    {
+        // ActiveFile: 3 changes, 1 day old → factor ≈ 1/(1+1/30) ≈ 0.97 each → score ≈ 2.9
+        // StaleFile: 10 changes, 80 days old → factor = 1/(1+80/30) ≈ 0.27 each → score ≈ 2.7
+        var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("COMMIT_DATE:2026-07-19 12:00:00 +0000");
+        sb.AppendLine("src/ActiveFile.cs");
+        sb.AppendLine("src/ActiveFile.cs");
+        sb.AppendLine("src/ActiveFile.cs");
+        sb.AppendLine("COMMIT_DATE:2026-05-01 12:00:00 +0000");
+        for (int i = 0; i < 10; i++)
+            sb.AppendLine("src/StaleFile.cs");
+
+        var result = RefactoringExecutor.ParseHotspotOutput(sb.ToString(), TimeSpan.FromDays(90), referenceTime);
+
+        result.Should().NotBeNull();
+        var lines = result!.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => l.Contains("changes,")).ToList();
+        // ActiveFile should rank first despite fewer changes
+        lines[0].Should().Contain("src/ActiveFile.cs");
+        lines[1].Should().Contain("src/StaleFile.cs");
+    }
+
+    [Fact]
+    public void ParseHotspotOutput_MalformedDateLinesDontCrash()
+    {
+        var referenceTime = new DateTime(2026, 7, 20, 12, 0, 0, DateTimeKind.Utc);
+        var gitOutput =
+            "COMMIT_DATE:not-a-date\nsrc/File1.cs\nsrc/File2.cs\n" +
+            "COMMIT_DATE:2026-07-19 12:00:00 +0000\nsrc/File3.cs\n";
+
+        var result = RefactoringExecutor.ParseHotspotOutput(gitOutput, TimeSpan.FromDays(90), referenceTime);
+
+        // Should not throw and should produce output
+        result.Should().NotBeNull();
+        result.Should().Contain("src/File1.cs");
+        result.Should().Contain("src/File2.cs");
+        result.Should().Contain("src/File3.cs");
     }
 
     [Fact]
@@ -661,5 +732,105 @@ public class RefactoringExecutorTests : IDisposable
         capturedLabels.Should().NotBeNull();
         capturedLabels.Should().Contain("agent:generated");
         capturedLabels.Should().NotContain("agent:next");
+    }
+
+    // TODO: This test verifies each criterion appears as a checkbox but does not assert positional ordering
+    // (i.e., that criteria appear under the "## Acceptance Criteria" heading and before "---"). A section-
+    // ordering bug could cause criteria to render in the wrong section without failing this test.
+    [Fact]
+    public void FormatIssueBody_WithPopulatedAcceptanceCriteria_RendersAllItemsAsCheckboxes()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            AcceptanceCriteria = ["Criterion A", "Criterion B", "Criterion C"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- [ ] Criterion A");
+        body.Should().Contain("- [ ] Criterion B");
+        body.Should().Contain("- [ ] Criterion C");
+        body.Should().NotContain("Refactoring applied without changing observable behavior");
+        body.Should().NotContain("All existing tests continue to pass");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNullAcceptanceCriteria_RendersFallbackAC()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            AcceptanceCriteria = null
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- [ ] Refactoring applied without changing observable behavior");
+        body.Should().Contain("- [ ] All existing tests continue to pass");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithEmptyAcceptanceCriteria_RendersFallbackAC()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            AcceptanceCriteria = []
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- [ ] Refactoring applied without changing observable behavior");
+        body.Should().Contain("- [ ] All existing tests continue to pass");
+    }
+
+    [Fact]
+    public void FormatIssueBody_WithNullEntriesInAcceptanceCriteria_SkipsNulls()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            AcceptanceCriteria = ["valid one", null!, "another valid"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- [ ] valid one");
+        body.Should().Contain("- [ ] another valid");
+    }
+
+    // TODO: No test verifies the boundary condition where AcceptanceCriteria contains exactly 1 item or
+    // more than 4 items. The issue specifies "Range: 2-4 criteria per proposal" but the rendering logic
+    // doesn't enforce this range. Consider adding tests documenting that single-item lists render correctly
+    // without falling through to the fallback.
+    [Fact]
+    public void FormatIssueBody_SanitizesAcceptanceCriteriaEntries()
+    {
+        var proposal = new RefactoringProposal
+        {
+            Title = "Test",
+            AffectedFiles = ["src/A.cs"],
+            Description = "desc",
+            Rationale = "rationale",
+            AcceptanceCriteria = ["@admin injection", "<script>xss</script>"]
+        };
+
+        var body = RefactoringExecutor.FormatIssueBody(proposal);
+
+        body.Should().Contain("- [ ] @\u200Badmin injection");
+        body.Should().Contain("- [ ] &lt;script>xss&lt;/script>");
     }
 }

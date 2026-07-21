@@ -128,4 +128,66 @@ public class RefactoringProposalDeserializationTests
         proposals.Should().HaveCount(1);
         proposals![0].DependsOn.Should().BeEmpty();
     }
+
+    [Fact]
+    public void Deserialize_WithAcceptanceCriteria_PopulatesCorrectly()
+    {
+        var json = """
+            [
+                {
+                    "title": "Extract validation",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Extract shared logic",
+                    "rationale": "DRY violation",
+                    "acceptanceCriteria": ["Zero references to old name remain", "New class registered in DI"]
+                }
+            ]
+            """;
+
+        var proposals = JsonSerializer.Deserialize<List<RefactoringProposal>>(json, JsonOptions);
+
+        proposals.Should().HaveCount(1);
+        proposals![0].AcceptanceCriteria.Should().BeEquivalentTo(["Zero references to old name remain", "New class registered in DI"]);
+    }
+
+    [Fact]
+    public void Deserialize_WithoutAcceptanceCriteria_FieldIsNull()
+    {
+        var json = """
+            [
+                {
+                    "title": "Simple rename",
+                    "affectedFiles": ["src/X.cs"],
+                    "description": "Rename method",
+                    "rationale": "Naming convention"
+                }
+            ]
+            """;
+
+        var proposals = JsonSerializer.Deserialize<List<RefactoringProposal>>(json, JsonOptions);
+
+        proposals.Should().HaveCount(1);
+        proposals![0].AcceptanceCriteria.Should().BeNull();
+    }
+
+    [Fact]
+    public void Deserialize_WithEmptyAcceptanceCriteria_PopulatesEmptyList()
+    {
+        var json = """
+            [
+                {
+                    "title": "Independent refactoring",
+                    "affectedFiles": ["src/A.cs"],
+                    "description": "Standalone change",
+                    "rationale": "No criteria needed",
+                    "acceptanceCriteria": []
+                }
+            ]
+            """;
+
+        var proposals = JsonSerializer.Deserialize<List<RefactoringProposal>>(json, JsonOptions);
+
+        proposals.Should().HaveCount(1);
+        proposals![0].AcceptanceCriteria.Should().BeEmpty();
+    }
 }

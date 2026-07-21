@@ -261,6 +261,49 @@ public class ConsolidationPromptBuilderRefactoringTests
         result.Should().Contain("single agent in one run");
     }
 
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_IncludesEvidenceQualityGateSection()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("Evidence Quality Gate");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_RejectsCodeReadingOnlyForHardCategories()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("DROP the proposal");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_ExemptsSimplificationAndDocumentation()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("may use \"code-reading:\" alone");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_CapsEvidenceScoreForExemptedCategories()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("capped evidence score of 1");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_ListsValidNonCodeReadingSources()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("\"hotspot:\"");
+        result.Should().Contain("\"grep:\"");
+        result.Should().Contain("\"usage-search:\"");
+        result.Should().Contain("\"tool:\"");
+    }
+
     // ─── Review Prompt (Strengthened) ────────────────────────────────────
 
     [Fact]
@@ -307,5 +350,37 @@ public class ConsolidationPromptBuilderRefactoringTests
 
         result.Should().Contain("Convention contradiction");
         result.Should().Contain("conventions.json");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_IncludesAcceptanceCriteriaInSchema()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("\"acceptanceCriteria\"");
+    }
+
+    // TODO: Assertion fragments ("verifiable", "WHAT must be true", "2-4 items") are generic and could match
+    // unrelated prompt text. Consider asserting on more distinctive phrases unique to the AC guidance section
+    // (e.g., "Prefer negative assertions" or "Do NOT use #N notation") to avoid false-passing tests if the
+    // quality guidance rules are accidentally deleted.
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_IncludesAcceptanceCriteriaFieldDefinition()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("acceptanceCriteria");
+        result.Should().Contain("verifiable");
+        result.Should().Contain("WHAT must be true");
+        result.Should().Contain("2-4 items");
+    }
+
+    [Fact]
+    public void BuildRefactoringReviewPrompt_IncludesAcceptanceCriteriaQualityBullets()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringReviewPrompt();
+
+        result.Should().Contain("Unverifiable acceptance criteria");
+        result.Should().Contain("Implementation-prescriptive acceptance criteria");
     }
 }
