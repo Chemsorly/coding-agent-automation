@@ -330,14 +330,15 @@ public sealed partial class PipelineRun
     public int OpenIssuesDownloaded { get; set; }
 
     /// <summary>Creates a <see cref="PipelineRunSummary"/> from this run's current state.</summary>
+    /// <param name="finalStepOverride">If non-null, used as <see cref="PipelineRunSummary.FinalStep"/> instead of <see cref="CurrentStep"/>.</param>
     // NOTE: [ARC-10] FinalStep = CurrentStep without terminal state guard — edge case if called before TransitionTo completes
     #pragma warning disable CS0618 // Obsolete members used intentionally for backward-compat serialization
-    public PipelineRunSummary ToSummary() => new()
+    public PipelineRunSummary ToSummary(PipelineStep? finalStepOverride = null) => new()
     {
         RunId = RunId,
         IssueIdentifier = IssueIdentifier,
         IssueTitle = IssueTitle,
-        FinalStep = CurrentStep,
+        FinalStep = finalStepOverride ?? CurrentStep,
         StartedAt = StartedAt,
         CompletedAt = CompletedAt,
         StartedAtOffset = StartedAtOffset,

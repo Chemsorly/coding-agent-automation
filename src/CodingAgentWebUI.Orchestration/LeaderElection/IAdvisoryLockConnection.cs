@@ -31,7 +31,7 @@ internal interface IAdvisoryLockConnection : IAsyncDisposable, IDisposable
     /// <summary>
     /// Explicitly releases the advisory lock.
     /// </summary>
-    Task ReleaseLockAsync(long lockKey);
+    Task ReleaseLockAsync(long lockKey, CancellationToken ct = default);
 
     /// <summary>
     /// Closes the underlying connection.
