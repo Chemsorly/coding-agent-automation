@@ -320,6 +320,8 @@ public static partial class ConsolidationPromptBuilder
                 "**Scope exceeding single-agent capacity** — proposals touching more than ~30 files (source + test), spanning multiple serialization boundaries, or requiring coordinated breaking changes across projects. Flag [CRITICAL] with a suggestion to split",
                 "**Shallow exploration** — if `.agent/refactoring-analysis.md` is missing or shows fewer than 15 total findings were received from sub-agents, flag [CRITICAL] because the analysis pipeline produced insufficient coverage",
                 "**Overlap with existing issues** — check if any proposal substantially duplicates an issue listed in the \"Existing Open Issues\" section of the analysis. Flag [WARNING] if overlap detected",
+                "**Unverifiable acceptance criteria** — criteria requiring runtime execution, benchmarks, manual testing, or subjective judgment. The review agent can only verify from diff + test results. Flag [WARNING]",
+                "**Implementation-prescriptive acceptance criteria** — criteria that dictate specific file names, class names, or implementation patterns rather than observable post-conditions. These block valid alternative approaches. Flag [WARNING]",
             ],
             "each proposal",
             "proposals",
