@@ -70,6 +70,14 @@ public class CodeReviewOrchestrator
             });
             context.Callbacks.NotifyChange();
 
+            // Re-compute diff artifacts every iteration (fix agent may have committed since last iteration)
+            await AgentPhaseExecutor.PreComputeDiffArtifactsAsync(run, _logger, ct);
+
+            // Delete consolidated findings from prior iteration (hygiene — prevents accidental prior-finding influence)
+            var consolidatedFindingsPath = Path.Combine(run.WorkspacePath!, AgentWorkspacePaths.ReviewFindingsFilePath);
+            if (File.Exists(consolidatedFindingsPath))
+                File.Delete(consolidatedFindingsPath);
+
             var iterationFindings = new System.Text.StringBuilder();
             var iterationCriticalCount = 0;
             var agentsRun = new List<string>();

@@ -102,11 +102,6 @@ public partial class AgentPhaseExecutor
 
         run.CodeReviewIterationsTotal = maxIterations;
 
-        // Pre-compute diff artifacts so review agents don't need to run git diff themselves.
-        // This saves context window space (agents read selectively) and eliminates the first
-        // 2-3 tool-call rounds that every review agent would otherwise spend on git commands.
-        await PreComputeDiffArtifactsAsync(run, _logger, ct);
-
         // Write issue context file for review agents (may not exist if analysis phase was skipped)
         try
         {
