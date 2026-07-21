@@ -705,10 +705,27 @@ public sealed class DispatchService : BackgroundService
             return;
         }
 
+        // Load project secrets if project has them (resolve project from template if needed)
+        Dictionary<string, string>? projectSecrets = null;
+        string? resolvedProjectId = item.ProjectId;
+        if (string.IsNullOrEmpty(resolvedProjectId) && _projectStore is not null
+            && !string.IsNullOrEmpty(request.ConsolidationTemplateId))
+        {
+            var projects = await _projectStore.LoadProjectsAsync(ct);
+            if (projects is not null)
+            {
+                var ownerProject = projects.FirstOrDefault(p =>
+                    p.Enabled && p.TemplateIds.Contains(request.ConsolidationTemplateId));
+                resolvedProjectId = ownerProject?.Id;
+            }
+        }
+
+        if (!string.IsNullOrEmpty(resolvedProjectId))
+        {
+            projectSecrets = await LoadProjectSecretsAsync(db, resolvedProjectId, ct);
+        }
+
         // Create K8s Job
-        // TODO: Add project secrets handling — load secrets via LoadProjectSecretsAsync and pass them
-        // in BuildContext (consistent with pipeline dispatch path lines 380-435). Without this,
-        // consolidation K8s Jobs for projects with secrets won't have access to them.
         try
         {
             var buildCtx = new JobSpecBuilder.BuildContext
@@ -722,7 +739,8 @@ public sealed class DispatchService : BackgroundService
                 AgentApiKeySecretName = _options.AgentApiKeySecretName,
                 AgentServiceAccountName = _options.AgentServiceAccountName,
                 Namespace = _options.Namespace,
-                OpencodeConfigSecretName = _options.OpencodeConfigSecretName
+                OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
+                ProjectSecrets = projectSecrets
             };
             var job = JobSpecBuilder.Build(template, buildCtx);
             await _kubeClient.CreateJobAsync(job, _options.Namespace, ct);
@@ -745,6 +763,24 @@ public sealed class DispatchService : BackgroundService
             }
             await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
             return;
+        }
+
+        // Create per-job K8s Secret if project has secrets
+        if (projectSecrets is not null && projectSecrets.Count > 0)
+        {
+            try
+            {
+                await CreateJobSecretAsync(jobName, item.Id, projectSecrets, ct);
+            }
+            catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
+            {
+                // Secret already exists — idempotent
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DispatchService: failed to create project-secrets K8s Secret for consolidation Job {JobName}", jobName);
+                // Non-fatal: job can still run without project secrets in degraded mode
+            }
         }
 
         // Transition to Dispatched
