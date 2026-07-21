@@ -132,7 +132,7 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
             // Expected during shutdown
         }
 
-        await ReleaseLockConnectionAsync();
+        await ReleaseLockConnectionAsync(cancellationToken);
     }
 
     private async Task RunElectionLoopAsync(CancellationToken stoppingToken)
@@ -294,21 +294,30 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
         SafeInvokeStoppedLeading();
     }
 
-    // TODO: ExecuteNonQueryAsync (ReleaseLockAsync) called without a CancellationToken.
-    // If the connection is hung during graceful shutdown, this could block StopAsync indefinitely.
-    // Consider passing the shutdown cancellation token through to ReleaseLockConnectionAsync.
-    private async Task ReleaseLockConnectionAsync()
+    private async Task ReleaseLockConnectionAsync(CancellationToken shutdownToken = default)
     {
         if (_lockConnection is null)
             return;
+
+        // Bound the entire release+close operation to 5 seconds.
+        // If Postgres is unreachable, we don't want to block host shutdown.
+        // Advisory locks are session-scoped — if we can't release explicitly,
+        // closing the connection (or the connection dropping) releases them automatically.
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(shutdownToken);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
 
         try
         {
             if (_lockConnection.State == ConnectionState.Open)
             {
-                await _lockConnection.ReleaseLockAsync(_options.LockKey);
+                await _lockConnection.ReleaseLockAsync(_options.LockKey, timeoutCts.Token);
                 Log.Debug("PostgresLeaderElectionService: Advisory lock explicitly released");
             }
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Warning(
+                "PostgresLeaderElectionService: Timed out releasing advisory lock — connection close will release it");
         }
         catch (Exception ex)
         {
@@ -317,7 +326,43 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
         }
         finally
         {
-            await CloseConnectionAsync();
+            await CloseConnectionBoundedAsync();
+        }
+    }
+
+    /// <summary>
+    /// Bounded connection close for the shutdown path. If CloseAsync hangs (e.g., Postgres unreachable),
+    /// we abandon the close after 2 seconds. The underlying CloseAsync task may continue running in the
+    /// background — this is acceptable since the process is shutting down and the connection will be
+    /// cleaned up by the OS / GC. Advisory locks are session-scoped and released server-side when the
+    /// TCP connection drops.
+    /// </summary>
+    private async Task CloseConnectionBoundedAsync()
+    {
+        if (_lockConnection is null)
+            return;
+
+        try
+        {
+            // Fresh timeout (not linked to shutdown token) — the 5s release timeout may have
+            // already fired, so we use an independent 2s budget for the close operation.
+            // TODO: If CloseAsync() hangs and is abandoned via WaitAsync, the task's exception
+            // (if any) goes unobserved and may surface as UnobservedTaskException in applications
+            // that subscribe to that event. Consider attaching a continuation to suppress:
+            // closeTask.ContinueWith(_ => { }, TaskContinuationOptions.OnlyOnFaulted)
+            using var closeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            await _lockConnection.CloseAsync().WaitAsync(closeCts.Token);
+            await _lockConnection.DisposeAsync();
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "PostgresLeaderElectionService: Error closing lock connection during shutdown");
+            // Best-effort dispose even if close failed/timed out
+            try { _lockConnection.Dispose(); } catch { /* swallow */ }
+        }
+        finally
+        {
+            _lockConnection = null;
         }
     }
 
