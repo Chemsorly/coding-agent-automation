@@ -429,6 +429,15 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine();
         sb.AppendLine("Final score = hotspot × evidence × scope. Rank descending. Take top N.");
         sb.AppendLine();
+        sb.AppendLine("### Step 3.5: Evidence Quality Gate");
+        sb.AppendLine();
+        sb.AppendLine("Before ranking, reject proposals that fail evidence quality:");
+        sb.AppendLine("- Categories `refactoring`, `bug`, `dead-code`: MUST have at least one evidence source");
+        sb.AppendLine("  that is NOT \"code-reading:\" only. If all sources are \"code-reading:\", DROP the proposal.");
+        sb.AppendLine("- Categories `simplification`, `documentation`: may use \"code-reading:\" alone but");
+        sb.AppendLine("  receive a capped evidence score of 1 regardless of other evidence quality.");
+        sb.AppendLine("- Valid non-code-reading sources: \"hotspot:\", \"grep:\", \"usage-search:\", \"tool:\"");
+        sb.AppendLine();
         sb.AppendLine("### Step 4: Format as Proposals");
         sb.AppendLine();
         sb.AppendLine($"Select the top **{maxProposals}** findings by score and convert them into the final proposal format.");

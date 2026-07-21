@@ -261,6 +261,49 @@ public class ConsolidationPromptBuilderRefactoringTests
         result.Should().Contain("single agent in one run");
     }
 
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_IncludesEvidenceQualityGateSection()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("Evidence Quality Gate");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_RejectsCodeReadingOnlyForHardCategories()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("DROP the proposal");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_ExemptsSimplificationAndDocumentation()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("may use \"code-reading:\" alone");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_CapsEvidenceScoreForExemptedCategories()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("capped evidence score of 1");
+    }
+
+    [Fact]
+    public void BuildRefactoringAggregationPrompt_ListsValidNonCodeReadingSources()
+    {
+        var result = ConsolidationPromptBuilder.BuildRefactoringAggregationPrompt();
+
+        result.Should().Contain("\"hotspot:\"");
+        result.Should().Contain("\"grep:\"");
+        result.Should().Contain("\"usage-search:\"");
+        result.Should().Contain("\"tool:\"");
+    }
+
     // ─── Review Prompt (Strengthened) ────────────────────────────────────
 
     [Fact]
