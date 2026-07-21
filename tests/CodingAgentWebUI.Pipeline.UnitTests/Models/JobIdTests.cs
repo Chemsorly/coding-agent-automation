@@ -17,6 +17,14 @@ public class JobIdTests
     }
 
     [Fact]
+    public void ImplicitConversion_FromNull_ThrowsArgumentNullException()
+    {
+        var act = () => { JobId id = (string)null!; };
+
+        act.Should().Throw<ArgumentNullException>();
+    }
+
+    [Fact]
     public void ToString_ReturnsInnerValue()
     {
         var id = new JobId("job-456");
@@ -27,9 +35,6 @@ public class JobIdTests
     [Fact]
     public void Equality_SameValue_AreEqual()
     {
-        // TODO: These equality/HashSet tests validate compiler-generated record struct behavior
-        // rather than custom logic. Consider replacing with tests that exercise the custom
-        // implicit operator and ToString() override in ways that would fail if implementation changed.
         var id1 = new JobId("same-job");
         var id2 = new JobId("same-job");
 
@@ -95,9 +100,6 @@ public class JobIdTests
 /// <summary>
 /// Tests for the MessagePack formatter that serializes <see cref="JobId"/> as a bare string.
 /// </summary>
-// TODO: Add a test for null/default JobId serialization round-trip. default(JobId).Value is null,
-// and the current formatter path (Serialize writes nil, Deserialize uses null-forgiving operator)
-// should be explicitly tested to document whether it produces JobId(null) or throws.
 public class JobIdFormatterTests
 {
     private static readonly MessagePackSerializerOptions Options =
@@ -131,6 +133,16 @@ public class JobIdFormatterTests
     }
 
     [Fact]
+    public void Serialize_DefaultJobId_ThrowsMessagePackSerializationException()
+    {
+        var defaultId = default(JobId);
+
+        var act = () => MessagePackSerializer.Serialize(defaultId, Options);
+
+        act.Should().Throw<MessagePackSerializationException>();
+    }
+
+    [Fact]
     public void Deserialize_FromPlainString_ProducesJobId()
     {
         // Serialize a raw string, then deserialize as JobId
@@ -138,6 +150,17 @@ public class JobIdFormatterTests
         var deserialized = MessagePackSerializer.Deserialize<JobId>(bytes, Options);
 
         deserialized.Value.Should().Be("raw-string-job");
+    }
+
+    [Fact]
+    public void Deserialize_FromNilToken_ThrowsMessagePackSerializationException()
+    {
+        // Serialize a null string to produce a nil MessagePack token
+        var bytes = MessagePackSerializer.Serialize((string?)null, Options);
+
+        var act = () => MessagePackSerializer.Deserialize<JobId>(bytes, Options);
+
+        act.Should().Throw<MessagePackSerializationException>();
     }
 
     [Fact]
