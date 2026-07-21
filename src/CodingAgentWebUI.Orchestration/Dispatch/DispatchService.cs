@@ -485,11 +485,25 @@ public sealed class DispatchService : BackgroundService
         // (avoids stale entity if another service modified the item during K8s API call)
         db.ChangeTracker.Clear();
         workItem = await db.WorkItems.FindAsync([item.Id], ct);
-        if (workItem is null) return;
-
-        if (workItem.Status != WorkItemStatus.Pending)
+        if (workItem is null || workItem.Status != WorkItemStatus.Pending)
         {
-            // Someone else already transitioned it
+            // Race condition: another process transitioned the work item while we were creating the K8s Job.
+            // Release the claimed PVC back to the pool and attempt to delete the orphaned Job.
+            // The per-job K8s Secret (if created) has an OwnerReference to the Job,
+            // so K8s garbage collection will automatically delete it when the Job is deleted.
+            if (claimedPvc is not null)
+                availablePvcs.Add(claimedPvc);
+
+            try
+            {
+                await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
+                Log.Information("DispatchService: deleted orphaned K8s Job {JobName} — WorkItem {WorkItemId} no longer Pending", jobName, item.Id);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DispatchService: failed to delete orphaned K8s Job {JobName} for WorkItem {WorkItemId}", jobName, item.Id);
+            }
+
             return;
         }
 
@@ -736,11 +750,25 @@ public sealed class DispatchService : BackgroundService
         // Transition to Dispatched
         db.ChangeTracker.Clear();
         workItem = await db.WorkItems.FindAsync([item.Id], ct);
-        // TODO: If status is no longer Pending (another process dispatched it), the K8s Job was already
-        // created but we skip the Dispatched status update, and claimedPvc is not released back to
-        // availablePvcs. This creates a state inconsistency window. Same pattern as pipeline path.
         if (workItem is null || workItem.Status != WorkItemStatus.Pending)
+        {
+            // Race condition: another process transitioned the work item while we were creating the K8s Job.
+            // Release the claimed PVC back to the pool and attempt to delete the orphaned Job.
+            if (claimedPvc is not null)
+                availablePvcs.Add(claimedPvc);
+
+            try
+            {
+                await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
+                Log.Information("DispatchService: deleted orphaned K8s Job {JobName} — consolidation WorkItem {WorkItemId} no longer Pending", jobName, item.Id);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "DispatchService: failed to delete orphaned K8s Job {JobName} for consolidation WorkItem {WorkItemId}", jobName, item.Id);
+            }
+
             return;
+        }
 
         workItem.Status = WorkItemStatus.Dispatched;
         workItem.DispatchedAt = DateTimeOffset.UtcNow;
