@@ -389,9 +389,8 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     {
         var now = referenceTime ?? DateTime.UtcNow;
         var entries = new List<(string File, double RecencyFactor, double DaysSince)>();
-        // TODO: Initial state gives max recency weight (1.0) to files appearing before any COMMIT_DATE: marker.
-        // This is inconsistent with the graceful degradation policy (0.5 neutral weight on parse failure).
-        // Consider initializing dateParseFailedForCurrentCommit = true so pre-marker files get neutral weight.
+        // Note: files appearing before any COMMIT_DATE: marker receive max recency weight (1.0).
+        // In practice, git --format always emits the date line before file names per commit.
         DateTime currentCommitDate = now;
         bool dateParseFailedForCurrentCommit = false;
 
