@@ -680,6 +680,168 @@ public class K8sEdgeCaseTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // Race condition: WorkItem no longer Pending after Job creation
+    // PVC must be released and orphaned Job must be deleted (#1488)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task PollAndDispatch_WorkItemTransitionedAfterJobCreation_PvcReleasedAndJobDeleted()
+    {
+        // Arrange: 1 PVC in pool, two Pending items (second item proves PVC was released)
+        var racedId = Guid.NewGuid();
+        var secondId = Guid.NewGuid();
+        await InsertWorkItem(racedId, "owner/repo#raced", "kiro,dotnet", WorkItemStatus.Pending,
+            createdAt: DateTimeOffset.UtcNow.AddMinutes(-2));
+        await InsertWorkItem(secondId, "owner/repo#second", "kiro,dotnet", WorkItemStatus.Pending,
+            createdAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var createCallCount = 0;
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            // TODO: async lambda in Moq .Callback creates an async void delegate (fire-and-forget).
+            // Works reliably only because the InMemory/SQLite provider completes synchronously.
+            // If the test DB is ever changed to a truly async provider, replace with .Returns(async () => { ... })
+            // or TaskCompletionSource-based synchronization to make ordering guarantees explicit.
+            .Callback<V1Job, string, CancellationToken>(async (job, ns, ct) =>
+            {
+                createCallCount++;
+                if (createCallCount == 1)
+                {
+                    // Simulate race: another process transitions the first work item to Dispatched
+                    // during the K8s API call window. Use a separate DbContext to avoid tracking conflicts.
+                    await using var raceDb = await _dbFactory.CreateDbContextAsync();
+                    var item = await raceDb.WorkItems.FindAsync(racedId);
+                    item!.Status = WorkItemStatus.Dispatched;
+                    item.DispatchedAt = DateTimeOffset.UtcNow;
+                    await raceDb.SaveChangesAsync();
+                }
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockKubeClient
+            .Setup(k => k.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateDispatchService(pvcPool: new[] { "pvc-race-test" });
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: DeleteJobAsync was called for the raced item's orphaned Job
+        var expectedJobName = $"caa-{racedId.ToString("N")[..8]}";
+        _mockKubeClient.Verify(
+            k => k.DeleteJobAsync(expectedJobName, "default", It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Assert: The second item was dispatched (proving PVC was released back to pool)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var secondItem = await db.WorkItems.FindAsync(secondId);
+        secondItem!.Status.Should().Be(WorkItemStatus.Dispatched,
+            "Second item should dispatch because PVC was released after race condition on first item");
+
+        // Assert: First item's DB state was NOT mutated by our code (ClaimedPvcName stays set)
+        var racedItem = await db.WorkItems.FindAsync(racedId);
+        racedItem!.ClaimedPvcName.Should().NotBeNull(
+            "Race condition path should not mutate the work item — ReconciliationService handles DB cleanup");
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_WorkItemNullAfterJobCreation_PvcReleasedAndJobDeleted()
+    {
+        // Arrange: WorkItem is hard-deleted between Job creation and re-fetch (defensive edge case)
+        var deletedId = Guid.NewGuid();
+        await InsertWorkItem(deletedId, "owner/repo#deleted", "kiro,dotnet", WorkItemStatus.Pending);
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            // TODO: async lambda in Moq .Callback creates an async void delegate (fire-and-forget).
+            // Works reliably only because the InMemory/SQLite provider completes synchronously.
+            // If the test DB is ever changed to a truly async provider, replace with .Returns(async () => { ... })
+            // or TaskCompletionSource-based synchronization to make ordering guarantees explicit.
+            .Callback<V1Job, string, CancellationToken>(async (job, ns, ct) =>
+            {
+                // Simulate race: hard-delete the work item during K8s API call
+                await using var raceDb = await _dbFactory.CreateDbContextAsync();
+                var item = await raceDb.WorkItems.FindAsync(deletedId);
+                if (item is not null)
+                {
+                    raceDb.WorkItems.Remove(item);
+                    await raceDb.SaveChangesAsync();
+                }
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockKubeClient
+            .Setup(k => k.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateDispatchService(pvcPool: new[] { "pvc-null-test" });
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: DeleteJobAsync was called for the orphaned Job
+        var expectedJobName = $"caa-{deletedId.ToString("N")[..8]}";
+        _mockKubeClient.Verify(
+            k => k.DeleteJobAsync(expectedJobName, "default", It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_RaceCondition_DeleteJobFails_PvcStillReleased()
+    {
+        // Arrange: Race condition occurs AND DeleteJobAsync fails — PVC must still be released
+        var racedId = Guid.NewGuid();
+        var secondId = Guid.NewGuid();
+        await InsertWorkItem(racedId, "owner/repo#raced-fail", "kiro,dotnet", WorkItemStatus.Pending,
+            createdAt: DateTimeOffset.UtcNow.AddMinutes(-2));
+        await InsertWorkItem(secondId, "owner/repo#second-fail", "kiro,dotnet", WorkItemStatus.Pending,
+            createdAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var createCallCount = 0;
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            // TODO: async lambda in Moq .Callback creates an async void delegate (fire-and-forget).
+            // Works reliably only because the InMemory/SQLite provider completes synchronously.
+            // If the test DB is ever changed to a truly async provider, replace with .Returns(async () => { ... })
+            // or TaskCompletionSource-based synchronization to make ordering guarantees explicit.
+            .Callback<V1Job, string, CancellationToken>(async (job, ns, ct) =>
+            {
+                createCallCount++;
+                if (createCallCount == 1)
+                {
+                    // Simulate race on first item
+                    await using var raceDb = await _dbFactory.CreateDbContextAsync();
+                    var item = await raceDb.WorkItems.FindAsync(racedId);
+                    item!.Status = WorkItemStatus.Dispatched;
+                    item.DispatchedAt = DateTimeOffset.UtcNow;
+                    await raceDb.SaveChangesAsync();
+                }
+            })
+            .Returns(Task.CompletedTask);
+
+        // DeleteJobAsync throws (simulating K8s API failure or 404)
+        _mockKubeClient
+            .Setup(k => k.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new k8s.Autorest.HttpOperationException("Not Found")
+            {
+                Response = new k8s.Autorest.HttpResponseMessageWrapper(
+                    new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.NotFound), "")
+            });
+
+        var service = CreateDispatchService(pvcPool: new[] { "pvc-fail-test" });
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: Second item still dispatched (PVC released despite DeleteJob failure)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var secondItem = await db.WorkItems.FindAsync(secondId);
+        secondItem!.Status.Should().Be(WorkItemStatus.Dispatched,
+            "PVC must be released even when DeleteJobAsync fails — compensating action is best-effort");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // Helpers
     // ═══════════════════════════════════════════════════════════════════════
 

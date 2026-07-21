@@ -675,6 +675,76 @@ public class DispatchServiceConsolidationTests : IDisposable
         }
     }
 
+    // ── Race condition: WorkItem no longer Pending after Job creation (#1488) ──
+
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_TransitionedAfterJobCreation_PvcReleasedAndJobDeleted()
+    {
+        // Arrange: Consolidation item with 1 PVC, plus a second consolidation item to prove PVC release
+        var racedId = Guid.NewGuid();
+        var secondId = Guid.NewGuid();
+        var racedRunId = racedId.ToString();
+        var secondRunId = secondId.ToString();
+        await InsertConsolidationWorkItem(racedId, racedRunId, "kiro,dotnet");
+        await InsertConsolidationWorkItem(secondId, secondRunId, "kiro,dotnet");
+
+        // Ensure second item is newer (ordered by CreatedAt)
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var first = await db.WorkItems.FindAsync(racedId);
+            first!.CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-2);
+            var second = await db.WorkItems.FindAsync(secondId);
+            second!.CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
+        var createCallCount = 0;
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            // TODO: async lambda in Moq .Callback creates an async void delegate (fire-and-forget).
+            // Works reliably only because the InMemory/SQLite provider completes synchronously.
+            // If the test DB is ever changed to a truly async provider, replace with .Returns(async () => { ... })
+            // or TaskCompletionSource-based synchronization to make ordering guarantees explicit.
+            .Callback<V1Job, string, CancellationToken>(async (job, ns, ct) =>
+            {
+                createCallCount++;
+                if (createCallCount == 1)
+                {
+                    // Simulate race: another process transitions the first consolidation item
+                    await using var raceDb = await _dbFactory.CreateDbContextAsync();
+                    var item = await raceDb.WorkItems.FindAsync(racedId);
+                    item!.Status = WorkItemStatus.Dispatched;
+                    item.DispatchedAt = DateTimeOffset.UtcNow;
+                    await raceDb.SaveChangesAsync();
+                }
+            })
+            .Returns(Task.CompletedTask);
+
+        _mockKubeClient
+            .Setup(k => k.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Use only 1 PVC to prove the release
+        var service = CreateServiceWithPvcPool(new[] { "pvc-consolidation-race" });
+
+        // Act
+        await InvokePollAndDispatch(service);
+
+        // Assert: DeleteJobAsync was called for the raced consolidation item's orphaned Job
+        var expectedJobName = $"caa-{racedId.ToString("N")[..8]}";
+        _mockKubeClient.Verify(
+            k => k.DeleteJobAsync(expectedJobName, "default", It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Assert: Second consolidation item was dispatched (PVC was released back to pool)
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            var secondItem = await db.WorkItems.FindAsync(secondId);
+            secondItem!.Status.Should().Be(WorkItemStatus.Dispatched,
+                "Second consolidation item should dispatch because PVC was released after race condition on first");
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private void SetupDefaultMocks()
@@ -751,16 +821,21 @@ public class DispatchServiceConsolidationTests : IDisposable
 
     private DispatchService CreateService(ILabelService? labelService = null)
     {
+        return CreateServiceWithPvcPool(new[] { "pvc-test-1", "pvc-test-2" }, labelService);
+    }
+
+    private DispatchService CreateServiceWithPvcPool(string[] pvcPool, ILabelService? labelService = null)
+    {
         var configData = new Dictionary<string, string?>
         {
             ["WorkDistribution:Dispatch:PollIntervalSeconds"] = "10",
             ["WorkDistribution:Dispatch:RateLimitPerSecond"] = "100",
             ["WorkDistribution:Namespace"] = "default",
             ["WorkDistribution:OrchestratorUrl"] = "http://orchestrator:8080",
-            ["WorkDistribution:AgentApiKeySecretName"] = "agent-api-key",
-            ["WorkDistribution:CredentialPools:Kiro:0"] = "pvc-test-1",
-            ["WorkDistribution:CredentialPools:Kiro:1"] = "pvc-test-2"
+            ["WorkDistribution:AgentApiKeySecretName"] = "agent-api-key"
         };
+        for (var i = 0; i < pvcPool.Length; i++)
+            configData[$"WorkDistribution:CredentialPools:Kiro:{i}"] = pvcPool[i];
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
         var templateProvider = BuildTemplateProvider();
