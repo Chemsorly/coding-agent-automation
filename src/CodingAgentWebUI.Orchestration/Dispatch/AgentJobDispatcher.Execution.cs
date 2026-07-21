@@ -135,7 +135,7 @@ public sealed partial class AgentJobDispatcher
         PipelineProject project,
         CancellationToken ct)
     {
-        var providerConfigs = await _infra.ProviderConfigBuilder.PrepareProviderConfigsAsync(
+        var providerConfigs = await _infra.PrepareProviderConfigsAsync(
             repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, _logger, ct);
 
         var config = await PipelineConfigurationResolver.ResolveAsync(
@@ -220,11 +220,15 @@ public sealed partial class AgentJobDispatcher
             if (core is null) return false;
             var (proj, profile, agentProviderId) = core.Value;
 
-            // Resolve quality gate configurations for this job
-            var resolvedQgcs = await _infra.Resolution.ResolveQualityGatesAsync(requiredLabels, ct);
+            // Shared dispatch preparation: QG/reviewer resolution, issue context, config, staleness
+            var preparation = await _infra.PrepareDispatchCoreAsync(
+                requiredLabels, issueIdentifier, issueProviderId,
+                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId,
+                proj, _logger, ct);
+            if (preparation is null) return false;
 
-            // Resolve reviewer configurations for this job
-            var resolvedReviewerConfigs = await _infra.Resolution.ResolveReviewersAsync(requiredLabels, ct);
+            var (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
+                forceRefresh, stalenessSignal, refreshCount) = preparation.Value;
 
             // Create the dispatched run via PipelineOrchestrationService
             var run = await _orchestration.CreateDispatchedRunAsync(
@@ -238,31 +242,13 @@ public sealed partial class AgentJobDispatcher
                 return false;
             }
 
-            // Set project context on the run (captured at dispatch time)
+            // Set project context and resolved metadata on the run
             run.ProjectId = proj.Id;
             run.ProjectName = proj.Name;
-
-            // Populate resolved profile and QGC IDs on the run
             run.ResolvedProfileId = profile.Id;
             run.ResolvedQualityGateConfigIds = resolvedQgcs.Select(q => q.Id).ToList().AsReadOnly();
             run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
-
-            // Pre-fetch issue details and comments
-            var issueContext = await _issueContextBuilder.BuildAsync(issueIdentifier, issueProviderId, ct);
-            if (issueContext is null)
-            {
-                _logger.Error("Issue provider config '{ConfigId}' not found", issueProviderId);
-                _runService.RemoveRun(run.RunId);
-                return false;
-            }
-
-            // Update run with fetched issue title
             run.IssueTitle = issueContext.IssueDetail.Title;
-
-            // Build and prepare provider configs for the agent
-            // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
-            var (providerConfigs, config) = await PrepareAndResolveConfigAsync(
-                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, proj, ct);
 
             await BuildAndSendAsync(
                 agent, run, profile,
@@ -272,9 +258,9 @@ public sealed partial class AgentJobDispatcher
                 msg => msg with
                 {
                     ExistingAnalysis = issueContext.ExistingAnalysis,
-                    ForceRefreshAnalysis = issueContext.ForceRefreshAnalysis,
-                    StalenessSignal = issueContext.StalenessSignal,
-                    AnalysisRefreshCount = issueContext.RefreshCount,
+                    ForceRefreshAnalysis = forceRefresh,
+                    StalenessSignal = stalenessSignal,
+                    AnalysisRefreshCount = refreshCount,
                     QualityGateConfigs = resolvedQgcs,
                     ReviewerConfigs = resolvedReviewerConfigs
                 },
@@ -545,7 +531,7 @@ public sealed partial class AgentJobDispatcher
                 .Select(r => r.RepoProviderId)
                 .Where(id => !string.IsNullOrEmpty(id))
                 .Cast<string>();
-            var providerConfigs = await _infra.ProviderConfigBuilder.PrepareProviderConfigsAsync(
+            var providerConfigs = await _infra.PrepareProviderConfigsAsync(
                 repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, _logger, ct, additionalRepoProviderIds);
 
             // Settings resolution: apply Project → Template overrides to the pre-loaded config

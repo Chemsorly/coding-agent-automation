@@ -82,10 +82,7 @@ public class EpicDeduplicationPropertyTests
                     new QualityGateResolver(),
                     new ReviewerResolver(),
                     mockConfigStore.Object,
-                    mockLogger.Object),
-                new ProviderConfigBuilder(
-                    mockConfigStore.Object,
-                    tokenVending)),
+                    mockLogger.Object)),
             mockAgentComm.Object,
             new ShutdownSignal(),
             mockLogger.Object);        return (dispatcher, runService, jobService, new List<IDisposable> { orchestration });
