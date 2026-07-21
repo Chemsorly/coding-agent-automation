@@ -1,24 +1,42 @@
 using AwesomeAssertions;
+using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using CodingAgentWebUI.Pipeline.Services;
 using Moq;
+using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.UnitTests;
 
 /// <summary>
-/// Unit tests for <see cref="IssueContextBuilder"/>.
-/// Verifies the extracted issue context preparation logic (fetching, parsing,
+/// Unit tests for <see cref="DispatchInfrastructure.BuildIssueContextAsync"/>.
+/// Verifies the issue context preparation logic (fetching, parsing,
 /// comment capping, and basic staleness signal detection).
 /// </summary>
 public class IssueContextBuilderTests
 {
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
-    private readonly Mock<IProviderConfigStore> _mockConfigStore = new();
+    private readonly Mock<IConfigurationStore> _mockConfigStore = new();
+    private readonly Mock<ITokenVendingService> _mockTokenVending = new();
+    private readonly Mock<ILabelService> _mockLabelService = new();
 
-    private IssueContextBuilder CreateBuilder() =>
-        new(_mockProviderFactory.Object, _mockConfigStore.Object);
+    private DispatchInfrastructure CreateInfrastructure()
+    {
+        var resolution = new DispatchResolutionService(
+            new ProfileResolver(),
+            new QualityGateResolver(),
+            new ReviewerResolver(),
+            _mockConfigStore.Object,
+            new Mock<ILogger>().Object);
+
+        return new DispatchInfrastructure(
+            _mockTokenVending.Object,
+            _mockProviderFactory.Object,
+            _mockLabelService.Object,
+            resolution);
+    }
 
     private void SetupIssueProvider(
         IReadOnlyList<IssueComment> comments,
@@ -36,7 +54,7 @@ public class IssueContextBuilderTests
             .ReturnsAsync(issueConfig);
 
         // TODO: Mock setups use It.IsAny<string>() — should verify exact identifier ("42") is passed
-        // to GetIssueAsync and ListCommentsAsync to catch bugs where BuildAsync forwards wrong identifier.
+        // to GetIssueAsync and ListCommentsAsync to catch bugs where BuildIssueContextAsync forwards wrong identifier.
         var mockIssueProvider = new Mock<IIssueProvider>();
         mockIssueProvider
             .Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -56,7 +74,7 @@ public class IssueContextBuilderTests
     }
 
     [Fact]
-    public async Task BuildAsync_WithValidConfig_ReturnsFetchedIssueContext()
+    public async Task BuildIssueContextAsync_WithValidConfig_ReturnsFetchedIssueContext()
     {
         var comments = new List<IssueComment>
         {
@@ -64,8 +82,8 @@ public class IssueContextBuilderTests
         };
         SetupIssueProvider(comments);
 
-        var builder = CreateBuilder();
-        var result = await builder.BuildAsync("42", "issue-provider-1", CancellationToken.None);
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.IssueDetail.Title.Should().Be("Test Issue Title");
@@ -81,21 +99,21 @@ public class IssueContextBuilderTests
     }
 
     [Fact]
-    public async Task BuildAsync_WhenProviderConfigNotFound_ReturnsNull()
+    public async Task BuildIssueContextAsync_WhenProviderConfigNotFound_ReturnsNull()
     {
         _mockConfigStore
             .Setup(s => s.GetProviderConfigByIdAsync("missing-id", ProviderKind.Issue, It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
 
-        var builder = CreateBuilder();
-        var result = await builder.BuildAsync("42", "missing-id", CancellationToken.None);
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "missing-id", CancellationToken.None);
 
         result.Should().BeNull();
     }
 
     // TODO: Add boundary test for exactly 50 comments — should pass through unmodified (code caps only > 50).
     [Fact]
-    public async Task BuildAsync_CapsCommentsAt50()
+    public async Task BuildIssueContextAsync_CapsCommentsAt50()
     {
         var comments = Enumerable.Range(1, 60).Select(i => new IssueComment
         {
@@ -106,15 +124,15 @@ public class IssueContextBuilderTests
         }).ToList();
         SetupIssueProvider(comments);
 
-        var builder = CreateBuilder();
-        var result = await builder.BuildAsync("42", "issue-provider-1", CancellationToken.None);
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.IssueComments.Should().HaveCount(50);
     }
 
     [Fact]
-    public async Task BuildAsync_WithExistingAnalysis_DetectsGateRejection()
+    public async Task BuildIssueContextAsync_WithExistingAnalysis_DetectsGateRejection()
     {
         var comments = new List<IssueComment>
         {
@@ -135,8 +153,8 @@ public class IssueContextBuilderTests
         };
         SetupIssueProvider(comments);
 
-        var builder = CreateBuilder();
-        var result = await builder.BuildAsync("42", "issue-provider-1", CancellationToken.None);
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.ExistingAnalysis.Should().Contain(CommentMarkers.AnalysisHeader);
@@ -145,7 +163,7 @@ public class IssueContextBuilderTests
     }
 
     [Fact]
-    public async Task BuildAsync_WithExistingAnalysis_DetectsGateWontDo()
+    public async Task BuildIssueContextAsync_WithExistingAnalysis_DetectsGateWontDo()
     {
         var comments = new List<IssueComment>
         {
@@ -166,8 +184,8 @@ public class IssueContextBuilderTests
         };
         SetupIssueProvider(comments);
 
-        var builder = CreateBuilder();
-        var result = await builder.BuildAsync("42", "issue-provider-1", CancellationToken.None);
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.ExistingAnalysis.Should().Contain(CommentMarkers.AnalysisHeader);
@@ -176,7 +194,7 @@ public class IssueContextBuilderTests
     }
 
     [Fact]
-    public async Task BuildAsync_NoAnalysisComment_ReturnsNullExistingAnalysis()
+    public async Task BuildIssueContextAsync_NoAnalysisComment_ReturnsNullExistingAnalysis()
     {
         var comments = new List<IssueComment>
         {
@@ -184,8 +202,8 @@ public class IssueContextBuilderTests
         };
         SetupIssueProvider(comments);
 
-        var builder = CreateBuilder();
-        var result = await builder.BuildAsync("42", "issue-provider-1", CancellationToken.None);
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.ExistingAnalysis.Should().BeNull();
@@ -194,7 +212,7 @@ public class IssueContextBuilderTests
     }
 
     [Fact]
-    public async Task BuildAsync_GateRejectionOlderThanAnalysis_NoForceRefresh()
+    public async Task BuildIssueContextAsync_GateRejectionOlderThanAnalysis_NoForceRefresh()
     {
         var comments = new List<IssueComment>
         {
@@ -215,8 +233,8 @@ public class IssueContextBuilderTests
         };
         SetupIssueProvider(comments);
 
-        var builder = CreateBuilder();
-        var result = await builder.BuildAsync("42", "issue-provider-1", CancellationToken.None);
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.ExistingAnalysis.Should().Contain(CommentMarkers.AnalysisHeader);

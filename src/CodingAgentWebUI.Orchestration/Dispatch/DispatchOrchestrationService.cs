@@ -26,9 +26,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private readonly IAgentProfileStore _agentProfileStore;
     private readonly IConfigurationStore _providerConfigStore;
     private readonly IPipelineConfigStore _pipelineConfigStore;
-    private readonly IProjectStore _projectStore;
-    private readonly AnalysisStalenessDetector? _stalenessDetector;
-    private readonly IssueContextBuilder _issueContextBuilder;
     private readonly ILogger _logger;
 
     public DispatchOrchestrationService(
@@ -40,8 +37,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         IConfigurationStore providerConfigStore,
         IPipelineConfigStore pipelineConfigStore,
         IProjectStore projectStore,
-        ILogger logger,
-        IWorkItemQueryService? workItemQuery = null)
+        ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(infra);
         ArgumentNullException.ThrowIfNull(orchestration);
@@ -60,12 +56,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         _agentProfileStore = agentProfileStore;
         _providerConfigStore = providerConfigStore;
         _pipelineConfigStore = pipelineConfigStore;
-        _projectStore = projectStore;
         _logger = logger;
-        _stalenessDetector = workItemQuery is not null
-            ? new AnalysisStalenessDetector(workItemQuery, logger)
-            : null;
-        _issueContextBuilder = new IssueContextBuilder(infra.ProviderFactory, providerConfigStore);
     }
 
     /// <summary>
@@ -135,11 +126,16 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
         var agentProviderId = profile.AgentProviderConfigId;
 
-        // Resolve quality gate configurations
-        var resolvedQgcs = await _infra.Resolution.ResolveQualityGatesAsync(requiredLabels, ct);
+        // Shared dispatch preparation: QG/reviewer resolution, issue context, config, staleness
+        var preparation = await _infra.PrepareDispatchCoreAsync(
+            requiredLabels, issueIdentifier, issueProviderId,
+            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId,
+            project, _logger, ct);
+        if (preparation is null)
+            return null;
 
-        // Resolve reviewer configurations
-        var resolvedReviewerConfigs = await _infra.Resolution.ResolveReviewersAsync(requiredLabels, ct);
+        var (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
+            forceRefresh, stalenessSignal, refreshCount) = preparation.Value;
 
         // Create the dispatched run via PipelineOrchestrationService
         var run = await _orchestration.CreateDispatchedRunAsync(
@@ -155,7 +151,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             return null;
         }
 
-        // Set project context on the run
+        // Set project context and resolved metadata on the run
         run.ProjectId = project.Id;
         run.ProjectName = project.Name;
         run.ResolvedProfileId = profile.Id;
@@ -163,71 +159,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             .Select(q => q.Id).ToList().AsReadOnly();
         run.ResolvedReviewerConfigIds = resolvedReviewerConfigs
             .Select(r => r.Id).ToList().AsReadOnly();
-
-        // Pre-fetch issue details, comments, and swap labels
-        var issueContext = await _issueContextBuilder.BuildAsync(
-            issueIdentifier, issueProviderId, ct);
-        if (issueContext is null)
-        {
-            _logger.Error("Issue provider config '{ConfigId}' not found", issueProviderId);
-            _runService.RemoveRun(run.RunId);
-            return null;
-        }
-
-        // Update run with fetched issue title
         run.IssueTitle = issueContext.IssueDetail.Title;
-
-        // Build and prepare provider configs for the agent
-        var providerConfigs = await _infra.ProviderConfigBuilder.PrepareProviderConfigsAsync(
-            repoProviderId, agentProviderId, brainProviderId,
-            pipelineProviderId, _logger, ct);
-
-        // Settings resolution: Global → Project → Template overrides
-        var config = await LoadAndApplySettingsAsync(
-            project, repoProviderId, brainProviderId, providerConfigs, ct);
-
-        // --- Staleness detection (after config is resolved for threshold) ---
-        var stalenessSignal = issueContext.StalenessSignal;
-        var refreshCount = issueContext.RefreshCount;
-        var forceRefresh = issueContext.ForceRefreshAnalysis;
-
-        if (!forceRefresh && issueContext.ExistingAnalysis is not null && _stalenessDetector is not null)
-        {
-            var analysisComment = issueContext.IssueComments
-                .Where(c => c.Body.Contains(CommentMarkers.AnalysisHeader))
-                .OrderByDescending(c => c.CreatedAt)
-                .FirstOrDefault();
-
-            if (analysisComment is not null)
-            {
-                // For signal 3: create a short-lived repo provider for commit counting
-                Func<DateTimeOffset, CancellationToken, Task<int>>? getCommitCount = null;
-                var repoConfig = await _providerConfigStore
-                    .GetProviderConfigByIdAsync(repoProviderId, ProviderKind.Repository, ct);
-                if (repoConfig is not null)
-                {
-                    getCommitCount = async (since, token) =>
-                    {
-                        await using var repoProvider = _infra.ProviderFactory.CreateRepositoryProvider(repoConfig);
-                        return await repoProvider.GetCommitCountSinceAsync(since, token);
-                    };
-                }
-
-                var result = await _stalenessDetector.EvaluateAsync(
-                    analysisComment, issueContext.IssueComments,
-                    issueContext.IssueDetail.Description,
-                    issueIdentifier, issueProviderId,
-                    config.AnalysisCommitThreshold,
-                    getCommitCount, ct);
-
-                if (result.ForceRefresh)
-                {
-                    forceRefresh = true;
-                    stalenessSignal = result.Signal;
-                }
-                refreshCount = result.RefreshCount;
-            }
-        }
 
         return new DispatchPreparationResult
         {
@@ -271,22 +203,6 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         }
 
         return profile;
-    }
-
-    /// <summary>
-    /// Loads the pipeline configuration and applies project/template overrides.
-    /// </summary>
-    private async Task<PipelineConfiguration> LoadAndApplySettingsAsync(
-        PipelineProject project,
-        string repoProviderId,
-        string? brainProviderId,
-        IReadOnlyList<ProviderConfig> providerConfigs,
-        CancellationToken ct)
-    {
-        return await PipelineConfigurationResolver.ResolveAsync(
-            _pipelineConfigStore.LoadPipelineConfigAsync,
-            _projectStore.LoadAllTemplatesAsync,
-            project, repoProviderId, brainProviderId, providerConfigs, ct);
     }
 
     // ── IDispatchOrchestrationService implementation ─────────────────────

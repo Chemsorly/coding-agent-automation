@@ -7,12 +7,19 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// Strongly-typed wrapper for job IDs used in SignalR hub method signatures.
 /// Prevents accidental transposition of string parameters (jobId vs runId vs templateId).
 /// </summary>
+/// <remarks>
+/// <c>default(JobId)</c> has <c>Value = null</c> because struct defaults bypass constructors
+/// and operators. The null guards on the implicit conversion and MessagePack formatter protect
+/// explicit creation paths but cannot prevent <c>default(T)</c> from existing.
+/// </remarks>
 public readonly record struct JobId(string Value)
 {
-    // TODO: Consider adding a null guard (e.g., `?? throw new ArgumentNullException(nameof(value))`)
-    // to prevent silent creation of a JobId with a null inner value, which could cause
-    // NullReferenceException downstream in ToString(), string comparisons, and logging.
-    public static implicit operator JobId(string value) => new(value);
+    public static implicit operator JobId(string value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return new(value);
+    }
+
     public override string ToString() => Value;
 }
 
@@ -24,13 +31,18 @@ public readonly record struct JobId(string Value)
 /// </summary>
 public sealed class JobIdFormatter : IMessagePackFormatter<JobId>
 {
-    // TODO: Add null guard for value.Value — default(JobId) has null Value,
-    // and writer.Write(null) writes Nil which round-trips to JobId(null) via Deserialize.
     public void Serialize(ref MessagePackWriter writer, JobId value, MessagePackSerializerOptions options)
-        => writer.Write(value.Value);
+    {
+        if (value.Value is null)
+            throw new MessagePackSerializationException("JobId cannot serialize a null Value (e.g., default(JobId)).");
+        writer.Write(value.Value);
+    }
 
-    // TODO: Add null guard — ReadString() can return null for MessagePack nil tokens.
-    // Consider: `reader.ReadString() ?? throw new MessagePackSerializationException("JobId cannot be null")`
     public JobId Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
-        => new(reader.ReadString()!);
+    {
+        var value = reader.ReadString();
+        if (value is null)
+            throw new MessagePackSerializationException("JobId cannot be deserialized from a nil token.");
+        return new(value);
+    }
 }
