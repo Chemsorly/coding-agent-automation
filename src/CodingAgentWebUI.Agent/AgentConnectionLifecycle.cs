@@ -268,18 +268,20 @@ public sealed class AgentConnectionLifecycle
         {
             _logger.Error(ex, "Failed to re-register agent {AgentId} after initial retry pipeline, starting extended recovery", _agentId);
 
+            var ct = _hostApplicationLifetime.ApplicationStopping;
             for (var i = 0; i < 3; i++)
             {
-                // TODO: Task.Delay without CancellationToken — if the application is shutting down
-                // (IHostApplicationLifetime.ApplicationStopping is triggered), this delay won't be
-                // interrupted and shutdown will block for up to ExtendedRetryDelay × remaining attempts.
-                // Pass _hostApplicationLifetime.ApplicationStopping to allow graceful interruption.
-                await Task.Delay(ExtendedRetryDelay);
                 try
                 {
-                    await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, CancellationToken.None);
+                    await Task.Delay(ExtendedRetryDelay, ct);
+                    await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, ct);
                     _logger.Information("Agent {AgentId} re-registered on extended attempt {Attempt}", _agentId, i + 1);
                     await DrainBufferAsync();
+                    return;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    _logger.Information("Extended re-registration cancelled during shutdown for agent {AgentId}", _agentId);
                     return;
                 }
                 catch (Exception retryEx)
