@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using CodingAgentWebUI.Pipeline;
@@ -358,7 +359,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         try
         {
             var sinceDate = DateTime.UtcNow.Subtract(lookback).ToString("yyyy-MM-dd");
-            var output = await RunGitCommandAsync(workspacePath, $"log --name-only --since=\"{sinceDate}\" --format=\"\"", ct);
+            var output = await RunGitCommandAsync(workspacePath, $"log --name-only --since=\"{sinceDate}\" --format=\"COMMIT_DATE:%ai\"", ct);
 
             var hotspots = ParseHotspotOutput(output, lookback);
             if (hotspots is null)
@@ -380,18 +381,69 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
     }
 
     /// <summary>
-    /// Parses raw git log --name-only output into a formatted hotspot summary.
+    /// Parses git log output with COMMIT_DATE: markers into a time-decay-weighted hotspot summary.
+    /// Each change is weighted by recency: factor = 1/(1 + days_since/30).
     /// Returns null if no files found. Exposed as internal static for testability.
     /// </summary>
-    internal static string? ParseHotspotOutput(string gitLogOutput, TimeSpan lookback)
+    internal static string? ParseHotspotOutput(string gitLogOutput, TimeSpan lookback, DateTime? referenceTime = null)
     {
-        var hotspots = gitLogOutput
-            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => line.Trim())
-            .Where(line => !string.IsNullOrWhiteSpace(line))
-            .GroupBy(file => file)
-            .Select(g => (File: g.Key, Count: g.Count()))
-            .OrderByDescending(x => x.Count)
+        var now = referenceTime ?? DateTime.UtcNow;
+        var entries = new List<(string File, double RecencyFactor, double DaysSince)>();
+        // Note: files appearing before any COMMIT_DATE: marker receive max recency weight (1.0).
+        // In practice, git --format always emits the date line before file names per commit.
+        DateTime currentCommitDate = now;
+        bool dateParseFailedForCurrentCommit = false;
+
+        foreach (var line in gitLogOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = line.Trim();
+            if (string.IsNullOrWhiteSpace(trimmed))
+                continue;
+
+            if (trimmed.StartsWith("COMMIT_DATE:"))
+            {
+                var dateStr = trimmed[12..];
+                if (DateTimeOffset.TryParse(dateStr, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+                {
+                    currentCommitDate = parsed.UtcDateTime;
+                    dateParseFailedForCurrentCommit = false;
+                }
+                else
+                {
+                    // Graceful degradation: neutral weight (0.5 → equivalent to 30 days old)
+                    dateParseFailedForCurrentCommit = true;
+                }
+                continue;
+            }
+
+            double daysSince;
+            double recencyFactor;
+
+            if (dateParseFailedForCurrentCommit)
+            {
+                daysSince = 30.0;
+                recencyFactor = 0.5;
+            }
+            else
+            {
+                daysSince = Math.Max(0, (now - currentCommitDate).TotalDays);
+                recencyFactor = 1.0 / (1.0 + daysSince / 30.0);
+            }
+
+            entries.Add((trimmed, recencyFactor, daysSince));
+        }
+
+        if (entries.Count == 0)
+            return null;
+
+        var hotspots = entries
+            .GroupBy(e => e.File)
+            .Select(g => (
+                File: g.Key,
+                Score: g.Sum(e => e.RecencyFactor),
+                Count: g.Count(),
+                AvgDaysAgo: (int)g.Average(e => e.DaysSince)))
+            .OrderByDescending(x => x.Score)
             .Take(30)
             .ToList();
 
@@ -399,11 +451,11 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
             return null;
 
         var sb = new StringBuilder();
-        sb.AppendLine($"# Git Hotspot Analysis (last {lookback.Days} days)");
-        sb.AppendLine("# Files ranked by change frequency — higher = more actively developed");
+        sb.AppendLine($"# Git Hotspot Analysis (last {lookback.Days} days, time-decay weighted)");
+        sb.AppendLine("# Score = sum of recency factors (1/(1+days/30) per change — recent changes weighted higher)");
         sb.AppendLine();
-        foreach (var (file, count) in hotspots)
-            sb.AppendLine($"{count} changes — {file}");
+        foreach (var (file, score, count, avgDaysAgo) in hotspots)
+            sb.AppendLine($"{score.ToString("F1", CultureInfo.InvariantCulture)} — {file} ({count} changes, avg {avgDaysAgo} days ago)");
 
         return sb.ToString();
     }
