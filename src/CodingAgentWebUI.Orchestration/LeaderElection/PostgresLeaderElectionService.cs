@@ -346,12 +346,14 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
         {
             // Fresh timeout (not linked to shutdown token) — the 5s release timeout may have
             // already fired, so we use an independent 2s budget for the close operation.
-            // TODO: If CloseAsync() hangs and is abandoned via WaitAsync, the task's exception
-            // (if any) goes unobserved and may surface as UnobservedTaskException in applications
-            // that subscribe to that event. Consider attaching a continuation to suppress:
-            // closeTask.ContinueWith(_ => { }, TaskContinuationOptions.OnlyOnFaulted)
             using var closeCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-            await _lockConnection.CloseAsync().WaitAsync(closeCts.Token);
+            var closeTask = _lockConnection.CloseAsync();
+            // Attach fault-suppressing continuation so that if this task is abandoned (timeout)
+            // and later faults, the exception is observed and won't surface as UnobservedTaskException.
+            _ = closeTask.ContinueWith(
+                static t => { _ = t.Exception; },
+                TaskContinuationOptions.OnlyOnFaulted);
+            await closeTask.WaitAsync(closeCts.Token);
             await _lockConnection.DisposeAsync();
         }
         catch (Exception ex)

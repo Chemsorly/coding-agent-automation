@@ -330,6 +330,32 @@ public class AnalysisStalenessDetectorTests
         result.ForceRefresh.Should().BeTrue(); // body_changed fires
     }
 
+    [Fact]
+    public async Task MaxRefreshCap_SuccessWithNonZeroOffset_ComparesCorrectly()
+    {
+        // 3 analysis comments at UTC times 10:00, 11:00, 12:00
+        var comments = new[]
+        {
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v1"), new DateTime(2026, 7, 1, 10, 0, 0, DateTimeKind.Utc)),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v2"), new DateTime(2026, 7, 1, 11, 0, 0, DateTimeKind.Utc)),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v3"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc)),
+        };
+
+        // Success at 17:00 +05:30 = 11:30 UTC — only the 12:00 comment is after the success
+        // With the old .DateTime code, this would return 17:00 (Kind=Unspecified), causing
+        // all comments to appear "before" success (0 counted). With .UtcDateTime it correctly
+        // returns 11:30 UTC, so only the 12:00 comment counts (RefreshCount == 1).
+        _mockQuery.Setup(q => q.GetLastSuccessfulCompletionAsync(IssueId, ProviderId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DateTimeOffset(2026, 7, 1, 17, 0, 0, TimeSpan.FromHours(5.5)));
+
+        var result = await _detector.EvaluateAsync(
+            comments[2], comments, "different body",
+            IssueId, ProviderId, 0, null, CancellationToken.None);
+
+        result.RefreshCount.Should().Be(1);
+        result.ForceRefresh.Should().BeTrue(); // body_changed fires since cap not hit
+    }
+
     // ── Newest comment selection ──────────────────────────────────────────
 
     [Fact]
