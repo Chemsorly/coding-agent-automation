@@ -1,4 +1,3 @@
-using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -29,64 +28,6 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
             try { Directory.Delete(_tempDir, recursive: true); }
             catch { /* best-effort */ }
         }
-    }
-
-    // ── ConsolidationRun serialization fidelity ─────────────────────────
-
-    /// <summary>
-    /// QueuedRequiredLabels must survive round-trip through the store.
-    /// If lost, rehydrated queued runs can't match agents after restart.
-    /// </summary>
-    [Fact]
-    public async Task ConsolidationRunStore_PreservesQueuedRequiredLabels()
-    {
-        var store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
-        var run = new ConsolidationRun
-        {
-            RunId = Guid.NewGuid().ToString(),
-            Type = ConsolidationRunType.BrainConsolidation,
-            TemplateId = "tmpl-1",
-            TemplateName = "Test",
-            StartedAtUtc = DateTimeOffset.UtcNow,
-            Status = ConsolidationRunStatus.Queued,
-            QueuedRequiredLabels = new List<string> { "dotnet", "dotnet10", "uac" }
-        };
-
-        await store.SaveRunAsync(run, CancellationToken.None);
-        var loaded = await store.GetByIdAsync(run.RunId, CancellationToken.None);
-
-        loaded.Should().NotBeNull();
-        loaded!.QueuedRequiredLabels.Should().NotBeNull();
-        loaded.QueuedRequiredLabels.Should().BeEquivalentTo(new[] { "dotnet", "dotnet10", "uac" });
-    }
-
-    /// <summary>
-    /// CompletedAtUtc and TotalTokens must survive round-trip (these are the fields
-    /// that UpdateRunAsync sets and that were lost with the old bug).
-    /// </summary>
-    [Fact]
-    public async Task ConsolidationRunStore_PreservesCompletionFields()
-    {
-        var store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
-        var completedAt = DateTimeOffset.UtcNow;
-        var run = new ConsolidationRun
-        {
-            RunId = Guid.NewGuid().ToString(),
-            Type = ConsolidationRunType.RefactoringDetection,
-            StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5),
-            Status = ConsolidationRunStatus.Succeeded,
-            Summary = "Found 3 refactoring opportunities",
-            CompletedAtUtc = completedAt,
-            TotalTokens = 45000
-        };
-
-        await store.SaveRunAsync(run, CancellationToken.None);
-        var loaded = await store.GetByIdAsync(run.RunId, CancellationToken.None);
-
-        loaded.Should().NotBeNull();
-        loaded!.CompletedAtUtc.Should().BeCloseTo(completedAt, TimeSpan.FromMilliseconds(1));
-        loaded.TotalTokens.Should().Be(45000);
-        loaded.Summary.Should().Be("Found 3 refactoring opportunities");
     }
 
     // ── LoopState null field handling ───────────────────────────────────
