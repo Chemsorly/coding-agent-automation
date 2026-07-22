@@ -17,44 +17,41 @@ public class AgentJobSlotManagerChatSnapshotTests
     {
         var slotManager = CreateSlotManager();
 
-        var (sessionId, task, cts) = slotManager.GetChatSlotSnapshot();
+        var (sessionId, task) = slotManager.GetChatSlotSnapshot();
 
         sessionId.Should().BeNull();
         task.Should().BeNull();
-        cts.Should().BeNull();
     }
 
     [Fact]
-    public void GetChatSlotSnapshot_AfterAcquireChatSlot_ReturnsSessionIdAndCts()
+    public void GetChatSlotSnapshot_AfterAcquireChatSlot_ReturnsSessionId()
     {
         var slotManager = CreateSlotManager();
         slotManager.TryAcquireChatSlot("session-1", out _);
 
-        var (sessionId, task, cts) = slotManager.GetChatSlotSnapshot();
+        var (sessionId, task) = slotManager.GetChatSlotSnapshot();
 
         sessionId.Should().Be("session-1");
-        cts.Should().NotBeNull();
         // Task is not yet set — SetActiveChatTask is called after Task.Run
         task.Should().BeNull();
     }
 
     [Fact]
-    public void GetChatSlotSnapshot_AfterSetActiveChatTask_ReturnsAllThreeFields()
+    public void GetChatSlotSnapshot_AfterSetActiveChatTask_ReturnsBothFields()
     {
         var slotManager = CreateSlotManager();
         slotManager.TryAcquireChatSlot("session-1", out _);
         var chatTask = Task.CompletedTask;
         slotManager.SetActiveChatTask(chatTask);
 
-        var (sessionId, task, cts) = slotManager.GetChatSlotSnapshot();
+        var (sessionId, task) = slotManager.GetChatSlotSnapshot();
 
         sessionId.Should().Be("session-1");
         task.Should().BeSameAs(chatTask);
-        cts.Should().NotBeNull();
     }
 
     [Fact]
-    public void GetChatSlotSnapshot_AfterReleaseChatSlot_ReturnsNullSessionIdAndNullCts()
+    public void GetChatSlotSnapshot_AfterReleaseChatSlot_ReturnsNullSessionId()
     {
         var slotManager = CreateSlotManager();
         slotManager.TryAcquireChatSlot("session-1", out _);
@@ -63,7 +60,7 @@ public class AgentJobSlotManagerChatSnapshotTests
 
         slotManager.ReleaseChatSlot();
 
-        var (sessionId, task, cts) = slotManager.GetChatSlotSnapshot();
+        var (sessionId, task) = slotManager.GetChatSlotSnapshot();
 
         sessionId.Should().BeNull();
         // TODO: This asserts an implementation detail — _activeChatTask is never cleared by
@@ -72,7 +69,6 @@ public class AgentJobSlotManagerChatSnapshotTests
         // (not Task) to determine if a chat is active.
         // _activeChatTask is never cleared by ReleaseChatSlot — stale reference remains
         task.Should().BeSameAs(chatTask);
-        cts.Should().BeNull();
     }
 
     [Fact]
@@ -81,11 +77,10 @@ public class AgentJobSlotManagerChatSnapshotTests
         var slotManager = CreateSlotManager();
         slotManager.TryAcquireJobSlot("job-1", out _);
 
-        var (sessionId, task, cts) = slotManager.GetChatSlotSnapshot();
+        var (sessionId, task) = slotManager.GetChatSlotSnapshot();
 
         sessionId.Should().BeNull();
         task.Should().BeNull();
-        cts.Should().BeNull();
     }
 
     private static AgentJobSlotManager CreateSlotManager()
