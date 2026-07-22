@@ -7,11 +7,10 @@ namespace CodingAgentWebUI.Agent;
 /// Result of <see cref="PipelineExecutionContextBuilder.Build"/> containing all objects
 /// constructed during the pipeline context assembly phase.
 /// </summary>
-// TODO: PipelineExecutionBuildResult holds IDisposable (CancellationTokenSource) and IAsyncDisposable
-// (PipelineSignalRReporter) but does not implement IDisposable/IAsyncDisposable. Ownership is implicit
-// via PipelineCleanup.RunAsync. Consider implementing IAsyncDisposable to make the contract explicit.
-internal sealed class PipelineExecutionBuildResult
+internal sealed class PipelineExecutionBuildResult : IAsyncDisposable
 {
+    private bool _disposed;
+
     public required PipelineRun Run { get; init; }
     public required PipelineExecutionContext ExecutionContext { get; init; }
     public required PipelineSignalRReporter Reporter { get; init; }
@@ -30,4 +29,25 @@ internal sealed class PipelineExecutionBuildResult
     /// Set by the caller after <c>CreateStepContext</c> completes.
     /// </summary>
     public PipelineStepContext? StepContext { get; set; }
+
+    /// <summary>
+    /// Disposes <see cref="LocalCts"/> and <see cref="Reporter"/>. Idempotent — subsequent
+    /// calls are no-ops. Used on the <see cref="PipelineExecutionContextBuilder.Build"/> failure
+    /// path to prevent resource leaks. The normal success path continues to use
+    /// <see cref="PipelineCleanup.RunAsync"/> for disposal.
+    /// </summary>
+    // TODO: The _disposed guard prevents double-dispose within this class, but cannot prevent
+    // external code from calling reporter.DisposeAsync() directly via PipelineCleanup.RunAsync.
+    // PipelineSignalRReporter.DisposeAsync is not idempotent (see TODO at PipelineSignalRReporter.cs:304).
+    // If a future refactor wraps buildResult in `await using` inside LocalPipelineExecutor's try block,
+    // PipelineCleanup.RunAsync in the finally block would call reporter.DisposeAsync() a second time,
+    // triggering ObjectDisposedException. Consider making PipelineSignalRReporter.DisposeAsync idempotent.
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        LocalCts.Dispose();
+        await Reporter.DisposeAsync();
+    }
 }

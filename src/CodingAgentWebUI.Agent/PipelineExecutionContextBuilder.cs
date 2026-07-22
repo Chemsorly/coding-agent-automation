@@ -24,6 +24,12 @@ internal sealed class PipelineExecutionContextBuilder
     private readonly AgentIdentity _agentIdentity;
     private readonly Serilog.ILogger _logger;
 
+    /// <summary>
+    /// Test seam: when set, invoked inside the try block after CTS creation to simulate a failure.
+    /// Enables unit testing of the catch block's cleanup logic. Null (no-op) in production.
+    /// </summary>
+    internal Action? _testThrowAfterCtsCreation;
+
     // TODO: Add ArgumentNullException.ThrowIfNull for required parameters (qualityGateValidator,
     // reporterFactory, feedbackService, agentIdentity, logger) to fail fast instead of NRE in Build().
     public PipelineExecutionContextBuilder(
@@ -48,7 +54,7 @@ internal sealed class PipelineExecutionContextBuilder
     /// Constructs all orchestrators, the reporter, delegates, and parameter objects needed
     /// for a single pipeline execution.
     /// </summary>
-    public PipelineExecutionBuildResult Build(
+    public async Task<PipelineExecutionBuildResult> Build(
         JobAssignmentMessage job,
         PipelineConfiguration config,
         IRepositoryProvider repoProvider,
@@ -99,68 +105,87 @@ internal sealed class PipelineExecutionContextBuilder
         // before releasing the semaphore.
         var reporter = _reporterFactory.Create(connection, outputBatcher, job.JobId, run, onStepChanged);
 
-        // TODO: localCts is not disposed if Build() throws after this line but before returning
-        // the result (e.g., during PipelineExecutionContext construction). Consider wrapping in
-        // try/catch that disposes localCts and reporter on failure before re-throwing.
-        var localCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-
-        // Build result with a mutable StepContext reference for the EmitOutputLine delegate.
-        // The delegate captures 'result' so that when StepContext is set later (after CreateStepContext),
-        // subsequent calls to EmitOutputLine will use the populated context for secret masking.
-        PipelineExecutionBuildResult? result = null;
-
-        // Fire-and-forget wrappers delegating to the reporter.
-        // context.InjectedSecrets is null until RunEnvironmentSetupStep populates it,
-        // so output before that step passes through unmasked (no secrets exist yet).
-        void TransitionTo(PipelineStep step) => reporter.TransitionTo(step, ct);
-        void ReportQualityGateResult(QualityGateReport report) => reporter.ReportQualityGateResult(report, ct);
-        void EmitOutputLine(string line) => reporter.EmitOutputLine(line, result?.StepContext, ct);
-
-        var prContext = new PullRequestCreationContext
+        // Wrap all post-reporter construction in try/catch so that if anything throws
+        // (including CreateLinkedTokenSource or record construction), the reporter and
+        // any partially-created CTS are disposed before the exception propagates.
+        CancellationTokenSource? localCts = null;
+        try
         {
-            RepoProvider = repoProvider,
-            AgentProvider = agentProvider,
-            BrainProvider = brainProvider,
-            BrainSync = brainSync,
-            Config = config,
-            IssueOps = issueOps,
-            Job = job,
-            PrOrchestrator = prOrchestrator,
-            EmitOutputLine = EmitOutputLine,
-            ReportStepTransition = (step, token) => reporter.ReportStepTransitionAsync(step, token)
-        };
+            localCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
-        // Build step context
-        var executionContext = new PipelineExecutionContext
+            // Test seam: allows unit tests to inject a failure after CTS creation
+            // to exercise the catch block's cleanup logic. No-op in production (null by default).
+            _testThrowAfterCtsCreation?.Invoke();
+
+            // Build result with a mutable StepContext reference for the EmitOutputLine delegate.
+            // The delegate captures 'result' so that when StepContext is set later (after CreateStepContext),
+            // subsequent calls to EmitOutputLine will use the populated context for secret masking.
+            PipelineExecutionBuildResult? result = null;
+
+            // Fire-and-forget wrappers delegating to the reporter.
+            // context.InjectedSecrets is null until RunEnvironmentSetupStep populates it,
+            // so output before that step passes through unmasked (no secrets exist yet).
+            void TransitionTo(PipelineStep step) => reporter.TransitionTo(step, ct);
+            void ReportQualityGateResult(QualityGateReport report) => reporter.ReportQualityGateResult(report, ct);
+            void EmitOutputLine(string line) => reporter.EmitOutputLine(line, result?.StepContext, ct);
+
+            var prContext = new PullRequestCreationContext
+            {
+                RepoProvider = repoProvider,
+                AgentProvider = agentProvider,
+                BrainProvider = brainProvider,
+                BrainSync = brainSync,
+                Config = config,
+                IssueOps = issueOps,
+                Job = job,
+                PrOrchestrator = prOrchestrator,
+                EmitOutputLine = EmitOutputLine,
+                ReportStepTransition = (step, token) => reporter.ReportStepTransitionAsync(step, token)
+            };
+
+            // Build step context
+            var executionContext = new PipelineExecutionContext
+            {
+                Job = job,
+                Run = run,
+                Config = config,
+                RepoProvider = repoProvider,
+                AgentProvider = agentProvider,
+                BrainProvider = brainProvider,
+                BrainSync = brainSync,
+                PipelineProvider = pipelineProvider,
+                IssueOps = issueOps,
+                PrOrchestrator = prOrchestrator,
+                AgentExecution = agentExecution,
+                QualityGates = qualityGates,
+                LocalCts = localCts,
+                PrContext = prContext,
+                TransitionTo = TransitionTo,
+                EmitOutputLine = EmitOutputLine,
+                ReportQualityGateResult = ReportQualityGateResult
+            };
+
+            result = new PipelineExecutionBuildResult
+            {
+                Run = run,
+                ExecutionContext = executionContext,
+                Reporter = reporter,
+                LocalCts = localCts,
+                EmitOutputLine = EmitOutputLine
+            };
+
+            return result;
+        }
+        catch
         {
-            Job = job,
-            Run = run,
-            Config = config,
-            RepoProvider = repoProvider,
-            AgentProvider = agentProvider,
-            BrainProvider = brainProvider,
-            BrainSync = brainSync,
-            PipelineProvider = pipelineProvider,
-            IssueOps = issueOps,
-            PrOrchestrator = prOrchestrator,
-            AgentExecution = agentExecution,
-            QualityGates = qualityGates,
-            LocalCts = localCts,
-            PrContext = prContext,
-            TransitionTo = TransitionTo,
-            EmitOutputLine = EmitOutputLine,
-            ReportQualityGateResult = ReportQualityGateResult
-        };
-
-        result = new PipelineExecutionBuildResult
-        {
-            Run = run,
-            ExecutionContext = executionContext,
-            Reporter = reporter,
-            LocalCts = localCts,
-            EmitOutputLine = EmitOutputLine
-        };
-
-        return result;
+            localCts?.Dispose();
+            // TODO: Wrap reporter.DisposeAsync() in a nested try/catch so that if it throws
+            // (e.g., ObjectDisposedException from the internal SemaphoreSlim), the original
+            // exception is not lost. Currently PipelineSignalRReporter.DisposeAsync leaves
+            // _signalrLock.Dispose() unprotected — a faulted semaphore would replace the
+            // original exception with a disposal exception.
+            await reporter.DisposeAsync();
+            throw;
+        }
     }
 }
