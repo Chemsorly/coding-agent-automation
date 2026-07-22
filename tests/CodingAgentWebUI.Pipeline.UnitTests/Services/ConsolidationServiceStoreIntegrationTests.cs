@@ -156,6 +156,100 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     }
 
     /// <summary>
+    /// BUG FIX #1540: TransitionToRunningAsync must reset StartedAtUtc so that the timeout
+    /// clock starts from actual execution, not queue-creation time.
+    /// </summary>
+    [Fact]
+    public async Task TransitionToRunningAsync_QueuedRun_ResetsStartedAtUtc()
+    {
+        // Arrange: create a run queued 90 min ago (simulates long queue wait)
+        var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+        run.Should().NotBeNull();
+        run!.Status = ConsolidationRunStatus.Queued;
+        run.StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-90);
+        await _store.SaveRunAsync(run, CancellationToken.None);
+
+        var beforeTransition = DateTimeOffset.UtcNow;
+
+        // Act
+        await _sut.TransitionToRunningAsync(run.RunId, CancellationToken.None);
+
+        // Assert: StartedAtUtc should be reset to approximately now, not 90 min ago
+        var persisted = await _store.GetByIdAsync(run.RunId, CancellationToken.None);
+        persisted.Should().NotBeNull();
+        persisted!.StartedAtUtc.Should().BeOnOrAfter(beforeTransition);
+        persisted.StartedAtUtc.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
+    /// BUG FIX #1540: TransitionToRunningAsync must update the in-memory _runningRuns tracker
+    /// so that GetActiveRunStartedAt (used by HeartbeatMonitorService) returns the corrected timestamp.
+    /// </summary>
+    [Fact]
+    public async Task TransitionToRunningAsync_QueuedRun_UpdatesInMemoryTracker()
+    {
+        // Arrange: create a run (enters _runningRuns) and set to Queued with old StartedAtUtc
+        var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+        run.Should().NotBeNull();
+        run!.Status = ConsolidationRunStatus.Queued;
+        run.StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-90);
+        await _store.SaveRunAsync(run, CancellationToken.None);
+
+        var beforeTransition = DateTimeOffset.UtcNow;
+
+        // Act
+        await _sut.TransitionToRunningAsync(run.RunId, CancellationToken.None);
+
+        // Assert: GetActiveRunStartedAt should return the reset timestamp
+        var activeStartedAt = _sut.GetActiveRunStartedAt(run.RunId);
+        activeStartedAt.Should().NotBeNull();
+        activeStartedAt!.Value.Should().BeOnOrAfter(beforeTransition);
+        activeStartedAt.Value.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
+    /// BUG FIX #1540: UpdateRunAsync must NOT set CompletedAtUtc when transitioning to Running.
+    /// </summary>
+    [Fact]
+    public async Task UpdateRunAsync_TransitionToRunning_DoesNotSetCompletedAtUtc()
+    {
+        // Arrange: create a run
+        var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+        run.Should().NotBeNull();
+
+        // Act: transition to Running (simulates DispatchService calling UpdateRunAsync)
+        await _sut.UpdateRunAsync(run!.RunId, ConsolidationRunStatus.Running, null, CancellationToken.None);
+
+        // Assert: CompletedAtUtc should remain null
+        var persisted = await _store.GetByIdAsync(run.RunId, CancellationToken.None);
+        persisted.Should().NotBeNull();
+        persisted!.CompletedAtUtc.Should().BeNull();
+    }
+
+    /// <summary>
+    /// BUG FIX #1540: UpdateRunAsync must set CompletedAtUtc when transitioning to a terminal status.
+    /// </summary>
+    [Fact]
+    public async Task UpdateRunAsync_TerminalStatus_SetsCompletedAtUtc()
+    {
+        // Arrange: create a run
+        var run = await _sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+        run.Should().NotBeNull();
+
+        var beforeUpdate = DateTimeOffset.UtcNow;
+
+        // Act: transition to Failed
+        await _sut.UpdateRunAsync(run!.RunId, ConsolidationRunStatus.Failed, "timed out", CancellationToken.None);
+
+        // Assert: CompletedAtUtc should be set
+        var persisted = await _store.GetByIdAsync(run.RunId, CancellationToken.None);
+        persisted.Should().NotBeNull();
+        persisted!.CompletedAtUtc.Should().NotBeNull();
+        persisted.CompletedAtUtc!.Value.Should().BeOnOrAfter(beforeUpdate);
+        persisted.CompletedAtUtc.Value.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    /// <summary>
     /// Verify GetRunHistoryAsync returns runs from the store (not from an inline filesystem scan).
     /// </summary>
     [Fact]

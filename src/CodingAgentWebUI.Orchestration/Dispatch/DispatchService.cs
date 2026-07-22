@@ -823,15 +823,14 @@ public sealed class DispatchService : BackgroundService
         if (string.IsNullOrEmpty(runId))
             return;
 
-        // Use IConsolidationService.UpdateRunAsync (not direct store write) to ensure
-        // the GetRunHistoryAsync cache is invalidated. Without this, the Active Runs
-        // section shows "(0)" even when an agent is busy with a consolidation job.
+        // Use IConsolidationService.TransitionToRunningAsync to ensure StartedAtUtc is reset
+        // (timeout anchor), the in-memory _runningRuns tracker is updated, and the
+        // GetRunHistoryAsync cache is invalidated.
         if (_consolidationService is not null)
         {
             try
             {
-                await _consolidationService.UpdateRunAsync(
-                    runId, ConsolidationRunStatus.Running, null, ct);
+                await _consolidationService.TransitionToRunningAsync(runId, ct);
             }
             catch (Exception ex)
             {
@@ -850,6 +849,7 @@ public sealed class DispatchService : BackgroundService
             if (run is not null && run.Status == ConsolidationRunStatus.Queued)
             {
                 run.Status = ConsolidationRunStatus.Running;
+                run.StartedAtUtc = DateTimeOffset.UtcNow;
                 await _consolidationRunStore.SaveRunAsync(run, ct);
             }
         }
