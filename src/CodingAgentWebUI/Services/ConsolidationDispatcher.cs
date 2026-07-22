@@ -295,8 +295,14 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
                 return;
 
             run.Status = ConsolidationRunStatus.Running;
+            run.StartedAtUtc = DateTimeOffset.UtcNow;
             await _runStore.SaveRunAsync(run, ct);
 
+            // TODO: #1540 — This updates the persistent store but does NOT update ConsolidationService._runningRuns
+            // (the in-memory tracker). HeartbeatMonitorService.SweepStuckConsolidationRuns calls GetActiveRunStartedAt
+            // which reads from _runningRuns, so runs dispatched through this path still have the stale StartedAtUtc
+            // visible to the heartbeat monitor. Fixing this requires resolving the circular dependency
+            // (ConsolidationService → IConsolidationDispatcher → IConsolidationService).
             _logger.Information("Consolidation run {RunId} transitioned from Queued to Running", runId);
         }
         catch (Exception ex)
