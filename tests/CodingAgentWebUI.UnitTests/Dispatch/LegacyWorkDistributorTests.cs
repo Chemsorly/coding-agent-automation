@@ -35,8 +35,6 @@ public class LegacyWorkDistributorTests
 
     // ── DistributeAsync ─────────────────────────────────────────────────
 
-    // TODO: Add explicit Verify(..., Times.Once) call for TryDispatchAsync and Times.Never checks for
-    //       Review/Decomposition dispatch methods, consistent with the other TaskType tests.
     [Fact]
     public async Task DistributeAsync_Implementation_DelegatesToTryDispatchAsync()
     {
