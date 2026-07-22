@@ -50,9 +50,8 @@ public sealed class AgentJobSlotManager
     }
 
     // TODO: Inconsistent thread-safety contract — ActiveChatSessionId acquires _busyLock for its
-    // read, but ActiveJobId, IsBusy, CurrentStep, JobCts, and ChatCts do not. Consider making all
-    // property reads consistently use locks (or volatile) to establish a clear thread-safety contract
-    // for callers.
+    // read, but ActiveJobId, IsBusy, and CurrentStep do not. Consider making all property reads
+    // consistently use locks (or volatile) to establish a clear thread-safety contract for callers.
     /// <summary>Whether the agent is currently executing a job.</summary>
     public bool IsBusy => _activeJobId is not null;
 
@@ -74,15 +73,19 @@ public sealed class AgentJobSlotManager
     /// <summary>The active chat task, or null if no chat is running.</summary>
     public Task? ActiveChatTask => Volatile.Read(ref _activeChatTask);
 
-    /// <summary>The job CTS for cancellation by event handlers.</summary>
-    // TODO: Exposing CancellationTokenSource via public properties breaks the encapsulation goal
-    // of this extraction. External callers can Cancel/Dispose the CTS without going through the
-    // managed slot release path, potentially causing double-dispose races. Consider providing
-    // CancelCurrentJob/CancelCurrentChat methods instead of exposing the raw CTS.
-    public CancellationTokenSource? JobCts => _jobCts;
+    // TODO: JobCancellationToken can throw ObjectDisposedException if ForceReleaseJobSlot() disposes
+    // the CTS between the null-check and the .Token access. Current call sites read the token
+    // immediately after slot acquisition (before any release path is reachable), but the public API
+    // contract doesn't enforce this ordering. Consider capturing the reference locally and wrapping
+    // in try/catch like the Cancel methods do, or documenting the precondition.
+    /// <summary>The job cancellation token, or null if no job is active.</summary>
+    public CancellationToken? JobCancellationToken => _jobCts?.Token;
 
-    /// <summary>The chat CTS for cancellation by event handlers.</summary>
-    public CancellationTokenSource? ChatCts => _chatCts;
+    // TODO: Same race condition as JobCancellationToken — ReleaseChatSlot() uses
+    // Interlocked.Exchange(ref _chatCts, null)?.Dispose() which can dispose the CTS between the
+    // null-conditional evaluation and the .Token property access. Consider the same fix.
+    /// <summary>The chat cancellation token, or null if no chat is active.</summary>
+    public CancellationToken? ChatCancellationToken => _chatCts?.Token;
 
     /// <summary>
     /// Cancels the currently running job, if any.
@@ -92,6 +95,40 @@ public sealed class AgentJobSlotManager
         var cts = _jobCts;
         try { cts?.Cancel(); }
         catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>
+    /// Cancels the currently running chat, if any.
+    /// </summary>
+    public void CancelCurrentChat()
+    {
+        var cts = _chatCts;
+        try { cts?.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    /// <summary>
+    /// Atomically verifies that the active chat session matches <paramref name="sessionId"/>
+    /// and cancels it. Returns <c>true</c> if cancellation was performed, <c>false</c> if the
+    /// session did not match (or no chat is active).
+    /// </summary>
+    /// <remarks>
+    /// This eliminates the TOCTOU window where a caller could verify the session ID via
+    /// <see cref="GetChatSlotSnapshot"/> and then call <see cref="CancelCurrentChat"/>, during
+    /// which time the session could have been released and a new one acquired.
+    /// </remarks>
+    public bool CancelChatIfSession(string sessionId)
+    {
+        lock (_busyLock)
+        {
+            if (_activeChatSessionId != sessionId)
+                return false;
+
+            var cts = _chatCts;
+            try { cts?.Cancel(); }
+            catch (ObjectDisposedException) { }
+            return true;
+        }
     }
 
     /// <summary>
@@ -223,11 +260,11 @@ public sealed class AgentJobSlotManager
     /// All fields are read under <see cref="_busyLock"/> to prevent TOCTOU races
     /// where ReleaseChatSlot() could clear state between individual property reads.
     /// </summary>
-    public (string? SessionId, Task? Task, CancellationTokenSource? Cts) GetChatSlotSnapshot()
+    public (string? SessionId, Task? Task) GetChatSlotSnapshot()
     {
         lock (_busyLock)
         {
-            return (_activeChatSessionId, _activeChatTask, _chatCts);
+            return (_activeChatSessionId, _activeChatTask);
         }
     }
 
