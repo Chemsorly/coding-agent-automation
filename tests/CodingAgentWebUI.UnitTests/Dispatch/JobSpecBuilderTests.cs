@@ -14,6 +14,7 @@ public class JobSpecBuilderTests
     private static JobTemplate CreateTemplate(
         string labels = "dotnet,dotnet10,kiro",
         string image = "chemsorly/coding-agent:kiro-dotnet10",
+        string providerType = "kiro",
         string? resourcesJson = null,
         string? podSecurityContextJson = null,
         string? nodeSelectorJson = null,
@@ -24,7 +25,7 @@ public class JobSpecBuilderTests
         {
             Labels = labels,
             Image = image,
-            ProviderType = "kiro",
+            ProviderType = providerType,
             MaxConcurrent = 2,
             Resources = resourcesJson is not null
                 ? JsonSerializer.Deserialize<JobTemplateResources>(resourcesJson, JobTemplateProvider.JsonOptions)
@@ -48,7 +49,9 @@ public class JobSpecBuilderTests
         Guid? workItemId = null,
         string agentSelector = "dotnet,dotnet10,kiro",
         int timeoutSeconds = 1800,
-        string? claimedPvc = null)
+        string? claimedPvc = null,
+        string? opcConfigSecret = null,
+        Dictionary<string, string>? projectSecrets = null)
     {
         return new JobSpecBuilder.BuildContext
         {
@@ -61,8 +64,8 @@ public class JobSpecBuilderTests
             AgentApiKeySecretName = "caa-secret",
             AgentServiceAccountName = "caa-agent",
             Namespace = "coding-agent",
-            OpencodeConfigSecretName = null,
-            ProjectSecrets = null
+            OpencodeConfigSecretName = opcConfigSecret,
+            ProjectSecrets = projectSecrets
         };
     }
 
@@ -734,6 +737,111 @@ public class JobSpecBuilderTests
         var env = container.Env.FirstOrDefault(e => e.Name == "OTEL_SERVICE_NAME");
         env.Should().NotBeNull("OTEL_SERVICE_NAME must be set for per-job trace attribution");
         env!.Value.Should().Be("coding-agent-worker-caa-abcdef12");
+    }
+
+    #endregion
+
+    #region OpenCode Provider
+
+    [Fact]
+    public void Build_OpencodeAgent_WithConfigSecret_MountsOpencodeConfigVolume()
+    {
+        var template = CreateTemplate(providerType: "opencode", image: "chemsorly/coding-agent:opencode");
+        var ctx = CreateContext(opcConfigSecret: "opencode-config-secret");
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var volumes = job.Spec.Template.Spec.Volumes;
+        volumes.Should().Contain(v => v.Name == "opencode-config");
+        var opcVol = volumes.First(v => v.Name == "opencode-config");
+        opcVol.Secret.Should().NotBeNull();
+        opcVol.Secret.SecretName.Should().Be("opencode-config-secret");
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        container.VolumeMounts.Should().Contain(vm => vm.Name == "opencode-config");
+        var opcMount = container.VolumeMounts.First(vm => vm.Name == "opencode-config");
+        opcMount.MountPath.Should().Be("/home/ubuntu/.config/opencode");
+        opcMount.ReadOnlyProperty.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Build_OpencodeAgent_WithoutConfigSecret_NoOpencodeVolume()
+    {
+        var template = CreateTemplate(providerType: "opencode", image: "chemsorly/coding-agent:opencode");
+        var ctx = CreateContext(opcConfigSecret: null);
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var volumes = job.Spec.Template.Spec.Volumes;
+        volumes.Should().NotContain(v => v.Name == "opencode-config");
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        container.VolumeMounts.Should().NotContain(vm => vm.Name == "opencode-config");
+    }
+
+    [Fact]
+    public void Build_NonKiroAgent_WithPvc_DoesNotMountKiroVolume()
+    {
+        // The condition is `isKiroAgent && ctx.ClaimedPvc is not null` — a non-kiro provider
+        // with a ClaimedPvc should NOT get the kiro-cli-data volume mount.
+        var template = CreateTemplate(providerType: "opencode", image: "chemsorly/coding-agent:opencode");
+        var ctx = CreateContext(claimedPvc: "some-pvc-claim");
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var volumes = job.Spec.Template.Spec.Volumes;
+        volumes.Should().NotContain(v => v.Name == "kiro-cli-data");
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        container.VolumeMounts.Should().NotContain(vm => vm.Name == "kiro-cli-data");
+    }
+
+    #endregion
+
+    #region ProjectSecrets Boundary
+
+    [Fact]
+    public void Build_EmptyProjectSecrets_NoProjectSecretsVolume()
+    {
+        // Empty (non-null) dictionary should NOT generate project-secrets volume
+        // — the production code guards with `Count > 0`.
+        var template = CreateTemplate();
+        var ctx = CreateContext(projectSecrets: new Dictionary<string, string>());
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var volumes = job.Spec.Template.Spec.Volumes;
+        volumes.Should().NotContain(v => v.Name == "project-secrets");
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        container.VolumeMounts.Should().NotContain(vm => vm.Name == "project-secrets");
+    }
+
+    [Fact]
+    public void Build_WithProjectSecrets_CreatesCorrectlyNamedSecret()
+    {
+        // Secret name must be `caa-secrets-{first 8 hex chars of WorkItemId}`
+        var workItemId = Guid.Parse("abcdef12-3456-7890-abcd-ef1234567890");
+        var template = CreateTemplate();
+        var ctx = CreateContext(
+            workItemId: workItemId,
+            projectSecrets: new Dictionary<string, string> { ["MY_SECRET"] = "value" });
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var volumes = job.Spec.Template.Spec.Volumes;
+        volumes.Should().Contain(v => v.Name == "project-secrets");
+        var secretVol = volumes.First(v => v.Name == "project-secrets");
+        secretVol.Secret.Should().NotBeNull();
+        // WorkItemId "abcdef12-3456-7890-abcd-ef1234567890" → ToString("N") = "abcdef1234567890abcdef1234567890" → [..8] = "abcdef12"
+        secretVol.Secret.SecretName.Should().Be("caa-secrets-abcdef12");
+        secretVol.Secret.Optional.Should().BeTrue();
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        container.VolumeMounts.Should().Contain(vm => vm.Name == "project-secrets");
+        var secretMount = container.VolumeMounts.First(vm => vm.Name == "project-secrets");
+        secretMount.MountPath.Should().Be("/var/run/secrets/project-secrets");
+        secretMount.ReadOnlyProperty.Should().BeTrue();
     }
 
     #endregion
