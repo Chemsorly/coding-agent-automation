@@ -177,7 +177,7 @@ public partial class QualityGateExecutor
             context.Callbacks.EmitOutputLine("📋 Collecting failure feedback...");
 
             // Load distinct categories from recent run summaries
-            var (harnessCategories, issueCategories) = await _feedbackService.LoadPreviousCategoriesAsync(_historyService).ConfigureAwait(false); // TODO: Propagate CancellationToken ct to LoadPreviousCategoriesAsync
+            var (harnessCategories, issueCategories) = await _feedbackService.LoadPreviousCategoriesAsync(_historyService, ct).ConfigureAwait(false);
 
             // Build the issue detail for the prompt (use context issue or create a minimal one from run data)
             var issue = context.Issue ?? new IssueDetail
