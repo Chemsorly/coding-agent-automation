@@ -176,7 +176,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             return;
         }
 
-        var jobCts = _slotManager.JobCts!;
+        var jobToken = _slotManager.JobCancellationToken!.Value;
         var activeTask = Task.Run(async () =>
         {
             await using var outputBatcher = new OutputBatcher();
@@ -198,7 +198,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 completion = await AgentJobRunner.ExecuteAsync(
                     _executor, message, _connectionLifecycle.Connection, outputBatcher,
                     step => _slotManager.SetCurrentStep(step),
-                    jobCts.Token, cancelledLabel: AgentLabels.Cancelled);
+                    jobToken, cancelledLabel: AgentLabels.Cancelled);
             }
             catch (Exception ex)
             {
@@ -265,7 +265,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
         _logger.Information("Accepted chat prompt for session {SessionId}", message.SessionId);
 
-        var chatCts = _slotManager.ChatCts!;
+        var chatToken = _slotManager.ChatCancellationToken!.Value;
         var activeTask = Task.Run(async () =>
         {
             int exitCode = ExitCodes.GeneralFailure;
@@ -306,11 +306,11 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
                     if (_isOpenCodeProvider)
                     {
-                        (exitCode, error) = await ExecuteChatViaOpenCodeAsync(message, chatWorkspace, outputBatcher, chatCts.Token);
+                        (exitCode, error) = await ExecuteChatViaOpenCodeAsync(message, chatWorkspace, outputBatcher, chatToken);
                     }
                     else
                     {
-                        (exitCode, error) = await ExecuteChatViaKiroCliAsync(message, chatWorkspace, outputBatcher, chatCts.Token);
+                        (exitCode, error) = await ExecuteChatViaKiroCliAsync(message, chatWorkspace, outputBatcher, chatToken);
                     }
                 }
                 catch (OperationCanceledException)
@@ -413,7 +413,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
     private async Task HandleCancelChatAsync(string sessionId)
     {
-        var (activeSessionId, chatTask, cts) = _slotManager.GetChatSlotSnapshot();
+        var (activeSessionId, chatTask) = _slotManager.GetChatSlotSnapshot();
 
         if (activeSessionId != sessionId)
         {
@@ -423,11 +423,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         }
 
         _logger.Information("Cancelling chat session {SessionId}", sessionId);
-        // ObjectDisposedException catch is still necessary: the snapshot captures a live CTS
-        // reference, but ReleaseChatSlot() can run AFTER the snapshot was taken (the chat task
-        // completes between our snapshot read and the Cancel() call), disposing the CTS.
-        try { cts?.Cancel(); }
-        catch (ObjectDisposedException) { }
+        _slotManager.CancelChatIfSession(sessionId);
 
         if (chatTask is not null)
         {
@@ -547,13 +543,13 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _logger.Information("Accepted consolidation job {JobId} of type {Type}",
             message.JobId, message.Type);
 
-        var jobCts = _slotManager.JobCts!;
+        var jobToken = _slotManager.JobCancellationToken!.Value;
         var activeTask = Task.Run(async () =>
         {
             try
             {
                 await _consolidationExecutor.ExecuteAsync(
-                    message, _connectionLifecycle.Connection, jobCts.Token);
+                    message, _connectionLifecycle.Connection, jobToken);
             }
             catch (Exception ex)
             {
@@ -610,8 +606,9 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         if (_slotManager.ActiveJobId is not null)
         {
             _logger.Information("Cancelling active job {JobId} due to shutdown", _slotManager.ActiveJobId);
+            _slotManager.CancelCurrentJob();
             await GracefulShutdownHelper.CancelAndWaitAsync(
-                _slotManager.JobCts,
+                null,
                 _slotManager.ActiveJobTask,
                 TimeSpan.FromSeconds(5),
                 _logger,
@@ -622,8 +619,9 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         if (_slotManager.ActiveChatSessionId is not null)
         {
             _logger.Information("Cancelling active chat session {SessionId} due to shutdown", _slotManager.ActiveChatSessionId);
+            _slotManager.CancelCurrentChat();
             await GracefulShutdownHelper.CancelAndWaitAsync(
-                _slotManager.ChatCts,
+                null,
                 _slotManager.ActiveChatTask,
                 TimeSpan.FromSeconds(2),
                 _logger,

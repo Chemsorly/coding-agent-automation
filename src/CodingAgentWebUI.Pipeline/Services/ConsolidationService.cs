@@ -295,7 +295,12 @@ public sealed class ConsolidationService : IConsolidationService
             // Update mutable fields
             run.Status = status;
             run.Summary = summary;
-            run.CompletedAtUtc = DateTimeOffset.UtcNow;
+            if (status is ConsolidationRunStatus.Succeeded
+                or ConsolidationRunStatus.Failed
+                or ConsolidationRunStatus.Cancelled)
+            {
+                run.CompletedAtUtc = DateTimeOffset.UtcNow;
+            }
             run.TotalTokens = totalTokens;
 
             // Persist updated run
@@ -376,9 +381,16 @@ public sealed class ConsolidationService : IConsolidationService
                 return;
 
             run.Status = ConsolidationRunStatus.Running;
+            run.StartedAtUtc = DateTimeOffset.UtcNow;
             await PersistRunAsync(run, ct);
 
-            _logger.Information("Consolidation run {RunId} transitioned from Queued to Running", runId);
+            // Update in-memory tracker so GetActiveRunStartedAt returns the corrected timestamp.
+            // _runStore.GetByIdAsync deserializes a new object (not the same reference as _runningRuns),
+            // so we must explicitly replace the stale entry.
+            var key = (run.Type, run.TemplateId);
+            _runningRuns.AddOrUpdate(key, run, (_, _) => run);
+
+            _logger.Information("Consolidation run {RunId} transitioned from Queued to Running (StartedAtUtc reset)", runId);
             OnChange?.Invoke();
         }
         catch (Exception ex)
