@@ -253,6 +253,9 @@ public sealed class ActiveRunRehydrationTests : IDisposable
     /// <summary>
     /// Simulates the rehydration logic from Program.cs — queries active WorkItems and adds to RunService.
     /// </summary>
+    // TODO: This helper duplicates the logic from ActiveRunRehydrationExtensions.RehydrateActiveRunsAsync()
+    // rather than calling the actual production code. Tests will still pass if the extension method regresses.
+    // Refactor to invoke RehydrateActiveRunsAsync() directly for accurate coverage. (review-findings)
     private async Task RehydrateAsync()
     {
         await using var db = await _dbFactory.CreateDbContextAsync();

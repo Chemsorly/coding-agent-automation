@@ -743,11 +743,87 @@ public class PostgresLeaderElectionServiceTests
         sut.Dispose();
     }
 
-    // TODO: Add a test that exercises the CloseConnectionBoundedAsync 2-second timeout path.
-    // Currently FakeAdvisoryLockConnection.CloseAsync() always returns Task.CompletedTask.
-    // A test should simulate a hung CloseAsync to verify the 2s timeout fires and falls back
-    // to synchronous Dispose(). Without this, removal of the WaitAsync/fallback logic would
-    // not be caught by any test.
+    [Fact]
+    public async Task StopAsync_WhenCloseAsyncHangs_CompletesWithinTimeout()
+    {
+        var fakeConn = new FakeAdvisoryLockConnection(acquireResult: true, verifyResult: true);
+        var factory = new FakeAdvisoryLockConnectionFactory(fakeConn);
+        var options = FastOptions();
+
+        var sut = new PostgresLeaderElectionService(options, factory);
+
+        await sut.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => sut.IsLeader, timeout: TimeSpan.FromSeconds(2));
+
+        // Simulate a hung CloseAsync (e.g., Postgres unreachable)
+        fakeConn.SimulateHungClose();
+
+        // StopAsync should complete within the 2s close timeout + 5s release timeout + margin
+        var stopTask = sut.StopAsync(CancellationToken.None);
+        var completed = await Task.WhenAny(stopTask, Task.Delay(TimeSpan.FromSeconds(10)));
+
+        completed.Should().Be(stopTask,
+            "StopAsync should complete within bounded time even when CloseAsync hangs");
+
+        sut.IsLeader.Should().BeFalse();
+        sut.Dispose();
+    }
+
+    [Fact]
+    public async Task StopAsync_WhenCloseAsyncFaultsAfterTimeout_DoesNotProduceUnobservedException()
+    {
+        var fakeConn = new FakeAdvisoryLockConnection(acquireResult: true, verifyResult: true);
+        var factory = new FakeAdvisoryLockConnectionFactory(fakeConn);
+        var options = FastOptions();
+
+        var sut = new PostgresLeaderElectionService(options, factory);
+
+        await sut.StartAsync(CancellationToken.None);
+        await WaitUntilAsync(() => sut.IsLeader, timeout: TimeSpan.FromSeconds(2));
+
+        // Simulate CloseAsync that faults after 3 seconds (longer than the 2s timeout)
+        fakeConn.SimulateFaultingClose(
+            new InvalidOperationException("Simulated post-timeout connection fault"),
+            TimeSpan.FromSeconds(3));
+
+        // Track unobserved task exceptions
+        var unobservedExceptions = new List<Exception>();
+        EventHandler<UnobservedTaskExceptionEventArgs> handler = (_, e) =>
+        {
+            unobservedExceptions.Add(e.Exception);
+            e.SetObserved(); // Prevent crashing the test process
+        };
+
+        TaskScheduler.UnobservedTaskException += handler;
+        try
+        {
+            // StopAsync should complete within the 2s close timeout + margin
+            await sut.StopAsync(CancellationToken.None);
+            sut.Dispose();
+
+            // Wait for the faulting close task to actually fault (3s delay)
+            await Task.Delay(TimeSpan.FromSeconds(4));
+
+            // TODO: UnobservedTaskException detection relies on GC finalization timing which is
+            // inherently non-deterministic under heavy CI load. Consider adding [Trait("Category", "Flaky")]
+            // or a retry attribute, or adding a secondary assertion that the faulting close task actually
+            // completed (confirming the test precondition was met).
+            // Force GC to finalize abandoned tasks and trigger UnobservedTaskException if any
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+
+            // Give the runtime a moment to fire events
+            await Task.Delay(100);
+
+            unobservedExceptions.Should().BeEmpty(
+                "CloseAsync fault should be observed by the continuation and not surface as UnobservedTaskException");
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= handler;
+        }
+    }
 
     #endregion
 
@@ -780,6 +856,7 @@ internal sealed class FakeAdvisoryLockConnection : IAdvisoryLockConnection
     private readonly bool _failOnOpen;
     private TaskCompletionSource? _releaseBlock;
     private volatile bool _releaseThrows;
+    private TaskCompletionSource? _closeBlock;
 
     public bool ReleaseLockCalled { get; private set; }
     public bool ReleaseLockReceivedCancellableToken { get; private set; }
@@ -830,6 +907,8 @@ internal sealed class FakeAdvisoryLockConnection : IAdvisoryLockConnection
 
     public Task CloseAsync()
     {
+        if (_closeBlock is not null)
+            return _closeBlock.Task;
         _state = ConnectionState.Closed;
         return Task.CompletedTask;
     }
@@ -875,6 +954,25 @@ internal sealed class FakeAdvisoryLockConnection : IAdvisoryLockConnection
     public void SimulateReleaseFailure()
     {
         _releaseThrows = true;
+    }
+
+    /// <summary>
+    /// Simulates a hung CloseAsync — CloseAsync() will block indefinitely until the TCS is completed.
+    /// </summary>
+    public void SimulateHungClose()
+    {
+        _closeBlock = new TaskCompletionSource();
+    }
+
+    /// <summary>
+    /// Simulates a CloseAsync that faults after a delay (e.g., longer than the 2s timeout).
+    /// The returned task will fault with the given exception after the specified delay.
+    /// </summary>
+    public void SimulateFaultingClose(Exception ex, TimeSpan delay)
+    {
+        _closeBlock = new TaskCompletionSource();
+        var tcs = _closeBlock;
+        _ = Task.Delay(delay).ContinueWith(_ => tcs.SetException(ex));
     }
 }
 

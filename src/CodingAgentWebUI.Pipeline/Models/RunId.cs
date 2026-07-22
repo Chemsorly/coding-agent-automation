@@ -7,10 +7,12 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// </summary>
 public readonly record struct RunId(string Value)
 {
-    // TODO: Consider adding ArgumentException.ThrowIfNullOrEmpty(value) in the implicit conversion
-    // operator for defense-in-depth. Currently null strings are silently wrapped, deferring failure
-    // to ThrowIfNullOrEmpty deeper in the call chain. Mirrors known issue in ProviderConfigId.
-    public static implicit operator RunId(string value) => new(value);
+    public static implicit operator RunId(string value)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(value);
+        return new(value);
+    }
+
     // TODO: Consider returning Value ?? string.Empty to satisfy the .NET contract that ToString()
     // returns a non-null string. default(RunId) currently produces null from ToString().
     public override string ToString() => Value;
