@@ -60,34 +60,9 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         entities[0].SummaryJson.Should().NotBeNullOrEmpty();
     }
 
-    [Fact]
-    public async Task GetRunHistory_ReturnsPersistedRuns_OrderedByStartedAtDesc()
-    {
-        var run1 = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-1", "First",
-            startedAt: DateTimeOffset.UtcNow.AddHours(-2));
-        var run2 = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-2", "Second",
-            startedAt: DateTimeOffset.UtcNow.AddHours(-1));
-        var run3 = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-3", "Third",
-            startedAt: DateTimeOffset.UtcNow);
-
-        await _sut.AddRunToHistoryAsync(run1);
-        await _sut.AddRunToHistoryAsync(run2);
-        await _sut.AddRunToHistoryAsync(run3);
-
-        var history = await _sut.GetRunHistoryAsync();
-
-        history.Should().HaveCount(3);
-        history[0].IssueIdentifier.Should().Be("issue-3"); // newest first
-        history[1].IssueIdentifier.Should().Be("issue-2");
-        history[2].IssueIdentifier.Should().Be("issue-1");
-    }
-
-    [Fact]
-    public async Task GetRunHistory_EmptyDatabase_ReturnsEmptyList()
-    {
-        var history = await _sut.GetRunHistoryAsync();
-        history.Should().BeEmpty();
-    }
+    // Ordering (newest-first) and empty-history tests moved to shared contract:
+    // PipelineRunHistoryServiceContractTests.GetHistory_ReturnsNewestFirst
+    // PipelineRunHistoryServiceContractTests.EmptyHistory_ReturnsEmptyList
 
     [Fact]
     public async Task AddRunToHistory_Upsert_UpdatesExistingRow()
@@ -184,32 +159,8 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         restored.RunType.Should().Be(PipelineRunType.Review);
     }
 
-    [Fact]
-    public async Task GetRunHistory_LimitedToMaxHistorySize()
-    {
-        // Insert more than the max (1000) rows
-        const int maxHistory = 1000;
-        using (var db = new InMemoryPipelineDbContext(_dbOptions))
-        {
-            for (var i = 0; i < maxHistory + 50; i++)
-            {
-                db.PipelineRuns.Add(new PipelineRunEntity
-                {
-                    RunId = Guid.NewGuid(),
-                    IssueIdentifier = $"issue-{i}",
-                    IssueTitle = $"Run {i}",
-                    FinalStep = PipelineStep.Completed,
-                    StartedAt = DateTimeOffset.UtcNow.AddMinutes(-i),
-                    SummaryJson = null
-                });
-            }
-            db.SaveChanges();
-        }
-
-        var history = await _sut.GetRunHistoryAsync();
-
-        history.Should().HaveCount(maxHistory);
-    }
+    // Max history size test moved to shared contract:
+    // PipelineRunHistoryServiceContractTests.MaxHistorySize_OldestEvicted
 
     // ── Consolidation filtering tests ───────────────────────────────────
 
