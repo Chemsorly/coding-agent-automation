@@ -256,6 +256,60 @@ public sealed class PipelineRunFactoryTests
         run.IssueTitle.Should().Be("Real Title");
     }
 
+    [Fact]
+    public void FromDistributionRequest_PropagatesProjectIdAndProjectName()
+    {
+        // Arrange
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#200",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 1800,
+            RunId = "run-project-propagation",
+            RunType = PipelineRunType.Implementation,
+            ProjectId = "019f1860-8b18-7b7e-ba7c-89afe24853b1",
+            ProjectName = "Default"
+        };
+
+        // Act
+        var run = PipelineRunFactory.FromDistributionRequest(request, "agent-1");
+
+        // Assert
+        run.ProjectId.Should().Be("019f1860-8b18-7b7e-ba7c-89afe24853b1");
+        run.ProjectName.Should().Be("Default");
+    }
+
+    [Fact]
+    public void FromDistributionRequest_ProjectFieldsRemainNull_WhenRequestHasNoProject()
+    {
+        // Arrange
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "owner/repo#201",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            TimeoutSeconds = 1800,
+            RunId = "run-no-project",
+            RunType = PipelineRunType.Implementation,
+            ProjectId = null,
+            ProjectName = null
+        };
+
+        // Act
+        var run = PipelineRunFactory.FromDistributionRequest(request);
+
+        // Assert
+        run.ProjectId.Should().BeNull();
+        run.ProjectName.Should().BeNull();
+    }
+
     private static JobDistributionRequest CreateMinimalRequest(string runId) => new()
     {
         IssueIdentifier = "owner/repo#1",
