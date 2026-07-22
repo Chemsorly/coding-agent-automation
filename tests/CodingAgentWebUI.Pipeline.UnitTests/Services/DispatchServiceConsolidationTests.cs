@@ -118,9 +118,10 @@ public class DispatchServiceConsolidationTests : IDisposable
             k => k.CreateJobAsync(It.IsAny<V1Job>(), "default", It.IsAny<CancellationToken>()),
             Times.Once);
 
-        // Assert: ConsolidationRun transitioned to Running (via IConsolidationService for cache invalidation)
+        // Assert: ConsolidationRun transitioned to Running (via IConsolidationService.TransitionToRunningAsync
+        // for StartedAtUtc reset, _runningRuns update, cache invalidation, and OnChange)
         _mockConsolidationService.Verify(
-            s => s.UpdateRunAsync(runId, ConsolidationRunStatus.Running, null, It.IsAny<CancellationToken>(), 0),
+            s => s.TransitionToRunningAsync(runId, It.IsAny<CancellationToken>()),
             Times.Once);
 
         // Assert: Payload was updated with ProviderConfigs
@@ -349,10 +350,11 @@ public class DispatchServiceConsolidationTests : IDisposable
     public async Task PollAndDispatch_ConsolidationItem_TransitionsViaConsolidationService_NotDirectStore()
     {
         // Regression test: TransitionConsolidationRunToRunningAsync must use
-        // IConsolidationService.UpdateRunAsync (which invalidates GetRunHistoryAsync cache)
+        // IConsolidationService.TransitionToRunningAsync (which resets StartedAtUtc,
+        // updates _runningRuns, invalidates GetRunHistoryAsync cache, and fires OnChange)
         // instead of IConsolidationRunStore.SaveRunAsync (which leaves cache stale).
         // Without this, the Active Runs section shows "(0)" even when an agent is busy
-        // with a consolidation job.
+        // with a consolidation job, and the timeout anchor is never reset (#1540).
         var workItemId = Guid.NewGuid();
         var runId = workItemId.ToString();
         await InsertConsolidationWorkItem(workItemId, runId, "kiro,dotnet");
@@ -375,12 +377,13 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         await InvokePollAndDispatch(service);
 
-        // Assert: status transition goes through IConsolidationService.UpdateRunAsync
-        // (which invalidates the in-memory cache), NOT directly through IConsolidationRunStore.SaveRunAsync
+        // Assert: status transition goes through IConsolidationService.TransitionToRunningAsync
+        // (which resets StartedAtUtc, updates _runningRuns, invalidates the in-memory cache,
+        // and fires OnChange), NOT directly through IConsolidationRunStore.SaveRunAsync
         _mockConsolidationService.Verify(
-            s => s.UpdateRunAsync(runId, ConsolidationRunStatus.Running, null, It.IsAny<CancellationToken>(), 0),
+            s => s.TransitionToRunningAsync(runId, It.IsAny<CancellationToken>()),
             Times.Once,
-            "TransitionConsolidationRunToRunningAsync must use IConsolidationService.UpdateRunAsync to invalidate the history cache");
+            "TransitionConsolidationRunToRunningAsync must use IConsolidationService.TransitionToRunningAsync to reset StartedAtUtc and invalidate the history cache");
 
         // IConsolidationRunStore.SaveRunAsync should NOT be called directly for the transition
         _mockRunStore.Verify(

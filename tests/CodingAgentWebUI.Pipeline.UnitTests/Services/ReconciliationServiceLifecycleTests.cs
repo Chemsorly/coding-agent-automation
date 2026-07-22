@@ -388,6 +388,54 @@ public class ReconciliationServiceLifecycleTests : IDisposable
             It.IsAny<long>()), Times.Once);
     }
 
+    /// <summary>
+    /// BUG FIX #1540: A consolidation run that was recently dispatched (StartedAtUtc = 2 min ago)
+    /// should NOT be timed out, even if it was originally created/queued >60 min ago.
+    /// After the fix, StartedAtUtc is reset on dispatch, so the timeout measures actual execution time.
+    /// </summary>
+    // TODO: #1540 — This test documents expected behavior but wouldn't fail if the fix were reverted.
+    // It sets up data in the already-corrected state (StartedAtUtc = 2 min ago). A stronger regression
+    // test would exercise the full path: create run with old StartedAtUtc → TransitionToRunningAsync →
+    // EnforceConsolidationTimeoutsAsync → verify NOT timed out.
+    [Fact]
+    public async Task EnforceConsolidationTimeouts_RecentlyDispatchedRun_NotTimedOut()
+    {
+        // Arrange: consolidation run that was recently dispatched (StartedAtUtc = 2 min ago)
+        // This simulates a run that was queued for hours but just started executing.
+        var runId = Guid.NewGuid().ToString();
+        var mockConsolidation = new Mock<IConsolidationService>();
+        mockConsolidation.Setup(c => c.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ConsolidationRun>
+            {
+                new ConsolidationRun
+                {
+                    RunId = runId,
+                    Type = ConsolidationRunType.BrainConsolidation,
+                    StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-2), // Recently dispatched
+                    Status = ConsolidationRunStatus.Running
+                }
+            });
+
+        var mockConfigStore = new Mock<IConfigurationStore>();
+        mockConfigStore.Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { AgentBusyProgressTimeout = TimeSpan.FromMinutes(60) });
+
+        var service = CreateService(
+            consolidationService: mockConsolidation.Object,
+            configStore: mockConfigStore.Object);
+
+        // Act
+        await service.EnforceConsolidationTimeoutsAsync(CancellationToken.None);
+
+        // Assert: UpdateRunAsync should NOT be called — the run has only been executing for 2 min
+        mockConsolidation.Verify(c => c.UpdateRunAsync(
+            It.IsAny<string>(),
+            It.IsAny<ConsolidationRunStatus>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>(),
+            It.IsAny<long>()), Times.Never);
+    }
+
     // ── Lifecycle cleanup on timeout (parity with HeartbeatMonitor) ────────
 
     [Fact]
