@@ -1,4 +1,3 @@
-using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
