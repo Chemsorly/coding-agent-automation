@@ -14,6 +14,22 @@ public class RunIdTests
     }
 
     [Fact]
+    public void ImplicitConversion_FromNull_ThrowsArgumentException()
+    {
+        var act = () => { RunId id = (string)null!; };
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void ImplicitConversion_FromEmpty_ThrowsArgumentException()
+    {
+        var act = () => { RunId id = ""; };
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
     public void ToString_ReturnsInnerValue()
     {
         var id = new RunId("run-456");

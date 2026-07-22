@@ -305,6 +305,43 @@ public class FeedbackServiceTests
         harness.Should().NotContain($"cat-{FeedbackConstraints.MaxRecentRunsForCategories + 5}");
     }
 
+    [Fact]
+    public async Task LoadPreviousCategories_PropagatesCancellationToken()
+    {
+        using var cts = new CancellationTokenSource();
+        var expectedToken = cts.Token;
+        CancellationToken receivedToken = default;
+
+        var mockHistory = new Mock<IPipelineRunHistoryService>();
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .Callback<CancellationToken>(ct => receivedToken = ct)
+            .ReturnsAsync(Array.Empty<PipelineRunSummary>());
+
+        await _sut.LoadPreviousCategoriesAsync(mockHistory.Object, expectedToken);
+
+        receivedToken.Should().Be(expectedToken);
+    }
+
+    // TODO: This test validates graceful-degradation but is not regression-proof for token propagation.
+    // The mock uses It.IsAny<CancellationToken>() and unconditionally throws, so it would pass even if
+    // the fix were reverted. To make it regression-proof, use It.Is<CancellationToken>(t => t.IsCancellationRequested)
+    // and return successfully for non-cancelled tokens.
+    [Fact]
+    public async Task LoadPreviousCategories_CancelledToken_ReturnsEmptyLists()
+    {
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        var mockHistory = new Mock<IPipelineRunHistoryService>();
+        mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var (harness, issue) = await _sut.LoadPreviousCategoriesAsync(mockHistory.Object, cts.Token);
+
+        harness.Should().BeEmpty();
+        issue.Should().BeEmpty();
+    }
+
     private static PipelineRunSummary CreateSummaryWithCategories(
         DateTimeOffset startedAt, string harnessCategory, string issueCategory) => new()
     {
