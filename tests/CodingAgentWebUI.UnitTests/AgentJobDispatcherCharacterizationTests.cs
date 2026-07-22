@@ -425,13 +425,15 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
         msg.ReviewPrAuthor.Should().BeNull();
     }
 
+    // TODO: Add a test verifying that PipelineRun has ProjectId/ProjectName/ResolvedProfileId set
+    // at the time RegisterDispatchedRun fires NotifyChange. The current refactoring calls
+    // ApplyRunMetadata after the delegate returns (after RegisterDispatchedRun), so subscribers
+    // may briefly observe the run without project/profile metadata. A test capturing run state
+    // inside the OnChange callback would guard against this temporal ordering regression.
+
     [Fact]
     public async Task DispatchDecompositionToAgentAsync_Phase2_Characterization_AllPropertiesCorrectlyMapped()
     {
-        // TODO: This test only asserts 5 properties (RunType, IssueIdentifier, IssueDetail.Title, QualityGateConfigs, ReviewerConfigs).
-        // Add exhaustive assertions for shared fields (ProjectId, ProjectName, ProjectSecrets, McpServers, ProviderConfigs, etc.)
-        // to match the other characterization tests and catch property-mapping drift bugs in the Phase 2 path.
-
         var agent = _registry.Register(new AgentRegistrationMessage
         {
             AgentId = "agent-decomp-p2",
@@ -462,12 +464,45 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
         _capturedMessage.Should().NotBeNull();
         var msg = _capturedMessage!;
 
-        // Verify Phase 2 RunType
-        msg.RunType.Should().Be(PipelineRunType.Decomposition);
+        // Shared properties
+        msg.JobId.Should().NotBeNullOrEmpty();
         msg.IssueIdentifier.Should().Be("epic-2");
+        msg.IssueDetail.Should().NotBeNull();
         msg.IssueDetail.Title.Should().Be("Epic Phase 2");
+        msg.IssueDetail.Description.Should().BeEmpty();
+        msg.ParsedIssue.Should().NotBeNull();
+        msg.IssueComments.Should().BeEmpty();
+        msg.RepoProviderConfigId.Should().Be("rp");
+        msg.AgentProviderConfigId.Should().Be("agent-provider-1");
+        msg.BrainProviderConfigId.Should().BeNull();
+        msg.PipelineProviderConfigId.Should().BeNull();
+        msg.ProviderConfigs.Should().NotBeNull();
+        msg.PipelineConfiguration.Should().NotBeNull();
+        msg.InitiatedBy.Should().Be("user");
+        msg.ResolvedProfileId.Should().Be("profile-1");
+        msg.McpServers.Should().HaveCount(1);
+        msg.McpServers[0].Name.Should().Be("test-mcp");
+        msg.ProjectId.Should().Be("proj-4");
+        msg.ProjectName.Should().Be("DecompProject2");
+        msg.ProjectSecrets.Should().ContainKey("SECRET");
+        msg.ProjectSteeringContent.Should().Be("steering");
+        msg.RepoSteeringContent.Should().BeNull(); // TokenVendingService.CloneWithSettings does not copy SteeringContent
+        msg.IssueProviderConfigId.Should().Be("ip");
+
+        // Decomposition Phase 2-specific properties
+        msg.RunType.Should().Be(PipelineRunType.Decomposition);
         msg.QualityGateConfigs.Should().BeEmpty();
         msg.ReviewerConfigs.Should().BeEmpty();
+        msg.ProjectContext.Should().BeNull(); // No EpicIssueProviderId on project
+
+        // Properties that should NOT be set for decomposition
+        msg.ExistingAnalysis.Should().BeNull();
+        msg.ForceRefreshAnalysis.Should().BeFalse();
+        msg.LinkedPullRequest.Should().BeNull();
+        msg.LinkedIssueContexts.Should().BeNull();
+        msg.ReviewPrTargetBranch.Should().BeNull();
+        msg.ReviewPrDescription.Should().BeNull();
+        msg.ReviewPrAuthor.Should().BeNull();
     }
 
     #endregion
