@@ -23,7 +23,7 @@ public class LabelServiceExtensionsTests
         // The Verify call below provides the real value. Consider removing NotThrowAsync or restructuring.
         _mockLabelService
             .Setup(l => l.SwapLabelAsync(
-                It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -45,7 +45,7 @@ public class LabelServiceExtensionsTests
         // the catch block actually logs rather than silently discarding exceptions.
         _mockLabelService
             .Setup(l => l.SwapLabelAsync(
-                It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Provider unavailable"));
 
@@ -61,7 +61,7 @@ public class LabelServiceExtensionsTests
     {
         _mockLabelService
             .Setup(l => l.SwapLabelAsync(
-                It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new OperationCanceledException());
 
@@ -77,7 +77,7 @@ public class LabelServiceExtensionsTests
     {
         _mockLabelService
             .Setup(l => l.SwapLabelAsync(
-                It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -104,7 +104,7 @@ public class LabelServiceExtensionsTests
     {
         _mockLabelService
             .Setup(l => l.SwapLabelAsync(
-                It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
@@ -132,7 +132,7 @@ public class LabelServiceExtensionsTests
         // TaskCanceledException derives from OperationCanceledException — should also propagate
         _mockLabelService
             .Setup(l => l.SwapLabelAsync(
-                It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
                 It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new TaskCanceledException());
 

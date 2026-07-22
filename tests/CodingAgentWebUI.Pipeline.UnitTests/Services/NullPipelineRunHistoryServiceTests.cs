@@ -109,7 +109,7 @@ public class NullPipelineRunHistoryServiceTests
             .Returns(new AgentHealthStatus { IsProcessAlive = true, IsExecuting = false });
 
         var mockIssueOps = new Mock<IAgentIssueOperations>();
-        mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();

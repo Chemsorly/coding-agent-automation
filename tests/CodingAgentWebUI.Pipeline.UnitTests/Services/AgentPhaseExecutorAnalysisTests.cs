@@ -57,9 +57,9 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
         _mockAgent.Setup(a => a.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockIssueOps.Setup(o => o.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueOps.Setup(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
         // TODO: Add a test that verifies PostCommentAsync is called with content containing
         // the <!-- agent:analysis-body-hash:{hash} --> marker. Currently all tests use It.IsAny<string>()
@@ -247,7 +247,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
         };
 
         SetupAgentWithValidAnalysis("ready");
-        _mockIssueOps.Setup(o => o.UpdateCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueOps.Setup(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var result = await _executor.ExecuteAnalysisPhaseAsync(BuildContext(), comments, forceRefreshFromDispatch: true, CancellationToken.None);
@@ -257,7 +257,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             "42", "comment-42",
             It.Is<string>(body => body.Contains("<!-- agent:analysis-body-hash:")),
             It.IsAny<CancellationToken>()), Times.Once);
-        _mockIssueOps.Verify(o => o.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockIssueOps.Verify(o => o.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -273,7 +273,7 @@ public class AgentPhaseExecutorAnalysisTests : IDisposable
             "42",
             It.Is<string>(body => body.Contains("<!-- agent:analysis-body-hash:")),
             It.IsAny<CancellationToken>()), Times.Once);
-        _mockIssueOps.Verify(o => o.UpdateCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockIssueOps.Verify(o => o.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
