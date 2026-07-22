@@ -199,11 +199,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         CancellationToken ct,
         List<(string TemplateName, IRepositoryProvider Provider)>? additionalRepoProviders = null)
     {
-        // TODO: Resource leak if Build() throws after partial construction (e.g., OOM during
-        // PipelineExecutionContext allocation). localCts and reporter are created inside Build()
-        // but the finally block won't run if Build() itself throws. Consider wrapping Build() in
-        // a try/finally or moving it inside the existing try block with partial-state handling.
-        var buildResult = _contextBuilder.Build(
+        var buildResult = await _contextBuilder.Build(
             job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
             issueOps, connection, outputBatcher, onStepChanged, ct);
 
