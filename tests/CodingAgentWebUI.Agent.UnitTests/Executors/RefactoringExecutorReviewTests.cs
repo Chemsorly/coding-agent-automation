@@ -77,8 +77,8 @@ public class RefactoringExecutorReviewTests : IDisposable
     private void SetupCloneWritesProposals(string proposalsJson)
     {
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, CancellationToken>((path, _) =>
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
                 var agentDir = Path.Combine(path, ".agent");
                 Directory.CreateDirectory(agentDir);
@@ -90,8 +90,8 @@ public class RefactoringExecutorReviewTests : IDisposable
     private void SetupCloneWritesEmptyProposals()
     {
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, CancellationToken>((path, _) =>
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
                 var agentDir = Path.Combine(path, ".agent");
                 Directory.CreateDirectory(agentDir);

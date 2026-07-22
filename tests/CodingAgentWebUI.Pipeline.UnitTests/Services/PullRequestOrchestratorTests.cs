@@ -17,15 +17,15 @@ public class PullRequestOrchestratorTests
         _sut = new PullRequestOrchestrator(_mockLogger.Object);
 
         // Default happy-path setup
-        _mockRepo.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+        _mockRepo.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>());
-        _mockRepo.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+        _mockRepo.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockRepo.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockRepo.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
-        _mockRepo.Setup(r => r.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockRepo.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<FileChangeSummary>());
         _mockRepo.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("https://github.com/org/repo/pull/99");
@@ -38,7 +38,7 @@ public class PullRequestOrchestratorTests
     [Fact]
     public async Task CreatePullRequest_NoCommitsAhead_ReturnsNull()
     {
-        _mockRepo.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockRepo.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         var result = await _sut.CreatePullRequestAsync(
@@ -91,7 +91,7 @@ public class PullRequestOrchestratorTests
     [Fact]
     public async Task CreatePullRequest_PushFails_ExceptionPropagates()
     {
-        _mockRepo.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+        _mockRepo.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("permission denied"));
 
@@ -109,7 +109,7 @@ public class PullRequestOrchestratorTests
     public async Task CreatePullRequest_BlacklistedFiles_RecordsOnRun()
     {
         var blacklisted = new List<string> { ".github/workflows/ci.yml", ".agent/config.json" };
-        _mockRepo.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+        _mockRepo.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(blacklisted.AsReadOnly());
 
@@ -128,7 +128,7 @@ public class PullRequestOrchestratorTests
     public async Task CreatePullRequest_BlacklistedFiles_NotIncludedInPrBody()
     {
         var blacklisted = new List<string> { ".github/workflows/ci.yml" };
-        _mockRepo.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+        _mockRepo.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(blacklisted.AsReadOnly());
 
@@ -238,7 +238,7 @@ public class PullRequestOrchestratorTests
             null, null, CreateConfig(), CancellationToken.None);
 
         result.Should().BeNull();
-        _mockRepo.Verify(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+        _mockRepo.Verify(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
             It.IsAny<bool>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

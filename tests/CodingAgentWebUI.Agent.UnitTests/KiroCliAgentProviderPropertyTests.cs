@@ -78,7 +78,7 @@ public class KiroCliAgentProviderPropertyTests
     /// **Validates: Requirements 1.1**
     /// </summary>
     [Property(MaxTest = 20, Arbitrary = [typeof(WorkspacePathArbitrary)])]
-    public void EnsureSession_CallCount_Equals_DistinctNormalizedPaths(List<WorkspacePath> paths)
+    public void EnsureSession_CallCount_Equals_DistinctNormalizedPaths(List<WorkspacePathString> paths)
     {
         // Arrange
         var mockOrchestrator = new Mock<IKiroCliOrchestrator>();
@@ -211,10 +211,10 @@ public class KiroCliAgentProviderPropertyTests
 /// <summary>
 /// Wrapper type for valid workspace path strings that won't throw on Path.GetFullPath.
 /// </summary>
-public sealed class WorkspacePath
+public sealed class WorkspacePathString
 {
     public string Value { get; }
-    public WorkspacePath(string value) => Value = value;
+    public WorkspacePathString(string value) => Value = value;
     public override string ToString() => Value;
 }
 
@@ -223,13 +223,13 @@ public sealed class WorkspacePath
 /// </summary>
 public static class WorkspacePathArbitrary
 {
-    public static Arbitrary<WorkspacePath> WorkspacePaths()
+    public static Arbitrary<WorkspacePathString> WorkspacePaths()
     {
         var tempRoot = Path.GetTempPath();
 
         var pathGen =
             from index in Gen.Choose(0, 9)
-            select new WorkspacePath(Path.Combine(tempRoot, $"workspace-{index}"));
+            select new WorkspacePathString(Path.Combine(tempRoot, $"workspace-{index}"));
 
         return pathGen.ToArbitrary();
     }

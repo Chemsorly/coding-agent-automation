@@ -14,14 +14,14 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// <summary>The full repository name in "owner/repo" format.</summary>
     string RepositoryFullName { get; }
 
-    Task CloneAsync(string workspacePath, CancellationToken ct);
-    Task<string> CreateBranchAsync(string workspacePath, string branchName, CancellationToken ct);
+    Task CloneAsync(WorkspacePath workspacePath, CancellationToken ct);
+    Task<string> CreateBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct);
     /// <summary>
     /// Stages all changes, unstages any files matching <paramref name="blacklistedPaths"/>
     /// and hardcoded pipeline paths, then commits the remaining staged files.
     /// Returns the list of file paths that were unstaged due to blacklist matches.
     /// </summary>
-    Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
+    Task<IReadOnlyList<string>> CommitAllAsync(WorkspacePath workspacePath, string message,
         IReadOnlyList<string>? blacklistedPaths, CancellationToken ct,
         IReadOnlyList<string>? pipelineInjectedPaths = null);
 
@@ -30,19 +30,19 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// When <paramref name="allowEmpty"/> is true, creates an empty commit if no files changed
     /// (useful for triggering CI re-runs after retry fixes that didn't change files).
     /// </summary>
-    Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message,
+    Task<IReadOnlyList<string>> CommitAllAsync(WorkspacePath workspacePath, string message,
         IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct,
         IReadOnlyList<string>? pipelineInjectedPaths = null);
 
     /// <summary>Backward-compatible overload with no blacklist.</summary>
-    Task CommitAllAsync(string workspacePath, string message, CancellationToken ct) =>
+    Task CommitAllAsync(WorkspacePath workspacePath, string message, CancellationToken ct) =>
         CommitAllAsync(workspacePath, message, null, ct);
-    Task PushBranchAsync(string workspacePath, string branchName, CancellationToken ct);
+    Task PushBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct);
 
     /// <summary>
     /// Pushes the branch to origin with optional force-push (required after rebase rewrites history).
     /// </summary>
-    Task PushBranchAsync(string workspacePath, string branchName, bool forcePush, CancellationToken ct)
+    Task PushBranchAsync(WorkspacePath workspacePath, string branchName, bool forcePush, CancellationToken ct)
         => PushBranchAsync(workspacePath, branchName, ct);
 
     Task<string> CreatePullRequestAsync(PullRequestInfo prInfo, CancellationToken ct);
@@ -50,13 +50,13 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// <summary>
     /// Returns the SHA of the HEAD commit in the given workspace repository.
     /// </summary>
-    Task<string> GetHeadCommitShaAsync(string workspacePath, CancellationToken ct);
+    Task<string> GetHeadCommitShaAsync(WorkspacePath workspacePath, CancellationToken ct);
 
     /// <summary>
     /// Checks whether the current branch has any commits ahead of the base branch.
     /// Returns false if the branch tip equals the merge base (no new commits).
     /// </summary>
-    Task<bool> HasCommitsAheadAsync(string workspacePath, CancellationToken ct);
+    Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, CancellationToken ct);
 
     /// <summary>
     /// Builds a list of file changes by comparing the current branch HEAD against the base branch.
@@ -64,7 +64,7 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// working directory to capture uncommitted changes.
     /// Returns an empty list if the diff cannot be computed.
     /// </summary>
-    Task<IReadOnlyList<FileChangeSummary>> GetFileChangesAsync(string workspacePath, CancellationToken ct);
+    Task<IReadOnlyList<FileChangeSummary>> GetFileChangesAsync(WorkspacePath workspacePath, CancellationToken ct);
 
     /// <summary>
     /// Validates that the provider is correctly configured and can communicate with its
@@ -77,7 +77,7 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// The existing code repository workflow clones fresh each run and does not use pull,
     /// so the default implementation throws NotSupportedException.
     /// </summary>
-    Task PullAsync(string workspacePath, CancellationToken ct)
+    Task PullAsync(WorkspacePath workspacePath, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support PullAsync. " +
             "Override this method to enable pull operations.");
@@ -100,7 +100,7 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// <summary>
     /// Checks out an existing remote branch after clone, creating a local tracking branch.
     /// </summary>
-    Task CheckoutRemoteBranchAsync(string workspacePath, string branchName, CancellationToken ct)
+    Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support CheckoutRemoteBranchAsync.");
 
@@ -108,7 +108,7 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// Rebases the current branch onto the latest base branch (fetches first to ensure freshness).
     /// If conflicts occur, aborts the rebase and returns the list of conflicting files.
     /// </summary>
-    Task<MergeResult> MergeFromBaseAsync(string workspacePath, CancellationToken ct)
+    Task<MergeResult> MergeFromBaseAsync(WorkspacePath workspacePath, CancellationToken ct)
         => throw new NotSupportedException(
             $"{GetType().Name} does not support MergeFromBaseAsync.");
 

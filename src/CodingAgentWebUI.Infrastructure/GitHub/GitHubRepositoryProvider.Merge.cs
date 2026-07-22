@@ -5,9 +5,9 @@ namespace CodingAgentWebUI.Infrastructure.GitHub;
 
 public partial class GitHubRepositoryProvider
 {
-    public Task<MergeResult> MergeFromBaseAsync(string workspacePath, CancellationToken ct)
+    public Task<MergeResult> MergeFromBaseAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(workspacePath);
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
 
         return Task.Run(async () =>
         {

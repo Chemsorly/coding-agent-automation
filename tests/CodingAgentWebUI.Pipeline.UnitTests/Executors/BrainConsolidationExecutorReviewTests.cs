@@ -30,19 +30,19 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
         // Default setup: brainProvider.CloneAsync creates the workspace directory structure
         _mockBrainProvider.Setup(x => x.BaseBranch).Returns("main");
         _mockBrainProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, CancellationToken>((path, _) =>
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
                 Directory.CreateDirectory(path);
                 Directory.CreateDirectory(Path.Combine(path, ".agent"));
             })
             .Returns(Task.CompletedTask);
         _mockBrainProvider
-            .Setup(x => x.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback(() => _callOrder.Add("commit"))
             .Returns(Task.CompletedTask);
         _mockBrainProvider
-            .Setup(x => x.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback(() => _callOrder.Add("push"))
             .Returns(Task.CompletedTask);
     }
@@ -173,8 +173,8 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
         // Only 2 agent calls: generator + diff summary (review skipped)
         _mockAgentProvider.Verify(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
         // Commit and push still happen
-        _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<string>(), "main", It.IsAny<CancellationToken>()), Times.Once);
+        _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), "main", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -207,8 +207,8 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
         // Only 2 agent calls: generator + diff summary (which threw)
         _mockAgentProvider.Verify(x => x.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()), Times.Exactly(2));
         // Commit and push still proceed
-        _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<string>(), "main", It.IsAny<CancellationToken>()), Times.Once);
+        _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), "main", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -289,8 +289,8 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
         // Only 1 agent call: generator (no diff summary, no review)
         // Note: diff summary is still called because it's separate from the review helper
         // But the review helper itself is skipped when disabled
-        _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<string>(), "main", It.IsAny<CancellationToken>()), Times.Once);
+        _mockBrainProvider.Verify(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        _mockBrainProvider.Verify(x => x.PushBranchAsync(It.IsAny<WorkspacePath>(), "main", It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -384,7 +384,7 @@ public class BrainConsolidationExecutorReviewTests : IDisposable
 
         // Make commit throw
         _mockBrainProvider
-            .Setup(x => x.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Commit failed: nothing to commit"));
 
         // Act

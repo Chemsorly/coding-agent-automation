@@ -21,7 +21,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
 
         _mockProvider = new Mock<IRepositoryProvider>();
         _mockProvider.Setup(p => p.BaseBranch).Returns("main");
-        _mockProvider.Setup(p => p.PullAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockProvider.Setup(p => p.PullAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         _mockGit = new Mock<IGitOperations>();
@@ -195,7 +195,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
         result.FilesCommitted.Should().Be(0);
         // Push should NOT be called when there's nothing to commit
         _mockProvider.Verify(
-            p => p.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -213,7 +213,7 @@ public class BrainUpdateServicePushRetryTests : IDisposable
         result.Success.Should().BeTrue();
         // PullAsync should NOT be called on the happy path (only during rebase)
         _mockProvider.Verify(
-            p => p.PullAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            p => p.PullAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 

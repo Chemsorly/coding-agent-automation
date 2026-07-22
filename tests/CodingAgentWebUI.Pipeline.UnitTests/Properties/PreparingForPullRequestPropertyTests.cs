@@ -220,7 +220,7 @@ public class PreparingForPullRequestPropertyTests
         {
             // After cleanup, CommitAllAsync throws "No changes to commit" to simulate no-change cleanup
             var commitCallCount = 0;
-            repoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+            repoProvider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                     It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
                 .ReturnsAsync(() =>
                 {
@@ -229,8 +229,9 @@ public class PreparingForPullRequestPropertyTests
                         throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
                     return Array.Empty<string>() as IReadOnlyList<string>;
                 });
-            repoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+            repoProvider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                     It.IsAny<IReadOnlyList<string>?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
+                // TODO: First parameter should be WorkspacePath _ instead of string _ to match the actual method signature (works via implicit conversion but is misleading)
                 .ReturnsAsync((string _, string _, IReadOnlyList<string>? _, bool allowEmpty, CancellationToken _, IReadOnlyList<string>? _) =>
                 {
                     var idx = Interlocked.Increment(ref commitCallCount);
@@ -377,16 +378,16 @@ public class PreparingForPullRequestPropertyTests
             .ReturnsAsync(true);
 
         var mockRepoProvider = new Mock<IRepositoryProvider>();
-        mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
-        mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>())).ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
-        mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>())).ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
-        mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockRepoProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
+        mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>())).ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        mockRepoProvider.Setup(p => p.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<bool>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>())).ReturnsAsync(Array.Empty<string>() as IReadOnlyList<string>);
+        mockRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         mockRepoProvider.Setup(p => p.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>())).ReturnsAsync("https://github.com/test/pr/1");
-        mockRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
-        mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
-        mockRepoProvider.Setup(p => p.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("abc123");
+        mockRepoProvider.Setup(p => p.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        mockRepoProvider.Setup(p => p.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<FileChangeSummary>() as IReadOnlyList<FileChangeSummary>);
+        mockRepoProvider.Setup(p => p.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).ReturnsAsync("abc123");
 
         var mockAgentProvider = new Mock<IAgentProvider>();
         mockAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
