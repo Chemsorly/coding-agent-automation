@@ -101,7 +101,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
         run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
-        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("abc123");
         _repoProvider.Setup(r => r.DismissPreviousReviewAsync(
             It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -179,7 +179,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
         // Agent output has severity markers but NO file:line reference
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] — General security concern without file reference";
 
-        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("abc123");
         _repoProvider.Setup(r => r.DismissPreviousReviewAsync(
             It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -235,7 +235,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
         run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
-        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("abc123");
         _repoProvider.Setup(r => r.DismissPreviousReviewAsync(
             It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -269,7 +269,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
         run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
-        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("abc123");
         _repoProvider.Setup(r => r.DismissPreviousReviewAsync(
             It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -308,7 +308,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
             It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Callback(() => callOrder.Add("dismiss"))
             .Returns(Task.CompletedTask);
-        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("abc123");
         _repoProvider.Setup(r => r.SubmitPullRequestReviewAsync(
             42, It.IsAny<ReviewSubmission>(), It.IsAny<CancellationToken>()))
@@ -368,7 +368,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
         run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
-        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("abc123");
         _repoProvider.Setup(r => r.DismissPreviousReviewAsync(
             It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -437,7 +437,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
         run.CodeReviewAgentFindings["SecurityBot"] =
             "[CRITICAL] src/Service.cs:42 — SQL injection\n[CRITICAL] src/Auth.cs:10 — Missing auth check";
 
-        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("abc123");
         _repoProvider.Setup(r => r.DismissPreviousReviewAsync(
             It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -464,7 +464,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
         run.SetCodeReviewCounts(1, 0, 0);
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] src/Service.cs:42 — SQL injection vulnerability";
 
-        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Git HEAD not found"));
         _repoProvider.Setup(r => r.DismissPreviousReviewAsync(
             It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -496,7 +496,7 @@ public class PostReviewFindingsStepInlineTests : IDisposable
         // Agent output has severity markers but NO file:line reference — candidate for retry
         run.CodeReviewAgentFindings["SecurityBot"] = "[CRITICAL] — General security concern without file reference";
 
-        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(r => r.GetHeadCommitShaAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("abc123");
         _repoProvider.Setup(r => r.DismissPreviousReviewAsync(
             It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
