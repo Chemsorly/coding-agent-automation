@@ -44,4 +44,20 @@ public class PhaseNameFormatterTests
     {
         PhaseNameFormatter.HumanizePhase(input).Should().Be(expected);
     }
+
+    [Theory]
+    [InlineData(null, "(unknown)")]
+    [InlineData("", "(unknown)")]
+    public void HumanizePhase_NullOrEmpty_ReturnsUnknown(string? input, string expected)
+    {
+        PhaseNameFormatter.HumanizePhase(input!).Should().Be(expected);
+    }
+
+    [Theory]
+    [InlineData("x", "X")]
+    [InlineData("A", "A")]
+    public void HumanizePhase_SingleCharacter_TitleCases(string input, string expected)
+    {
+        PhaseNameFormatter.HumanizePhase(input).Should().Be(expected);
+    }
 }
