@@ -301,6 +301,10 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
     /// <see cref="SerializedSendAsync"/> catches <see cref="ObjectDisposedException"/>,
     /// so tasks arriving after disposal are handled gracefully without unobserved exceptions.
     /// </summary>
+    // TODO: Add _disposed idempotency guard. Currently DisposeAsync is not idempotent —
+    // calling it twice will invoke _signalrLock.Dispose() on an already-disposed SemaphoreSlim.
+    // Now that PipelineExecutionBuildResult introduces a second disposal path for the reporter,
+    // the lack of idempotency is a latent risk if code paths ever converge.
     public async ValueTask DisposeAsync()
     {
         try { await _signalrLock.WaitAsync(CancellationToken.None); _signalrLock.Release(); }

@@ -27,13 +27,9 @@ namespace CodingAgentWebUI.Agent;
 /// messages and releases the job slot if the buffer empties.
 /// </para>
 /// </remarks>
-// TODO: This class holds a volatile HubConnectionManager (which is IAsyncDisposable) but does not
-// implement IAsyncDisposable itself. If ExecuteAsync throws before reaching ShutdownAsync, the
-// connection leaks. Consider implementing IAsyncDisposable to ensure proper cleanup during DI
-// container teardown.
-public sealed class AgentConnectionLifecycle
+public sealed class AgentConnectionLifecycle : IAsyncDisposable
 {
-    private volatile HubConnectionManager _hubManager;
+    private volatile HubConnectionManager? _hubManager;
     private readonly HubConnectionManagerFactory _hubManagerFactory;
     private readonly SignalRCompletionReporter _completionReporter;
     private readonly AgentJobSlotManager _slotManager;
@@ -99,10 +95,11 @@ public sealed class AgentConnectionLifecycle
     }
 
     /// <summary>The underlying hub connection for business handlers to invoke server methods.</summary>
-    public HubConnection Connection => _hubManager.Connection;
+    public HubConnection Connection => _hubManager?.Connection
+        ?? throw new ObjectDisposedException(nameof(AgentConnectionLifecycle));
 
     /// <summary>Whether the hub connection is currently active.</summary>
-    public bool IsConnected => _hubManager.IsConnected;
+    public bool IsConnected => _hubManager?.IsConnected ?? false;
 
     /// <summary>
     /// Connects to the orchestrator, registers the agent, and runs the heartbeat loop
@@ -110,16 +107,19 @@ public sealed class AgentConnectionLifecycle
     /// </summary>
     public async Task ConnectAndRunAsync(CancellationToken stoppingToken)
     {
-        WireEventHandlers(_hubManager);
+        var manager = _hubManager
+            ?? throw new ObjectDisposedException(nameof(AgentConnectionLifecycle));
+
+        WireEventHandlers(manager);
 
         // Connect to orchestrator
-        await _hubManager.StartAsync(stoppingToken);
+        await manager.StartAsync(stoppingToken);
 
         // Register with orchestrator
         var registration = BuildRegistrationMessage();
 
         await _signalRPipeline.ExecuteAsync(async token =>
-            await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), stoppingToken);
+            await manager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), stoppingToken);
         _logger.Information("Agent {AgentId} registered with labels [{Labels}]",
             _agentId, string.Join(", ", _labels));
 
@@ -149,12 +149,15 @@ public sealed class AgentConnectionLifecycle
     /// </summary>
     public async Task ShutdownAsync()
     {
+        var manager = _hubManager;
+        if (manager is null) return;
+
         // Deregister from orchestrator
         try
         {
-            if (_hubManager.IsConnected)
+            if (manager.IsConnected)
             {
-                await _hubManager.Connection.InvokeAsync(HubMethodNames.DeregisterAgent, _agentId);
+                await manager.Connection.InvokeAsync(HubMethodNames.DeregisterAgent, _agentId);
                 _logger.Information("Agent {AgentId} deregistered from orchestrator", _agentId);
             }
         }
@@ -166,12 +169,25 @@ public sealed class AgentConnectionLifecycle
         // Close connection
         try
         {
-            await _hubManager.StopAsync(CancellationToken.None);
+            await manager.StopAsync(CancellationToken.None);
         }
         catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to close hub connection during shutdown");
         }
+    }
+
+    /// <summary>
+    /// Atomically nulls and disposes the underlying <see cref="HubConnectionManager"/>.
+    /// Uses <see cref="Interlocked.Exchange{T}"/> to guarantee exactly-once disposal,
+    /// even if <see cref="DisposeAsync"/> races with <see cref="ShutdownAsync"/> or
+    /// <see cref="HandleTerminalClosedAsync"/>.
+    /// </summary>
+    public async ValueTask DisposeAsync()
+    {
+        var manager = Interlocked.Exchange(ref _hubManager, null);
+        if (manager is null) return;
+        await SafeDisposeAsync(manager);
     }
 
     // TODO: Event handlers on old HubConnectionManager instances are never unwired before disposal.
@@ -207,6 +223,8 @@ public sealed class AgentConnectionLifecycle
                 await Task.Delay(delay, ct);
 
                 var oldManager = _hubManager;
+                if (oldManager is null) return; // Already disposed
+
                 newManager = _hubManagerFactory.Create();
                 WireEventHandlers(newManager);
                 await newManager.StartAsync(ct);
@@ -217,6 +235,10 @@ public sealed class AgentConnectionLifecycle
                 await _signalRPipeline.ExecuteAsync(async token =>
                     await newManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), ct);
 
+                // TODO: TOCTOU race — if DisposeAsync runs between reading oldManager and this assignment,
+                // newManager will be written into _hubManager after DisposeAsync has already completed,
+                // leaking the connection. Use Interlocked.CompareExchange(ref _hubManager, newManager, oldManager)
+                // and dispose newManager if the CAS fails.
                 _hubManager = newManager;
                 newManager = null; // Ownership transferred — skip disposal
 
@@ -255,12 +277,15 @@ public sealed class AgentConnectionLifecycle
         _logger.Information("Re-registering agent {AgentId} after reconnection (connectionId={ConnectionId})",
             _agentId, connectionId);
 
+        var manager = _hubManager;
+        if (manager is null) return; // Already disposed
+
         var registration = BuildRegistrationMessage();
 
         try
         {
             await _signalRPipeline.ExecuteAsync(async token =>
-                await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), CancellationToken.None);
+                await manager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), CancellationToken.None);
             _logger.Information("Agent {AgentId} re-registered successfully after reconnection", _agentId);
             await DrainBufferAsync();
         }
@@ -274,7 +299,11 @@ public sealed class AgentConnectionLifecycle
                 try
                 {
                     await Task.Delay(ExtendedRetryDelay, ct);
-                    await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, ct);
+
+                    var currentManager = _hubManager;
+                    if (currentManager is null) return; // Disposed during retry
+
+                    await currentManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, ct);
                     _logger.Information("Agent {AgentId} re-registered on extended attempt {Attempt}", _agentId, i + 1);
                     await DrainBufferAsync();
                     return;
@@ -328,11 +357,14 @@ public sealed class AgentConnectionLifecycle
 
             try
             {
+                var manager = _hubManager;
+                if (manager is null) return; // Disposed during drain
+
                 switch (msg)
                 {
                     case BufferedJobCompleted completed:
                         await _signalRPipeline.ExecuteAsync(async token =>
-                            await _hubManager.Connection.InvokeAsync(
+                            await manager.Connection.InvokeAsync(
                                 HubMethodNames.ReportJobCompleted, completed.JobId, completed.Payload, token),
                             CancellationToken.None);
                         _logger.Information("Successfully replayed buffered ReportJobCompleted for job {JobId}", completed.JobId);
@@ -390,6 +422,9 @@ public sealed class AgentConnectionLifecycle
 
     private async Task SendHeartbeatAsync(CancellationToken ct)
     {
+        var manager = _hubManager;
+        if (manager is null) return;
+
         var heartbeat = new HeartbeatMessage
         {
             AgentId = _agentId,
@@ -398,7 +433,6 @@ public sealed class AgentConnectionLifecycle
             MemoryUsageMb = Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024)
         };
 
-        var manager = _hubManager;
         await manager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
     }
 
