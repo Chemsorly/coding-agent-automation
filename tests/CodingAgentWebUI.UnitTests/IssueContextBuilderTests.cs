@@ -57,7 +57,7 @@ public class IssueContextBuilderTests
         // to GetIssueAsync and ListCommentsAsync to catch bugs where BuildIssueContextAsync forwards wrong identifier.
         var mockIssueProvider = new Mock<IIssueProvider>();
         mockIssueProvider
-            .Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "42",
@@ -66,7 +66,7 @@ public class IssueContextBuilderTests
                 Labels = Array.Empty<string>()
             });
         mockIssueProvider
-            .Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(comments);
         _mockProviderFactory
             .Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))

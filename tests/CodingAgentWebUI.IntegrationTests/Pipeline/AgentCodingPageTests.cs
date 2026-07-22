@@ -83,7 +83,7 @@ public class AgentCodingPageTests
         _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ReviewerConfiguration>());
 
-        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "42", Title = "Test Issue", Description = "Test description",
@@ -101,7 +101,7 @@ public class AgentCodingPageTests
                 PageSize = 25,
                 HasMore = false
             });
-        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
         _mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);

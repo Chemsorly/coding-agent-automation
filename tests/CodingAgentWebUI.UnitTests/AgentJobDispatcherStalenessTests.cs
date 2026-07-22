@@ -156,7 +156,7 @@ public class AgentJobDispatcherStalenessTests : IDisposable
             .ReturnsAsync(new[] { issueConfig });
 
         var mockIssueProvider = new Mock<IIssueProvider>();
-        mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "issue-1",
@@ -164,7 +164,7 @@ public class AgentJobDispatcherStalenessTests : IDisposable
                 Description = description,
                 Labels = Array.Empty<string>()
             });
-        mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(comments);
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(mockIssueProvider.Object);

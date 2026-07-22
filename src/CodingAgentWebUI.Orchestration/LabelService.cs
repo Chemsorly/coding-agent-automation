@@ -33,7 +33,7 @@ public sealed class LabelService : ILabelService
     /// <inheritdoc />
     public async Task SwapLabelAsync(
         ProviderConfigId providerConfigId,
-        string identifier,
+        IssueIdentifier identifier,
         string newLabel,
         LabelTargetKind targetKind,
         CancellationToken ct)
@@ -44,13 +44,13 @@ public sealed class LabelService : ILabelService
     /// <inheritdoc />
     public async Task SwapLabelAsync(
         ProviderConfigId providerConfigId,
-        string identifier,
+        IssueIdentifier identifier,
         string newLabel,
         LabelTargetKind targetKind,
         string? expectedCurrentLabel,
         CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(identifier.Value);
         ArgumentNullException.ThrowIfNull(newLabel);
         // TODO: Validate providerConfigId.Value is not null/empty. The previous string parameter
         // had ArgumentNullException.ThrowIfNull(providerConfigId) which is now lost because structs
@@ -71,7 +71,7 @@ public sealed class LabelService : ILabelService
 
         _logger.Information(
             "Label swap: {Identifier} → {NewLabel} (target={TargetKind}, provider={ProviderConfigId})",
-            identifier, newLabel, targetKind, providerConfigId.Value);
+            identifier.Value, newLabel, targetKind, providerConfigId.Value);
 
         try
         {
@@ -82,7 +82,7 @@ public sealed class LabelService : ILabelService
                     break;
 
                 case LabelTargetKind.PullRequest:
-                    await SwapPrLabelAsync(providerConfigId.Value, identifier, newLabel, ct);
+                    await SwapPrLabelAsync(providerConfigId.Value, identifier.Value, newLabel, ct);
                     break;
 
                 default:
@@ -90,13 +90,13 @@ public sealed class LabelService : ILabelService
                     break;
             }
 
-            _logger.Debug("Label swap completed: {Identifier} → {NewLabel}", identifier, newLabel);
+            _logger.Debug("Label swap completed: {Identifier} → {NewLabel}", identifier.Value, newLabel);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex,
                 "Failed to swap label to {Label} on {TargetKind} {Identifier}",
-                newLabel, targetKind, identifier);
+                newLabel, targetKind, identifier.Value);
         }
     }
 
@@ -160,7 +160,7 @@ public sealed class LabelService : ILabelService
     /// </summary>
     private async Task SwapIssueLabelAsync(
         string issueProviderConfigId,
-        string issueIdentifier,
+        IssueIdentifier issueIdentifier,
         string newLabel,
         CancellationToken ct)
     {
@@ -169,7 +169,7 @@ public sealed class LabelService : ILabelService
         {
             _logger.Warning(
                 "Issue provider config '{ConfigId}' not found, skipping label swap for issue {IssueIdentifier}",
-                issueProviderConfigId, issueIdentifier);
+                issueProviderConfigId, issueIdentifier.Value);
             return;
         }
 

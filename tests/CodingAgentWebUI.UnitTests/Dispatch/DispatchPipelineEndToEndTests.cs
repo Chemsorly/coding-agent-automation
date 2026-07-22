@@ -390,7 +390,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         // After prepare: no label swap happened
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Distribute successfully (agent available)
@@ -425,7 +425,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         // Label was never swapped to in-progress
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Never);
     }
 

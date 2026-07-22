@@ -171,7 +171,7 @@ public class GitHubIssueProviderTests
     }
 
     [Theory]
-    [InlineData(null, "100", "body", "issueIdentifier")]
+    [InlineData(null, "100", "body", "issueIdentifier.Value")]
     [InlineData("42", null, "body", "commentId")]
     [InlineData("42", "100", null, "body")]
     public async Task UpdateCommentAsync_NullParams_ThrowsArgumentNullException(
@@ -211,7 +211,7 @@ public class GitHubIssueProviderTests
     {
         var act = () => _provider.AddLabelsAsync(null!, new List<string> { "bug" }.AsReadOnly(), CancellationToken.None);
         (await act.Should().ThrowAsync<ArgumentNullException>())
-            .Which.ParamName.Should().Be("identifier");
+            .Which.ParamName.Should().Be("identifier.Value");
     }
 
     [Fact]
@@ -247,7 +247,7 @@ public class GitHubIssueProviderTests
     {
         var act = () => _provider.CloseIssueAsync(null!, CancellationToken.None);
         (await act.Should().ThrowAsync<ArgumentNullException>())
-            .Which.ParamName.Should().Be("identifier");
+            .Which.ParamName.Should().Be("identifier.Value");
     }
 
     [Fact]
@@ -285,7 +285,7 @@ public class GitHubIssueProviderTests
     {
         var act = () => _provider.RemoveLabelAsync(null!, "label", CancellationToken.None);
         (await act.Should().ThrowAsync<ArgumentNullException>())
-            .Which.ParamName.Should().Be("identifier");
+            .Which.ParamName.Should().Be("identifier.Value");
     }
 
     [Fact]

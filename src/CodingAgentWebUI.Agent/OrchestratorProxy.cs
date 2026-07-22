@@ -33,9 +33,12 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// <summary>
     /// Posts an analysis comment on the issue via the orchestrator.
     /// </summary>
-    public Task<string?> PostCommentAsync(string issueIdentifier, string body, CancellationToken ct)
+    public Task<string?> PostCommentAsync(IssueIdentifier issueIdentifier, string body, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        // TODO: ThrowIfNull(issueIdentifier.Value) produces ParamName="issueIdentifier.Value" instead of "issueIdentifier".
+        // Consider using ArgumentNullException.ThrowIfNull(issueIdentifier.Value, nameof(issueIdentifier)) to preserve the original contract.
+        // Same pattern repeats in SwapLabelAsync, GetIssueAsync, ListCommentsAsync, UpdateCommentAsync below.
+        ArgumentNullException.ThrowIfNull(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(body);
         return _signalRPipeline.ExecuteAsync(async token =>
         {
@@ -52,9 +55,9 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// <summary>
     /// Swaps the agent label on the issue via the orchestrator.
     /// </summary>
-    public Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct)
+    public Task SwapLabelAsync(IssueIdentifier issueIdentifier, string newLabel, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(newLabel);
         return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(HubMethodNames.RequestLabelChange, _jobId, newLabel, (int)LabelTargetKind.Issue, token), ct).AsTask();
@@ -64,9 +67,9 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// Swaps the agent label via the orchestrator with explicit target kind routing.
     /// Used by review runs to route label swaps to PRs instead of issues.
     /// </summary>
-    public Task SwapLabelAsync(string identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct)
+    public Task SwapLabelAsync(IssueIdentifier identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(identifier.Value);
         ArgumentNullException.ThrowIfNull(newLabel);
         return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(HubMethodNames.RequestLabelChange, _jobId, newLabel, (int)targetKind, token), ct).AsTask();
@@ -170,38 +173,38 @@ public sealed class OrchestratorProxy : IAgentIssueOperations
     /// <summary>
     /// Gets full issue details by identifier via the orchestrator.
     /// </summary>
-    public async Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct)
+    public async Task<IssueDetail> GetIssueAsync(IssueIdentifier identifier, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(identifier.Value);
 
         return await _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync<IssueDetail>(
-                HubMethodNames.RequestGetIssue, _jobId, identifier, token), ct);
+                HubMethodNames.RequestGetIssue, _jobId, identifier.Value, token), ct);
     }
 
     /// <summary>
     /// Lists all comments on an issue via the orchestrator.
     /// </summary>
-    public async Task<IReadOnlyList<IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct)
+    public async Task<IReadOnlyList<IssueComment>> ListCommentsAsync(IssueIdentifier identifier, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(identifier.Value);
 
         return await _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync<IReadOnlyList<IssueComment>>(
-                HubMethodNames.RequestListComments, _jobId, identifier, token), ct);
+                HubMethodNames.RequestListComments, _jobId, identifier.Value, token), ct);
     }
 
     /// <summary>
     /// Updates an existing comment by ID via the orchestrator.
     /// </summary>
-    public Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct)
+    public Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(commentId);
         ArgumentNullException.ThrowIfNull(body);
 
         return _signalRPipeline.ExecuteAsync(async token =>
             await _connection.InvokeAsync(
-                HubMethodNames.RequestUpdateComment, _jobId, issueIdentifier, commentId, body, token), ct).AsTask();
+                HubMethodNames.RequestUpdateComment, _jobId, issueIdentifier.Value, commentId, body, token), ct).AsTask();
     }
 }

@@ -36,9 +36,9 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
         : base(client, projectId) { }
 
     /// <inheritdoc />
-    public async Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct)
+    public async Task<IssueDetail> GetIssueAsync(IssueIdentifier identifier, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(identifier.Value);
         var iid = ParseIdentifier(identifier);
 
         try
@@ -97,9 +97,9 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<PipelineIssueComment>> ListCommentsAsync(string identifier, CancellationToken ct)
+    public async Task<IReadOnlyList<PipelineIssueComment>> ListCommentsAsync(IssueIdentifier identifier, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(identifier.Value);
         var iid = ParseIdentifier(identifier);
 
         var notes = await ExecuteWithResilienceAsync(
@@ -123,9 +123,9 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
-    public async Task<string?> PostCommentAsync(string identifier, string body, CancellationToken ct)
+    public async Task<string?> PostCommentAsync(IssueIdentifier identifier, string body, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(identifier.Value);
         ArgumentNullException.ThrowIfNull(body);
         var iid = ParseIdentifier(identifier);
 
@@ -153,9 +153,9 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
-    public async Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct)
+    public async Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(issueIdentifier.Value);
         ArgumentNullException.ThrowIfNull(commentId);
         ArgumentNullException.ThrowIfNull(body);
         var iid = ParseIdentifier(issueIdentifier);
@@ -189,9 +189,9 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
-    public async Task AddLabelsAsync(string identifier, IReadOnlyList<string> labels, CancellationToken ct)
+    public async Task AddLabelsAsync(IssueIdentifier identifier, IReadOnlyList<string> labels, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(identifier.Value);
         ArgumentNullException.ThrowIfNull(labels);
         var iid = ParseIdentifier(identifier);
 
@@ -217,9 +217,9 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
-    public async Task RemoveLabelAsync(string identifier, string label, CancellationToken ct)
+    public async Task RemoveLabelAsync(IssueIdentifier identifier, string label, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(identifier.Value);
         ArgumentNullException.ThrowIfNull(label);
         var iid = ParseIdentifier(identifier);
 
@@ -253,9 +253,9 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
-    public async Task CloseIssueAsync(string identifier, CancellationToken ct)
+    public async Task CloseIssueAsync(IssueIdentifier identifier, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(identifier.Value);
         var iid = ParseIdentifier(identifier);
 
         try
@@ -313,9 +313,9 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
     }
 
     /// <inheritdoc />
-    public async Task<bool> IsIssueClosedAsync(string identifier, CancellationToken ct)
+    public async Task<bool> IsIssueClosedAsync(IssueIdentifier identifier, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentNullException.ThrowIfNull(identifier.Value);
         var iid = ParseIdentifier(identifier);
 
         try

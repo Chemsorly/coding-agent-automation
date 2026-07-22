@@ -117,7 +117,7 @@ public class OrchestratorProxyTests
     {
         var proxy = CreateProxy();
         var act = () => proxy.PostCommentAsync(null!, "body", CancellationToken.None);
-        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("issueIdentifier");
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("issueIdentifier.Value");
     }
 
     [Fact]
@@ -133,7 +133,7 @@ public class OrchestratorProxyTests
     {
         var proxy = CreateProxy();
         var act = () => proxy.SwapLabelAsync(null!, "label", CancellationToken.None);
-        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("issueIdentifier");
+        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("issueIdentifier.Value");
     }
 
     [Fact]
