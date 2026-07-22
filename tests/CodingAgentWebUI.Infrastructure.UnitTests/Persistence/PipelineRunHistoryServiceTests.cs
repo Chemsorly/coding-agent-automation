@@ -162,33 +162,8 @@ public class PipelineRunHistoryServiceTests : IDisposable
         await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("run");
     }
 
-    [Fact]
-    public async Task AddRunToHistory_CapsAtMaxHistorySize()
-    {
-        var runsDir = Path.Combine(Path.GetTempPath(), $"runs-cap-{Guid.NewGuid()}");
-        var service = new PipelineRunHistoryService(_mockLogger.Object, runsDir);
-
-        // Add MaxHistorySize + 5 runs
-        for (var i = 0; i < PipelineRunHistoryService.MaxHistorySize + 5; i++)
-        {
-            var run = new PipelineRun
-            {
-                RunId = $"run-{i}",
-                IssueIdentifier = $"{i}",
-                IssueTitle = $"Issue {i}",
-                IssueProviderConfigId = "p",
-                RepoProviderConfigId = "r",
-                CurrentStep = PipelineStep.Completed,
-                StartedAt = DateTime.UtcNow
-            };
-            await service.AddRunToHistoryAsync(run);
-        }
-
-        var history = await service.GetRunHistoryAsync();
-        history.Should().HaveCount(PipelineRunHistoryService.MaxHistorySize);
-        // Most recent should be first
-        history[0].RunId.Should().Be($"run-{PipelineRunHistoryService.MaxHistorySize + 4}");
-    }
+    // MaxHistorySize cap test moved to shared contract:
+    // PipelineRunHistoryServiceContractTests.MaxHistorySize_OldestEvicted
 
     [Fact]
     public void CleanupExpiredWorkspaces_ThrowsOnNullConfig()
@@ -236,69 +211,11 @@ public class PipelineRunHistoryServiceTests : IDisposable
         deserialized.FinalStep.Should().Be(PipelineStep.Completed);
     }
 
-    [Fact]
-    public async Task GetRunHistory_ReturnsAllPersistedRunsInChronologicalOrder_NewestFirst()
-    {
-        Directory.CreateDirectory(_tempDir);
+    // Ordering (newest-first) test moved to shared contract:
+    // PipelineRunHistoryServiceContractTests.GetHistory_ReturnsNewestFirst
 
-        // Write runs with different timestamps
-        // TODO: Add a test case with StartedAtOffset = default to exercise the backward-compat fallback in LoadHistoryAsync
-        var oldRun = new PipelineRunSummary
-        {
-            RunId = "old-run",
-            IssueIdentifier = "1",
-            IssueTitle = "Old",
-            FinalStep = PipelineStep.Completed,
-            StartedAt = new DateTime(2024, 1, 1, 10, 0, 0, DateTimeKind.Utc),
-            StartedAtOffset = new DateTimeOffset(2024, 1, 1, 10, 0, 0, TimeSpan.Zero),
-            CompletedAt = new DateTime(2024, 1, 1, 10, 30, 0, DateTimeKind.Utc)
-        };
-        var middleRun = new PipelineRunSummary
-        {
-            RunId = "middle-run",
-            IssueIdentifier = "2",
-            IssueTitle = "Middle",
-            FinalStep = PipelineStep.Failed,
-            StartedAt = new DateTime(2024, 6, 15, 12, 0, 0, DateTimeKind.Utc),
-            StartedAtOffset = new DateTimeOffset(2024, 6, 15, 12, 0, 0, TimeSpan.Zero),
-            CompletedAt = new DateTime(2024, 6, 15, 12, 45, 0, DateTimeKind.Utc)
-        };
-        var newestRun = new PipelineRunSummary
-        {
-            RunId = "newest-run",
-            IssueIdentifier = "3",
-            IssueTitle = "Newest",
-            FinalStep = PipelineStep.Completed,
-            StartedAt = new DateTime(2025, 3, 20, 8, 0, 0, DateTimeKind.Utc),
-            StartedAtOffset = new DateTimeOffset(2025, 3, 20, 8, 0, 0, TimeSpan.Zero),
-            CompletedAt = new DateTime(2025, 3, 20, 9, 0, 0, DateTimeKind.Utc)
-        };
-
-        File.WriteAllText(Path.Combine(_tempDir, $"{oldRun.RunId}.json"), JsonSerializer.Serialize(oldRun, JsonOptions));
-        File.WriteAllText(Path.Combine(_tempDir, $"{middleRun.RunId}.json"), JsonSerializer.Serialize(middleRun, JsonOptions));
-        File.WriteAllText(Path.Combine(_tempDir, $"{newestRun.RunId}.json"), JsonSerializer.Serialize(newestRun, JsonOptions));
-
-        var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
-
-        var history = await service.GetRunHistoryAsync();
-
-        history.Should().HaveCount(3);
-        history[0].RunId.Should().Be("newest-run");
-        history[1].RunId.Should().Be("middle-run");
-        history[2].RunId.Should().Be("old-run");
-    }
-
-    [Fact]
-    public async Task GetRunHistory_EmptyDirectory_ReturnsEmptyList()
-    {
-        Directory.CreateDirectory(_tempDir);
-
-        var service = new PipelineRunHistoryService(_mockLogger.Object, _tempDir);
-
-        var history = await service.GetRunHistoryAsync();
-
-        history.Should().BeEmpty();
-    }
+    // Empty-history test moved to shared contract:
+    // PipelineRunHistoryServiceContractTests.EmptyHistory_ReturnsEmptyList
 
     [Fact]
     public async Task GetRunHistory_CorruptedJsonFileIsSkipped_RemainingFilesStillLoaded()
