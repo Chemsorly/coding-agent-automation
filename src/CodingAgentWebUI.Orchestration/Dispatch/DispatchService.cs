@@ -66,59 +66,12 @@ public sealed class DispatchService : BackgroundService
         IPipelineConfigStore? pipelineConfigStore = null,
         IConsolidationJobPreparationService? consolidationJobPreparer = null,
         IOrchestratorRunService? runService = null)
-    {
-        _dbFactory = dbFactory;
-        _leaderElection = leaderElection;
-        _kubeClient = kubeClient;
-        _transitionService = transitionService;
-        _labelService = labelService;
-        _tokenVending = tokenVending;
-        _consolidationRunStore = consolidationRunStore;
-        _consolidationService = consolidationService;
-        _providerConfigStore = providerConfigStore;
-        _agentProfileStore = agentProfileStore;
-        _projectStore = projectStore;
-        _pipelineConfigStore = pipelineConfigStore;
-        _consolidationJobPreparer = consolidationJobPreparer;
-        _runService = runService;
-        _options = new DispatchServiceOptions();
-        configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
-
-        var pvcList = configuration.GetSection("WorkDistribution:CredentialPools:Kiro").Get<List<string>>();
-        if (pvcList is not null)
-            _options.KiroPvcPool = pvcList;
-
-        _options.OrchestratorUrl = configuration.GetValue<string>("WorkDistribution:OrchestratorUrl") ?? "";
-        _options.AgentApiKeySecretName = configuration.GetValue<string>("WorkDistribution:AgentApiKeySecretName") ?? "";
-        _options.AgentServiceAccountName = configuration.GetValue<string>("WorkDistribution:AgentServiceAccountName") ?? "";
-        _options.Namespace = configuration.GetValue<string>("WorkDistribution:Namespace")
-            ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
-            ?? "default";
-        _options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
-
-        // Load job templates from ConfigMap-mounted file (required for K8s mode)
-        var templatesPath = configuration.GetValue<string>("WorkDistribution:JobTemplatesPath") ?? DefaultJobTemplatesPath;
-        // Also check .json path for format flexibility
-        if (!File.Exists(templatesPath) && templatesPath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
-        {
-            var jsonFallback = Path.ChangeExtension(templatesPath, ".json");
-            if (File.Exists(jsonFallback))
-                templatesPath = jsonFallback;
-        }
-        _templateProvider = JobTemplateProvider.LoadFromFile(templatesPath);
-        Log.Information("DispatchService: loaded {Count} job template(s) from {Path}",
-            _templateProvider.GetAllTemplates().Count, templatesPath);
-
-        _rateLimiter = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
-        {
-            TokenLimit = _options.RateLimitPerSecond,
-            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-            QueueLimit = 0,
-            ReplenishmentPeriod = TimeSpan.FromSeconds(1),
-            TokensPerPeriod = _options.RateLimitPerSecond,
-            AutoReplenishment = true
-        });
-    }
+        : this(dbFactory, leaderElection, kubeClient, transitionService, configuration,
+               LoadTemplateProvider(configuration), labelService, tokenVending,
+               consolidationRunStore, consolidationService, providerConfigStore,
+               agentProfileStore, projectStore, pipelineConfigStore,
+               consolidationJobPreparer, runService)
+    { }
 
     /// <summary>
     /// Constructor overload accepting a pre-built JobTemplateProvider (for testing).
@@ -157,6 +110,16 @@ public sealed class DispatchService : BackgroundService
         _runService = runService;
         _templateProvider = templateProvider;
         _options = new DispatchServiceOptions();
+        InitializeOptions(configuration);
+        _rateLimiter = CreateRateLimiter();
+    }
+
+    /// <summary>
+    /// Reads configuration values and binds them to <see cref="_options"/>.
+    /// Called from the primary constructor; the public constructor delegates here via chaining.
+    /// </summary>
+    private void InitializeOptions(IConfiguration configuration)
+    {
         configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
 
         var pvcList = configuration.GetSection("WorkDistribution:CredentialPools:Kiro").Get<List<string>>();
@@ -170,16 +133,32 @@ public sealed class DispatchService : BackgroundService
             ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
             ?? "default";
         _options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
+    }
 
-        _rateLimiter = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+    private TokenBucketRateLimiter CreateRateLimiter() => new(new TokenBucketRateLimiterOptions
+    {
+        TokenLimit = _options.RateLimitPerSecond,
+        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+        QueueLimit = 0,
+        ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+        TokensPerPeriod = _options.RateLimitPerSecond,
+        AutoReplenishment = true
+    });
+
+    private static JobTemplateProvider LoadTemplateProvider(IConfiguration configuration)
+    {
+        var templatesPath = configuration.GetValue<string>("WorkDistribution:JobTemplatesPath") ?? DefaultJobTemplatesPath;
+        // Also check .json path for format flexibility
+        if (!File.Exists(templatesPath) && templatesPath.EndsWith(".yaml", StringComparison.OrdinalIgnoreCase))
         {
-            TokenLimit = _options.RateLimitPerSecond,
-            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-            QueueLimit = 0,
-            ReplenishmentPeriod = TimeSpan.FromSeconds(1),
-            TokensPerPeriod = _options.RateLimitPerSecond,
-            AutoReplenishment = true
-        });
+            var jsonFallback = Path.ChangeExtension(templatesPath, ".json");
+            if (File.Exists(jsonFallback))
+                templatesPath = jsonFallback;
+        }
+        var provider = JobTemplateProvider.LoadFromFile(templatesPath);
+        Log.Information("DispatchService: loaded {Count} job template(s) from {Path}",
+            provider.GetAllTemplates().Count, templatesPath);
+        return provider;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
