@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 
 /// <summary>
 /// Unit tests for <see cref="LegacyWorkDistributor"/>.
-/// Verifies facade delegation to underlying services.
+/// Verifies facade delegation to underlying services with strict argument matching.
 /// </summary>
 public class LegacyWorkDistributorTests
 {
@@ -35,6 +35,8 @@ public class LegacyWorkDistributorTests
 
     // ── DistributeAsync ─────────────────────────────────────────────────
 
+    // TODO: Add explicit Verify(..., Times.Once) call for TryDispatchAsync and Times.Never checks for
+    //       Review/Decomposition dispatch methods, consistent with the other TaskType tests.
     [Fact]
     public async Task DistributeAsync_Implementation_DelegatesToTryDispatchAsync()
     {
@@ -56,9 +58,8 @@ public class LegacyWorkDistributorTests
     public async Task DistributeAsync_WhenNoAgent_ReturnsFailureWithMessage()
     {
         _mockJobDispatcher.Setup(d => d.TryDispatchAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
-                It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<PipelineProject?>()))
+                "org/repo#1", "ip-1", "rp-1", (string?)null, (string?)null, "loop",
+                It.IsAny<CancellationToken>(), "Fix bug", (PipelineProject?)null))
             .ReturnsAsync(false);
 
         var request = CreateRequest(WorkItemTaskType.Implementation);
@@ -74,9 +75,20 @@ public class LegacyWorkDistributorTests
     public async Task DistributeAsync_Review_DelegatesToTryDispatchReviewAsync()
     {
         _mockJobDispatcher.Setup(d => d.TryDispatchReviewAsync(
-                It.IsAny<ReviewDispatchRequest>(),
+                It.Is<ReviewDispatchRequest>(r =>
+                    r.PrIdentifier == "org/repo#1" &&
+                    r.PrBranchName == "feature/pr-1" &&
+                    r.PrTitle == "Fix bug" &&
+                    r.PrDescription == "PR body text" &&
+                    r.PrAuthor == "author-user" &&
+                    r.PrUrl == "https://github.com/org/repo/pull/1" &&
+                    r.PrTargetBranch == "main" &&
+                    r.IssueProviderId == "ip-1" &&
+                    r.RepoProviderId == "rp-1" &&
+                    r.BrainProviderId == null &&
+                    r.InitiatedBy == "loop"),
                 It.IsAny<CancellationToken>(),
-                It.IsAny<PipelineProject?>()))
+                (PipelineProject?)null))
             .ReturnsAsync(true);
 
         var request = CreateRequest(WorkItemTaskType.Review);
@@ -87,20 +99,28 @@ public class LegacyWorkDistributorTests
         _mockJobDispatcher.Verify(d => d.TryDispatchReviewAsync(
             It.Is<ReviewDispatchRequest>(r =>
                 r.PrIdentifier == "org/repo#1" &&
+                r.PrBranchName == "feature/pr-1" &&
+                r.PrTitle == "Fix bug" &&
+                r.PrDescription == "PR body text" &&
+                r.PrAuthor == "author-user" &&
+                r.PrUrl == "https://github.com/org/repo/pull/1" &&
+                r.PrTargetBranch == "main" &&
                 r.IssueProviderId == "ip-1" &&
-                r.RepoProviderId == "rp-1"),
+                r.RepoProviderId == "rp-1" &&
+                r.BrainProviderId == null &&
+                r.InitiatedBy == "loop"),
             It.IsAny<CancellationToken>(),
-            It.IsAny<PipelineProject?>()), Times.Once);
+            (PipelineProject?)null), Times.Once);
     }
 
     [Fact]
     public async Task DistributeAsync_Decomposition_DelegatesToTryDispatchDecompositionAsync()
     {
         _mockJobDispatcher.Setup(d => d.TryDispatchDecompositionAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<CancellationToken>(),
-                It.IsAny<string?>(), It.IsAny<PipelineProject?>()))
+                "org/repo#1", "Fix bug", PipelineRunType.Implementation,
+                "ip-1", "rp-1", (string?)null, "loop",
+                It.IsAny<CancellationToken>(),
+                (string?)null, (PipelineProject?)null))
             .ReturnsAsync(true);
 
         var request = CreateRequest(WorkItemTaskType.Decomposition);
@@ -110,9 +130,37 @@ public class LegacyWorkDistributorTests
         result.Success.Should().BeTrue();
         _mockJobDispatcher.Verify(d => d.TryDispatchDecompositionAsync(
             "org/repo#1", "Fix bug", PipelineRunType.Implementation,
-            "ip-1", "rp-1", null, "loop",
+            "ip-1", "rp-1", (string?)null, "loop",
             It.IsAny<CancellationToken>(),
-            null, It.IsAny<PipelineProject?>()), Times.Once);
+            (string?)null, (PipelineProject?)null), Times.Once);
+    }
+
+    [Fact]
+    public async Task DistributeAsync_UnknownTaskType_RoutesToDefaultImplementationPath()
+    {
+        _mockJobDispatcher.Setup(d => d.TryDispatchAsync(
+                "org/repo#1", "ip-1", "rp-1", (string?)null, (string?)null, "loop",
+                It.IsAny<CancellationToken>(), "Fix bug", (PipelineProject?)null))
+            .ReturnsAsync(true);
+
+        var request = CreateRequest((WorkItemTaskType)99);
+
+        var result = await _sut.DistributeAsync(request, CancellationToken.None);
+
+        result.Success.Should().BeTrue();
+        result.ErrorMessage.Should().BeNull();
+        _mockJobDispatcher.Verify(d => d.TryDispatchAsync(
+            "org/repo#1", "ip-1", "rp-1", (string?)null, (string?)null, "loop",
+            It.IsAny<CancellationToken>(), "Fix bug", (PipelineProject?)null), Times.Once);
+        _mockJobDispatcher.Verify(d => d.TryDispatchReviewAsync(
+            It.IsAny<ReviewDispatchRequest>(),
+            It.IsAny<CancellationToken>(),
+            It.IsAny<PipelineProject?>()), Times.Never);
+        _mockJobDispatcher.Verify(d => d.TryDispatchDecompositionAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>(),
+            It.IsAny<string?>(), It.IsAny<PipelineProject?>()), Times.Never);
     }
 
     // ── CancelJobAsync ──────────────────────────────────────────────────
@@ -257,6 +305,21 @@ public class LegacyWorkDistributorTests
         result.Success.Should().BeTrue();
         result.Queued.Should().BeTrue();
         result.ErrorMessage.Should().Be("Queued — no idle agent");
+
+        // Verify enqueued PendingJob field values
+        var queuedJobs = _dispatcherService.GetQueuedJobs();
+        queuedJobs.Should().HaveCount(1);
+        var job = queuedJobs[0];
+        job.IssueIdentifier.Should().Be("crun-123");
+        job.IssueProviderId.Should().Be("consolidation");
+        job.RepoProviderId.Should().Be("");
+        job.InitiatedBy.Should().Be("consolidation");
+        job.RequiredLabels.Should().BeEquivalentTo(new[] { "dotnet", "kiro" });
+        job.TaskType.Should().Be(WorkItemTaskType.Consolidation);
+        job.ConsolidationRunType.Should().Be(ConsolidationRunType.BrainConsolidation);
+        job.ConsolidationTemplateId.Should().Be("template-1");
+        job.ConsolidationWorkspacePath.Should().Be("/tmp/ws");
+        job.AutoDispatch.Should().BeFalse();
     }
 
     [Fact]
@@ -301,8 +364,10 @@ public class LegacyWorkDistributorTests
         var result = await _sut.DistributeAsync(request, CancellationToken.None);
 
         result.Success.Should().BeTrue();
-        // Verify the job was enqueued (queue length > 0)
-        _dispatcherService.QueueLength.Should().Be(1);
+        // Verify the job was enqueued with correctly parsed labels
+        var queuedJobs = _dispatcherService.GetQueuedJobs();
+        queuedJobs.Should().HaveCount(1);
+        queuedJobs[0].RequiredLabels.Should().BeEquivalentTo(new[] { "dotnet", "kiro" });
     }
 
     // ── Null argument validation ────────────────────────────────────────
@@ -330,6 +395,8 @@ public class LegacyWorkDistributorTests
         LinkedPullRequest = taskType == WorkItemTaskType.Review
             ? new LinkedPullRequest { BranchName = "feature/pr-1", IsDraft = false, Number = 1, Url = "https://github.com/org/repo/pull/1" }
             : null,
-        ReviewPrTargetBranch = taskType == WorkItemTaskType.Review ? "main" : null
+        ReviewPrTargetBranch = taskType == WorkItemTaskType.Review ? "main" : null,
+        ReviewPrDescription = taskType == WorkItemTaskType.Review ? "PR body text" : null,
+        ReviewPrAuthor = taskType == WorkItemTaskType.Review ? "author-user" : null
     };
 }
