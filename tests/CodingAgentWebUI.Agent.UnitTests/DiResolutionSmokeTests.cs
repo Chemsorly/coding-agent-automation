@@ -137,7 +137,8 @@ public class DiResolutionSmokeTests
             sp.GetRequiredService<IJobCompletionReporter>(),
             sp.GetRequiredService<AgentIdentity>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
-            Log.Logger));
+            Log.Logger,
+            serviceProvider: sp));
 
         return services.BuildServiceProvider(new ServiceProviderOptions
         {

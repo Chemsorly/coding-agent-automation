@@ -69,6 +69,27 @@ Custom bucket boundaries are configured via `InstrumentAdvice<double>` at instru
 
 Other histograms (`token_vending.duration`, `quality_gate.duration`, etc.) use the OpenTelemetry SDK's default bucket boundaries.
 
+### K8s Agent Pod Metrics
+
+The `pipeline.jobs.*` metrics (Prometheus: `pipeline_jobs_dispatched_total`, `pipeline_jobs_completed_total`, `pipeline_jobs_failed_total`, `pipeline_jobs_duration_seconds`) are emitted by **agent pods** — ephemeral K8s Jobs that exit after processing a single work item.
+
+**Flush behavior:** Before triggering host shutdown, agent pods call `MeterProvider.ForceFlush()` to ensure buffered metrics are exported to the OTLP collector. Under normal conditions, this guarantees delivery within 3 seconds of pipeline completion.
+
+**Edge cases where metrics may be lost:**
+- Pod receives SIGKILL before ForceFlush completes (e.g., `terminationGracePeriodSeconds` exceeded)
+- Pod is OOM-killed during execution
+- OTLP collector is unreachable and the flush timeout expires
+
+**Reliable fallback:** For alerting and dashboards where metric reliability is critical, use the orchestrator-side equivalents from the `CodingAgent.WorkDistribution` meter:
+
+| Agent-side metric (may have gaps) | Orchestrator-side equivalent (reliable) |
+|-----------------------------------|----------------------------------------|
+| `pipeline.jobs.dispatched` (`pipeline_jobs_dispatched_total`) | `workdistribution.workitems_terminated` (`workdistribution_workitems_terminated_total`) |
+| `pipeline.jobs.completed` (`pipeline_jobs_completed_total`) | `workdistribution.workitems_terminated` with `status="Succeeded"` |
+| `pipeline.jobs.failed` (`pipeline_jobs_failed_total`) | `workdistribution.workitems_terminated` with `status="Failed"` |
+
+The orchestrator metrics are emitted from a long-lived process and are not subject to pod exit timing issues.
+
 ## Traces
 
 All spans are emitted from the `CodingAgent.Pipeline` ActivitySource. Spans marked with † are emitted from both the orchestrator (`PipelineOrchestrationService`) and the agent worker (`LocalPipelineExecutor`).
