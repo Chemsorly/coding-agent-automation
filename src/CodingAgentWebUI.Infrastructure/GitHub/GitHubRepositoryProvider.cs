@@ -64,9 +64,9 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
         _gitPipeline = ResiliencePipelineFactory.CreateGitNetworkPipeline(Log.Logger);
     }
 
-    public Task CloneAsync(string workspacePath, CancellationToken ct)
+    public Task CloneAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(workspacePath);
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
 
         return Task.Run(async () =>
         {
@@ -82,9 +82,9 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
         }, ct);
     }
 
-    public Task PullAsync(string workspacePath, CancellationToken ct)
+    public Task PullAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(workspacePath);
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
 
         return Task.Run(async () =>
         {
@@ -93,17 +93,17 @@ public partial class GitHubRepositoryProvider : GitHubProviderBase, IRepositoryP
         }, ct);
     }
 
-    public Task<string> CreateBranchAsync(string workspacePath, string branchName, CancellationToken ct)
+    public Task<string> CreateBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(workspacePath);
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
         ArgumentNullException.ThrowIfNull(branchName);
 
         return Task.Run(() => RepositoryGitOperations.CreateBranch(workspacePath, branchName), ct);
     }
 
-    public Task CheckoutRemoteBranchAsync(string workspacePath, string branchName, CancellationToken ct)
+    public Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(workspacePath);
+        ArgumentException.ThrowIfNullOrEmpty(workspacePath.Value);
         ArgumentNullException.ThrowIfNull(branchName);
 
         return Task.Run(() => RepositoryGitOperations.CheckoutRemoteBranch(workspacePath, branchName), ct);

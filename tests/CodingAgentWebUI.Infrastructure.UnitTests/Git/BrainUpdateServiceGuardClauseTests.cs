@@ -73,7 +73,7 @@ public class BrainUpdateServiceGuardClauseTests
         // Arrange: provider returns null BaseBranch
         var providerWithNullBranch = new Mock<IRepositoryProvider>();
         providerWithNullBranch.Setup(p => p.BaseBranch).Returns((string)null!);
-        providerWithNullBranch.Setup(p => p.PullAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        providerWithNullBranch.Setup(p => p.PullAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Act: The ArgumentException for null remoteBranch is thrown inside PushWithRetryRebaseAsync
@@ -95,7 +95,7 @@ public class BrainUpdateServiceGuardClauseTests
         // Arrange: provider returns empty BaseBranch
         var providerWithEmptyBranch = new Mock<IRepositoryProvider>();
         providerWithEmptyBranch.Setup(p => p.BaseBranch).Returns(string.Empty);
-        providerWithEmptyBranch.Setup(p => p.PullAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        providerWithEmptyBranch.Setup(p => p.PullAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Act
@@ -121,7 +121,7 @@ public class BrainUpdateServiceGuardClauseTests
 
         var sut = new BrainUpdateService(new LoggerConfiguration().CreateLogger(), mockGit.Object);
 
-        _mockProvider.Setup(p => p.PullAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockProvider.Setup(p => p.PullAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Act

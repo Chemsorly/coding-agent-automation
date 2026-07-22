@@ -217,7 +217,7 @@ public class PipelineStepTests
     [Fact]
     public async Task CloneRepositoryStep_Success_SetsWorkspaceAndTransitions()
     {
-        _repoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var step = new CloneRepositoryStep();
@@ -232,7 +232,7 @@ public class PipelineStepTests
     [Fact]
     public async Task CloneRepositoryStep_CloneFails_FailsRun()
     {
-        _repoProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _repoProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Clone failed"));
 
         var step = new CloneRepositoryStep();
@@ -301,7 +301,7 @@ public class PipelineStepTests
     public async Task SyncBrainPreRunStep_SyncFails_ReportsBrainSyncFailure()
     {
         var mockBrainProvider = new Mock<IRepositoryProvider>();
-        mockBrainProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockBrainProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("clone failed"));
         var brainSync = new BrainSyncService(Mock.Of<IBrainUpdateService>(), _logger);
         _run.WorkspacePath = "/tmp/test";
