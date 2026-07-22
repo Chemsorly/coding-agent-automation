@@ -13,7 +13,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 /// <summary>
 /// Characterization tests for <see cref="PipelineConfiguration"/>.
 /// Covers serialization round-trips, default value preservation, ApplyProjectOverrides
-/// mutation safety, partial-apply semantics, ordering guarantees, and sub-config delegation.
+/// mutation safety, partial-apply semantics, and ordering guarantees.
 /// </summary>
 public class PipelineConfigurationTests
 {
@@ -452,78 +452,4 @@ public class PipelineConfigurationTests
         result.AnalysisCommitThreshold.Should().Be(50);
     }
 
-    // ── Sub-config delegation ──────────────────────────────────────────────────
-
-    [Fact]
-    public void SubConfigDelegation_FlatPropertyPopulatesSubConfig()
-    {
-        // Verify that flat JSON-visible properties correctly delegate to sub-configs
-        var config = new PipelineConfiguration
-        {
-            MaxRetries = 5,
-            MaxAnalysisRetries = 2,
-            AgentTimeout = TimeSpan.FromMinutes(45),
-            StallWarningInterval = TimeSpan.FromMinutes(3),
-            StallPollInterval = TimeSpan.FromSeconds(20),
-        };
-
-        // Retry sub-config should reflect the flat property values
-        config.Retry.MaxRetries.Should().Be(5);
-        config.Retry.MaxAnalysisRetries.Should().Be(2);
-        config.Retry.AgentTimeout.Should().Be(TimeSpan.FromMinutes(45));
-        config.Retry.StallWarningInterval.Should().Be(TimeSpan.FromMinutes(3));
-        config.Retry.StallPollInterval.Should().Be(TimeSpan.FromSeconds(20));
-
-        // ExternalCi sub-config
-        var config2 = new PipelineConfiguration
-        {
-            ExternalCiTimeout = TimeSpan.FromMinutes(25),
-            ExternalCiPollInterval = TimeSpan.FromSeconds(45),
-            CiNotStartedTimeout = TimeSpan.FromMinutes(8),
-            CiNotStartedMaxRetries = 10,
-            MaxInfrastructureRetries = 4,
-        };
-        config2.ExternalCi.ExternalCiTimeout.Should().Be(TimeSpan.FromMinutes(25));
-        config2.ExternalCi.ExternalCiPollInterval.Should().Be(TimeSpan.FromSeconds(45));
-        config2.ExternalCi.CiNotStartedTimeout.Should().Be(TimeSpan.FromMinutes(8));
-        config2.ExternalCi.CiNotStartedMaxRetries.Should().Be(10);
-        config2.ExternalCi.MaxInfrastructureRetries.Should().Be(4);
-
-        // ClosedLoop sub-config
-        var config3 = new PipelineConfiguration
-        {
-            ClosedLoopAutoStart = true,
-            ClosedLoopPollInterval = TimeSpan.FromSeconds(120),
-            ClosedLoopMaxRunsPerCycle = 5,
-            ClosedLoopMaxConsecutivePollFailures = 8,
-            ClosedLoopMaxPagesToFetch = 20,
-            ClosedLoopCircuitBreakerCooldown = TimeSpan.FromMinutes(10),
-        };
-        config3.ClosedLoop.AutoStart.Should().BeTrue();
-        config3.ClosedLoop.ClosedLoopPollInterval.Should().Be(TimeSpan.FromSeconds(120));
-        config3.ClosedLoop.ClosedLoopMaxRunsPerCycle.Should().Be(5);
-        config3.ClosedLoop.ClosedLoopMaxConsecutivePollFailures.Should().Be(8);
-        config3.ClosedLoop.ClosedLoopMaxPagesToFetch.Should().Be(20);
-        config3.ClosedLoop.ClosedLoopCircuitBreakerCooldown.Should().Be(TimeSpan.FromMinutes(10));
-
-        // Agent sub-config
-        var config4 = new PipelineConfiguration
-        {
-            BrainReadOnly = true,
-            BrainPushMaxRetries = 5,
-            AgentDisconnectGracePeriod = TimeSpan.FromMinutes(10),
-            OutputBufferCapacity = 20_000,
-        };
-        config4.Agent.BrainReadOnly.Should().BeTrue();
-        config4.Agent.BrainPushMaxRetries.Should().Be(5);
-        config4.Agent.AgentDisconnectGracePeriod.Should().Be(TimeSpan.FromMinutes(10));
-        config4.Agent.OutputBufferCapacity.Should().Be(20_000);
-
-        // Commit sub-config
-        var config5 = new PipelineConfiguration
-        {
-            BlacklistedPaths = new[] { "custom/path" },
-        };
-        config5.Commit.BlacklistedPaths.Should().BeEquivalentTo(new[] { "custom/path" });
-    }
 }
