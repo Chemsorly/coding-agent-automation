@@ -169,6 +169,9 @@ public sealed class ActiveRunRehydrationIntegrationTests : IDisposable
 
     // ── Helpers ──
 
+    // TODO: This helper duplicates the logic from ActiveRunRehydrationExtensions.RehydrateActiveRunsAsync()
+    // rather than calling the actual production code. Tests will still pass if the extension method regresses.
+    // Refactor to invoke RehydrateActiveRunsAsync() directly for accurate coverage. (review-findings)
     private async Task RehydrateAsync()
     {
         await using var db = await _dbFactory.CreateDbContextAsync();

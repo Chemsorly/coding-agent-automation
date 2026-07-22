@@ -8,12 +8,25 @@ public class ProviderConfigIdTests
     [Fact]
     public void ImplicitConversion_FromString_ProducesCorrectValue()
     {
-        // TODO: Add a test for implicit conversion from null string. The implicit operator accepts
-        // null without validation, producing ProviderConfigId with Value = null. This is a meaningful
-        // boundary that the old code explicitly guarded against with ArgumentNullException.ThrowIfNull.
         ProviderConfigId id = "my-provider-config";
 
         id.Value.Should().Be("my-provider-config");
+    }
+
+    [Fact]
+    public void ImplicitConversion_FromNull_ThrowsArgumentException()
+    {
+        var act = () => { ProviderConfigId id = (string)null!; };
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void ImplicitConversion_FromEmpty_ThrowsArgumentException()
+    {
+        var act = () => { ProviderConfigId id = ""; };
+
+        act.Should().Throw<ArgumentException>();
     }
 
     [Fact]
@@ -57,9 +70,6 @@ public class ProviderConfigIdTests
     [Fact]
     public void Default_HasNullValue()
     {
-        // TODO: Add a test that validates how production code (LabelService, PipelineOrchestrationService)
-        // handles a default/null-valued ProviderConfigId. Currently default(ProviderConfigId) passes
-        // silently through method signatures and would cause NullReferenceException deeper in the call chain.
         var id = default(ProviderConfigId);
 
         id.Value.Should().BeNull();
