@@ -741,6 +741,46 @@ public class JobSpecBuilderTests
 
     #endregion
 
+    #region LOG_LEVEL Propagation
+
+    [Fact]
+    public void Build_WhenLogLevelSet_PropagatesLogLevel()
+    {
+        Environment.SetEnvironmentVariable("LOG_LEVEL", "Debug");
+        try
+        {
+            var template = CreateTemplate();
+            var ctx = CreateContext();
+
+            var job = JobSpecBuilder.Build(template, ctx);
+
+            var container = job.Spec.Template.Spec.Containers[0];
+            var env = container.Env.FirstOrDefault(e => e.Name == "LOG_LEVEL");
+            env.Should().NotBeNull();
+            env!.Value.Should().Be("Debug");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("LOG_LEVEL", null);
+        }
+    }
+
+    [Fact]
+    public void Build_WhenLogLevelNotSet_DoesNotIncludeLogLevel()
+    {
+        Environment.SetEnvironmentVariable("LOG_LEVEL", null);
+
+        var template = CreateTemplate();
+        var ctx = CreateContext();
+
+        var job = JobSpecBuilder.Build(template, ctx);
+
+        var container = job.Spec.Template.Spec.Containers[0];
+        container.Env.FirstOrDefault(e => e.Name == "LOG_LEVEL").Should().BeNull();
+    }
+
+    #endregion
+
     #region OpenCode Provider
 
     [Fact]
