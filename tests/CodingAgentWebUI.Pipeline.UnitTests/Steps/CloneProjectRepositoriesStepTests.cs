@@ -98,7 +98,7 @@ public class CloneProjectRepositoriesStepTests : IDisposable
         };
 
         var mockProvider = new Mock<IRepositoryProvider>();
-        mockProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var context = BuildContext(projectContext, [("backend-api", mockProvider.Object)]);
@@ -111,7 +111,7 @@ public class CloneProjectRepositoriesStepTests : IDisposable
         result.Should().Be(StepResult.Continue);
         backendTarget.LocalPath.Should().Be("repos/backend-api");
         mockProvider.Verify(p => p.CloneAsync(
-            It.Is<string>(path => path.EndsWith("backend-api")),
+            It.Is<WorkspacePath>(path => path.Value.EndsWith("backend-api")),
             It.IsAny<CancellationToken>()), Times.Once);
     }
 
@@ -138,10 +138,10 @@ public class CloneProjectRepositoriesStepTests : IDisposable
         };
 
         var backendProvider = new Mock<IRepositoryProvider>();
-        backendProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        backendProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var frontendProvider = new Mock<IRepositoryProvider>();
-        frontendProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        frontendProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var context = BuildContext(projectContext, [
@@ -157,8 +157,8 @@ public class CloneProjectRepositoriesStepTests : IDisposable
         result.Should().Be(StepResult.Continue);
         backendTarget.LocalPath.Should().Be("repos/backend-api");
         frontendTarget.LocalPath.Should().Be("repos/frontend-web");
-        backendProvider.Verify(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
-        frontendProvider.Verify(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+        backendProvider.Verify(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()), Times.Once);
+        frontendProvider.Verify(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -178,7 +178,7 @@ public class CloneProjectRepositoriesStepTests : IDisposable
         };
 
         var failingProvider = new Mock<IRepositoryProvider>();
-        failingProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        failingProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Network error"));
 
         var context = BuildContext(projectContext, [("failing-repo", failingProvider.Object)]);
@@ -215,10 +215,10 @@ public class CloneProjectRepositoriesStepTests : IDisposable
         };
 
         var goodProvider = new Mock<IRepositoryProvider>();
-        goodProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        goodProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         var badProvider = new Mock<IRepositoryProvider>();
-        badProvider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        badProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Auth failed"));
 
         var context = BuildContext(projectContext, [
@@ -253,7 +253,7 @@ public class CloneProjectRepositoriesStepTests : IDisposable
         };
 
         var provider = new Mock<IRepositoryProvider>();
-        provider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        provider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var context = BuildContext(projectContext, [("some-repo", provider.Object)]);
@@ -287,7 +287,7 @@ public class CloneProjectRepositoriesStepTests : IDisposable
         cts.Cancel(); // Already cancelled
 
         var provider = new Mock<IRepositoryProvider>();
-        provider.Setup(p => p.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        provider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var context = BuildContext(projectContext, [("slow-repo", provider.Object)]);

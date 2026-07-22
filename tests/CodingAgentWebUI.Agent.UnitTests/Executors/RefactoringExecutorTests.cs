@@ -61,7 +61,7 @@ public class RefactoringExecutorTests : IDisposable
 
         // Setup clone to create the workspace directory structure
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Agent succeeds but produces no proposals file
@@ -96,8 +96,8 @@ public class RefactoringExecutorTests : IDisposable
 
         // Setup clone to create workspace and write malformed JSON
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, CancellationToken>((path, _) =>
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
                 // Create the .agent directory and write malformed JSON
                 var agentDir = Path.Combine(path, ".agent");
@@ -147,8 +147,8 @@ public class RefactoringExecutorTests : IDisposable
             """;
 
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, CancellationToken>((path, _) =>
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
                 var agentDir = Path.Combine(path, ".agent");
                 Directory.CreateDirectory(agentDir);
@@ -242,7 +242,7 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(allIssues);
 
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         string? capturedPrompt = null;
@@ -272,7 +272,7 @@ public class RefactoringExecutorTests : IDisposable
             .ThrowsAsync(new InvalidOperationException("Provider unavailable"));
 
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         _mockAgentProvider
@@ -308,7 +308,7 @@ public class RefactoringExecutorTests : IDisposable
             .ReturnsAsync(oldIssues);
 
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         string? capturedPrompt = null;
@@ -332,7 +332,7 @@ public class RefactoringExecutorTests : IDisposable
         var job = CreateJob();
 
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         _mockIssueProvider
@@ -359,7 +359,7 @@ public class RefactoringExecutorTests : IDisposable
         var job = CreateJob();
 
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var closedIssues = new PagedResult<IssueSummary>
@@ -657,8 +657,8 @@ public class RefactoringExecutorTests : IDisposable
             """;
 
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, CancellationToken>((path, _) =>
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
                 var agentDir = Path.Combine(path, ".agent");
                 Directory.CreateDirectory(agentDir);
@@ -705,8 +705,8 @@ public class RefactoringExecutorTests : IDisposable
             """;
 
         _mockRepoProvider
-            .Setup(x => x.CloneAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, CancellationToken>((path, _) =>
+            .Setup(x => x.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
+            .Callback<WorkspacePath, CancellationToken>((path, _) =>
             {
                 var agentDir = Path.Combine(path, ".agent");
                 Directory.CreateDirectory(agentDir);

@@ -430,15 +430,15 @@ public class PullRequestFinalizationServiceTests
         var transitions = new List<PipelineStep>();
 
         // Setup PullRequestOrchestrator to succeed
-        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>());
-        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
-        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<FileChangeSummary>());
         repoProvider.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("https://github.com/org/repo/pull/99");
@@ -474,13 +474,13 @@ public class PullRequestFinalizationServiceTests
         var transitions = new List<PipelineStep>();
 
         // Setup PullRequestOrchestrator to return null (no commits ahead)
-        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>());
-        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
         repoProvider.Setup(r => r.BaseBranch).Returns("main");
         repoProvider.Setup(r => r.FormatCloseReference(It.IsAny<string>())).Returns("Closes #1");
@@ -511,15 +511,15 @@ public class PullRequestFinalizationServiceTests
         var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
 
         // Setup PullRequestOrchestrator to succeed
-        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>());
-        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
-        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<FileChangeSummary>());
         repoProvider.Setup(r => r.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("https://github.com/org/repo/pull/99");
@@ -561,15 +561,15 @@ public class PullRequestFinalizationServiceTests
         var config = new PipelineConfiguration { AgentTimeout = TimeSpan.FromMinutes(5) };
 
         // Setup PullRequestOrchestrator to succeed (rework path — updates existing PR)
-        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>());
-        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        repoProvider.Setup(r => r.HasCommitsAheadAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
-        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        repoProvider.Setup(r => r.GetFileChangesAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<FileChangeSummary>());
         repoProvider.Setup(r => r.UpdatePullRequestAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
@@ -603,10 +603,10 @@ public class PullRequestFinalizationServiceTests
         var config = new PipelineConfiguration();
 
         // Setup PullRequestOrchestrator to throw (push fails)
-        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<string>(), It.IsAny<string>(),
+        repoProvider.Setup(r => r.CommitAllAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>(), It.IsAny<IReadOnlyList<string>?>()))
             .ReturnsAsync(Array.Empty<string>());
-        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<string>(), It.IsAny<string>(),
+        repoProvider.Setup(r => r.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(),
                 It.IsAny<bool>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("permission denied"));
         repoProvider.Setup(r => r.BaseBranch).Returns("main");

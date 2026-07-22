@@ -37,7 +37,7 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         PostedReviews.Clear();
     }
 
-    public Task CloneAsync(string workspacePath, CancellationToken ct)
+    public Task CloneAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
         MethodCalls.Add(nameof(CloneAsync));
         if (ShouldFail) throw new InvalidOperationException("Fake clone failure");
@@ -45,32 +45,32 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         return Task.CompletedTask;
     }
 
-    public Task<string> CreateBranchAsync(string workspacePath, string branchName, CancellationToken ct)
+    public Task<string> CreateBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
     {
         MethodCalls.Add(nameof(CreateBranchAsync));
         LastBranchName = branchName;
         return Task.FromResult(branchName);
     }
 
-    public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, CancellationToken ct, IReadOnlyList<string>? pipelineInjectedPaths = null)
+    public Task<IReadOnlyList<string>> CommitAllAsync(WorkspacePath workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, CancellationToken ct, IReadOnlyList<string>? pipelineInjectedPaths = null)
     {
         MethodCalls.Add(nameof(CommitAllAsync));
         return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
     }
 
-    public Task<IReadOnlyList<string>> CommitAllAsync(string workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct, IReadOnlyList<string>? pipelineInjectedPaths = null)
+    public Task<IReadOnlyList<string>> CommitAllAsync(WorkspacePath workspacePath, string message, IReadOnlyList<string>? blacklistedPaths, bool allowEmpty, CancellationToken ct, IReadOnlyList<string>? pipelineInjectedPaths = null)
     {
         MethodCalls.Add(nameof(CommitAllAsync));
         return Task.FromResult<IReadOnlyList<string>>(Array.Empty<string>());
     }
 
-    public Task CommitAllAsync(string workspacePath, string message, CancellationToken ct)
+    public Task CommitAllAsync(WorkspacePath workspacePath, string message, CancellationToken ct)
     {
         MethodCalls.Add(nameof(CommitAllAsync));
         return Task.CompletedTask;
     }
 
-    public Task PushBranchAsync(string workspacePath, string branchName, CancellationToken ct)
+    public Task PushBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct)
     {
         MethodCalls.Add(nameof(PushBranchAsync));
         return Task.CompletedTask;
@@ -83,13 +83,13 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
         return Task.FromResult(LastCreatedPrUrl);
     }
 
-    public Task<string> GetHeadCommitShaAsync(string workspacePath, CancellationToken ct) =>
+    public Task<string> GetHeadCommitShaAsync(WorkspacePath workspacePath, CancellationToken ct) =>
         Task.FromResult("abc123def456");
 
-    public Task<bool> HasCommitsAheadAsync(string workspacePath, CancellationToken ct) =>
+    public Task<bool> HasCommitsAheadAsync(WorkspacePath workspacePath, CancellationToken ct) =>
         Task.FromResult(true);
 
-    public Task<IReadOnlyList<FileChangeSummary>> GetFileChangesAsync(string workspacePath, CancellationToken ct) =>
+    public Task<IReadOnlyList<FileChangeSummary>> GetFileChangesAsync(WorkspacePath workspacePath, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<FileChangeSummary>>(Array.Empty<FileChangeSummary>());
 
     public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;
@@ -99,13 +99,13 @@ public sealed class InMemoryRepositoryProvider : IRepositoryProvider
 
     public Task ClosePullRequestAsync(int pullRequestNumber, CancellationToken ct) => Task.CompletedTask;
 
-    public Task CheckoutRemoteBranchAsync(string workspacePath, string branchName, CancellationToken ct) =>
+    public Task CheckoutRemoteBranchAsync(WorkspacePath workspacePath, string branchName, CancellationToken ct) =>
         Task.CompletedTask;
 
-    public Task<MergeResult> MergeFromBaseAsync(string workspacePath, CancellationToken ct) =>
+    public Task<MergeResult> MergeFromBaseAsync(WorkspacePath workspacePath, CancellationToken ct) =>
         Task.FromResult(new MergeResult { Success = true, HasConflicts = false, ConflictFiles = Array.Empty<string>() });
 
-    public Task PullAsync(string workspacePath, CancellationToken ct) => Task.CompletedTask;
+    public Task PullAsync(WorkspacePath workspacePath, CancellationToken ct) => Task.CompletedTask;
 
     public Task UpdatePullRequestAsync(int pullRequestNumber, string body, bool markReady, CancellationToken ct) =>
         Task.CompletedTask;
