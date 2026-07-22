@@ -71,8 +71,6 @@ public sealed class AnalysisStalenessDetector
         // Max refresh cap: count hash-marker analyses since last success
         var lastSuccess = await _workItemQuery.GetLastSuccessfulCompletionAsync(
             issueIdentifier, issueProviderConfigId, ct);
-        // TODO: Use lastSuccess?.UtcDateTime instead of lastSuccess?.DateTime to avoid
-        // Kind=Unspecified DateTime comparison issues if DateTimeOffset ever has non-zero offset.
         // TODO: Potential off-by-one in max refresh cap — the count includes the current
         // (un-refreshed) analysisComment because it also has a hash marker. The first analysis
         // posted for any issue gets a hash marker, so refreshCount starts at 1 before any
@@ -82,7 +80,7 @@ public sealed class AnalysisStalenessDetector
         var refreshCount = issueComments.Count(c =>
             c.Body.Contains(CommentMarkers.AnalysisHeader)
             && AnalysisBodyHash.Extract(c.Body) is not null
-            && c.CreatedAt > (lastSuccess?.DateTime ?? DateTime.MinValue));
+            && c.CreatedAt > (lastSuccess?.UtcDateTime ?? DateTime.MinValue));
 
         if (refreshCount >= 3)
         {

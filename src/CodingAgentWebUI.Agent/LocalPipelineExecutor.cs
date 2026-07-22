@@ -184,21 +184,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         }
     }
 
-    /// <summary>
-    /// Delegates to <see cref="AgentProviderResolver.ResolveAsync"/>. Retained as internal
-    /// for backward compatibility with existing unit tests that verify disposal behavior.
-    /// </summary>
-    internal async Task<(IRepositoryProvider RepoProvider, IAgentProvider AgentProvider, IRepositoryProvider? BrainProvider, IPipelineProvider? PipelineProvider, List<(string TemplateName, IRepositoryProvider Provider)>? AdditionalRepoProviders)> ResolveProvidersAsync(
-        JobAssignmentMessage job,
-        IProviderFactory providerFactory,
-        ProviderConfig repoConfig,
-        ProviderConfig agentConfig,
-        CancellationToken ct)
-    {
-        var resolved = await _providerResolver.ResolveAsync(job, providerFactory, repoConfig, agentConfig, ct);
-        return (resolved.RepoProvider, resolved.AgentProvider, resolved.BrainProvider, resolved.PipelineProvider, resolved.AdditionalRepoProviders);
-    }
-
     private async Task<JobCompletionPayload> ExecutePipelineStepsAsync(
         JobAssignmentMessage job,
         PipelineConfiguration config,

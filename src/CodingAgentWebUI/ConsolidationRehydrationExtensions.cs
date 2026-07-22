@@ -6,17 +6,25 @@ using Serilog;
 namespace CodingAgentWebUI;
 
 /// <summary>
-/// Extension methods for post-build application startup tasks: consolidation cleanup,
-/// run rehydration, and pipeline loop auto-start.
+/// Extension methods for cleaning up orphaned consolidation runs and rehydrating
+/// queued consolidation runs at application startup.
 /// </summary>
-internal static class StartupTasks
+internal static class ConsolidationRehydrationExtensions
 {
     /// <summary>
-    /// Runs post-build startup tasks: cleans up orphaned consolidation runs, rehydrates
-    /// queued runs, and auto-starts the pipeline loop if configured.
+    /// Cleans up orphaned consolidation runs from previous sessions and rehydrates
+    /// queued consolidation runs via <see cref="IWorkDistributor"/> (unified dispatch path).
     /// </summary>
-    public static async Task RunPostBuildStartupAsync(this WebApplication app, PipelineConfiguration pipelineConfig)
+    /// <remarks>
+    /// Must run after <see cref="EndpointRegistration.MapApplicationEndpoints"/> so that
+    /// middleware is configured before background work begins.
+    /// </remarks>
+    public static async Task RunConsolidationStartupAsync(this WebApplication app, PipelineConfiguration pipelineConfig)
     {
+        ArgumentNullException.ThrowIfNull(app);
+        // TODO: Add ArgumentNullException.ThrowIfNull(pipelineConfig) — pipelineConfig is dereferenced
+        // on AgentTimeout and WorkspaceBaseDirectory but has no null guard (review-findings)
+
         // Clean up orphaned consolidation runs from previous sessions
         var consolidationService = app.Services.GetRequiredService<IConsolidationService>();
         await consolidationService.CleanupOrphanedRunsAsync(CancellationToken.None);
@@ -53,17 +61,6 @@ internal static class StartupTasks
                 };
                 await workDistributor.DistributeAsync(request, CancellationToken.None);
             }
-        }
-
-        // Auto-start pipeline loop if configured
-        if (pipelineConfig.ClosedLoopAutoStart)
-        {
-            var loopService = app.Services.GetRequiredService<PipelineLoopService>();
-            var loopStarted = await loopService.StartLoopAsync();
-            if (loopStarted)
-                Log.Information("Pipeline loop auto-started (ClosedLoopAutoStart=true)");
-            else
-                Log.Warning("Pipeline loop auto-start requested but StartLoopAsync returned false (no valid templates?)");
         }
     }
 }
