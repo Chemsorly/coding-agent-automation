@@ -185,11 +185,14 @@ public class AgentWorkerServiceJobSlotTests
     }
 
     [Fact]
+    // TODO: This test sets _currentStep via reflection, bypassing SetCurrentStep(). The Volatile.Write
+    // + int conversion logic in SetCurrentStep is never exercised. Add a test that calls SetCurrentStep
+    // through the public API and verifies the round-trip through CurrentStep getter.
     public void Heartbeat_JobActive_CurrentStepReflectsBusy()
     {
         var service = CreateService();
         SetPrivateField(GetSlotManager(service), "_activeJobId", "busy-job");
-        SetPrivateField(GetSlotManager(service), "_currentStep", PipelineStep.AnalyzingCode);
+        SetPrivateField(GetSlotManager(service), "_currentStep", (int)PipelineStep.AnalyzingCode);
 
         service.CurrentStep.Should().Be(PipelineStep.AnalyzingCode);
     }
@@ -199,7 +202,7 @@ public class AgentWorkerServiceJobSlotTests
     {
         var service = CreateService();
         SetPrivateField(GetSlotManager(service), "_activeJobId", "finishing-job");
-        SetPrivateField(GetSlotManager(service), "_currentStep", PipelineStep.GeneratingCode);
+        SetPrivateField(GetSlotManager(service), "_currentStep", (int)PipelineStep.GeneratingCode);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         await GetSlotManager(service).ReleaseJobSlotAndSignalReadyAsync();
