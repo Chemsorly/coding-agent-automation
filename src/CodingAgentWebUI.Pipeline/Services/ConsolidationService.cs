@@ -10,7 +10,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Manages consolidation loop execution: triggering runs, tracking history,
 /// persisting run records, and managing harness suggestions.
 /// </summary>
-public sealed class ConsolidationService : IConsolidationService
+public sealed class ConsolidationService : IConsolidationService, IConsolidationRunTracker
 {
     private readonly ILogger _logger;
     private readonly PipelineConfiguration _config;
