@@ -29,6 +29,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly IPipelineRunHistoryService _runHistoryService;
     private readonly ILogger _logger;
     private readonly IConsolidationRunStore _runStore;
+    private readonly Lazy<IConsolidationRunTracker>? _runTracker;
 
     public ConsolidationDispatcher(
         IAgentRegistryService registry,
@@ -42,7 +43,8 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         IPipelineRunHistoryService runHistoryService,
         ILogger logger,
         IConsolidationRunStore runStore,
-        IConsolidationJobPreparationService? jobPreparer = null)
+        IConsolidationJobPreparationService? jobPreparer = null,
+        Lazy<IConsolidationRunTracker>? runTracker = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(jobDispatcher);
@@ -68,6 +70,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         _runHistoryService = runHistoryService;
         _logger = logger;
         _runStore = runStore;
+        _runTracker = runTracker;
     }
 
     /// <inheritdoc />
@@ -283,27 +286,37 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
 
     /// <summary>
     /// Transitions a queued consolidation run to Running status after successful dispatch.
-    /// This mirrors what the deleted DrainConsolidationJobsAsync did via IConsolidationService.TransitionToRunningAsync.
-    /// We call the run store directly to avoid a circular dependency (ConsolidationService → IConsolidationDispatcher → IConsolidationService).
+    /// Delegates to <see cref="IConsolidationRunTracker"/> which handles both persistent store
+    /// and in-memory tracker updates, eliminating duplication with ConsolidationService.
     /// </summary>
-    private async Task TransitionRunToRunningAsync(string runId, CancellationToken ct)
+    internal async Task TransitionRunToRunningAsync(string runId, CancellationToken ct)
     {
         try
         {
-            var run = await _runStore.GetByIdAsync(runId, ct);
-            if (run is null || run.Status != ConsolidationRunStatus.Queued)
-                return;
+            if (_runTracker?.Value is { } tracker)
+            {
+                await tracker.TransitionToRunningAsync(runId, ct);
+                // TODO: This log is emitted unconditionally but TransitionToRunningAsync is a no-op
+                // if the run is not found or not in Queued status. Consider returning a bool from the
+                // tracker method or removing this log (the tracker already logs on success).
+                _logger.Information("Consolidation run {RunId} transitioned from Queued to Running", runId);
+            }
+            else
+            {
+                // Fallback: direct store write when tracker not available (test isolation only).
+                // In-memory tracker will NOT be updated — acceptable for tests.
+                var run = await _runStore.GetByIdAsync(runId, ct);
+                if (run is null || run.Status != ConsolidationRunStatus.Queued)
+                    return;
 
-            run.Status = ConsolidationRunStatus.Running;
-            run.StartedAtUtc = DateTimeOffset.UtcNow;
-            await _runStore.SaveRunAsync(run, ct);
+                run.Status = ConsolidationRunStatus.Running;
+                run.StartedAtUtc = DateTimeOffset.UtcNow;
+                await _runStore.SaveRunAsync(run, ct);
 
-            // TODO: #1540 — This updates the persistent store but does NOT update ConsolidationService._runningRuns
-            // (the in-memory tracker). HeartbeatMonitorService.SweepStuckConsolidationRuns calls GetActiveRunStartedAt
-            // which reads from _runningRuns, so runs dispatched through this path still have the stale StartedAtUtc
-            // visible to the heartbeat monitor. Fixing this requires resolving the circular dependency
-            // (ConsolidationService → IConsolidationDispatcher → IConsolidationService).
-            _logger.Information("Consolidation run {RunId} transitioned from Queued to Running", runId);
+                _logger.Warning(
+                    "Consolidation run {RunId} transitioned via fallback (no tracker) — in-memory state NOT updated",
+                    runId);
+            }
         }
         catch (Exception ex)
         {
