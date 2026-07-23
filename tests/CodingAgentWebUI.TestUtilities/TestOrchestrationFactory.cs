@@ -104,6 +104,7 @@ public static class TestOrchestrationFactory
         public static readonly NoOpLabelService Instance = new();
         public Task SwapLabelAsync(ProviderConfigId providerConfigId, IssueIdentifier identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct) => Task.CompletedTask;
         public Task SwapLabelAsync(ProviderConfigId providerConfigId, IssueIdentifier identifier, string newLabel, LabelTargetKind targetKind, string? expectedCurrentLabel, CancellationToken ct) => Task.CompletedTask;
+        public Task SwapLabelStrictAsync(ProviderConfigId providerConfigId, IssueIdentifier identifier, string newLabel, LabelTargetKind targetKind, CancellationToken ct) => Task.CompletedTask;
         public Task<bool> EnsureAgentLabelsAsync(ProviderConfigId providerConfigId, LabelTargetKind targetKind, CancellationToken ct) => Task.FromResult(true);
     }
 
