@@ -45,8 +45,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     private readonly IBrainUpdateService? _brainUpdateService;
     private readonly IPipelineRunHistoryService? _historyService;
     private readonly IOpenIssueContextWriter _openIssueContextWriter;
-    private readonly FeedbackService _feedbackService;
-    private readonly PullRequestFinalizationService _finalization;
     private readonly AgentIdentity _agentIdentity;
     private readonly AgentProviderResolver _providerResolver;
     private readonly IPipelineReporterFactory _reporterFactory;
@@ -78,14 +76,14 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         _brainUpdateService = brainUpdateService;
         _historyService = historyService;
         _openIssueContextWriter = openIssueContextWriter ?? new OpenIssueContextWriter(logger);
-        _feedbackService = new FeedbackService(logger);
-        _finalization = new PullRequestFinalizationService(logger);
         _agentIdentity = agentIdentity ?? new AgentIdentity(Environment.MachineName);
         _providerResolver = new AgentProviderResolver(logger);
         _reporterFactory = reporterFactory ?? new PipelineReporterFactory(logger);
+        var feedbackService = new FeedbackService(logger);
+        var finalization = new PullRequestFinalizationService(logger);
         _contextBuilder = new PipelineExecutionContextBuilder(
-            qualityGateValidator, _reporterFactory, _feedbackService, _agentIdentity, logger,
-            brainUpdateService, historyService);
+            qualityGateValidator, _reporterFactory, feedbackService, _agentIdentity, logger,
+            brainUpdateService, historyService, finalization);
         _logger = logger;
     }
 
@@ -215,7 +213,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         {
             var linkedCt = buildResult.LocalCts.Token;
 
-            stepContext = CreateStepContext(buildResult.ExecutionContext, reporter, ct);
+            stepContext = _contextBuilder.CreateStepContext(buildResult.ExecutionContext, reporter, ct);
             buildResult.StepContext = stepContext;
 
             // Inject additional repo providers for cross-repo decomposition cloning
@@ -225,10 +223,10 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             // Build step pipeline based on run type
             var steps = run.RunType switch
             {
-                PipelineRunType.Review => BuildReviewStepPipeline(job, issueOps, repoConfig),
-                PipelineRunType.DecompositionAnalysis => BuildDecompositionAnalysisStepPipeline(job, _openIssueContextWriter, issueOps, repoConfig),
-                PipelineRunType.Decomposition => BuildDecompositionStepPipeline(job, _openIssueContextWriter, issueOps, repoConfig),
-                _ => BuildAgentStepPipeline(job, issueOps, repoConfig)
+                PipelineRunType.Review => AgentStepPipelineBuilder.BuildReviewStepPipeline(job, issueOps, repoConfig),
+                PipelineRunType.DecompositionAnalysis => AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, _openIssueContextWriter, issueOps, repoConfig),
+                PipelineRunType.Decomposition => AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, _openIssueContextWriter, issueOps, repoConfig),
+                _ => AgentStepPipelineBuilder.BuildAgentStepPipeline(job, issueOps, repoConfig)
             };
 
             var outcome = await PipelineRunExecutionHost.ExecuteStepsAsync(steps, stepContext, linkedCt);
@@ -281,182 +279,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         }
     }
 
-    /// <summary>
-    /// Builds the common step prefix shared by all pipelines:
-    /// Clone → EnsureGitignore → [CloneProjectRepositories] → WriteMcpConfig → WriteSteering.
-    /// </summary>
-    private static List<IPipelineStep> BuildCommonPrefix(JobAssignmentMessage job, bool includeProjectClone = false)
-    {
-        var steps = new List<IPipelineStep>
-        {
-            new CloneRepositoryStep(),
-            new EnsureAgentGitignoreStep(),
-        };
-        if (includeProjectClone)
-            steps.Add(new CloneProjectRepositoriesStep());
-        steps.Add(new WriteMcpConfigStep(job));
-        steps.Add(new WriteSteeringStep(job));
-        return steps;
-    }
-
-    /// <summary>
-    /// Builds the full step prefix (common prefix + RunEnvironmentSetup + SyncBrainPreRun + DownloadIssueImages).
-    /// Used by agent and decomposition pipelines.
-    /// </summary>
-    private static List<IPipelineStep> BuildFullPrefix(JobAssignmentMessage job, OrchestratorProxy proxy, ProviderConfig repoConfig, bool includeProjectClone = false)
-    {
-        var steps = BuildCommonPrefix(job, includeProjectClone);
-        steps.Add(new RunEnvironmentSetupStep(job));
-        steps.Add(new SyncBrainPreRunStep());
-        steps.Add(new DownloadIssueImagesStep(
-            ct => proxy.RequestTokenRefreshAsync(ProviderKind.Repository, ct),
-            repoConfig));
-        return steps;
-    }
-
-    /// <summary>
-    /// Builds the ordered step pipeline for agent-side execution.
-    /// Skips FetchIssueStep (issue data comes from job assignment) and adds MCP config step.
-    /// </summary>
-    internal static IReadOnlyList<IPipelineStep> BuildAgentStepPipeline(
-        JobAssignmentMessage job, OrchestratorProxy proxy, ProviderConfig repoConfig)
-    {
-        var steps = BuildFullPrefix(job, proxy, repoConfig);
-        steps.AddRange(PipelineStepFactory.CreateCoreImplementationSteps());
-        return steps;
-    }
-
-    /// <summary>
-    /// Builds the ordered step pipeline for PR review runs.
-    /// Shorter sequence: Clone → WriteMcpConfig → WriteSteering → CreateBranch → SyncBrain → DownloadIssueImages → ExtractLinkedIssues → ReviewCode → PostFindings.
-    /// Skips analysis, code generation, quality gates, and rework detection.
-    /// </summary>
-    internal static IReadOnlyList<IPipelineStep> BuildReviewStepPipeline(
-        JobAssignmentMessage job, OrchestratorProxy proxy, ProviderConfig repoConfig)
-    {
-        var steps = BuildCommonPrefix(job);
-        steps.AddRange([
-            new CreateBranchStep(),
-            new SyncBrainPreRunStep(),
-            new DownloadIssueImagesStep(
-                ct => proxy.RequestTokenRefreshAsync(ProviderKind.Repository, ct),
-                repoConfig),
-            new ExtractLinkedIssuesStep(new IssueDescriptionParser()),
-            new ReviewCodeStep(),
-            new PostReviewFindingsStep()
-        ]);
-        return steps;
-    }
-
-    /// <summary>
-    /// Builds the step pipeline for DecompositionAnalysis (Phase 1).
-    /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → DownloadIssueImages → WriteProjectContext → WriteOpenIssueContext → DecompositionAnalysis → PostDecompositionPlan.
-    /// IOpenIssueContextWriter is injected into the WriteOpenIssueContextStep via constructor.
-    /// </summary>
-    internal static IReadOnlyList<IPipelineStep> BuildDecompositionAnalysisStepPipeline(
-        JobAssignmentMessage job,
-        IOpenIssueContextWriter openIssueContextWriter,
-        OrchestratorProxy proxy,
-        ProviderConfig repoConfig)
-    {
-        var steps = BuildFullPrefix(job, proxy, repoConfig, includeProjectClone: true);
-        steps.AddRange([
-            new WriteProjectContextStep(),
-            new WriteOpenIssueContextStep(openIssueContextWriter),
-            new DecompositionAnalysisStep(),
-            new PostDecompositionPlanStep()
-        ]);
-        return steps;
-    }
-
-    /// <summary>
-    /// Builds the step pipeline for Decomposition (Phase 2).
-    /// Sequence: Clone → CloneProjectRepos → WriteMcpConfig → WriteSteering → RunEnvironmentSetup → SyncBrain → DownloadIssueImages → WriteProjectContext → WriteOpenIssueContext → Decomposition → CreateSubIssues → PostDecompositionSummary.
-    /// WriteProjectContextStep is included so the agent has cross-repo routing context
-    /// when generating sub-issue JSON files with targetRepository values.
-    /// WriteOpenIssueContextStep provides deduplication context for the agent.
-    /// </summary>
-    internal static IReadOnlyList<IPipelineStep> BuildDecompositionStepPipeline(
-        JobAssignmentMessage job,
-        IOpenIssueContextWriter openIssueContextWriter,
-        OrchestratorProxy proxy,
-        ProviderConfig repoConfig)
-    {
-        var steps = BuildFullPrefix(job, proxy, repoConfig, includeProjectClone: true);
-        steps.AddRange([
-            new WriteProjectContextStep(),
-            new WriteOpenIssueContextStep(openIssueContextWriter),
-            new DecompositionStep(),
-            new CreateSubIssuesStep(),
-            new PostDecompositionSummaryStep()
-        ]);
-        return steps;
-    }
-
-    private PipelineStepContext CreateStepContext(
-        PipelineExecutionContext inputs,
-        PipelineSignalRReporter reporter,
-        CancellationToken ct)
-    {
-        var callbacks = new AgentCallbacks(
-            inputs.TransitionTo,
-            inputs.EmitOutputLine,
-            inputs.IssueOps,
-            inputs.Run,
-            inputs.PrOrchestrator,
-            inputs.RepoProvider,
-            inputs.ReportQualityGateResult,
-            (r, report, isDraft, token) => CreatePullRequestAsync(r, report, isDraft, inputs.PrContext, token),
-            async (contextLoaded, fileCount) => await reporter.ReportBrainSyncResultAsync(contextLoaded, fileCount, ct));
-
-        var ctx = PipelineStepContext.ForAgent(
-            run: inputs.Run,
-            config: inputs.Config,
-            repoProvider: inputs.RepoProvider,
-            agentProvider: inputs.AgentProvider,
-            brainProvider: inputs.BrainProvider,
-            pipelineProvider: inputs.PipelineProvider,
-            cts: inputs.LocalCts,
-            configStore: new NullConfigurationStore(),
-            callbacks: callbacks,
-            issueOps: inputs.IssueOps,
-            agentExecution: inputs.AgentExecution,
-            qualityGates: inputs.QualityGates,
-            brainSync: inputs.BrainSync,
-            prOrchestrator: inputs.PrOrchestrator,
-            logger: _logger,
-            qualityGateValidator: _qualityGateValidator,
-            issue: inputs.Job.IssueDetail,
-            parsedIssue: inputs.Job.ParsedIssue,
-            issueComments: inputs.Job.IssueComments,
-            preResolvedReviewerConfigs: inputs.Job.ReviewerConfigs,
-            preResolvedQualityGateConfigs: inputs.Job.QualityGateConfigs,
-            projectContext: inputs.Job.ProjectContext);
-
-        // Propagate dispatch-level staleness detection results to the step context
-        // so AnalyzeCodeStep can use ForceRefreshAnalysis and set OTel tags correctly.
-        ctx.ForceRefreshAnalysis = inputs.Job.ForceRefreshAnalysis;
-        ctx.StalenessSignal = inputs.Job.StalenessSignal;
-        ctx.AnalysisRefreshCount = inputs.Job.AnalysisRefreshCount;
-
-        return ctx;
-    }
-
-    private async Task CreatePullRequestAsync(
-        PipelineRun run, QualityGateReport report, bool isDraft,
-        PullRequestCreationContext context, CancellationToken ct)
-    {
-        await _finalization.RunFullPrCreationAsync(
-            run, report, isDraft,
-            context.PrOrchestrator, context.RepoProvider, context.AgentProvider,
-            context.BrainProvider, context.BrainSync, context.Config,
-            context.Job.IssueDetail, context.Job.IssueComments,
-            _feedbackService, _historyService,
-            context.EmitOutputLine,
-            step => context.ReportStepTransition?.Invoke(step, ct) ?? Task.CompletedTask,
-            ct);
-    }
-
     internal static JobCompletionPayload BuildCompletionPayload(PipelineRun run) => BuildPayloadBase(run) with
     {
         FinalStep = run.CurrentStep,
@@ -500,50 +322,4 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         FinalLabel = run.FinalLabel
     };
 
-    /// <summary>
-    /// Adapts the agent executor's callback methods to <see cref="IPipelineCallbacks"/>.
-    /// Routes label swaps based on <see cref="PipelineRun.LabelTargetKind"/>:
-    /// Implementation runs swap labels on issues, Review runs swap labels on PRs.
-    /// </summary>
-    private sealed class AgentCallbacks(
-        Action<PipelineStep> transitionTo,
-        Action<string> emitOutputLine,
-        OrchestratorProxy orchestratorProxy,
-        PipelineRun run,
-        PullRequestOrchestrator prOrchestrator,
-        IRepositoryProvider repoProvider,
-        Action<QualityGateReport> reportQualityGateResult,
-        Func<PipelineRun, QualityGateReport, bool, CancellationToken, Task> createPullRequest,
-        Func<bool, int, Task> reportBrainSyncResult) : PipelineCallbacksBase
-    {
-        protected override PipelineRun Run => run;
-        public override void TransitionTo(PipelineStep step) => transitionTo(step);
-        public override void EmitOutputLine(string line) => emitOutputLine(line);
-        public override void NotifyChange() { }
-        public override Task AddRunToHistoryAsync(PipelineRun run) => Task.CompletedTask;
-        public override Task UpdateFileChangeStats(PipelineRun run)
-            => prOrchestrator.UpdateFileChangeStatsAsync(run, repoProvider);
-        public override Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
-            => orchestratorProxy.SwapLabelAsync(issueIdentifier, label, GetLabelTargetKind(), ct);
-        public override Task RemoveAllAgentLabels(string issueIdentifier, CancellationToken ct)
-            => orchestratorProxy.SwapLabelAsync(issueIdentifier, string.Empty, GetLabelTargetKind(), ct);
-        public override Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
-        {
-            reportQualityGateResult(report);
-            return createPullRequest(run, report, isDraft, ct);
-        }
-        protected override Task CreateDraftPrCoreAsync(PipelineRun run, CancellationToken ct)
-            => prOrchestrator.CreateDraftPrIfNotExistsAsync(run, repoProvider, ct);
-        protected override void LogDraftPrFailure(PipelineRun run, Exception ex)
-        {
-            Serilog.Log.Warning(ex, "Agent {RunId} failed to create draft PR, continuing", run.RunId);
-        }
-        public override Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
-        {
-            reportQualityGateResult(report);
-            return createPullRequest(run, report, isDraft, ct);
-        }
-        public override Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
-            => reportBrainSyncResult(contextLoaded, knowledgeFileCount);
-    }
 }
