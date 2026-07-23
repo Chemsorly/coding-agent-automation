@@ -9,10 +9,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// to reduce its responsibility surface. Handles provider resolution, run construction,
 /// and dedup-guard registration via <see cref="PipelineRunLifecycleService"/>.
 /// </summary>
-// TODO: Implement IAsyncDisposable — this class owns a PipelineProviderManager (IAsyncDisposable) via
-// _providerManager but never disposes it. Currently safe because ResolveProviderConfigAsync doesn't
-// populate Active* providers and temp providers are disposed inline, but the ownership contract is violated.
-public class DispatchRunCreationService : IDispatchRunCreator
+public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable, IDisposable
 {
     private readonly PipelineRunLifecycleService _lifecycle;
     private readonly PipelineProviderManager _providerManager;
@@ -155,5 +152,22 @@ public class DispatchRunCreationService : IDispatchRunCreator
         run.PipelineProviderConfigId = pipelineProviderId;
 
         return run;
+    }
+
+    // TODO: Add a `bool _disposed` guard to make DisposeAsync idempotent. Currently, double-calling
+    // DisposeAsync delegates to _providerManager.DisposeAsync() twice, which attempts to dispose
+    // already-disposed provider instances (tolerated but violates the idempotency contract).
+    public async ValueTask DisposeAsync()
+    {
+        await _providerManager.DisposeAsync();
+        GC.SuppressFinalize(this);
+    }
+
+    public void Dispose()
+    {
+        // Do not call DisposeAsync synchronously — .GetAwaiter().GetResult()
+        // deadlocks in Blazor Server's SynchronizationContext.
+        // DisposeAsync() is the correct disposal path; sync Dispose handles only sync resources.
+        GC.SuppressFinalize(this);
     }
 }
