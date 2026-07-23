@@ -233,7 +233,8 @@ try
             sp.GetRequiredService<IJobCompletionReporter>(),
             sp.GetRequiredService<AgentIdentity>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
-            Log.Logger));
+            Log.Logger,
+            serviceProvider: sp));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<WorkItemAgentService>());
         builder.Services.AddSingleton<IAgentService>(sp => sp.GetRequiredService<WorkItemAgentService>());
     }

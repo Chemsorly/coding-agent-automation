@@ -94,15 +94,15 @@ public class PipelineOrchestrationServiceTests : IDisposable
             _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new List<ReviewerConfiguration>());
 
-        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "42", Title = "Test Issue", Description = "Test description",
                 Labels = Array.Empty<string>()
             });
-        _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
         _mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -260,7 +260,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_WithMissingIssueTitle_FailsWithInsufficientInfo()
     {
-        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "", Description = "Some description", Labels = Array.Empty<string>() });
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -271,7 +271,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_WithMissingDescription_FailsWithInsufficientInfo()
     {
-        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Valid Title", Description = "", Labels = Array.Empty<string>() });
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -313,7 +313,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_WhenIssueProviderThrows_FailsWithConnectivityError()
     {
-        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Connection refused"));
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -336,7 +336,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_WhenAnalysisCommentFails_ContinuesToCompletion()
     {
-        _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API error"));
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -361,7 +361,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_WhenExistingAnalysisCommentFound_SkipsAgentAnalysis()
     {
-        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>
             {
                 new() { Id = "1", Body = "## 🤖 Agent Analysis\n\nPrevious analysis content here.", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-1) }
@@ -374,14 +374,14 @@ public class PipelineOrchestrationServiceTests : IDisposable
             p => p.ExecuteAsync(It.Is<AgentRequest>(r => r.Prompt.Contains("Analyze the codebase")), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()),
             Times.Never);
         _mockIssueProvider.Verify(
-            p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
     [Fact]
     public async Task StartPipeline_WhenListCommentsFails_RunsFreshAnalysis()
     {
-        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("API error"));
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -1017,9 +1017,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var firstRepoProvider = new Mock<IRepositoryProvider>();
         var firstAgentProvider = new Mock<IAgentProvider>();
 
-        firstIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = Array.Empty<string>() });
-        firstIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<IssueComment>());
-        firstIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
+        firstIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>())).ReturnsAsync(new IssueDetail { Identifier = "42", Title = "Test", Description = "Desc", Labels = Array.Empty<string>() });
+        firstIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>())).ReturnsAsync(new List<IssueComment>());
+        firstIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
         firstIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>())).ReturnsAsync(true);
         firstRepoProvider.Setup(p => p.CloneAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         firstRepoProvider.Setup(p => p.CreateBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).ReturnsAsync("feature/auto-42-test");
@@ -1414,9 +1414,9 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task StartPipeline_LabelOperationFailure_PipelineContinues()
     {
-        _mockIssueProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("API rate limit"));
-        _mockIssueProvider.Setup(p => p.AddLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("API rate limit"));
 
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -1553,15 +1553,15 @@ public class PipelineOrchestrationServiceTests : IDisposable
             .ReturnsAsync(new List<ReviewerConfiguration>());
 
         // Issue provider
-        mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "42", Title = "Test Issue", Description = "Test description",
                 Labels = Array.Empty<string>()
             });
-        mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
         mockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
@@ -1806,7 +1806,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public async Task ConfidenceGate_RequeuedAfterRejection_ForcesRefreshAnalysis()
     {
         // Simulate a previous gate rejection comment that is newer than the analysis comment
-        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>
             {
                 new() { Id = "1", Body = "## 🤖 Agent Analysis\n\nOld analysis.", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-2) },
@@ -1828,7 +1828,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task ConfidenceGate_RequeuedAfterWontDo_ForcesRefreshAnalysis()
     {
-        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>
             {
                 new() { Id = "1", Body = "## 🤖 Agent Analysis\n\nOld analysis.", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-2) },
@@ -1849,7 +1849,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     public async Task ConfidenceGate_ExistingAnalysisWithNoGateMarker_SkipsAnalysis()
     {
         // Analysis comment exists, no gate markers — should reuse existing analysis
-        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>
             {
                 new() { Id = "1", Body = "## 🤖 Agent Analysis\n\nExisting analysis.", Author = "bot", CreatedAt = DateTime.UtcNow.AddHours(-1) }
@@ -1867,9 +1867,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
         SetupAnalysisAgentWithAssessment("not_ready", "Vague issue",
             blockingIssues: new[] { "No AC" });
 
+        // TODO: Setup matcher uses string literal "42" relying on implicit string→IssueIdentifier conversion.
+        // If the implicit conversion is removed in Phase 2, these tests will break at compile time. Update to use IssueIdentifier explicitly.
         var commentOrder = new List<string>();
         _mockIssueProvider.Setup(p => p.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, CancellationToken>((_, body, _) => commentOrder.Add(body.Contains("Agent Analysis") ? "analysis" : "gate"))
+            .Callback<IssueIdentifier, string, CancellationToken>((_, body, _) => commentOrder.Add(body.Contains("Agent Analysis") ? "analysis" : "gate"))
             .ReturnsAsync((string?)null);
 
         await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -1882,9 +1884,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
     {
         SetupAnalysisAgentWithAssessment("wont_do", "Already fixed");
 
+        // TODO: Setup matcher uses string literal "42" relying on implicit string→IssueIdentifier conversion.
+        // If the implicit conversion is removed in Phase 2, these tests will break at compile time. Update to use IssueIdentifier explicitly.
         var commentOrder = new List<string>();
         _mockIssueProvider.Setup(p => p.PostCommentAsync("42", It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, CancellationToken>((_, body, _) => commentOrder.Add(body.Contains("Agent Analysis") ? "analysis" : "gate"))
+            .Callback<IssueIdentifier, string, CancellationToken>((_, body, _) => commentOrder.Add(body.Contains("Agent Analysis") ? "analysis" : "gate"))
             .ReturnsAsync((string?)null);
 
         await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
@@ -1943,7 +1947,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
     [Fact]
     public async Task PipelineEvents_FailedRun_EmitsFailureMessage()
     {
-        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail { Identifier = "42", Title = "", Description = "desc", Labels = Array.Empty<string>() });
 
         var outputLines = new List<string>();

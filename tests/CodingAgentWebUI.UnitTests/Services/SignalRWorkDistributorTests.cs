@@ -718,7 +718,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         // Assert: no label swap at all — issue stays in its current state
         result.Success.Should().BeTrue();
         _mockLabelService.Verify(l => l.SwapLabelAsync(
-            It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 

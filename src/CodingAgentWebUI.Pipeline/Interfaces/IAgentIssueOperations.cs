@@ -14,13 +14,13 @@ public interface IAgentIssueOperations
     /// <summary>
     /// Posts a comment on the specified issue. Returns the comment URL if available.
     /// </summary>
-    Task<string?> PostCommentAsync(string issueIdentifier, string body, CancellationToken ct);
+    Task<string?> PostCommentAsync(IssueIdentifier issueIdentifier, string body, CancellationToken ct);
 
     /// <summary>
     /// Swaps the current agent label on the specified issue to <paramref name="newLabel"/>.
     /// Removes all existing agent labels before adding the new one.
     /// </summary>
-    Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct);
+    Task SwapLabelAsync(IssueIdentifier issueIdentifier, string newLabel, CancellationToken ct);
 
     // --- Decomposition-specific operations ---
     // All calls are proxied through SignalR to the orchestrator, which resolves
@@ -52,19 +52,19 @@ public interface IAgentIssueOperations
     /// <summary>
     /// Gets full issue details by identifier.
     /// </summary>
-    Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct)
+    Task<IssueDetail> GetIssueAsync(IssueIdentifier identifier, CancellationToken ct)
         => throw new NotSupportedException("GetIssueAsync is not implemented by this provider.");
 
     /// <summary>
     /// Lists all comments on an issue.
     /// </summary>
-    Task<IReadOnlyList<IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct)
+    Task<IReadOnlyList<IssueComment>> ListCommentsAsync(IssueIdentifier identifier, CancellationToken ct)
         => throw new NotSupportedException("ListCommentsAsync is not implemented by this provider.");
 
     /// <summary>
     /// Updates an existing comment by ID.
     /// </summary>
-    Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct)
+    Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct)
         => throw new NotSupportedException("UpdateCommentAsync is not implemented by this provider.");
 
     /// <summary>

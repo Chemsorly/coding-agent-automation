@@ -84,6 +84,11 @@ public static class JobSpecBuilder
         // Per-job service name for trace/metric attribution
         envVars.Add(new V1EnvVar { Name = "OTEL_SERVICE_NAME", Value = $"coding-agent-worker-{ctx.JobName}" });
 
+        // Propagate log level so worker pods use the same verbosity as the orchestrator
+        var logLevel = Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel);
+        if (!string.IsNullOrEmpty(logLevel))
+            envVars.Add(new V1EnvVar { Name = AgentDefaults.EnvLogLevel, Value = logLevel });
+
         // Propagate agent labels from the template so WorkItemAgentService can read them
         if (!string.IsNullOrEmpty(template.Labels))
             envVars.Add(new V1EnvVar { Name = AgentDefaults.EnvAgentLabels, Value = template.Labels });
