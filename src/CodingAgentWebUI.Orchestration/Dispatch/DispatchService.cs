@@ -792,8 +792,11 @@ public sealed class DispatchService : BackgroundService
 
         // Cascade to ConsolidationRun: transition to Failed so it doesn't stay stuck in Queued/Running
         // TODO: When _consolidationK8sDispatcher is null, the ConsolidationRun status is never updated
-        // and stays stuck in Queued/Running permanently. Consider extracting cascade logic to be
-        // independent of the dispatcher, or log a warning when cascade is skipped.
+        // and stays stuck in Queued/Running permanently. This widens the gap from the original defensive
+        // behavior where cascade was attempted with internal null-checks on individual services. If a
+        // future caller invokes FailWorkItem for consolidation items without the dispatcher registered,
+        // the run will remain stuck. Consider extracting cascade logic to be independent of the
+        // dispatcher, or log a warning when cascade is skipped.
         if (taskType == WorkItemTaskType.Consolidation && issueIdentifier is not null
             && _consolidationK8sDispatcher is not null)
             await _consolidationK8sDispatcher.CascadeFailureAsync(issueIdentifier, errorMessage, ct);
