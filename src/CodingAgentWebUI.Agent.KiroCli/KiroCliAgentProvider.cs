@@ -64,10 +64,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
     }
 
     /// <inheritdoc />
-    public async Task EnsureSessionAsync(string workspacePath, CancellationToken ct)
+    public async Task EnsureSessionAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(workspacePath);
-
         var normalizedPath = Path.GetFullPath(workspacePath);
 
         if (_establishedSessions.Contains(normalizedPath))
@@ -202,9 +200,8 @@ public partial class KiroCliAgentProvider : IAgentProvider
     }
 
     /// <inheritdoc />
-    public async Task<string?> GetLatestSessionIdAsync(string workspacePath, CancellationToken ct)
+    public async Task<string?> GetLatestSessionIdAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(workspacePath);
         try
         {
             var psi = new System.Diagnostics.ProcessStartInfo

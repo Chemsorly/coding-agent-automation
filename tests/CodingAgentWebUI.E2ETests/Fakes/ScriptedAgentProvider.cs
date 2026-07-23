@@ -89,11 +89,11 @@ public sealed class ScriptedAgentProvider : IAgentProvider
         return new AgentResult { ExitCode = script.ExitCode, OutputLines = Array.Empty<string>() };
     }
 
-    public Task EnsureSessionAsync(string workspacePath, CancellationToken ct) => Task.CompletedTask;
+    public Task EnsureSessionAsync(WorkspacePath workspacePath, CancellationToken ct) => Task.CompletedTask;
     public AgentHealthStatus GetHealthStatus() => new() { IsExecuting = false };
     public Task KillAsync() => Task.CompletedTask;
     public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;
-    public Task<string?> GetLatestSessionIdAsync(string workspacePath, CancellationToken ct) => Task.FromResult<string?>("fake-session-id");
+    public Task<string?> GetLatestSessionIdAsync(WorkspacePath workspacePath, CancellationToken ct) => Task.FromResult<string?>("fake-session-id");
     public ValueTask DisposeAsync() => ValueTask.CompletedTask;
 }
 
