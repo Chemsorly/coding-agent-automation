@@ -54,6 +54,13 @@ public class WorkItemEntity
     /// <summary>PVC name claimed from the pool for kiro agents, null for other agent types.</summary>
     public string? ClaimedPvcName { get; set; }
 
+    /// <summary>
+    /// Flag indicating the label swap to agent:in-progress failed after all retry attempts.
+    /// Set by PendingWorkItemDrainService when the retry loop is exhausted.
+    /// A reconciliation sweep can pick up flagged items and retry the label swap.
+    /// </summary>
+    public bool NeedsLabelReconciliation { get; set; }
+
     /// <summary>Concurrency token mapped to PostgreSQL xmin system column.</summary>
     public uint RowVersion { get; set; }
 }

@@ -101,6 +101,39 @@ public sealed class LabelService : ILabelService
     }
 
     /// <inheritdoc />
+    public async Task SwapLabelStrictAsync(
+        ProviderConfigId providerConfigId,
+        IssueIdentifier identifier,
+        string newLabel,
+        LabelTargetKind targetKind,
+        CancellationToken ct)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
+        ArgumentNullException.ThrowIfNull(newLabel);
+
+        _logger.Information(
+            "Label swap (strict): {Identifier} → {NewLabel} (target={TargetKind}, provider={ProviderConfigId})",
+            identifier, newLabel, targetKind, providerConfigId.Value);
+
+        switch (targetKind)
+        {
+            case LabelTargetKind.Issue:
+                await SwapIssueLabelAsync(providerConfigId.Value, identifier, newLabel, ct);
+                break;
+
+            case LabelTargetKind.PullRequest:
+                await SwapPrLabelAsync(providerConfigId.Value, identifier, newLabel, ct);
+                break;
+
+            default:
+                _logger.Warning("Unknown LabelTargetKind {TargetKind}, skipping label swap", targetKind);
+                break;
+        }
+
+        _logger.Debug("Label swap (strict) completed: {Identifier} → {NewLabel}", identifier, newLabel);
+    }
+
+    /// <inheritdoc />
     public async Task<bool> EnsureAgentLabelsAsync(
         ProviderConfigId providerConfigId,
         LabelTargetKind targetKind,
