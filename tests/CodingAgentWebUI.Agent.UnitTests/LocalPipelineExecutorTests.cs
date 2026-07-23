@@ -1104,7 +1104,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps.Should().HaveCount(16);
         await connection.DisposeAsync();
@@ -1118,7 +1118,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps[0].Should().BeOfType<CloneRepositoryStep>();
         steps[^1].Should().BeOfType<RunQualityGatesStep>();
@@ -1133,7 +1133,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps[2].Should().BeOfType<WriteMcpConfigStep>();
         await connection.DisposeAsync();
@@ -1147,7 +1147,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildAgentStepPipeline(job, proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps.Should().ContainItemsAssignableTo<DownloadIssueImagesStep>();
         await connection.DisposeAsync();
@@ -1696,7 +1696,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
         await connection.DisposeAsync();
@@ -1710,7 +1710,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
 
         var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
         var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
@@ -1728,7 +1728,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
 
         steps[0].Should().BeOfType<CloneRepositoryStep>();
         await connection.DisposeAsync();
@@ -1742,7 +1742,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(DownloadIssueImagesStep));
         await connection.DisposeAsync();
@@ -1756,7 +1756,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildReviewStepPipeline(job, proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
 
         var syncIndex = steps.ToList().FindIndex(s => s is SyncBrainPreRunStep);
         var downloadIndex = steps.ToList().FindIndex(s => s is DownloadIssueImagesStep);
@@ -1779,7 +1779,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
         await connection.DisposeAsync();
@@ -1793,7 +1793,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
 
         var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
         var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
@@ -1813,7 +1813,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
         await connection.DisposeAsync();
@@ -1827,7 +1827,7 @@ public class LocalPipelineExecutorTests : IDisposable
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
-        var steps = LocalPipelineExecutor.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
+        var steps = AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
 
         var mcpIndex = steps.ToList().FindIndex(s => s is WriteMcpConfigStep);
         var steeringIndex = steps.ToList().FindIndex(s => s is WriteSteeringStep);
