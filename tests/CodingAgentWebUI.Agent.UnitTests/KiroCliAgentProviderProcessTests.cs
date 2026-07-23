@@ -218,7 +218,7 @@ public class KiroCliAgentProviderProcessTests
         _mockLogger.Verify(l => l.Warning(
             It.IsAny<Exception>(),
             It.IsAny<string>(),
-            It.IsAny<string>()), Times.Once);
+            It.IsAny<WorkspacePath>()), Times.Once);
     }
 
     // ─── GetHealthStatus ─────────────────────────────────────────────────

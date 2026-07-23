@@ -24,7 +24,7 @@ internal static class RepositoryGitOperations
     }
 
     public static async Task Clone(
-        string workspacePath, string cloneUrl, string baseBranch,
+        WorkspacePath workspacePath, string cloneUrl, string baseBranch,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
     {
         var options = new CloneOptions
@@ -45,7 +45,7 @@ internal static class RepositoryGitOperations
     }
 
     public static async Task Pull(
-        string workspacePath, string baseBranch,
+        WorkspacePath workspacePath, string baseBranch,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
     {
         await pipeline.ExecuteAsync(async _ =>
@@ -76,7 +76,7 @@ internal static class RepositoryGitOperations
         }, ct);
     }
 
-    public static string CreateBranch(string workspacePath, string branchName)
+    public static string CreateBranch(WorkspacePath workspacePath, string branchName)
     {
         using var repo = new Repository(workspacePath);
         var branch = repo.CreateBranch(branchName);
@@ -84,7 +84,7 @@ internal static class RepositoryGitOperations
         return branch.FriendlyName;
     }
 
-    public static void CheckoutRemoteBranch(string workspacePath, string branchName)
+    public static void CheckoutRemoteBranch(WorkspacePath workspacePath, string branchName)
     {
         using var repo = new Repository(workspacePath);
 
@@ -107,7 +107,7 @@ internal static class RepositoryGitOperations
     }
 
     public static IReadOnlyList<string> CommitAll(
-        string workspacePath, string message,
+        WorkspacePath workspacePath, string message,
         IReadOnlyList<string>? blacklistedPaths, bool allowEmpty,
         IReadOnlyList<string>? pipelineInjectedPaths = null)
     {
@@ -214,7 +214,7 @@ internal static class RepositoryGitOperations
     }
 
     public static async Task Push(
-        string workspacePath, string branchName, bool forcePush,
+        WorkspacePath workspacePath, string branchName, bool forcePush,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
     {
         using var repo = new Repository(workspacePath);
@@ -257,14 +257,14 @@ internal static class RepositoryGitOperations
         }, ct);
     }
 
-    public static string GetHeadCommitSha(string workspacePath)
+    public static string GetHeadCommitSha(WorkspacePath workspacePath)
     {
         using var repo = new Repository(workspacePath);
         return repo.Head.Tip.Sha;
     }
 
     public static async Task<bool> HasCommitsAhead(
-        string workspacePath, string baseBranch, ResiliencePipeline pipeline, CancellationToken ct)
+        WorkspacePath workspacePath, string baseBranch, ResiliencePipeline pipeline, CancellationToken ct)
     {
         return await pipeline.ExecuteAsync(async _ =>
         {
@@ -288,7 +288,7 @@ internal static class RepositoryGitOperations
         }, ct);
     }
 
-    public static IReadOnlyList<FileChangeSummary> GetFileChanges(string workspacePath, string baseBranch)
+    public static IReadOnlyList<FileChangeSummary> GetFileChanges(WorkspacePath workspacePath, string baseBranch)
     {
         try
         {
@@ -348,7 +348,7 @@ internal static class RepositoryGitOperations
     }
 
     public static async Task<MergeResult> MergeFromBase(
-        string workspacePath, string baseBranchName,
+        WorkspacePath workspacePath, string baseBranchName,
         string tokenUsername, string token, ResiliencePipeline pipeline, CancellationToken ct)
     {
         using var repo = new Repository(workspacePath);
@@ -500,7 +500,7 @@ internal static class RepositoryGitOperations
         };
     }
 
-    public static void ForceResolveConflictsUsingTheirs(Repository repo, string workspacePath)
+    public static void ForceResolveConflictsUsingTheirs(Repository repo, WorkspacePath workspacePath)
     {
         var conflicts = repo.Index.Conflicts.ToList();
         var resolvedCount = 0;

@@ -36,7 +36,7 @@ public class AdversarialReviewHelperTests : IDisposable
         _outputLines = new List<string>();
 
         // Default mock for GetLatestSessionIdAsync (used by CRITICAL 1 fix)
-        _mockAgent.Setup(a => a.GetLatestSessionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockAgent.Setup(a => a.GetLatestSessionIdAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("generator-session-default");
     }
 
@@ -299,7 +299,7 @@ public class AdversarialReviewHelperTests : IDisposable
         var callCount = 0;
         var reviewUsage = new TokenUsage { InputTokens = 500, OutputTokens = 250 };
 
-        _mockAgent.Setup(a => a.GetLatestSessionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockAgent.Setup(a => a.GetLatestSessionIdAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("generator-session-123");
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(() =>
