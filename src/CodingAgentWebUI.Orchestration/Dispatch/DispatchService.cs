@@ -359,112 +359,43 @@ public sealed class DispatchService : BackgroundService
             return;
         }
 
-        // Generate deterministic job name
-        var jobName = GenerateJobName(item.Id);
-
-        // Claim PVC for kiro agents
-        string? claimedPvc = null;
-        if (isKiroAgent)
-        {
-            claimedPvc = availablePvcs[0];
-            availablePvcs.RemoveAt(0);
-        }
-
-        // Pre-write K8sJobName (and ClaimedPvcName) to WorkItem BEFORE K8s API call
-        var workItem = await db.WorkItems.FindAsync([item.Id], ct);
-        if (workItem is null || workItem.Status != WorkItemStatus.Pending)
-        {
-            // Item was modified by another process
-            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            return;
-        }
-
-        workItem.K8sJobName = jobName;
-        if (claimedPvc is not null)
-            workItem.ClaimedPvcName = claimedPvc;
-
-        try
-        {
-            await db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            Log.Warning("DispatchService: concurrency conflict pre-writing K8sJobName for {WorkItemId}", item.Id);
-            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            return;
-        }
-
-        // Load project secrets if project has them
-        Dictionary<string, string>? projectSecrets = null;
-        if (!string.IsNullOrEmpty(item.ProjectId))
-        {
-            projectSecrets = await LoadProjectSecretsAsync(db, item.ProjectId, ct);
-        }
-
-        // Create K8s Job via JobSpecBuilder
-        if (!await CreateK8sJobAsync(db, item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, "", ct))
-            return;
-
-        // Create per-job K8s Secret if project has secrets
-        await CreateJobSecretIfNeededAsync(jobName, item.Id, projectSecrets, "", ct);
-
-        // Update to Dispatched — clear change tracker first to get fresh state
-        // (avoids stale entity if another service modified the item during K8s API call)
-        var (shouldContinue, reloadedWorkItem) = await HandleOrphanedJobIfRaceDetectedAsync(db, item.Id, jobName, claimedPvc, availablePvcs, "", ct);
-        if (!shouldContinue)
-            return;
-
-        workItem = reloadedWorkItem!;
-        workItem.Status = WorkItemStatus.Dispatched;
-        workItem.DispatchedAt = DateTimeOffset.UtcNow;
-
-        try
-        {
-            await db.SaveChangesAsync(ct);
-
-            // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14 fix).
-            // Without this, StartedAt reflects preparation/enqueue time which can be
-            // hours earlier for queued work, inflating the Duration shown in the UI.
-            _runService?.GetRun(item.Id.ToString())?.ResetStartedAt(workItem.DispatchedAt!.Value);
-
-            // Record dispatch latency / pending duration metric
-            var latency = (workItem.DispatchedAt.Value - (workItem.OriginalEnqueuedAt ?? workItem.CreatedAt)).TotalSeconds;
-            WorkDistributionTelemetry.DispatchLatency.Record(latency,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
-            WorkDistributionTelemetry.PendingDuration.Record(latency,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
-
-            // Track concurrency
-            concurrencyBySelector[item.AgentSelector] =
-                concurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0) + 1;
-
-            Log.Information(
-                "DispatchService: WorkItem {WorkItemId} dispatched as Job {JobName} (selector={Selector}, pvc={Pvc})",
-                item.Id, jobName, item.AgentSelector, claimedPvc ?? "none");
-
-            // Swap issue label to agent:in-progress (non-fatal — best effort)
-            if (_labelService is not null &&
-                !string.IsNullOrEmpty(item.IssueIdentifier) &&
-                !string.IsNullOrEmpty(item.IssueProviderConfigId))
+        await ExecuteDispatchLifecycleAsync(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, "",
+            async _ =>
             {
-                try
+                // Load project secrets if project has them
+                Dictionary<string, string>? projectSecrets = null;
+                if (!string.IsNullOrEmpty(item.ProjectId))
                 {
-                    await _labelService.SwapLabelAsync(
-                        item.IssueProviderConfigId, item.IssueIdentifier, AgentLabels.InProgress, ct);
+                    projectSecrets = await LoadProjectSecretsAsync(db, item.ProjectId, ct);
                 }
-                catch (Exception ex)
+                return (true, projectSecrets);
+            },
+            async workItem =>
+            {
+                // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14 fix).
+                // Without this, StartedAt reflects preparation/enqueue time which can be
+                // hours earlier for queued work, inflating the Duration shown in the UI.
+                _runService?.GetRun(item.Id.ToString())?.ResetStartedAt(workItem.DispatchedAt!.Value);
+
+                // Swap issue label to agent:in-progress (non-fatal — best effort)
+                if (_labelService is not null &&
+                    !string.IsNullOrEmpty(item.IssueIdentifier) &&
+                    !string.IsNullOrEmpty(item.IssueProviderConfigId))
                 {
-                    Log.Warning(ex,
-                        "DispatchService: failed to swap label to agent:in-progress for {IssueIdentifier}",
-                        item.IssueIdentifier);
+                    try
+                    {
+                        await _labelService.SwapLabelAsync(
+                            item.IssueProviderConfigId, item.IssueIdentifier, AgentLabels.InProgress, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex,
+                            "DispatchService: failed to swap label to agent:in-progress for {IssueIdentifier}",
+                            item.IssueIdentifier);
+                    }
                 }
-            }
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            Log.Warning("DispatchService: concurrency conflict updating WorkItem {WorkItemId} to Dispatched", item.Id);
-            // Job exists in K8s — ReconciliationService will reconcile
-        }
+            },
+            ct);
     }
 
     // ── Consolidation Dispatch ─────────────────────────────────────────────
@@ -505,6 +436,144 @@ public sealed class DispatchService : BackgroundService
             }
         }
 
+        // Capture updatedRequest outside the delegate so onDispatchSuccess can reference it
+        JobDistributionRequest? updatedRequest = null;
+
+        await ExecuteDispatchLifecycleAsync(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, "consolidation ",
+            async workItem =>
+            {
+                // Deserialize payload to extract consolidation fields
+                JobDistributionRequest? request = null;
+                if (!string.IsNullOrEmpty(workItem.Payload))
+                {
+                    try
+                    {
+                        request = JsonSerializer.Deserialize<JobDistributionRequest>(workItem.Payload, PipelineJsonOptions.Default);
+                    }
+                    catch (JsonException ex)
+                    {
+                        Log.Warning(ex, "DispatchService: failed to deserialize consolidation WorkItem {WorkItemId} payload", item.Id);
+                    }
+                }
+
+                if (request is null)
+                {
+                    await FailWorkItem(item.Id, "Consolidation WorkItem has no valid payload", item.TaskType, item.IssueIdentifier, ct);
+                    return (false, null);
+                }
+
+                // Build provider configs and vend tokens at dispatch time
+                IReadOnlyList<ProviderConfig>? vendedConfigs = null;
+                string repoProviderId = "";
+                PipelineConfiguration? pipelineConfig = null;
+
+                try
+                {
+                    // Parse agent labels from selector string
+                    var agentLabels = (item.AgentSelector ?? "")
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .ToList()
+                        .AsReadOnly();
+
+                    // Delegate config resolution and token vending to shared preparer
+                    if (_consolidationJobPreparer is null)
+                    {
+                        Log.Error("DispatchService: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
+                        await FailWorkItem(item.Id, "IConsolidationJobPreparationService not registered", item.TaskType, item.IssueIdentifier, ct);
+                        return (false, null);
+                    }
+
+                    var preparation = await _consolidationJobPreparer.PrepareAsync(
+                        request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
+                        request.ConsolidationTemplateId,
+                        agentLabels,
+                        ct);
+                    vendedConfigs = preparation.ProviderConfigs;
+                    repoProviderId = preparation.RepoProviderConfigId;
+
+                    // Load pipeline configuration for the agent
+                    if (_pipelineConfigStore is not null)
+                    {
+                        pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "DispatchService: failed to resolve provider configs for consolidation WorkItem {WorkItemId}", item.Id);
+                    await FailWorkItem(item.Id, $"Provider config resolution failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
+                    return (false, null);
+                }
+
+                // Update payload with resolved configs so GET /api/work-items/{id}/assignment returns complete data
+                updatedRequest = request with
+                {
+                    ProviderConfigs = vendedConfigs ?? [],
+                    RepoProviderConfigId = repoProviderId,
+                    PipelineConfiguration = pipelineConfig ?? new PipelineConfiguration()
+                };
+                workItem.Payload = JsonSerializer.Serialize(updatedRequest, PipelineJsonOptions.Default);
+
+                // Load project secrets if project has them (resolve project from template if needed)
+                Dictionary<string, string>? projectSecrets = null;
+                string? resolvedProjectId = item.ProjectId;
+                if (string.IsNullOrEmpty(resolvedProjectId) && _projectStore is not null
+                    && !string.IsNullOrEmpty(request.ConsolidationTemplateId))
+                {
+                    var projects = await _projectStore.LoadProjectsAsync(ct);
+                    if (projects is not null)
+                    {
+                        var ownerProject = projects.FirstOrDefault(p =>
+                            p.Enabled && p.TemplateIds.Contains(request.ConsolidationTemplateId));
+                        resolvedProjectId = ownerProject?.Id;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(resolvedProjectId))
+                {
+                    projectSecrets = await LoadProjectSecretsAsync(db, resolvedProjectId, ct);
+                }
+
+                return (true, projectSecrets);
+            },
+            async _ =>
+            {
+                // Transition ConsolidationRunStatus: Queued → Running (best-effort, after successful dispatch)
+                if (updatedRequest is not null)
+                    await TransitionConsolidationRunToRunningAsync(updatedRequest, ct);
+            },
+            ct);
+    }
+
+    // ── Shared K8s Job Dispatch Lifecycle ──────────────────────────────────
+
+    /// <summary>
+    /// Shared dispatch lifecycle for both regular and consolidation WorkItems.
+    /// Handles: PVC claim, WorkItem load, pre-write, K8s Job creation, secret creation,
+    /// race detection, status transition to Dispatched, and metric recording.
+    /// Variant-specific behavior is injected via delegates.
+    /// </summary>
+    /// <param name="prepareVariant">
+    /// Called after WorkItem is loaded. Returns (shouldContinue, projectSecrets).
+    /// May mutate workItem entity fields (e.g., Payload). Return (false, null) to abort.
+    /// Must handle its own error logging and FailWorkItem calls before returning false.
+    /// </param>
+    /// <param name="onDispatchSuccess">
+    /// Called inside the final try block after successful Dispatched save.
+    /// For regular: resets StartedAt + swaps label. For consolidation: transitions run to Running.
+    /// </param>
+    private async Task ExecuteDispatchLifecycleAsync(
+        PipelineDbContext db,
+        PendingWorkItemProjection item,
+        JobTemplate template,
+        bool isKiroAgent,
+        List<string> availablePvcs,
+        Dictionary<string, int> concurrencyBySelector,
+        string logPrefix,
+        Func<WorkItemEntity, Task<(bool shouldContinue, Dictionary<string, string>? projectSecrets)>> prepareVariant,
+        Func<WorkItemEntity, Task>? onDispatchSuccess,
+        CancellationToken ct)
+    {
+        // Generate deterministic job name
         var jobName = GenerateJobName(item.Id);
 
         // Claim PVC for kiro agents
@@ -515,89 +584,26 @@ public sealed class DispatchService : BackgroundService
             availablePvcs.RemoveAt(0);
         }
 
-        // Load full WorkItem to access + update Payload
+        // Load full WorkItem
         var workItem = await db.WorkItems.FindAsync([item.Id], ct);
         if (workItem is null || workItem.Status != WorkItemStatus.Pending)
         {
+            // Item was modified by another process
             if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
             return;
         }
 
-        // Deserialize payload to extract consolidation fields
-        JobDistributionRequest? request = null;
-        if (!string.IsNullOrEmpty(workItem.Payload))
-        {
-            try
-            {
-                request = JsonSerializer.Deserialize<JobDistributionRequest>(workItem.Payload, PipelineJsonOptions.Default);
-            }
-            catch (JsonException ex)
-            {
-                Log.Warning(ex, "DispatchService: failed to deserialize consolidation WorkItem {WorkItemId} payload", item.Id);
-            }
-        }
-
-        if (request is null)
+        // Variant-specific preparation (may mutate workItem, load secrets, or signal abort)
+        // TODO: Wrap prepareVariant in try/catch to release claimedPvc on unhandled exception (PVC leak risk if e.g. LoadProjectSecretsAsync throws)
+        var (shouldProceed, projectSecrets) = await prepareVariant(workItem);
+        if (!shouldProceed)
         {
             if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            await FailWorkItem(item.Id, "Consolidation WorkItem has no valid payload", item.TaskType, item.IssueIdentifier, ct);
             return;
         }
 
-        // Build provider configs and vend tokens at dispatch time
-        IReadOnlyList<ProviderConfig>? vendedConfigs = null;
-        string repoProviderId = "";
-        PipelineConfiguration? pipelineConfig = null;
-
-        try
-        {
-            // Parse agent labels from selector string
-            var agentLabels = (item.AgentSelector ?? "")
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .ToList()
-                .AsReadOnly();
-
-            // Delegate config resolution and token vending to shared preparer
-            if (_consolidationJobPreparer is null)
-            {
-                Log.Error("DispatchService: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
-                if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-                await FailWorkItem(item.Id, "IConsolidationJobPreparationService not registered", item.TaskType, item.IssueIdentifier, ct);
-                return;
-            }
-
-            var preparation = await _consolidationJobPreparer.PrepareAsync(
-                request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-                request.ConsolidationTemplateId,
-                agentLabels,
-                ct);
-            vendedConfigs = preparation.ProviderConfigs;
-            repoProviderId = preparation.RepoProviderConfigId;
-
-            // Load pipeline configuration for the agent
-            if (_pipelineConfigStore is not null)
-            {
-                pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "DispatchService: failed to resolve provider configs for consolidation WorkItem {WorkItemId}", item.Id);
-            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            await FailWorkItem(item.Id, $"Provider config resolution failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
-            return;
-        }
-
-        // Update payload with resolved configs so GET /api/work-items/{id}/assignment returns complete data
-        var updatedRequest = request with
-        {
-            ProviderConfigs = vendedConfigs ?? [],
-            RepoProviderConfigId = repoProviderId,
-            PipelineConfiguration = pipelineConfig ?? new PipelineConfiguration()
-        };
-        workItem.Payload = JsonSerializer.Serialize(updatedRequest, PipelineJsonOptions.Default);
-
-        // Pre-write K8sJobName + updated Payload
+        // Pre-write K8sJobName (and ClaimedPvcName) to WorkItem BEFORE K8s API call.
+        // EF change tracking also persists any entity mutations from prepareVariant (e.g., Payload).
         workItem.K8sJobName = jobName;
         if (claimedPvc is not null)
             workItem.ClaimedPvcName = claimedPvc;
@@ -608,40 +614,21 @@ public sealed class DispatchService : BackgroundService
         }
         catch (DbUpdateConcurrencyException)
         {
-            Log.Warning("DispatchService: concurrency conflict pre-writing consolidation WorkItem {WorkItemId}", item.Id);
+            Log.Warning("DispatchService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
             if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
             return;
         }
 
-        // Load project secrets if project has them (resolve project from template if needed)
-        Dictionary<string, string>? projectSecrets = null;
-        string? resolvedProjectId = item.ProjectId;
-        if (string.IsNullOrEmpty(resolvedProjectId) && _projectStore is not null
-            && !string.IsNullOrEmpty(request.ConsolidationTemplateId))
-        {
-            var projects = await _projectStore.LoadProjectsAsync(ct);
-            if (projects is not null)
-            {
-                var ownerProject = projects.FirstOrDefault(p =>
-                    p.Enabled && p.TemplateIds.Contains(request.ConsolidationTemplateId));
-                resolvedProjectId = ownerProject?.Id;
-            }
-        }
-
-        if (!string.IsNullOrEmpty(resolvedProjectId))
-        {
-            projectSecrets = await LoadProjectSecretsAsync(db, resolvedProjectId, ct);
-        }
-
-        // Create K8s Job
-        if (!await CreateK8sJobAsync(db, item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, "consolidation ", ct))
+        // Create K8s Job via JobSpecBuilder
+        if (!await CreateK8sJobAsync(db, item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, logPrefix, ct))
             return;
 
         // Create per-job K8s Secret if project has secrets
-        await CreateJobSecretIfNeededAsync(jobName, item.Id, projectSecrets, "consolidation ", ct);
+        await CreateJobSecretIfNeededAsync(jobName, item.Id, projectSecrets, logPrefix, ct);
 
-        // Transition to Dispatched
-        var (shouldContinue, reloadedWorkItem) = await HandleOrphanedJobIfRaceDetectedAsync(db, item.Id, jobName, claimedPvc, availablePvcs, "consolidation ", ct);
+        // Update to Dispatched — clear change tracker first to get fresh state
+        // (avoids stale entity if another service modified the item during K8s API call)
+        var (shouldContinue, reloadedWorkItem) = await HandleOrphanedJobIfRaceDetectedAsync(db, item.Id, jobName, claimedPvc, availablePvcs, logPrefix, ct);
         if (!shouldContinue)
             return;
 
@@ -653,31 +640,30 @@ public sealed class DispatchService : BackgroundService
         {
             await db.SaveChangesAsync(ct);
 
+            // Record dispatch latency / pending duration metric
             var latency = (workItem.DispatchedAt.Value - (workItem.OriginalEnqueuedAt ?? workItem.CreatedAt)).TotalSeconds;
             WorkDistributionTelemetry.DispatchLatency.Record(latency,
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
             WorkDistributionTelemetry.PendingDuration.Record(latency,
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
 
+            // Track concurrency
             concurrencyBySelector[item.AgentSelector ?? ""] =
                 concurrencyBySelector.GetValueOrDefault(item.AgentSelector ?? "", 0) + 1;
 
             Log.Information(
-                "DispatchService: consolidation WorkItem {WorkItemId} dispatched as Job {JobName} (selector={Selector}, pvc={Pvc})",
-                item.Id, jobName, item.AgentSelector, claimedPvc ?? "none");
+                "DispatchService: {LogPrefix}WorkItem {WorkItemId} dispatched as Job {JobName} (selector={Selector}, pvc={Pvc})",
+                logPrefix, item.Id, jobName, item.AgentSelector, claimedPvc ?? "none");
+
+            // Variant-specific post-dispatch success action
+            if (onDispatchSuccess is not null)
+                await onDispatchSuccess(workItem);
         }
         catch (DbUpdateConcurrencyException)
         {
-            Log.Warning("DispatchService: concurrency conflict updating consolidation WorkItem {WorkItemId} to Dispatched", item.Id);
-            return;
+            Log.Warning("DispatchService: concurrency conflict updating {LogPrefix}WorkItem {WorkItemId} to Dispatched", logPrefix, item.Id);
+            // Job exists in K8s — ReconciliationService will reconcile
         }
-
-        // Transition ConsolidationRunStatus: Queued → Running (best-effort, after successful dispatch)
-        // TODO: This runs after the Dispatched status is persisted. If TransitionConsolidationRunToRunningAsync
-        // fails despite its try/catch (e.g., non-standard exception), the WorkItem is Dispatched but the
-        // ConsolidationRun remains Queued — a state inconsistency. Document recovery path or consider
-        // reconciliation logic.
-        await TransitionConsolidationRunToRunningAsync(updatedRequest, ct);
     }
 
     // ── Shared K8s Job Dispatch Lifecycle Helpers ────────────────────────
