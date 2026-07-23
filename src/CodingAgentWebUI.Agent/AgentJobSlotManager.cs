@@ -73,19 +73,29 @@ public sealed class AgentJobSlotManager
     /// <summary>The active chat task, or null if no chat is running.</summary>
     public Task? ActiveChatTask => Volatile.Read(ref _activeChatTask);
 
-    // TODO: JobCancellationToken can throw ObjectDisposedException if ForceReleaseJobSlot() disposes
-    // the CTS between the null-check and the .Token access. Current call sites read the token
-    // immediately after slot acquisition (before any release path is reachable), but the public API
-    // contract doesn't enforce this ordering. Consider capturing the reference locally and wrapping
-    // in try/catch like the Cancel methods do, or documenting the precondition.
     /// <summary>The job cancellation token, or null if no job is active.</summary>
-    public CancellationToken? JobCancellationToken => _jobCts?.Token;
+    public CancellationToken? JobCancellationToken
+    {
+        get
+        {
+            var cts = _jobCts;
+            if (cts is null) return null;
+            try { return cts.Token; }
+            catch (ObjectDisposedException) { return null; }
+        }
+    }
 
-    // TODO: Same race condition as JobCancellationToken — ReleaseChatSlot() uses
-    // Interlocked.Exchange(ref _chatCts, null)?.Dispose() which can dispose the CTS between the
-    // null-conditional evaluation and the .Token property access. Consider the same fix.
     /// <summary>The chat cancellation token, or null if no chat is active.</summary>
-    public CancellationToken? ChatCancellationToken => _chatCts?.Token;
+    public CancellationToken? ChatCancellationToken
+    {
+        get
+        {
+            var cts = _chatCts;
+            if (cts is null) return null;
+            try { return cts.Token; }
+            catch (ObjectDisposedException) { return null; }
+        }
+    }
 
     /// <summary>
     /// Cancels the currently running job, if any.

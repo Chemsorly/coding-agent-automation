@@ -236,6 +236,44 @@ public class AgentJobSlotManagerCancellationTests
         }
     }
 
+    // ── Race condition: Property accessor + ForceRelease/ReleaseChatSlot ─
+
+    [Fact]
+    public void JobCancellationToken_ConcurrentWithForceRelease_DoesNotThrow()
+    {
+        for (int i = 0; i < 100; i++)
+        {
+            var slotManager = CreateSlotManager();
+            slotManager.TryAcquireJobSlot($"job-{i}", out _);
+
+            var act = () => Parallel.Invoke(
+                () => { _ = slotManager.JobCancellationToken; },
+                () => { _ = slotManager.JobCancellationToken; },
+                () => slotManager.ForceReleaseJobSlot()
+            );
+
+            act.Should().NotThrow();
+        }
+    }
+
+    [Fact]
+    public void ChatCancellationToken_ConcurrentWithReleaseChatSlot_DoesNotThrow()
+    {
+        for (int i = 0; i < 100; i++)
+        {
+            var slotManager = CreateSlotManager();
+            slotManager.TryAcquireChatSlot($"session-{i}", out _);
+
+            var act = () => Parallel.Invoke(
+                () => { _ = slotManager.ChatCancellationToken; },
+                () => { _ = slotManager.ChatCancellationToken; },
+                () => slotManager.ReleaseChatSlot()
+            );
+
+            act.Should().NotThrow();
+        }
+    }
+
     // ── No public CTS properties ────────────────────────────────────────
 
     [Fact]
