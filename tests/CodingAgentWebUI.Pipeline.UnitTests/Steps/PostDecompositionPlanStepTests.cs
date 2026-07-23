@@ -120,7 +120,7 @@ public class PostDecompositionPlanStepTests : IDisposable
         _issueOps.Verify(x => x.PostCommentAsync("42",
             It.Is<string>(body => body.Contains(CommentMarkers.DecompositionPlan)),
             It.IsAny<CancellationToken>()), Times.Once);
-        _issueOps.Verify(x => x.UpdateCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _issueOps.Verify(x => x.UpdateCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -153,7 +153,7 @@ public class PostDecompositionPlanStepTests : IDisposable
         _issueOps.Verify(x => x.UpdateCommentAsync("42", "comment-99",
             It.Is<string>(body => body.Contains(CommentMarkers.DecompositionPlan)),
             It.IsAny<CancellationToken>()), Times.Once);
-        _issueOps.Verify(x => x.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _issueOps.Verify(x => x.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

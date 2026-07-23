@@ -180,7 +180,7 @@ public class PostDecompositionSummaryStepTests
 
         string? capturedBody = null;
         _issueOps.Setup(x => x.PostCommentAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, CancellationToken>((_, body, _) => capturedBody = body)
+            .Callback<IssueIdentifier, string, CancellationToken>((_, body, _) => capturedBody = body)
             .ReturnsAsync((string?)null);
         _issueOps.Setup(x => x.SwapLabelAsync("50", It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);

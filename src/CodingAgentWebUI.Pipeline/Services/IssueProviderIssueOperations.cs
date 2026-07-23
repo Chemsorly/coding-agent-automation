@@ -1,4 +1,5 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
@@ -18,10 +19,10 @@ internal sealed class IssueProviderIssueOperations : IAgentIssueOperations
         _logger = logger;
     }
 
-    public Task<string?> PostCommentAsync(string issueIdentifier, string body, CancellationToken ct)
+    public Task<string?> PostCommentAsync(IssueIdentifier issueIdentifier, string body, CancellationToken ct)
         => _issueProvider.PostCommentAsync(issueIdentifier, body, ct);
 
-    public async Task SwapLabelAsync(string issueIdentifier, string newLabel, CancellationToken ct)
+    public async Task SwapLabelAsync(IssueIdentifier issueIdentifier, string newLabel, CancellationToken ct)
     {
         try
         {

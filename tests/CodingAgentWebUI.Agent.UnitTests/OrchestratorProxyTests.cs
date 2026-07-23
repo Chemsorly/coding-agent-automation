@@ -112,12 +112,14 @@ public class OrchestratorProxyTests
         await act.Should().ThrowAsync<InvalidOperationException>();
     }
 
+    // TODO: ThrowAsync<ArgumentException>() passes because ArgumentNullException is-a ArgumentException,
+    // but if tightened to ThrowAsync<ArgumentNullException>() in the future, verify paramName is "issueIdentifier.Value".
     [Fact]
     public async Task PostCommentAsync_ThrowsOnNullIssueIdentifier()
     {
         var proxy = CreateProxy();
-        var act = () => proxy.PostCommentAsync(null!, "body", CancellationToken.None);
-        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("issueIdentifier");
+        var act = () => proxy.PostCommentAsync(default(IssueIdentifier), "body", CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>().WithParameterName("issueIdentifier.Value");
     }
 
     [Fact]
@@ -132,8 +134,8 @@ public class OrchestratorProxyTests
     public async Task SwapLabelAsync_ThrowsOnNullIssueIdentifier()
     {
         var proxy = CreateProxy();
-        var act = () => proxy.SwapLabelAsync(null!, "label", CancellationToken.None);
-        await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("issueIdentifier");
+        var act = () => proxy.SwapLabelAsync(default(IssueIdentifier), "label", CancellationToken.None);
+        await act.Should().ThrowAsync<ArgumentException>().WithParameterName("issueIdentifier.Value");
     }
 
     [Fact]

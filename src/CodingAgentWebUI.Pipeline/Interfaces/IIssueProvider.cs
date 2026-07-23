@@ -19,7 +19,7 @@ public sealed record CreatedIssueResult
 public interface IIssueProvider : IAsyncDisposable
 {
     IssueProviderType ProviderType { get; }
-    Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct);
+    Task<IssueDetail> GetIssueAsync(IssueIdentifier identifier, CancellationToken ct);
 
     /// <summary>
     /// Lists open issues with optional label filtering.
@@ -35,33 +35,33 @@ public interface IIssueProvider : IAsyncDisposable
     Task<PagedResult<IssueSummary>> ListOpenIssuesAsync(int page, int pageSize, CancellationToken ct)
         => ListOpenIssuesAsync(page, pageSize, labels: null, ct);
 
-    Task<IReadOnlyList<IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct);
+    Task<IReadOnlyList<IssueComment>> ListCommentsAsync(IssueIdentifier identifier, CancellationToken ct);
 
     /// <summary>
     /// Posts a comment on the issue and returns the comment's HTML URL (or null if unavailable).
     /// </summary>
-    Task<string?> PostCommentAsync(string identifier, string body, CancellationToken ct);
-    Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct);
+    Task<string?> PostCommentAsync(IssueIdentifier identifier, string body, CancellationToken ct);
+    Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct);
 
     /// <summary>
     /// Adds labels to an issue identified by <paramref name="identifier"/>.
     /// </summary>
-    Task AddLabelsAsync(string identifier, IReadOnlyList<string> labels, CancellationToken ct);
+    Task AddLabelsAsync(IssueIdentifier identifier, IReadOnlyList<string> labels, CancellationToken ct);
 
     /// <summary>
     /// Closes an issue identified by <paramref name="identifier"/>.
     /// </summary>
-    Task CloseIssueAsync(string identifier, CancellationToken ct);
+    Task CloseIssueAsync(IssueIdentifier identifier, CancellationToken ct);
 
     /// <summary>
     /// Removes a single label from an issue. No-op if the label is not present.
     /// </summary>
-    Task RemoveLabelAsync(string identifier, string label, CancellationToken ct);
+    Task RemoveLabelAsync(IssueIdentifier identifier, string label, CancellationToken ct);
 
     /// <summary>
     /// Adds a single label to an issue.
     /// </summary>
-    Task AddLabelAsync(string identifier, string label, CancellationToken ct)
+    Task AddLabelAsync(IssueIdentifier identifier, string label, CancellationToken ct)
         => AddLabelsAsync(identifier, new[] { label }, ct);
 
     /// <summary>
@@ -105,7 +105,7 @@ public interface IIssueProvider : IAsyncDisposable
     /// Checks whether the specified issue is closed.
     /// Returns true if closed, false if open or not found.
     /// </summary>
-    Task<bool> IsIssueClosedAsync(string identifier, CancellationToken ct)
+    Task<bool> IsIssueClosedAsync(IssueIdentifier identifier, CancellationToken ct)
         => Task.FromResult(false);
 
     /// <summary>
@@ -135,5 +135,5 @@ public interface IIssueProvider : IAsyncDisposable
     /// Default: <c>#{identifier}</c> (GitHub/GitLab same-project autolink).
     /// Override for external trackers (e.g., Jira returns the identifier as-is since it already contains the project prefix).
     /// </summary>
-    string FormatIssueReference(string identifier) => $"#{identifier}";
+    string FormatIssueReference(IssueIdentifier identifier) => $"#{identifier}";
 }

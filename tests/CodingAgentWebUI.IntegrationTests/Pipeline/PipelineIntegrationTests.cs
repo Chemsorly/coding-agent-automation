@@ -224,7 +224,7 @@ public class PipelineIntegrationTests : IntegrationTestBase
     public async Task FullPipelineFlow_RealInternalServices()
     {
         // Issue with structured markdown so IssueDescriptionParser extracts sections
-        MockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        MockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "99",

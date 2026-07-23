@@ -25,10 +25,10 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         ClosedIssueIdentifiers.Clear();
     }
 
-    public Task<IssueDetail> GetIssueAsync(string identifier, CancellationToken ct)
+    public Task<IssueDetail> GetIssueAsync(IssueIdentifier identifier, CancellationToken ct)
     {
         if (ShouldFail) throw new HttpRequestException("Fake issue provider failure");
-        var issue = Issues.FirstOrDefault(i => i.Identifier == identifier)
+        var issue = Issues.FirstOrDefault(i => i.Identifier == identifier.Value)
             ?? throw new KeyNotFoundException($"Issue {identifier} not found in fake provider");
         return Task.FromResult(issue);
     }
@@ -51,28 +51,28 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         });
     }
 
-    public Task<IReadOnlyList<IssueComment>> ListCommentsAsync(string identifier, CancellationToken ct) =>
+    public Task<IReadOnlyList<IssueComment>> ListCommentsAsync(IssueIdentifier identifier, CancellationToken ct) =>
         Task.FromResult<IReadOnlyList<IssueComment>>(new List<IssueComment>());
 
-    public Task<string?> PostCommentAsync(string identifier, string body, CancellationToken ct)
+    public Task<string?> PostCommentAsync(IssueIdentifier identifier, string body, CancellationToken ct)
     {
-        PostedComments.Add((identifier, body));
+        PostedComments.Add((identifier.Value, body));
         return Task.FromResult<string?>(null);
     }
 
-    public Task UpdateCommentAsync(string issueIdentifier, string commentId, string body, CancellationToken ct) =>
+    public Task UpdateCommentAsync(IssueIdentifier issueIdentifier, string commentId, string body, CancellationToken ct) =>
         Task.CompletedTask;
 
-    public Task AddLabelsAsync(string identifier, IReadOnlyList<string> labels, CancellationToken ct)
+    public Task AddLabelsAsync(IssueIdentifier identifier, IReadOnlyList<string> labels, CancellationToken ct)
     {
         foreach (var label in labels)
-            LabelChanges.Add((identifier, label, true));
+            LabelChanges.Add((identifier.Value, label, true));
         return Task.CompletedTask;
     }
 
-    public Task RemoveLabelAsync(string identifier, string label, CancellationToken ct)
+    public Task RemoveLabelAsync(IssueIdentifier identifier, string label, CancellationToken ct)
     {
-        LabelChanges.Add((identifier, label, false));
+        LabelChanges.Add((identifier.Value, label, false));
         return Task.CompletedTask;
     }
 
@@ -90,9 +90,9 @@ public sealed class InMemoryIssueProvider : IIssueProvider
         });
     }
 
-    public Task CloseIssueAsync(string identifier, CancellationToken ct) => Task.CompletedTask;
-    public Task<bool> IsIssueClosedAsync(string identifier, CancellationToken ct)
-        => Task.FromResult(ClosedIssueIdentifiers.Contains(identifier));
+    public Task CloseIssueAsync(IssueIdentifier identifier, CancellationToken ct) => Task.CompletedTask;
+    public Task<bool> IsIssueClosedAsync(IssueIdentifier identifier, CancellationToken ct)
+        => Task.FromResult(ClosedIssueIdentifiers.Contains(identifier.Value));
     public Task<bool> HasAgentLabelsAsync(CancellationToken ct) => Task.FromResult(true);
     public Task<bool> EnsureAgentLabelsAsync(CancellationToken ct) => Task.FromResult(true);
     public Task ValidateAsync(CancellationToken ct) => Task.CompletedTask;

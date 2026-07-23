@@ -47,7 +47,7 @@ public class IntegrationTestBase : IDisposable
 
     private void SetupDefaultMocks()
     {
-        MockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        MockIssueProvider.Setup(p => p.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
             {
                 Identifier = "42",
@@ -55,9 +55,9 @@ public class IntegrationTestBase : IDisposable
                 Description = "## Requirements\nImplement feature X\n\n## Acceptance Criteria\n- [ ] Feature X works",
                 Labels = Array.Empty<string>()
             });
-        MockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        MockIssueProvider.Setup(p => p.PostCommentAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
-        MockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        MockIssueProvider.Setup(p => p.ListCommentsAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<IssueComment>());
         MockIssueProvider.Setup(p => p.InitializeAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
