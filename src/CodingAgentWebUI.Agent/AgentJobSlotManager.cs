@@ -30,7 +30,9 @@ public sealed class AgentJobSlotManager
     private JobAssignmentMessage? _activeJobAssignment;
     private DateTimeOffset? _activeJobStartedAt;
     private PipelineRunType _activeJobRunType;
-    private PipelineStep? _currentStep;
+    private int _currentStep = NullStep;
+
+    private const int NullStep = -1;
 
     private volatile CancellationTokenSource? _chatCts;
     private Task? _activeChatTask;
@@ -49,14 +51,22 @@ public sealed class AgentJobSlotManager
         _signalReady = signalReady;
     }
 
-    // TODO: Inconsistent thread-safety contract — ActiveChatSessionId acquires _busyLock for its
-    // read, but ActiveJobId, IsBusy, and CurrentStep do not. Consider making all property reads
-    // consistently use locks (or volatile) to establish a clear thread-safety contract for callers.
+    // NOTE: Thread-safety contract — ActiveChatSessionId acquires _busyLock for its read because
+    // it participates in TOCTOU-sensitive operations (CancelChatIfSession, GetChatSlotSnapshot).
+    // ActiveJobId uses volatile; CurrentStep uses Volatile.Read; IsBusy reads the volatile _activeJobId.
+    // This is intentional: single-field reads use lightweight barriers, multi-field consistency uses locks.
     /// <summary>Whether the agent is currently executing a job.</summary>
     public bool IsBusy => _activeJobId is not null;
 
     /// <summary>The current pipeline step being executed, or null if idle.</summary>
-    public PipelineStep? CurrentStep => _currentStep;
+    public PipelineStep? CurrentStep
+    {
+        get
+        {
+            var value = Volatile.Read(ref _currentStep);
+            return value == NullStep ? null : (PipelineStep)value;
+        }
+    }
 
     /// <summary>The active job ID, or null if idle.</summary>
     public string? ActiveJobId => _activeJobId;
@@ -223,7 +233,7 @@ public sealed class AgentJobSlotManager
     /// </summary>
     public void SetCurrentStep(PipelineStep? step)
     {
-        _currentStep = step;
+        Volatile.Write(ref _currentStep, step.HasValue ? (int)step.Value : NullStep);
     }
 
     /// <summary>
@@ -237,7 +247,7 @@ public sealed class AgentJobSlotManager
             _activeJobAssignment = null;
             _activeJobStartedAt = null;
             _activeJobRunType = default;
-            _currentStep = null;
+            _currentStep = NullStep;
         }
 
 #pragma warning disable 0420 // volatile field passed by reference to Interlocked — safe by design
@@ -297,7 +307,7 @@ public sealed class AgentJobSlotManager
             _activeJobAssignment = null;
             _activeJobStartedAt = null;
             _activeJobRunType = default;
-            _currentStep = null;
+            _currentStep = NullStep;
         }
 
 #pragma warning disable 0420 // volatile field passed by reference to Interlocked — safe by design
@@ -317,9 +327,14 @@ public sealed class AgentJobSlotManager
             if (_activeJobId is null || _activeJobAssignment is null)
                 return null;
 
+            // TODO: Consider using Volatile.Read(ref _currentStep) here for consistency with the
+            // CurrentStep property. Although _busyLock provides acquire/release fences, SetCurrentStep()
+            // writes outside the lock using Volatile.Write, so a plain read here relies on the CLR's
+            // current lock implementation emitting full barriers (which is not guaranteed by the spec).
+            var step = _currentStep;
             return ActiveJobStateFactory.Create(
                 _activeJobId, _activeJobAssignment,
-                _currentStep ?? PipelineStep.GeneratingCode,
+                step == NullStep ? PipelineStep.GeneratingCode : (PipelineStep)step,
                 _activeJobStartedAt ?? DateTimeOffset.UtcNow);
         }
     }
