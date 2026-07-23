@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using AwesomeAssertions;
 using Microsoft.Extensions.Hosting;
 using Moq;
@@ -147,6 +148,49 @@ public class AgentConnectionLifecycleTests
 
         sourceCode.Should().Contain("volatile HubConnectionManager? _hubManager",
             "The _hubManager field must be nullable to hold null after disposal");
+    }
+
+    [Fact]
+    public void SourceCode_UsesInterlockedCompareExchange_InReconnection()
+    {
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionLifecycle.cs"));
+
+        sourceCode.Should().Contain("Interlocked.CompareExchange(ref _hubManager, newManager, oldManager)",
+            "HandleTerminalClosedAsync must use Interlocked.CompareExchange to atomically swap the hub manager");
+    }
+
+    [Fact]
+    public void SourceCode_NoDirectHubManagerAssignment_OutsideConstructor()
+    {
+        var sourceCode = File.ReadAllText(
+            Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionLifecycle.cs"));
+
+        // Find all bare _hubManager = assignments (not inside Interlocked calls)
+        var matches = Regex.Matches(sourceCode, @"(?<!Interlocked\.\w+\(ref\s)_hubManager\s*=\s*");
+
+        // Extract the constructor body to identify which matches are in the constructor
+        var constructorStart = sourceCode.IndexOf("public AgentConnectionLifecycle(", StringComparison.Ordinal);
+        var constructorBodyStart = sourceCode.IndexOf('{', constructorStart);
+
+        // Find the matching closing brace for the constructor
+        var braceCount = 0;
+        var constructorEnd = -1;
+        for (var i = constructorBodyStart; i < sourceCode.Length; i++)
+        {
+            if (sourceCode[i] == '{') braceCount++;
+            else if (sourceCode[i] == '}') braceCount--;
+            if (braceCount == 0) { constructorEnd = i; break; }
+        }
+
+        // All bare _hubManager = assignments must be within the constructor
+        foreach (System.Text.RegularExpressions.Match match in matches)
+        {
+            var isInConstructor = match.Index > constructorBodyStart && match.Index < constructorEnd;
+            isInConstructor.Should().BeTrue(
+                $"_hubManager assignment at position {match.Index} must be inside the constructor or use Interlocked. " +
+                $"Found: ...{sourceCode.Substring(Math.Max(0, match.Index - 20), Math.Min(60, sourceCode.Length - match.Index))}...");
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
