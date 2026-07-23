@@ -7,7 +7,7 @@ using CodingAgentWebUI.Pipeline.Services;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
-/// Bundles the parameters needed by <see cref="LocalPipelineExecutor.CreateStepContext"/> into a single object,
+/// Bundles the parameters needed by <see cref="PipelineExecutionContextBuilder.CreateStepContext"/> into a single object,
 /// reducing the method's parameter count from 19 to 1 (plus CancellationToken).
 /// </summary>
 internal sealed record PipelineExecutionContext
