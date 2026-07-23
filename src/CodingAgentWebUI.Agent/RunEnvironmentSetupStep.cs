@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
@@ -82,84 +81,22 @@ internal sealed class RunEnvironmentSetupStep : IPipelineStep
                 context.Run.RunId, step.Name, step.Command);
             context.Callbacks.EmitOutputLine(SecretMasker.Mask($"🔧 Running setup: {step.Name}", effectiveSecrets));
 
-            try
+            var result = await SetupCommandRunner.RunAsync(
+                step.Command, step.Name, context.Run.WorkspacePath!, effectiveSecrets,
+                line => context.Callbacks.EmitOutputLine(line), ct);
+
+            if (!result.Success)
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "/bin/bash",
-                    WorkingDirectory = context.Run.WorkspacePath,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                psi.ArgumentList.Add("-c");
-                psi.ArgumentList.Add(step.Command);
-
-                // Inject secrets as environment variables into the child process
-                foreach (var (key, value) in effectiveSecrets)
-                    psi.Environment[key] = value;
-
-                using var process = new Process { StartInfo = psi };
-                process.Start();
-
-                // Read stdout and stderr concurrently to avoid pipe buffer deadlock
-                var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-                var stderrTask = process.StandardError.ReadToEndAsync(ct);
-
-                // Wait with 120-second timeout per step
-                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeoutCts.CancelAfter(TimeSpan.FromSeconds(120));
-
-                try
-                {
-                    await process.WaitForExitAsync(timeoutCts.Token);
-                }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                {
-                    // Timeout — kill the process tree
-                    try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-                    var timeoutMessage = $"Setup step '{step.Name}' timed out after 120 seconds";
-                    _logger.Error("Pipeline {RunId} setup step '{StepName}' timed out after 120s (command: {Command})",
-                        context.Run.RunId, step.Name, step.Command);
-                    await context.FailRunAsync(SecretMasker.Mask(timeoutMessage, effectiveSecrets), ct);
-                    return StepResult.Stop;
-                }
-
-                var stdout = await stdoutTask;
-                var stderr = await stderrTask;
-
-                // Emit masked output
-                if (!string.IsNullOrWhiteSpace(stdout))
-                    context.Callbacks.EmitOutputLine(SecretMasker.Mask(stdout.TrimEnd(), effectiveSecrets));
-                if (!string.IsNullOrWhiteSpace(stderr))
-                    context.Callbacks.EmitOutputLine(SecretMasker.Mask(stderr.TrimEnd(), effectiveSecrets));
-
-                if (process.ExitCode != 0)
-                {
-                    var truncatedStderr = stderr.Length > 500 ? stderr[..500] : stderr;
-                    var failureMessage = $"Setup step '{step.Name}' failed with exit code {process.ExitCode}: {truncatedStderr}";
-                    _logger.Error("Pipeline {RunId} setup step '{StepName}' failed with exit code {ExitCode} (command: {Command}): {Stderr}",
-                        context.Run.RunId, step.Name, process.ExitCode, step.Command, truncatedStderr.Trim());
-                    await context.FailRunAsync(SecretMasker.Mask(failureMessage, effectiveSecrets), ct);
-                    return StepResult.Stop;
-                }
-
-                _logger.Information("Pipeline {RunId} setup step '{StepName}' completed successfully (exit code 0)",
-                    context.Run.RunId, step.Name);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw; // Propagate pipeline-level cancellation
-            }
-            catch (Exception ex)
-            {
-                var failureMessage = $"Setup step '{step.Name}' threw an exception: {ex.Message}";
-                _logger.Error(ex, "Pipeline {RunId} setup step '{StepName}' threw an exception (command: {Command})",
-                    context.Run.RunId, step.Name, step.Command);
-                await context.FailRunAsync(SecretMasker.Mask(failureMessage, effectiveSecrets), ct);
+                // TODO: Record telemetry on failure (Activity.Current?.RecordMaskedError / SetStatus) to maintain
+                // observability parity with the Pipeline version of RunEnvironmentSetupStep.
+                _logger.Error("Pipeline {RunId} setup step '{StepName}' failed: {Message}",
+                    context.Run.RunId, step.Name, result.FailureMessage);
+                await context.FailRunAsync(result.FailureMessage!, ct);
                 return StepResult.Stop;
             }
+
+            _logger.Information("Pipeline {RunId} setup step '{StepName}' completed successfully (exit code 0)",
+                context.Run.RunId, step.Name);
         }
 
         _logger.Information("Pipeline {RunId} environment setup complete ({StepCount} steps executed successfully)",
