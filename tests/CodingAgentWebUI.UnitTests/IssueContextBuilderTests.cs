@@ -241,4 +241,31 @@ public class IssueContextBuilderTests
         result.ForceRefreshAnalysis.Should().BeFalse();
         result.StalenessSignal.Should().BeNull();
     }
+
+    [Fact]
+    public async Task BuildIssueContextAsync_ExtractsImagesFromBodyAndComments()
+    {
+        var issueDescription = "See the error below:\n\n![screenshot](https://github.com/user-attachments/assets/abc123.png)\n\nPlease fix this.";
+        var comments = new List<IssueComment>
+        {
+            new()
+            {
+                Id = "c1",
+                Body = "Here is another screenshot:\n\n<img src=\"https://github.com/user-attachments/assets/def456.png\" alt=\"error details\">",
+                Author = "user",
+                CreatedAt = DateTime.UtcNow
+            }
+        };
+        SetupIssueProvider(comments, issueDescription);
+
+        var infra = CreateInfrastructure();
+        var result = await infra.BuildIssueContextAsync("42", "issue-provider-1", CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.IssueDetail.Images.Should().HaveCount(2);
+        result.IssueDetail.Images[0].Url.Should().Be("https://github.com/user-attachments/assets/abc123.png");
+        result.IssueDetail.Images[0].SourceType.Should().Be(ImageSourceType.Body);
+        result.IssueDetail.Images[1].Url.Should().Be("https://github.com/user-attachments/assets/def456.png");
+        result.IssueDetail.Images[1].SourceType.Should().Be(ImageSourceType.Comment);
+    }
 }

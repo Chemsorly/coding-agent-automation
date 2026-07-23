@@ -178,6 +178,18 @@ public sealed class DispatchInfrastructure
                 : allComments;
         }
 
+        // Extract images from body + comments (mirrors FetchIssueStep pattern)
+        var imageExtractor = new IssueImageExtractor();
+        var images = imageExtractor.Extract(issueDetail.Description, issueComments, issueIdentifier, ImageSourceKind.Issue);
+        issueDetail = new IssueDetail
+        {
+            Description = issueDetail.Description,
+            Identifier = issueDetail.Identifier,
+            Labels = issueDetail.Labels,
+            Title = issueDetail.Title,
+            Images = images
+        };
+
         // Detect existing analysis and rework state from comments.
         // NOTE: Only gate_rejection and gate_wont_do are detected here.
         // The three AnalysisStalenessDetector signals (body_changed, agent_error,
