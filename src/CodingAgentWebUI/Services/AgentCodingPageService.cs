@@ -617,8 +617,6 @@ public class AgentCodingPageService : IDisposable
             () => IsIssueDrawerOpen = true,
             OpenIssueDrawerAsync);
 
-    // TODO: Returning (false, null, null) when template is null causes the component to silently clear _errorMessage.
-    // The old code returned early without modifying error state. Consider returning early or returning an error message.
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(IssueSummary issue)
         => DispatchFromDrawerCoreAsync(
             IssueDrawerTemplate, issue,
@@ -653,7 +651,6 @@ public class AgentCodingPageService : IDisposable
             () => IsPrDrawerOpen = true,
             OpenPrDrawerAsync);
 
-    // TODO: Same (false, null, null) issue as DispatchFromIssueDrawerAsync — silently clears component error state.
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(PullRequestSummary pr)
         => DispatchFromDrawerCoreAsync(
             PrDrawerTemplate, pr,
@@ -688,7 +685,6 @@ public class AgentCodingPageService : IDisposable
             () => IsEpicDrawerOpen = true,
             OpenEpicDrawerAsync);
 
-    // TODO: Same (false, null, null) issue as DispatchFromIssueDrawerAsync — silently clears component error state.
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(IssueSummary issue)
         => DispatchFromDrawerCoreAsync(
             EpicDrawerTemplate, issue,
@@ -752,7 +748,7 @@ public class AgentCodingPageService : IDisposable
     }
 
     /// <summary>
-    /// Shared dispatch lifecycle: guard null template → set dispatching flag → dispatch → optionally close on success.
+    /// Shared dispatch lifecycle: set dispatching flag → guard null template → dispatch → optionally close on success.
     /// </summary>
     private async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromDrawerCoreAsync<TItem>(
         PipelineJobTemplate? drawerTemplate,
@@ -761,10 +757,10 @@ public class AgentCodingPageService : IDisposable
         Func<TItem, PipelineJobTemplate, Task<(bool Success, string? Error, string? SuccessMessage)>> dispatchAsync,
         Action? closeDrawer)
     {
-        if (drawerTemplate == null) return (false, null, null);
         setDispatching(true);
         try
         {
+            if (drawerTemplate == null) return (false, "No template selected. Please select a template first.", null);
             var (success, error, successMessage) = await dispatchAsync(item, drawerTemplate);
             if (success && closeDrawer != null) closeDrawer();
             return (success, error, successMessage);
