@@ -12,7 +12,7 @@ public interface ILabelService
     /// Swaps the agent label on an entity: removes all existing agent labels, then adds <paramref name="newLabel"/>.
     /// Routes to the correct provider based on <paramref name="targetKind"/>.
     /// </summary>
-    Task SwapLabelAsync(ProviderConfigId providerConfigId, string identifier, string newLabel,
+    Task SwapLabelAsync(ProviderConfigId providerConfigId, IssueIdentifier identifier, string newLabel,
         LabelTargetKind targetKind, CancellationToken ct);
 
     /// <summary>
@@ -20,7 +20,7 @@ public interface ILabelService
     /// If <paramref name="expectedCurrentLabel"/> is provided, validates the transition via
     /// <see cref="LabelStateMachine"/> and logs a warning on invalid transitions (fail-open).
     /// </summary>
-    Task SwapLabelAsync(ProviderConfigId providerConfigId, string identifier, string newLabel,
+    Task SwapLabelAsync(ProviderConfigId providerConfigId, IssueIdentifier identifier, string newLabel,
         LabelTargetKind targetKind, string? expectedCurrentLabel, CancellationToken ct)
         => SwapLabelAsync(providerConfigId, identifier, newLabel, targetKind, ct);
 
@@ -36,6 +36,6 @@ public interface ILabelService
     /// <summary>
     /// Backward-compatible overload for existing call sites (routes to Issue).
     /// </summary>
-    Task SwapLabelAsync(ProviderConfigId providerConfigId, string identifier, string newLabel, CancellationToken ct)
+    Task SwapLabelAsync(ProviderConfigId providerConfigId, IssueIdentifier identifier, string newLabel, CancellationToken ct)
         => SwapLabelAsync(providerConfigId, identifier, newLabel, LabelTargetKind.Issue, ct);
 }

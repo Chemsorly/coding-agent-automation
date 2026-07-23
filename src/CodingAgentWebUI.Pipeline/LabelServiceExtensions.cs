@@ -18,7 +18,7 @@ public static class LabelServiceExtensions
     public static async Task TrySwapLabelAsync(
         this ILabelService labelService,
         ProviderConfigId providerConfigId,
-        string identifier,
+        IssueIdentifier identifier,
         string newLabel,
         LabelTargetKind targetKind,
         ILogger logger,

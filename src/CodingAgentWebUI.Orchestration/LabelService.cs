@@ -33,7 +33,7 @@ public sealed class LabelService : ILabelService
     /// <inheritdoc />
     public async Task SwapLabelAsync(
         ProviderConfigId providerConfigId,
-        string identifier,
+        IssueIdentifier identifier,
         string newLabel,
         LabelTargetKind targetKind,
         CancellationToken ct)
@@ -44,13 +44,13 @@ public sealed class LabelService : ILabelService
     /// <inheritdoc />
     public async Task SwapLabelAsync(
         ProviderConfigId providerConfigId,
-        string identifier,
+        IssueIdentifier identifier,
         string newLabel,
         LabelTargetKind targetKind,
         string? expectedCurrentLabel,
         CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(identifier);
+        ArgumentException.ThrowIfNullOrEmpty(identifier.Value);
         ArgumentNullException.ThrowIfNull(newLabel);
         // TODO: Validate providerConfigId.Value is not null/empty. The previous string parameter
         // had ArgumentNullException.ThrowIfNull(providerConfigId) which is now lost because structs

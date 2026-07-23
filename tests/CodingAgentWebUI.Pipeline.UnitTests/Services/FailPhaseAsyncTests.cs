@@ -60,7 +60,7 @@ public class FailPhaseAsyncTests
             });
 
         // Default: SwapLabelAsync completes successfully
-        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         // Default: UpdateFileChangeStats completes successfully
@@ -244,7 +244,7 @@ public class FailPhaseAsyncTests
         result.Should().BeTrue();
         _run.FailureReason.Should().BeNull();
         _mockIssueOps.Verify(
-            o => o.SwapLabelAsync(It.IsAny<string>(), AgentLabels.Error, It.IsAny<CancellationToken>()),
+            o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), AgentLabels.Error, It.IsAny<CancellationToken>()),
             Times.Never);
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Never);
     }

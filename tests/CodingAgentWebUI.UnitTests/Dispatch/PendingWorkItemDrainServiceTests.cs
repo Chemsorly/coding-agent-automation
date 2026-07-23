@@ -159,7 +159,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
 
         // Assert: label was NOT swapped
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Assert: WorkItem was reverted to Pending (not stuck in Dispatched)
@@ -217,7 +217,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
 
         // Assert: label was NOT swapped
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -290,7 +290,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
             Times.Once);
         // Ensure issue provider was NOT used
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync("issue-provider-1", It.IsAny<string>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync("issue-provider-1", It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 

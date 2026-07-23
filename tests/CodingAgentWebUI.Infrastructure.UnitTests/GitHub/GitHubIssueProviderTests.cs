@@ -3,6 +3,7 @@ using Moq;
 using Octokit;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline.Interfaces;
 
@@ -171,7 +172,6 @@ public class GitHubIssueProviderTests
     }
 
     [Theory]
-    [InlineData(null, "100", "body", "issueIdentifier")]
     [InlineData("42", null, "body", "commentId")]
     [InlineData("42", "100", null, "body")]
     public async Task UpdateCommentAsync_NullParams_ThrowsArgumentNullException(
@@ -180,6 +180,14 @@ public class GitHubIssueProviderTests
         var act = () => _provider.UpdateCommentAsync(issueIdentifier!, commentId!, body!, CancellationToken.None);
         (await act.Should().ThrowAsync<ArgumentNullException>())
             .Which.ParamName.Should().Be(expectedParamName);
+    }
+
+    [Fact]
+    public async Task UpdateCommentAsync_EmptyIdentifier_ThrowsArgumentException()
+    {
+        var act = () => _provider.UpdateCommentAsync(default(IssueIdentifier), "100", "body", CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentException>())
+            .Which.ParamName.Should().Be("issueIdentifier.Value");
     }
 
     [Theory]
@@ -207,11 +215,11 @@ public class GitHubIssueProviderTests
     }
 
     [Fact]
-    public async Task AddLabelsAsync_NullIdentifier_ThrowsArgumentNullException()
+    public async Task AddLabelsAsync_NullIdentifier_ThrowsArgumentException()
     {
-        var act = () => _provider.AddLabelsAsync(null!, new List<string> { "bug" }.AsReadOnly(), CancellationToken.None);
-        (await act.Should().ThrowAsync<ArgumentNullException>())
-            .Which.ParamName.Should().Be("identifier");
+        var act = () => _provider.AddLabelsAsync(default, new List<string> { "bug" }.AsReadOnly(), CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentException>())
+            .Which.ParamName.Should().Be("identifier.Value");
     }
 
     [Fact]
@@ -243,11 +251,11 @@ public class GitHubIssueProviderTests
     }
 
     [Fact]
-    public async Task CloseIssueAsync_NullIdentifier_ThrowsArgumentNullException()
+    public async Task CloseIssueAsync_NullIdentifier_ThrowsArgumentException()
     {
-        var act = () => _provider.CloseIssueAsync(null!, CancellationToken.None);
-        (await act.Should().ThrowAsync<ArgumentNullException>())
-            .Which.ParamName.Should().Be("identifier");
+        var act = () => _provider.CloseIssueAsync(default, CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentException>())
+            .Which.ParamName.Should().Be("identifier.Value");
     }
 
     [Fact]
@@ -281,11 +289,11 @@ public class GitHubIssueProviderTests
     }
 
     [Fact]
-    public async Task RemoveLabelAsync_NullIdentifier_ThrowsArgumentNullException()
+    public async Task RemoveLabelAsync_NullIdentifier_ThrowsArgumentException()
     {
-        var act = () => _provider.RemoveLabelAsync(null!, "label", CancellationToken.None);
-        (await act.Should().ThrowAsync<ArgumentNullException>())
-            .Which.ParamName.Should().Be("identifier");
+        var act = () => _provider.RemoveLabelAsync(default, "label", CancellationToken.None);
+        (await act.Should().ThrowAsync<ArgumentException>())
+            .Which.ParamName.Should().Be("identifier.Value");
     }
 
     [Fact]
