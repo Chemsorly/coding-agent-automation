@@ -7,7 +7,7 @@ using CodingAgentWebUI.Pipeline.Services;
 namespace CodingAgentWebUI.Agent;
 
 /// <summary>
-/// Bundles the parameters needed by <see cref="LocalPipelineExecutor.CreatePullRequestAsync"/> into a single object,
+/// Bundles the parameters needed by <see cref="PipelineExecutionContextBuilder"/> for PR creation into a single object,
 /// reducing the method's parameter count from 14 to 5.
 /// </summary>
 internal sealed record PullRequestCreationContext
