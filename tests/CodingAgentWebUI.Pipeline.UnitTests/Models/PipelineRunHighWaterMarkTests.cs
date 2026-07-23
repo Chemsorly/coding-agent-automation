@@ -221,7 +221,7 @@ public class PipelineRunHighWaterMarkTests
                 }
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
-        _mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = false });

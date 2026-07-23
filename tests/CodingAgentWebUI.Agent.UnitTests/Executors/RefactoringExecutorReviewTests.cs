@@ -36,7 +36,7 @@ public class RefactoringExecutorReviewTests : IDisposable
 
         // Default: GetLatestSessionIdAsync returns a fake session ID (needed by AdversarialReviewHelper)
         _mockAgentProvider
-            .Setup(x => x.GetLatestSessionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(x => x.GetLatestSessionIdAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("fake-session-id");
     }
 

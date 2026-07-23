@@ -128,11 +128,11 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 }
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
-        _mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockAgentProvider.Setup(p => p.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = false });
-        _mockAgentProvider.Setup(p => p.GetLatestSessionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockAgentProvider.Setup(p => p.GetLatestSessionIdAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((string?)null);
 
         _mockValidator.Setup(v => v.ValidateAsync(It.IsAny<string>(), It.IsAny<IReadOnlyList<QualityGateConfiguration>>(), It.IsAny<CancellationToken>()))
@@ -349,7 +349,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         var run = await _service.RunAsync("issue-1", "repo-1", "42", "agent-1", CancellationToken.None);
 
         _mockAgentProvider.Verify(
-            p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            p => p.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()),
             Times.Once);
         _mockAgentProvider.Verify(
             p => p.ExecuteAsync(
@@ -1029,7 +1029,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
         firstRepoProvider.Setup(p => p.PushBranchAsync(It.IsAny<WorkspacePath>(), It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         firstRepoProvider.Setup(p => p.CreatePullRequestAsync(It.IsAny<PullRequestInfo>(), It.IsAny<CancellationToken>())).ReturnsAsync("https://github.com/test/pr/1");
         firstAgentProvider.Setup(p => p.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>())).ReturnsAsync(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
-        firstAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        firstAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
         firstAgentProvider.Setup(p => p.GetHealthStatus()).Returns(new AgentHealthStatus { IsExecuting = false });
 
         _mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>())).Returns(firstIssueProvider.Object);
@@ -1591,7 +1591,7 @@ public class PipelineOrchestrationServiceTests : IDisposable
                 }
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
-        mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         mockAgentProvider.Setup(p => p.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = false });

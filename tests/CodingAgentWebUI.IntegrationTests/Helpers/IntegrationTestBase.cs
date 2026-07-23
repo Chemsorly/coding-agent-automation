@@ -87,7 +87,7 @@ public class IntegrationTestBase : IDisposable
                 }
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
-        MockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        MockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         MockAgentProvider.Setup(p => p.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = false });

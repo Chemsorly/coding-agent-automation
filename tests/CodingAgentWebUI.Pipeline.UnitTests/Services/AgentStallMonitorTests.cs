@@ -184,7 +184,7 @@ public class AgentStallMonitorTests
 
         var called = false;
         var tcs = new TaskCompletionSource();
-        _mockAgent.Setup(a => a.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockAgent.Setup(a => a.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(() => { called = true; return tcs.Task; });
 
         var task = AgentStallMonitor.MonitorAsync(

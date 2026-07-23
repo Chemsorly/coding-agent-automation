@@ -404,7 +404,7 @@ public class PreparingForPullRequestPropertyTests
                 }
                 return Task.FromResult(new AgentResult { ExitCode = 0, OutputLines = Array.Empty<string>() });
             });
-        mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        mockAgentProvider.Setup(p => p.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         mockAgentProvider.Setup(p => p.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = false });
