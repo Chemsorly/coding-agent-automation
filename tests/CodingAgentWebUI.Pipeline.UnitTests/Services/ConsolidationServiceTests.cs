@@ -128,6 +128,33 @@ public sealed class ConsolidationServiceTests : IDisposable
         File.Exists(filePath).Should().BeTrue();
     }
 
+    [Fact]
+    public async Task TriggerAsync_ValidTemplate_SetsProjectNameFromOwningProject()
+    {
+        // Validates: ConsolidationRun must carry the owning project's display name
+        // so the UI PROJECT column shows the project instead of "—".
+        var sut = CreateSut();
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.RefactoringDetection, "tmpl-1", CancellationToken.None);
+
+        run.Should().NotBeNull();
+        run!.ProjectName.Should().Be("Default");
+    }
+
+    [Fact]
+    public async Task TriggerAsync_GlobalTemplate_ProjectNameIsNull()
+    {
+        // Global consolidation runs (templateId=null) have no owning project.
+        var sut = CreateSut();
+
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.HarnessSuggestions, null, CancellationToken.None);
+
+        run.Should().NotBeNull();
+        run!.ProjectName.Should().BeNull();
+    }
+
     #endregion
 
     #region TriggerAsync — duplicate running rejects

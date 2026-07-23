@@ -57,6 +57,12 @@ public sealed class ConsolidationRun
     public IReadOnlyList<string>? QueuedRequiredLabels { get; set; }
 
     /// <summary>
+    /// Project display name for the owning project (resolved from template → project at trigger time).
+    /// Null for global consolidation runs (no owning project).
+    /// </summary>
+    public string? ProjectName { get; set; }
+
+    /// <summary>
     /// When true, created refactoring issues will receive both <c>agent:generated</c> and
     /// <c>agent:next</c> labels, immediately dispatching them for agent execution.
     /// Defaults to <c>false</c> for backward compatibility with old persisted runs.

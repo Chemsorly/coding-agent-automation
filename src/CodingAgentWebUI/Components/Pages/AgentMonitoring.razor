@@ -133,7 +133,7 @@
                                         <Icon Name="@GetConsolidationTypeIconName(cRun.Type)" Size="14" /> @FormatConsolidationRunTypeShort(cRun.Type)
                                     </span>
                                 </td>
-                                <td>—</td>
+                                <td>@(string.IsNullOrEmpty(cRun.ProjectName) ? "—" : cRun.ProjectName)</td>
                                 <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
                                 <td title="@(cAgent?.AgentId ?? "—")">@(cAgent?.AgentId ?? "—")</td>
                                 <td>
@@ -491,7 +491,7 @@
                                         <Icon Name="@GetConsolidationTypeIconName(cRun.Type)" Size="14" /> @FormatConsolidationRunTypeShort(cRun.Type)
                                     </span>
                                 </td>
-                                <td>—</td>
+                                <td>@(string.IsNullOrEmpty(cRun.ProjectName) ? "—" : cRun.ProjectName)</td>
                                 <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
                                 <td>consolidation</td>
                                 <td>@cRun.StartedAtUtc.ToLocalTime().ToString("HH:mm:ss")</td>
