@@ -80,7 +80,8 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
                 {
                     CurrentStep = liveRun.CurrentStep,
                     AgentId = summaries[i].AgentId ?? liveRun.AgentId,
-                    IssueTitle = !string.IsNullOrEmpty(liveRun.IssueTitle) ? liveRun.IssueTitle : summaries[i].IssueTitle
+                    IssueTitle = !string.IsNullOrEmpty(liveRun.IssueTitle) ? liveRun.IssueTitle : summaries[i].IssueTitle,
+                    ProjectName = summaries[i].ProjectName ?? liveRun.ProjectName
                 };
             }
 

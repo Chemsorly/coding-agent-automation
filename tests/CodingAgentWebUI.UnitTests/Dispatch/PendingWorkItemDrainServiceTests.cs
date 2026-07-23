@@ -89,7 +89,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         // Use a completion signal to know when the label swap has been invoked
         var labelSwapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockLabelService
-            .Setup(l => l.SwapLabelAsync("issue-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Setup(l => l.SwapLabelStrictAsync("issue-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask)
             .Callback(() => labelSwapCalled.TrySetResult());
 
@@ -107,7 +107,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         // Assert: label swap was actually called (not a timeout)
         completed.Should().BeSameAs(labelSwapCalled.Task, "label swap should have been called within timeout");
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync("issue-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            l => l.SwapLabelStrictAsync("issue-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
             Times.Once);
     }
 
@@ -159,7 +159,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
 
         // Assert: label was NOT swapped
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            l => l.SwapLabelStrictAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Assert: WorkItem was reverted to Pending (not stuck in Dispatched)
@@ -217,7 +217,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
 
         // Assert: label was NOT swapped
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            l => l.SwapLabelStrictAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -268,7 +268,7 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         // Use a completion signal to know when the label swap has been invoked
         var labelSwapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _mockLabelService
-            .Setup(l => l.SwapLabelAsync("repo-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()))
+            .Setup(l => l.SwapLabelStrictAsync("repo-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask)
             .Callback(() => labelSwapCalled.TrySetResult());
 
@@ -286,12 +286,221 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
         // Assert: label swap was called with PullRequest target kind and repo provider (NOT issue provider)
         completed.Should().BeSameAs(labelSwapCalled.Task, "label swap should have been called within timeout");
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync("repo-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()),
+            l => l.SwapLabelStrictAsync("repo-provider-1", "org/repo#42", AgentLabels.InProgress, LabelTargetKind.PullRequest, It.IsAny<CancellationToken>()),
             Times.Once);
         // Ensure issue provider was NOT used
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync("issue-provider-1", It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            l => l.SwapLabelStrictAsync("issue-provider-1", It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
             Times.Never);
+    }
+
+    [Fact]
+    public async Task DrainPendingItems_LabelSwapTransientFailure_RetriesAndSucceeds()
+    {
+        // Arrange: insert a Pending WorkItem
+        var workItemId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "org/repo#200",
+            IssueProviderConfigId = "issue-provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            RunId = workItemId.ToString(),
+            TimeoutSeconds = 3600
+        };
+        var payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#200",
+                IssueProviderConfigId = "issue-provider-1",
+                Status = WorkItemStatus.Pending,
+                Payload = payload,
+                AgentSelector = "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Setup: idle agent available
+        _mockResolver.Setup(r => r.ResolveAgent(""))
+            .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockAgentComm.Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Setup: label swap fails on first call, succeeds on second
+        var callCount = 0;
+        var labelSwapDone = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockLabelService
+            .Setup(l => l.SwapLabelStrictAsync("issue-provider-1", "org/repo#200", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Returns(() =>
+            {
+                callCount++;
+                if (callCount == 1)
+                    return Task.FromException(new HttpRequestException("rate limited"));
+                labelSwapDone.TrySetResult();
+                return Task.CompletedTask;
+            });
+
+        var service = CreateService();
+
+        // Act: trigger a single drain cycle and wait for label swap to complete
+        service.Signal();
+        await service.StartAsync(CancellationToken.None);
+        var completed = await Task.WhenAny(labelSwapDone.Task, Task.Delay(10_000));
+
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+        try { await service.StopAsync(cts.Token); } catch (OperationCanceledException) { }
+
+        // Assert: label swap was retried and succeeded on the second attempt
+        completed.Should().BeSameAs(labelSwapDone.Task, "label swap should have succeeded on retry within timeout");
+        _mockLabelService.Verify(
+            l => l.SwapLabelStrictAsync("issue-provider-1", "org/repo#200", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            Times.Exactly(2));
+
+        // Assert: NeedsLabelReconciliation is NOT set (swap eventually succeeded)
+        await using var checkDb = await _dbFactory.CreateDbContextAsync();
+        var item = await checkDb.WorkItems.FindAsync(workItemId);
+        item.Should().NotBeNull();
+        item!.NeedsLabelReconciliation.Should().BeFalse();
+        item.Status.Should().Be(WorkItemStatus.Dispatched);
+    }
+
+    [Fact]
+    public async Task DrainPendingItems_LabelSwapExhaustsRetries_FlagsForReconciliation()
+    {
+        // Arrange: insert a Pending WorkItem
+        var workItemId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "org/repo#201",
+            IssueProviderConfigId = "issue-provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            RunId = workItemId.ToString(),
+            TimeoutSeconds = 3600
+        };
+        var payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#201",
+                IssueProviderConfigId = "issue-provider-1",
+                Status = WorkItemStatus.Pending,
+                Payload = payload,
+                AgentSelector = "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Setup: idle agent available
+        _mockResolver.Setup(r => r.ResolveAgent(""))
+            .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockAgentComm.Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Setup: label swap always fails
+        _mockLabelService
+            .Setup(l => l.SwapLabelStrictAsync("issue-provider-1", "org/repo#201", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("API unavailable"));
+
+        var service = CreateService();
+
+        // Act: trigger a single drain cycle
+        await InvokeDrainAsync(service);
+
+        // Assert: label swap was called exactly 3 times (1 initial + 2 retries)
+        _mockLabelService.Verify(
+            l => l.SwapLabelStrictAsync("issue-provider-1", "org/repo#201", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            Times.Exactly(3));
+
+        // Assert: NeedsLabelReconciliation flag is set
+        await using var checkDb = await _dbFactory.CreateDbContextAsync();
+        var item = await checkDb.WorkItems.FindAsync(workItemId);
+        item.Should().NotBeNull();
+        item!.NeedsLabelReconciliation.Should().BeTrue("flag should be set after retry exhaustion");
+
+        // Assert: dispatch itself succeeded (status is Dispatched, not reverted)
+        item.Status.Should().Be(WorkItemStatus.Dispatched);
+    }
+
+    [Fact]
+    public async Task DrainPendingItems_LabelSwapCancellation_DoesNotRetryOrFlag()
+    {
+        // Arrange: insert a Pending WorkItem
+        var workItemId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "org/repo#202",
+            IssueProviderConfigId = "issue-provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            RunId = workItemId.ToString(),
+            TimeoutSeconds = 3600
+        };
+        var payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#202",
+                IssueProviderConfigId = "issue-provider-1",
+                Status = WorkItemStatus.Pending,
+                Payload = payload,
+                AgentSelector = "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Setup: idle agent available
+        _mockResolver.Setup(r => r.ResolveAgent(""))
+            .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockAgentComm.Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Setup: label swap throws OperationCanceledException (shutdown)
+        _mockLabelService
+            .Setup(l => l.SwapLabelStrictAsync("issue-provider-1", "org/repo#202", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+
+        var service = CreateService();
+
+        // Act: trigger drain — OCE should propagate up, no retry, no flag
+        await InvokeDrainAsync(service);
+
+        // Assert: label swap was only called once (no retry on OCE)
+        _mockLabelService.Verify(
+            l => l.SwapLabelStrictAsync("issue-provider-1", "org/repo#202", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Assert: NeedsLabelReconciliation flag is NOT set
+        await using var checkDb = await _dbFactory.CreateDbContextAsync();
+        var item = await checkDb.WorkItems.FindAsync(workItemId);
+        item.Should().NotBeNull();
+        item!.NeedsLabelReconciliation.Should().BeFalse("OCE should not trigger reconciliation flag");
     }
 
     [Fact]
