@@ -235,12 +235,14 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
                 await _signalRPipeline.ExecuteAsync(async token =>
                     await newManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), ct);
 
-                // TODO: TOCTOU race — if DisposeAsync runs between reading oldManager and this assignment,
-                // newManager will be written into _hubManager after DisposeAsync has already completed,
-                // leaking the connection. Use Interlocked.CompareExchange(ref _hubManager, newManager, oldManager)
-                // and dispose newManager if the CAS fails.
-                _hubManager = newManager;
-                newManager = null; // Ownership transferred — skip disposal
+                if (Interlocked.CompareExchange(ref _hubManager, newManager, oldManager) != oldManager)
+                {
+                    // CAS failed — DisposeAsync ran concurrently; dispose the orphaned newManager
+                    await SafeDisposeAsync(newManager);
+                    newManager = null;
+                    return;
+                }
+                newManager = null; // Ownership transferred — skip disposal in catch
 
                 // Dispose old manager after successful swap.
                 // Safe: DisposeAsync does not fire the Closed event (no re-entrant call).

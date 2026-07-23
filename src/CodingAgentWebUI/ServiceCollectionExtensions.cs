@@ -129,7 +129,8 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             Log.Logger,
             sp.GetRequiredService<IConsolidationRunStore>(),
-            sp.GetRequiredService<IConsolidationJobPreparationService>()));
+            sp.GetRequiredService<IConsolidationJobPreparationService>(),
+            new Lazy<IConsolidationRunTracker>(() => sp.GetRequiredService<IConsolidationRunTracker>())));
 
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
             Log.Logger,
@@ -139,6 +140,9 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IConsolidationRunStore>(),
             sp.GetRequiredService<IHarnessSuggestionStore>(),
             sp.GetRequiredService<IConsolidationDispatcher>()));
+
+        services.AddSingleton<IConsolidationRunTracker>(sp =>
+            (IConsolidationRunTracker)sp.GetRequiredService<IConsolidationService>());
 
         services.AddSingleton<ConsolidationBadgeService>();
         services.AddSingleton<ProjectChangeNotifier>();

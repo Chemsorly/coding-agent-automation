@@ -690,4 +690,59 @@ public sealed class ConsolidationServiceTests : IDisposable
     }
 
     #endregion
+
+    #region IConsolidationRunTracker
+
+    [Fact]
+    public void ConsolidationService_ImplementsIConsolidationRunTracker()
+    {
+        var sut = CreateSut();
+        sut.Should().BeAssignableTo<IConsolidationRunTracker>();
+    }
+
+    [Fact]
+    public async Task IConsolidationRunTracker_TransitionToRunningAsync_UpdatesInMemoryTracker()
+    {
+        // Arrange: create a queued run and add it to the in-memory tracker via TriggerAsync
+        var mockDispatcher = new Mock<IConsolidationDispatcher>();
+        mockDispatcher
+            .Setup(d => d.TryDispatchAsync(It.IsAny<ConsolidationRun>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ConsolidationDispatchResult.Queued);
+
+        var sut = new ConsolidationService(
+            _logger,
+            _config,
+            _mockProjectStore.Object,
+            _mockRunHistory.Object,
+            new FileSystemConsolidationRunStore(_runsDir),
+            new FileSystemHarnessSuggestionStore(_suggestionsPath),
+            mockDispatcher.Object);
+
+        // Trigger a run that gets queued — this adds it to _runningRuns with Queued status
+        var run = await sut.TriggerAsync(
+            ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
+        run.Should().NotBeNull();
+        run!.Status.Should().Be(ConsolidationRunStatus.Queued);
+
+        var originalStartedAt = run.StartedAtUtc;
+
+        // Small delay to ensure new StartedAtUtc is distinct
+        await Task.Delay(10);
+
+        // Act: call TransitionToRunningAsync via IConsolidationRunTracker interface
+        IConsolidationRunTracker tracker = sut;
+        await tracker.TransitionToRunningAsync(run.RunId, CancellationToken.None);
+
+        // Assert: in-memory tracker shows correct StartedAtUtc (updated, not original)
+        sut.IsRunActive(run.RunId).Should().BeTrue();
+        var updatedStartedAt = sut.GetActiveRunStartedAt(run.RunId);
+        updatedStartedAt.Should().NotBeNull();
+        updatedStartedAt!.Value.Should().BeAfter(originalStartedAt);
+    }
+
+    // TODO: Add negative test for TransitionToRunningAsync with a non-Queued run (e.g., already Running).
+    // Should verify the guard at ConsolidationService.cs (Status != Queued → return) prevents double-transition.
+    // The dispatcher-level test uses a mock tracker and does not exercise this actual guard.
+
+    #endregion
 }
