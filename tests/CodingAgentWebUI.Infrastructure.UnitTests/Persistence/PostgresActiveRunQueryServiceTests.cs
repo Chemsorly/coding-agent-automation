@@ -176,6 +176,67 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
         results.Should().ContainSingle();
     }
 
+    /// <summary>
+    /// Regression test: when a run is dispatched normally (no restart), the PipelineRuns
+    /// table doesn't have a row yet (only created at completion). The Active Runs query
+    /// does a LEFT JOIN which produces null ProjectName from DB. The enrichment loop must
+    /// propagate ProjectName from the in-memory PipelineRun so the UI shows it.
+    /// </summary>
+    [Fact]
+    public async Task GetActiveRunsAsync_EnrichesProjectNameFromInMemoryRun_WhenDbHasNoProjectName()
+    {
+        // Arrange — WorkItem in DB with no matching PipelineRuns row (normal active state)
+        var workItemId = Guid.NewGuid();
+        await using (var db = new InMemoryPipelineDbContext(_options))
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                IssueIdentifier = "1572",
+                IssueProviderConfigId = "issue-cfg-1",
+                Status = WorkItemStatus.Running,
+                TaskType = WorkItemTaskType.Implementation,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+                DispatchedAt = DateTimeOffset.UtcNow.AddMinutes(-10),
+                Payload = "{}",
+                AssignedAgentId = "caa-test-agent"
+            });
+            // No PipelineRuns row — normal for active runs before completion
+            await db.SaveChangesAsync();
+        }
+
+        // In-memory PipelineRun has ProjectName set from dispatch
+        var liveRun = PipelineRun.Create(
+            runId: workItemId.ToString(),
+            issueIdentifier: "1572",
+            issueTitle: "Extract step-pipeline builders",
+            issueProviderConfigId: "issue-cfg-1",
+            repoProviderConfigId: "repo-cfg-1",
+            runType: PipelineRunType.Implementation,
+            startedAt: DateTimeOffset.UtcNow.AddMinutes(-10),
+            initiatedBy: "loop",
+            agentId: "caa-test-agent");
+        liveRun.CurrentStep = PipelineStep.VerifyingBaseline;
+        liveRun.ProjectId = "019f1860-8b18-7b7e-ba7c-89afe24853b1";
+        liveRun.ProjectName = "Default";
+
+        _mockRunService.Setup(r => r.GetActiveRuns())
+            .Returns(new List<PipelineRun> { liveRun });
+        _mockRunService.Setup(r => r.GetRun(workItemId.ToString())).Returns(liveRun);
+
+        var factory = new InMemoryDbContextFactory(_options);
+        var service = new PostgresActiveRunQueryService(factory, _mockRunService.Object);
+
+        // Act
+        var results = await service.GetActiveRunsAsync();
+
+        // Assert — ProjectName must be enriched from in-memory run
+        results.Should().ContainSingle();
+        var result = results[0];
+        result.ProjectName.Should().Be("Default");
+        result.CurrentStep.Should().Be(PipelineStep.VerifyingBaseline);
+    }
+
     public void Dispose() { }
 
     private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
