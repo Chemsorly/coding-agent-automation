@@ -172,6 +172,33 @@ public class PipelineExecutionBuildResultTests : IAsyncDisposable
         await act.Should().NotThrowAsync();
     }
 
+    [Fact]
+    public async Task Reporter_DisposeAsync_CalledTwice_DoesNotThrow()
+    {
+        var run = CreateRun();
+        var reporter = CreateReporter(run);
+
+        // First call disposes the semaphore
+        await reporter.DisposeAsync();
+
+        // Second call must not throw ObjectDisposedException
+        var act = async () => await reporter.DisposeAsync();
+        await act.Should().NotThrowAsync();
+    }
+
+    [Fact]
+    public async Task Reporter_DisposeAsync_ConcurrentCalls_DoNotThrow()
+    {
+        var run = CreateRun();
+        var reporter = CreateReporter(run);
+
+        // Two concurrent disposal calls must both complete without throwing
+        var act = async () => await Task.WhenAll(
+            reporter.DisposeAsync().AsTask(),
+            reporter.DisposeAsync().AsTask());
+        await act.Should().NotThrowAsync();
+    }
+
     private static HubConnection CreateDisconnectedHubConnection()
     {
         return new HubConnectionBuilder()

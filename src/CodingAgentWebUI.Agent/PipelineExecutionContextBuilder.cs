@@ -183,11 +183,6 @@ internal sealed class PipelineExecutionContextBuilder
         catch
         {
             localCts?.Dispose();
-            // TODO: Wrap reporter.DisposeAsync() in a nested try/catch so that if it throws
-            // (e.g., ObjectDisposedException from the internal SemaphoreSlim), the original
-            // exception is not lost. Currently PipelineSignalRReporter.DisposeAsync leaves
-            // _signalrLock.Dispose() unprotected — a faulted semaphore would replace the
-            // original exception with a disposal exception.
             await reporter.DisposeAsync();
             throw;
         }
