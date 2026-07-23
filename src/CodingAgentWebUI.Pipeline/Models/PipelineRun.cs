@@ -17,7 +17,7 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// <para><b>Thread-safety contract:</b></para>
 /// <list type="bullet">
 ///   <item><b>Volatile fields:</b> <see cref="CurrentStep"/>, <see cref="AgentId"/> — single-word atomic read/write via <see cref="Volatile"/>.</item>
-///   <item><b>Interlocked fields:</b> <see cref="LastStepChangeAt"/>, <see cref="CodeReviewCriticalCount"/>/<see cref="CodeReviewWarningCount"/>/<see cref="CodeReviewSuggestionCount"/> — atomic increment/exchange via <see cref="Interlocked"/>.</item>
+///   <item><b>Interlocked fields:</b> <see cref="StartedAtOffset"/>, <see cref="LastStepChangeAt"/>, <see cref="CodeReviewCriticalCount"/>/<see cref="CodeReviewWarningCount"/>/<see cref="CodeReviewSuggestionCount"/> — atomic read/exchange via <see cref="Interlocked"/>.</item>
 ///   <item><b>Concurrent collections:</b> <see cref="CodeReviewAgentFindings"/>, <see cref="RetryErrors"/>, <see cref="ChatHistory"/>, <see cref="OutputLines"/>, <see cref="QualityGateHistory"/> — thread-safe containers.</item>
 ///   <item><b>Unprotected mutable properties:</b> everything else — callers must synchronize externally or ensure single-writer semantics.</item>
 /// </list>
@@ -45,6 +45,11 @@ public sealed partial class PipelineRun
     /// <summary>Highest pipeline step ever reached during this run (excludes terminal states). Used by the sidebar to show revisited steps.</summary>
     public PipelineStep HighWaterMark { get; set; }
 
+    // TODO: StartedAt (DateTime, 8 bytes) has no Interlocked/volatile on reads. The lock in ResetStartedAt
+    //       guards the write side only — readers (e.g. ToSummary) have no memory barrier guaranteeing they see
+    //       the updated value consistently with StartedAtOffset. On x64 this is safe in practice (aligned 64-bit
+    //       reads are atomic) but inconsistent with the Interlocked treatment of StartedAtOffset. Consider adding
+    //       Volatile.Read/Write or making readers acquire _startedAtLock for compound-read consistency.
     [Obsolete("Use StartedAtOffset for timezone-safe comparisons")]
     public DateTime StartedAt { get; internal set; }
 
@@ -52,7 +57,20 @@ public sealed partial class PipelineRun
     public DateTime? CompletedAt { get; set; }
 
     /// <summary>Timezone-safe shadow of <see cref="StartedAt"/>. Set alongside the original property.</summary>
-    public DateTimeOffset StartedAtOffset { get; internal set; }
+    /// <remarks>Uses Interlocked on ticks for thread-safe reads (DateTimeOffset is 12 bytes, not atomic on x64).
+    /// Writes to the pair (StartedAt, StartedAtOffset) are guarded by <see cref="_startedAtLock"/> in <see cref="ResetStartedAt"/>.</remarks>
+    // TODO: Getter reconstructs DateTimeOffset with TimeSpan.Zero, discarding any non-UTC offset from the original value.
+    //       Safe given all current callers pass UTC, but the implicit UTC contract is undocumented on the setter.
+    //       Consider adding a Debug.Assert(value.Offset == TimeSpan.Zero) in the setter to prevent future misuse.
+    public DateTimeOffset StartedAtOffset
+    {
+        get => new DateTimeOffset(Interlocked.Read(ref _startedAtOffsetTicks), TimeSpan.Zero);
+        internal set => Interlocked.Exchange(ref _startedAtOffsetTicks, value.UtcTicks);
+    }
+    private long _startedAtOffsetTicks;
+
+    /// <summary>Lock guarding compound writes to the (StartedAt, StartedAtOffset) pair in <see cref="ResetStartedAt"/>.</summary>
+    private readonly object _startedAtLock = new();
 
     /// <summary>Timezone-safe shadow of <see cref="CompletedAt"/>. Set alongside the original property.</summary>
     public DateTimeOffset? CompletedAtOffset { get; set; }
