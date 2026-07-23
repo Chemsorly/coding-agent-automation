@@ -444,6 +444,35 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
             .Build();
     }
 
+    private static JobAssignmentMessage CreateTestJobWithStaleness(bool forceRefresh, string? signal, int refreshCount)
+    {
+        return new JobAssignmentMessage
+        {
+            JobId = "job-123",
+            IssueIdentifier = "test/repo#42",
+            RunType = PipelineRunType.Implementation,
+            InitiatedBy = "test-user",
+            RepoProviderConfigId = "repo-config-1",
+            AgentProviderConfigId = "agent-config-1",
+            PipelineProviderConfigId = "pipeline-config-1",
+            BrainProviderConfigId = "brain-config-1",
+            IssueDetail = new IssueDetail { Identifier = "test/repo#42", Title = "Test Issue", Description = "", Labels = new List<string> { "bug" } },
+            ParsedIssue = new ParsedIssue { RequirementsSection = "", AcceptanceCriteria = [] },
+            PipelineConfiguration = new PipelineConfiguration(),
+            ProviderConfigs = new List<ProviderConfig>(),
+            ReviewerConfigs = [],
+            QualityGateConfigs = [],
+            IssueComments = [],
+            ReviewPrTargetBranch = "main",
+            ReviewPrDescription = null,
+            ReviewPrAuthor = null,
+            LinkedIssueContexts = null,
+            ForceRefreshAnalysis = forceRefresh,
+            StalenessSignal = signal,
+            AnalysisRefreshCount = refreshCount
+        };
+    }
+
     [Fact]
     public async Task Build_FailurePath_DisposesLocalCtsAndReporter()
     {
@@ -522,6 +551,113 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
 
         var thrown = await act.Should().ThrowAsync<ArgumentException>();
         thrown.Which.Should().BeSameAs(expectedException);
+    }
+
+    // ── CreateStepContext ─────────────────────────────────────────────────
+
+    // TODO: CreateBuilder() does not pass a PullRequestFinalizationService, leaving _finalization null.
+    // Add a test that constructs the builder with a mock finalization service and exercises the
+    // CreatePullRequest callback path to cover the moved CreatePullRequestAsync logic.
+    [Fact]
+    public async Task CreateStepContext_SetsRunAndConfigCorrectly()
+    {
+        SetupReporterFactory();
+        var builder = CreateBuilder();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var job = CreateTestJob();
+        var config = new PipelineConfiguration { MaxRetries = 3 };
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var buildResult = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        var reporter = buildResult.Reporter;
+
+        // Act
+        var ctx = builder.CreateStepContext(buildResult.ExecutionContext, reporter, CancellationToken.None);
+
+        // Assert
+        ctx.Run.Should().BeSameAs(buildResult.Run);
+        ctx.Config.Should().BeSameAs(config);
+        ctx.RepoProvider.Should().BeSameAs(mockRepo.Object);
+        ctx.AgentProvider.Should().BeSameAs(mockAgent.Object);
+
+        await buildResult.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task CreateStepContext_PropagatesStalenessFields()
+    {
+        SetupReporterFactory();
+        var builder = CreateBuilder();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var job = CreateTestJobWithStaleness(forceRefresh: true, signal: "file-changed", refreshCount: 2);
+
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var buildResult = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        var reporter = buildResult.Reporter;
+
+        // Act
+        var ctx = builder.CreateStepContext(buildResult.ExecutionContext, reporter, CancellationToken.None);
+
+        // Assert
+        ctx.ForceRefreshAnalysis.Should().BeTrue();
+        ctx.StalenessSignal.Should().Be("file-changed");
+        ctx.AnalysisRefreshCount.Should().Be(2);
+
+        await buildResult.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task CreateStepContext_CallbacksFireTransitionTo()
+    {
+        SetupReporterFactory();
+        var builder = CreateBuilder();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var job = CreateTestJob();
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        PipelineStep? transitionedStep = null;
+        var buildResult = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, step => transitionedStep = step, CancellationToken.None);
+
+        var reporter = buildResult.Reporter;
+
+        // Act
+        var ctx = builder.CreateStepContext(buildResult.ExecutionContext, reporter, CancellationToken.None);
+        ctx.Callbacks.TransitionTo(PipelineStep.AnalyzingCode);
+
+        // Assert — the TransitionTo delegate fires through the reporter which updates onStepChanged
+        // TODO: Replace Task.Delay(100) with a proper synchronization primitive (e.g., TaskCompletionSource
+        // or ManualResetEventSlim) to avoid flaky failures on loaded CI runners.
+        // Allow a small delay for the fire-and-forget to complete
+        await Task.Delay(100);
+        transitionedStep.Should().Be(PipelineStep.AnalyzingCode);
+
+        await buildResult.DisposeAsync();
     }
 
     private sealed class NoOpHandler : HttpMessageHandler
