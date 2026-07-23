@@ -856,6 +856,30 @@ public class AgentCodingPageServiceTests
     }
 
     [Fact]
+    public async Task DispatchFromIssueDrawerAsync_ReturnsError_WhenTemplateIsNull()
+    {
+        // No template opened — IssueDrawerTemplate is null
+        var (success, error, msg) = await _service.DispatchFromIssueDrawerAsync(MakeIssue());
+
+        Assert.False(success);
+        Assert.NotNull(error);
+        Assert.Contains("template", error, StringComparison.OrdinalIgnoreCase);
+        Assert.False(_service.IssueDrawerDispatching); // dispatching flag must be reset
+    }
+
+    [Fact]
+    public async Task DispatchFromPrDrawerAsync_ReturnsError_WhenTemplateIsNull()
+    {
+        var pr = new PullRequestSummary { Identifier = "99", Number = 99, Title = "Fix", BranchName = "fix/a", TargetBranch = "main", Url = "http://x", Description = "", Labels = Array.Empty<string>(), IsDraft = false };
+        var (success, error, msg) = await _service.DispatchFromPrDrawerAsync(pr);
+
+        Assert.False(success);
+        Assert.NotNull(error);
+        Assert.Contains("template", error, StringComparison.OrdinalIgnoreCase);
+        Assert.False(_service.PrDrawerDispatching); // dispatching flag must be reset
+    }
+
+    [Fact]
     public async Task ActiveDrawerTab_ReflectsOpenDrawer()
     {
         var template = MakeTemplate();

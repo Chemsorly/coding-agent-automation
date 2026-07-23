@@ -26,9 +26,11 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     private readonly ResiliencePipeline _signalRPipeline;
 
     private volatile AgentRegistrationMessage? _currentRegistration;
-    private PipelineStep? _currentStep;
+    private int _currentStep = NullStep;
     private CancellationTokenSource? _heartbeatCts;
     private Task? _heartbeatTask;
+
+    private const int NullStep = -1;
 
     /// <inheritdoc />
     public event Func<string, Task>? OnCancelJobReceived;
@@ -106,7 +108,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     /// <inheritdoc />
     public void UpdateCurrentStep(PipelineStep? step)
     {
-        _currentStep = step;
+        Volatile.Write(ref _currentStep, step.HasValue ? (int)step.Value : NullStep);
     }
 
     /// <inheritdoc />
@@ -297,11 +299,12 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
 
                 try
                 {
+                    var stepValue = Volatile.Read(ref _currentStep);
                     var heartbeat = new HeartbeatMessage
                     {
                         AgentId = _agentIdentity.Id,
                         Timestamp = DateTimeOffset.UtcNow,
-                        CurrentStep = _currentStep,
+                        CurrentStep = stepValue == NullStep ? null : (PipelineStep)stepValue,
                         MemoryUsageMb = Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024)
                     };
                     await _hubManager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
