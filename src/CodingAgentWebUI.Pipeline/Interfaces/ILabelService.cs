@@ -25,6 +25,14 @@ public interface ILabelService
         => SwapLabelAsync(providerConfigId, identifier, newLabel, targetKind, ct);
 
     /// <summary>
+    /// Like <see cref="SwapLabelAsync(ProviderConfigId, IssueIdentifier, string, LabelTargetKind, CancellationToken)"/>
+    /// but propagates exceptions on failure instead of swallowing them.
+    /// Use when the caller needs to detect and retry failures.
+    /// </summary>
+    Task SwapLabelStrictAsync(ProviderConfigId providerConfigId, IssueIdentifier identifier,
+        string newLabel, LabelTargetKind targetKind, CancellationToken ct);
+
+    /// <summary>
     /// Ensures agent status labels exist for the given target kind.
     /// Routes to IIssueProvider.EnsureAgentLabelsAsync for Issues,
     /// or IRepositoryProvider.EnsureAgentLabelsForPullRequestsAsync for PRs.
