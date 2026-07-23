@@ -48,75 +48,20 @@ public sealed class RunEnvironmentSetupStep : IPipelineStep
         {
             context.Callbacks.EmitOutputLine(SecretMasker.Mask($"🔧 Running setup: {step.Name}", secrets));
 
-            try
+            var result = await SetupCommandRunner.RunAsync(
+                step.Command, step.Name, context.Run.WorkspacePath!, secrets,
+                line => context.Callbacks.EmitOutputLine(line), ct);
+
+            if (!result.Success)
             {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = "/bin/bash",
-                    WorkingDirectory = context.Run.WorkspacePath,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                psi.ArgumentList.Add("-c");
-                psi.ArgumentList.Add(step.Command);
+                if (result.Exception is not null)
+                    Activity.Current?.RecordMaskedError(result.Exception, secrets);
+                // TODO: Timeout detection relies on string matching. SetupCommandResult should expose a structured
+                // failure reason (e.g., IsTimeout bool or FailureKind enum) instead of requiring callers to inspect message content.
+                else if (result.FailureMessage?.Contains("timed out") == true)
+                    Activity.Current?.SetStatus(ActivityStatusCode.Error, result.FailureMessage);
 
-                // Inject secrets as environment variables
-                foreach (var (key, value) in secrets)
-                    psi.Environment[key] = value;
-
-                using var process = new Process { StartInfo = psi };
-                process.Start();
-
-                // Read stdout and stderr concurrently to avoid pipe buffer deadlock
-                var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
-                var stderrTask = process.StandardError.ReadToEndAsync(ct);
-
-                // Wait with 120-second timeout per step
-                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeoutCts.CancelAfter(TimeSpan.FromSeconds(120));
-
-                try
-                {
-                    await process.WaitForExitAsync(timeoutCts.Token);
-                }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-                {
-                    // Timeout — kill the process tree
-                    try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-                    var timeoutMessage = $"Setup step '{step.Name}' timed out after 120 seconds";
-                    Activity.Current?.SetStatus(ActivityStatusCode.Error, timeoutMessage);
-                    await context.FailRunAsync(SecretMasker.Mask(timeoutMessage, secrets), ct);
-                    return StepResult.Stop;
-                }
-
-                var stdout = await stdoutTask;
-                var stderr = await stderrTask;
-
-                // Emit masked output
-                if (!string.IsNullOrWhiteSpace(stdout))
-                    context.Callbacks.EmitOutputLine(SecretMasker.Mask(stdout.TrimEnd(), secrets));
-                if (!string.IsNullOrWhiteSpace(stderr))
-                    context.Callbacks.EmitOutputLine(SecretMasker.Mask(stderr.TrimEnd(), secrets));
-
-                if (process.ExitCode != 0)
-                {
-                    var truncatedStderr = stderr.Length > 500 ? stderr[..500] : stderr;
-                    var failureMessage = $"Setup step '{step.Name}' failed with exit code {process.ExitCode}: {truncatedStderr}";
-                    await context.FailRunAsync(SecretMasker.Mask(failureMessage, secrets), ct);
-                    return StepResult.Stop;
-                }
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw; // Propagate pipeline-level cancellation
-            }
-            catch (Exception ex)
-            {
-                Activity.Current?.RecordMaskedError(ex, secrets);
-                var failureMessage = $"Setup step '{step.Name}' threw an exception: {ex.Message}";
-                await context.FailRunAsync(SecretMasker.Mask(failureMessage, secrets), ct);
+                await context.FailRunAsync(result.FailureMessage!, ct);
                 return StepResult.Stop;
             }
         }
