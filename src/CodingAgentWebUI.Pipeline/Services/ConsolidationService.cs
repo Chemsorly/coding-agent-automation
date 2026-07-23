@@ -100,15 +100,17 @@ public sealed class ConsolidationService : IConsolidationService
 
         // Resolve template name for display using project-based lookup
         string? templateName = null;
+        string? projectName = null;
         if (templateId is not null)
         {
-            var template = await ResolveTemplateAsync(templateId, ct);
+            var (template, resolvedProjectName) = await ResolveTemplateWithProjectAsync(templateId, ct);
             if (template is null)
             {
                 _logger.Warning("Consolidation run rejected: template {TemplateId} not found", templateId);
                 return null;
             }
             templateName = template.Name;
+            projectName = resolvedProjectName;
         }
         else
         {
@@ -124,7 +126,8 @@ public sealed class ConsolidationService : IConsolidationService
             TemplateName = templateName,
             StartedAtUtc = DateTimeOffset.UtcNow,
             Status = ConsolidationRunStatus.Running,
-            AutoDispatch = autoDispatch
+            AutoDispatch = autoDispatch,
+            ProjectName = projectName
         };
 
         // Register in concurrency tracker — TryAdd is the sole guard (no separate ContainsKey check)
@@ -629,16 +632,26 @@ public sealed class ConsolidationService : IConsolidationService
     /// </summary>
     private async Task<PipelineJobTemplate?> ResolveTemplateAsync(string templateId, CancellationToken ct)
     {
+        var (template, _) = await ResolveTemplateWithProjectAsync(templateId, ct);
+        return template;
+    }
+
+    /// <summary>
+    /// Resolves a template by ID and returns both the template and the owning project's display name.
+    /// </summary>
+    private async Task<(PipelineJobTemplate? Template, string? ProjectName)> ResolveTemplateWithProjectAsync(
+        string templateId, CancellationToken ct)
+    {
         var projects = await _projectStore.LoadProjectsAsync(ct);
         var templateLookup = (await _projectStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
 
         foreach (var project in projects.Where(p => p.Enabled))
         {
             if (project.TemplateIds.Contains(templateId) && templateLookup.TryGetValue(templateId, out var template))
-                return template;
+                return (template, project.Name);
         }
 
-        return null;
+        return (null, null);
     }
 
     /// <summary>
