@@ -182,10 +182,10 @@ public class DecompositionCapPropertyTests
                 });
 
             mockIssueOps
-                .Setup(o => o.GetIssueAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                .Returns<string, CancellationToken>((id, ct) => Task.FromResult(new IssueDetail
+                .Setup(o => o.GetIssueAsync(It.IsAny<IssueIdentifier>(), It.IsAny<CancellationToken>()))
+                .Returns<IssueIdentifier, CancellationToken>((id, ct) => Task.FromResult(new IssueDetail
                 {
-                    Identifier = id,
+                    Identifier = id.Value,
                     Title = $"Issue {id}",
                     Description = $"Description for issue {id}",
                     Labels = new List<string> { "bug" }

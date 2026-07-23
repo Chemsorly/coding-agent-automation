@@ -236,7 +236,7 @@ public class LabelServiceTests
     {
         var issueProvider = new Mock<IIssueProvider>();
         issueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
-        issueProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        issueProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("Network error"));
 
         var issueConfig = new ProviderConfig

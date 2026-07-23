@@ -169,7 +169,7 @@ public sealed class RunLifecycleManagerTests
         _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
             It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockLabelService.Verify(l => l.SwapLabelAsync(
-            It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -221,7 +221,7 @@ public sealed class RunLifecycleManagerTests
 
         // CompleteRunAsync does NOT clear agent state or swap labels (caller does that)
         _mockLabelService.Verify(l => l.SwapLabelAsync(
-            It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -354,7 +354,7 @@ public sealed class RunLifecycleManagerTests
         _mockHistoryService.Verify(h => h.AddRunToHistoryAsync(
             It.IsAny<PipelineRun>(), It.IsAny<CancellationToken>()), Times.Never);
         _mockLabelService.Verify(l => l.SwapLabelAsync(
-            It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
             It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 

@@ -5,7 +5,10 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.AspNetCore.SignalR.Client;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 
 namespace CodingAgentWebUI.Agent;
 
@@ -30,6 +33,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
     private readonly IJobCompletionReporter _completionReporter;
     private readonly AgentIdentity _agentIdentity;
     private readonly IHostApplicationLifetime _lifetime;
+    private readonly IServiceProvider? _serviceProvider;
     private readonly Serilog.ILogger _logger;
 
     private volatile CancellationTokenSource? _pipelineCts;
@@ -43,7 +47,10 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         IJobCompletionReporter completionReporter,
         AgentIdentity agentIdentity,
         IHostApplicationLifetime lifetime,
-        Serilog.ILogger logger)
+        Serilog.ILogger logger,
+        // TODO: Consider making serviceProvider required (non-nullable) — it's always available in DI factory
+        // lambdas, and leaving it optional means a future caller could omit it and silently lose ForceFlush behavior.
+        IServiceProvider? serviceProvider = null)
     {
         ArgumentNullException.ThrowIfNull(workItemId);
         ArgumentNullException.ThrowIfNull(workItemClient);
@@ -60,6 +67,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         _completionReporter = completionReporter;
         _agentIdentity = agentIdentity;
         _lifetime = lifetime;
+        _serviceProvider = serviceProvider;
         _logger = logger;
 
         // Use the injected connection manager
@@ -117,6 +125,29 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
             activity?.SetTag("exit_code", exitCode);
             if (exitCode != 0)
                 activity?.SetStatus(ActivityStatusCode.Error);
+
+            // Flush OTLP metrics and traces before triggering host shutdown.
+            // Without this, the PeriodicExportingMetricReader (60s default interval) may not
+            // have exported the counters recorded by PipelineRunInstrumentation.Dispose().
+            // The host's own shutdown sequence also flushes, but is subject to SIGKILL race
+            // if the K8s pod's terminationGracePeriodSeconds expires during shutdown.
+            // TODO: Add unit test coverage for ForceFlush behavior — verify MeterProvider.ForceFlush is called
+            // with 3000ms timeout, TracerProvider.ForceFlush with remaining budget, exceptions are swallowed,
+            // and null serviceProvider case skips flush gracefully.
+            if (_serviceProvider is not null)
+            {
+                try
+                {
+                    var sw = Stopwatch.StartNew();
+                    _serviceProvider.GetService<MeterProvider>()?.ForceFlush(timeoutMilliseconds: 3000);
+                    var remaining = Math.Max(500, 2000 - (int)sw.ElapsedMilliseconds);
+                    _serviceProvider.GetService<TracerProvider>()?.ForceFlush(timeoutMilliseconds: remaining);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning(ex, "Failed to flush OpenTelemetry providers before shutdown");
+                }
+            }
 
             // Set the process exit code and stop the host
             Environment.ExitCode = exitCode;

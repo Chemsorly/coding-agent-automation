@@ -276,6 +276,23 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             var dispatchedSuccessfully = false;
             try
             {
+                // DB transition first: in-memory state only reflects confirmed DB state.
+                // If TransitionAsync fails, no in-memory cleanup is needed.
+                // This also ensures the agent's JobAccepted → Running transition is valid
+                // (Dispatched → Running, not Pending → Running which is rejected).
+                var dispatchTime = DateTimeOffset.UtcNow;
+                await _transitionService.TransitionAsync(
+                    item.Id,
+                    WorkItemStatus.Dispatched,
+                    entity =>
+                    {
+                        entity.DispatchedAt = dispatchTime;
+                        entity.AssignedAgentId = agentId;
+                    },
+                    ct);
+
+                dispatchedSuccessfully = true;
+
                 // Update in-memory PipelineRun with agent ID.
                 // If the run is not in memory (orchestrator restart scenario), re-create it
                 // so that HeartbeatMonitor and run-tracking continue to function correctly.
@@ -298,22 +315,6 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                             request.RunId, request.IssueIdentifier);
                     }
                 }
-
-                // Transition to Dispatched in DB BEFORE sending via SignalR.
-                // This ensures the agent's JobAccepted → Running transition is valid
-                // (Dispatched → Running, not Pending → Running which is rejected).
-                var dispatchTime = DateTimeOffset.UtcNow;
-                await _transitionService.TransitionAsync(
-                    item.Id,
-                    WorkItemStatus.Dispatched,
-                    entity =>
-                    {
-                        entity.DispatchedAt = dispatchTime;
-                        entity.AssignedAgentId = agentId;
-                    },
-                    ct);
-
-                dispatchedSuccessfully = true;
 
                 // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14).
                 // Without this, StartedAt reflects preparation/enqueue time which can be
@@ -350,9 +351,10 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     item.Id);
                 _agentResolver.ReleaseAgent(agentId);
 
-                // Clean up in-memory PipelineRun (idempotent — TryRemove is a no-op if key doesn't exist,
-                // which handles the case where the exception fired before run creation/modification)
-                if (!string.IsNullOrEmpty(request.RunId))
+                // Clean up in-memory PipelineRun only if it was actually registered
+                // (DB transition succeeded, so in-memory registration happened).
+                // If TransitionAsync failed, the run was never added — no cleanup needed.
+                if (dispatchedSuccessfully && !string.IsNullOrEmpty(request.RunId))
                 {
                     _runService.RemoveRun(request.RunId);
                 }

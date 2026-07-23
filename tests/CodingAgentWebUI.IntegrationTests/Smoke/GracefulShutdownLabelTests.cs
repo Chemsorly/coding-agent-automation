@@ -72,9 +72,9 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
 
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(issueConfig))
             .Returns(_mockIssueProvider.Object);
-        _mockIssueProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockIssueProvider.Setup(p => p.AddLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockIssueProvider.Setup(p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockIssueProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
 
@@ -160,7 +160,7 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         };
 
         var throwingProvider = new Mock<IIssueProvider>();
-        throwingProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        throwingProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HttpRequestException("GitHub API unreachable"));
         throwingProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
 
@@ -301,10 +301,10 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         };
 
         var hangingProvider = new Mock<IIssueProvider>();
-        hangingProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns((string _, string _, CancellationToken ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct));
-        hangingProvider.Setup(p => p.AddLabelAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns((string _, string _, CancellationToken ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct));
+        hangingProvider.Setup(p => p.RemoveLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((IssueIdentifier _, string _, CancellationToken ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct));
+        hangingProvider.Setup(p => p.AddLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((IssueIdentifier _, string _, CancellationToken ct) => Task.Delay(Timeout.InfiniteTimeSpan, ct));
         hangingProvider.Setup(p => p.DisposeAsync()).Returns(ValueTask.CompletedTask);
 
         var configStore = new Mock<IConfigurationStore>();

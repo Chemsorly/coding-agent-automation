@@ -232,7 +232,7 @@ public class DispatchOrchestrationServiceTests
 
         // Label swap is deferred to ConfirmDistributionLabelAsync (#997)
         _mockLabelService.Verify(
-            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), AgentLabels.InProgress, It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -1030,7 +1030,7 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
     public async Task RevertFailedDistribution_LabelSwapFailure_DoesNotThrow()
     {
         _mockLabelService
-            .Setup(s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Provider unreachable"));
 
         var request = new JobDistributionRequest
@@ -1187,7 +1187,7 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
 
         // No label swap should have occurred (drain service handles it later)
         _mockLabelService.Verify(
-            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
