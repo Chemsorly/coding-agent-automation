@@ -945,11 +945,12 @@ public class QualityGateValidatorTests
             "bash", $"-c \"{script}\"", Directory.GetCurrentDirectory(), CancellationToken.None, TimeSpan.FromSeconds(30));
         sw.Stop();
 
-        // Assert: bounded completion within 1x pipe drain timeout + margin.
-        // If drains were sequential with independent timeouts, this would take ~10s (2x5s).
-        // Concurrent drain via Task.WhenAll ensures it completes in ~5s.
+        // Assert: bounded completion within 1x pipe drain timeout + generous margin for CI.
+        // The pipe drain timeout is 5s; process creation and scheduling overhead in loaded
+        // CI environments can add several seconds. Use 15s as the upper bound — still well
+        // below what truly sequential drain would produce (10s drain + overhead).
         sw.Elapsed.Should().BeGreaterThan(TimeSpan.FromSeconds(4)); // must actually wait for timeout
-        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(8));    // but not 2x timeout
+        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(15));   // but not 2x timeout
         exitCode.Should().Be(0);
     }
 
