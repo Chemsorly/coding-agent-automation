@@ -839,6 +839,10 @@ public sealed class DispatchService : BackgroundService
             return;
         }
 
+        // TODO: This fallback path performs a direct store write without updating the in-memory tracker,
+        // which replicates the same stale-state bug pattern this refactoring aimed to eliminate.
+        // If _consolidationService is ever null at runtime, HeartbeatMonitorService will observe stale
+        // StartedAtUtc. Consider removing this fallback or routing through IConsolidationRunTracker.
         // Fallback: direct store write when IConsolidationService not available (shouldn't happen in production)
         if (_consolidationRunStore is null)
             return;
