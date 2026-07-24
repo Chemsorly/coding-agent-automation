@@ -69,10 +69,10 @@ public class AgentJobDispatcherStalenessTests : IDisposable
 
         // Default: no errors, no prior successes
         _mockWorkItemQuery
-            .Setup(q => q.GetLastSuccessfulCompletionAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(q => q.GetLastSuccessfulCompletionAsync(It.IsAny<string>(), It.IsAny<ProviderConfigId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((DateTimeOffset?)null);
         _mockWorkItemQuery
-            .Setup(q => q.HasAgentErrorSinceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
+            .Setup(q => q.HasAgentErrorSinceAsync(It.IsAny<string>(), It.IsAny<ProviderConfigId>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
     }
 
@@ -364,7 +364,7 @@ public class AgentJobDispatcherStalenessTests : IDisposable
 
         // Verify detector was never called
         _mockWorkItemQuery.Verify(
-            q => q.HasAgentErrorSinceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            q => q.HasAgentErrorSinceAsync(It.IsAny<string>(), It.IsAny<ProviderConfigId>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -393,7 +393,7 @@ public class AgentJobDispatcherStalenessTests : IDisposable
 
         // Detector never invoked
         _mockWorkItemQuery.Verify(
-            q => q.HasAgentErrorSinceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
+            q => q.HasAgentErrorSinceAsync(It.IsAny<string>(), It.IsAny<ProviderConfigId>(), It.IsAny<DateTimeOffset>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
