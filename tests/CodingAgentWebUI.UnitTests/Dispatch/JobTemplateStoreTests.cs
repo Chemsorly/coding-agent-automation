@@ -5,10 +5,10 @@ using CodingAgentWebUI.Orchestration.Dispatch;
 namespace CodingAgentWebUI.UnitTests.Dispatch;
 
 /// <summary>
-/// Tests for <see cref="JobTemplateProvider"/> — loads job templates from JSON,
+/// Tests for <see cref="JobTemplateStore"/> — loads job templates from JSON,
 /// resolves templates by agent selector, and fails fast on misconfiguration.
 /// </summary>
-public class JobTemplateProviderTests
+public class JobTemplateStoreTests
 {
     #region Deserialization
 
@@ -35,7 +35,7 @@ public class JobTemplateProviderTests
         ]
         """;
 
-        var templates = JsonSerializer.Deserialize<List<JobTemplate>>(json, JobTemplateProvider.JsonOptions);
+        var templates = JsonSerializer.Deserialize<List<JobTemplate>>(json, JobTemplateStore.JsonOptions);
 
         templates.Should().HaveCount(1);
         var t = templates![0];
@@ -61,7 +61,7 @@ public class JobTemplateProviderTests
         [{ "labels": "kiro,python,python312", "image": "chemsorly/coding-agent:kiro-python312", "providerType": "kiro" }]
         """;
 
-        var templates = JsonSerializer.Deserialize<List<JobTemplate>>(json, JobTemplateProvider.JsonOptions);
+        var templates = JsonSerializer.Deserialize<List<JobTemplate>>(json, JobTemplateStore.JsonOptions);
 
         templates.Should().HaveCount(1);
         var t = templates![0];
@@ -80,28 +80,28 @@ public class JobTemplateProviderTests
     [Fact]
     public void NormalizeLabels_UnsortedInput_ReturnsSorted()
     {
-        JobTemplateProvider.NormalizeLabels("dotnet10,kiro,dotnet")
+        JobTemplateStore.NormalizeLabels("dotnet10,kiro,dotnet")
             .Should().Be("dotnet,dotnet10,kiro");
     }
 
     [Fact]
     public void NormalizeLabels_AlreadySorted_ReturnsUnchanged()
     {
-        JobTemplateProvider.NormalizeLabels("dotnet,dotnet10,kiro")
+        JobTemplateStore.NormalizeLabels("dotnet,dotnet10,kiro")
             .Should().Be("dotnet,dotnet10,kiro");
     }
 
     [Fact]
     public void NormalizeLabels_Whitespace_IsTrimmed()
     {
-        JobTemplateProvider.NormalizeLabels(" kiro , dotnet , dotnet10 ")
+        JobTemplateStore.NormalizeLabels(" kiro , dotnet , dotnet10 ")
             .Should().Be("dotnet,dotnet10,kiro");
     }
 
     [Fact]
     public void NormalizeLabels_EmptyString_ReturnsEmpty()
     {
-        JobTemplateProvider.NormalizeLabels("").Should().Be("");
+        JobTemplateStore.NormalizeLabels("").Should().Be("");
     }
 
     #endregion
@@ -118,7 +118,7 @@ public class JobTemplateProviderTests
         ]
         """;
 
-        var provider = JobTemplateProvider.LoadFromJson(json);
+        var provider = JobTemplateStore.LoadFromJson(json);
 
         provider.Resolve("dotnet,dotnet10,kiro")!.Image.Should().Be("img-dotnet");
         provider.Resolve("kiro,python,python312")!.Image.Should().Be("img-python");
@@ -131,7 +131,7 @@ public class JobTemplateProviderTests
         [{ "labels": "kiro,dotnet,dotnet10", "image": "img-dotnet", "providerType": "kiro" }]
         """;
 
-        var provider = JobTemplateProvider.LoadFromJson(json);
+        var provider = JobTemplateStore.LoadFromJson(json);
 
         // Input is unsorted — should still resolve
         provider.Resolve("dotnet10,kiro,dotnet")!.Image.Should().Be("img-dotnet");
@@ -144,14 +144,14 @@ public class JobTemplateProviderTests
         [{ "labels": "kiro,dotnet,dotnet10", "image": "img-dotnet", "providerType": "kiro" }]
         """;
 
-        var provider = JobTemplateProvider.LoadFromJson(json);
+        var provider = JobTemplateStore.LoadFromJson(json);
         provider.Resolve("opencode,java,java21").Should().BeNull();
     }
 
     [Fact]
     public void LoadFromJson_EmptyArray_ProducesEmptyProvider()
     {
-        var provider = JobTemplateProvider.LoadFromJson("[]");
+        var provider = JobTemplateStore.LoadFromJson("[]");
         provider.Resolve("anything").Should().BeNull();
         provider.GetAllTemplates().Should().BeEmpty();
     }
@@ -159,14 +159,14 @@ public class JobTemplateProviderTests
     [Fact]
     public void LoadFromJson_MalformedJson_Throws()
     {
-        var act = () => JobTemplateProvider.LoadFromJson("not json at all");
+        var act = () => JobTemplateStore.LoadFromJson("not json at all");
         act.Should().Throw<JsonException>();
     }
 
     [Fact]
     public void LoadFromFile_MissingFile_ThrowsFileNotFoundException()
     {
-        var act = () => JobTemplateProvider.LoadFromFile("/nonexistent/path/job-templates.json");
+        var act = () => JobTemplateStore.LoadFromFile("/nonexistent/path/job-templates.json");
         act.Should().Throw<FileNotFoundException>();
     }
 
@@ -180,7 +180,7 @@ public class JobTemplateProviderTests
             [{ "labels": "kiro,dotnet,dotnet10", "image": "test-image", "providerType": "kiro" }]
             """);
 
-            var provider = JobTemplateProvider.LoadFromFile(tempFile);
+            var provider = JobTemplateStore.LoadFromFile(tempFile);
             provider.Resolve("dotnet,dotnet10,kiro")!.Image.Should().Be("test-image");
         }
         finally
@@ -200,14 +200,14 @@ public class JobTemplateProviderTests
         [{ "labels": "kiro,dotnet,dotnet10", "image": "img", "providerType": "kiro", "maxConcurrent": 3 }]
         """;
 
-        var provider = JobTemplateProvider.LoadFromJson(json);
+        var provider = JobTemplateStore.LoadFromJson(json);
         provider.GetMaxConcurrent("dotnet,dotnet10,kiro").Should().Be(3);
     }
 
     [Fact]
     public void GetMaxConcurrent_NoTemplate_ReturnsZero()
     {
-        var provider = JobTemplateProvider.LoadFromJson("[]");
+        var provider = JobTemplateStore.LoadFromJson("[]");
         provider.GetMaxConcurrent("unknown").Should().Be(0);
     }
 
@@ -218,7 +218,7 @@ public class JobTemplateProviderTests
         [{ "labels": "kiro,dotnet,dotnet10", "image": "img", "providerType": "kiro", "maxConcurrent": 0 }]
         """;
 
-        var provider = JobTemplateProvider.LoadFromJson(json);
+        var provider = JobTemplateStore.LoadFromJson(json);
         provider.GetMaxConcurrent("dotnet,dotnet10,kiro").Should().Be(0);
     }
 
@@ -237,7 +237,7 @@ public class JobTemplateProviderTests
         """;
 
         // Both normalize to same key — last entry wins
-        var provider = JobTemplateProvider.LoadFromJson(json);
+        var provider = JobTemplateStore.LoadFromJson(json);
         provider.Resolve("dotnet,dotnet10,kiro")!.Image.Should().Be("second");
     }
 
@@ -275,7 +275,7 @@ public class JobTemplateProviderTests
               effect: NoSchedule
         """;
 
-        var provider = JobTemplateProvider.LoadFromYaml(yaml);
+        var provider = JobTemplateStore.LoadFromYaml(yaml);
         var t = provider.Resolve("dotnet,dotnet10,kiro");
 
         t.Should().NotBeNull();
@@ -298,7 +298,7 @@ public class JobTemplateProviderTests
           providerType: kiro
         """;
 
-        var provider = JobTemplateProvider.LoadFromYaml(yaml);
+        var provider = JobTemplateStore.LoadFromYaml(yaml);
         var t = provider.Resolve("kiro,python,python312");
 
         t.Should().NotBeNull();
@@ -322,7 +322,7 @@ public class JobTemplateProviderTests
           providerType: kiro
         """;
 
-        var provider = JobTemplateProvider.LoadFromYaml(yaml);
+        var provider = JobTemplateStore.LoadFromYaml(yaml);
         provider.Resolve("dotnet,dotnet10,kiro")!.Image.Should().Be("img-dotnet");
         provider.Resolve("kiro,python,python312")!.Image.Should().Be("img-python");
     }
@@ -341,7 +341,7 @@ public class JobTemplateProviderTests
               providerType: kiro
             """);
 
-            var provider = JobTemplateProvider.LoadFromFile(yamlFile);
+            var provider = JobTemplateStore.LoadFromFile(yamlFile);
             provider.Resolve("dotnet,dotnet10,kiro")!.Image.Should().Be("test-yaml-image");
         }
         finally
@@ -367,7 +367,7 @@ public class JobTemplateProviderTests
             fsGroup: 1000
         """;
 
-        var provider = JobTemplateProvider.LoadFromYaml(yaml);
+        var provider = JobTemplateStore.LoadFromYaml(yaml);
         var template = provider.Resolve("dotnet,dotnet10,kiro");
 
         template.Should().NotBeNull();

@@ -457,19 +457,19 @@ public class DispatchServiceLifecycleTests : IDisposable
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
 
-        // Build JobTemplateProvider from imageMapping + maxConcurrentPods
-        var templateProvider = BuildTemplateProvider(imageMapping, maxConcurrentPods);
+        // Build JobTemplateStore from imageMapping + maxConcurrentPods
+        var templateStore = BuildTemplateStore(imageMapping, maxConcurrentPods);
 
-        return new DispatchService(_dbFactory, leaderElection ?? _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider, runService: runService);
+        return new DispatchService(_dbFactory, leaderElection ?? _leaderElection, _mockKubeClient.Object, _transitionService, config, templateStore, runService: runService);
     }
 
-    private static JobTemplateProvider BuildTemplateProvider(
+    private static JobTemplateStore BuildTemplateStore(
         Dictionary<string, string> imageMapping,
         Dictionary<string, int>? maxConcurrentPods = null)
     {
         // Normalize maxConcurrentPods keys so they match regardless of input order
         var normalizedMaxConcurrent = maxConcurrentPods?.ToDictionary(
-            kv => JobTemplateProvider.NormalizeLabels(kv.Key), kv => kv.Value);
+            kv => JobTemplateStore.NormalizeLabels(kv.Key), kv => kv.Value);
 
         var templates = imageMapping.Select(kv => new JobTemplate
         {
@@ -477,11 +477,11 @@ public class DispatchServiceLifecycleTests : IDisposable
             Image = kv.Value,
             ProviderType = kv.Key.Contains("kiro") ? "kiro" : "opencode",
             MaxConcurrent = normalizedMaxConcurrent?.GetValueOrDefault(
-                JobTemplateProvider.NormalizeLabels(kv.Key), 0) ?? 0
+                JobTemplateStore.NormalizeLabels(kv.Key), 0) ?? 0
         }).ToList();
 
         var json = System.Text.Json.JsonSerializer.Serialize(templates);
-        return JobTemplateProvider.LoadFromJson(json);
+        return JobTemplateStore.LoadFromJson(json);
     }
 
     private async Task InvokePollAndDispatch(DispatchService service)

@@ -21,7 +21,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// K8s mode only: polls WorkItems WHERE Status=Pending ORDER BY CreatedAt ASC,
-/// resolves container image via JobTemplateProvider, creates K8s Jobs via JobSpecBuilder,
+/// resolves container image via JobTemplateStore, creates K8s Jobs via JobSpecBuilder,
 /// updates to Dispatched. Runs under leader election (same Lease as PipelineLoopService).
 /// Rate-limited: default 10 Jobs/s. Skips items whose selector group is at concurrency limit.
 /// </summary>
@@ -37,7 +37,7 @@ public sealed class DispatchService : BackgroundService
     private readonly IKubernetesJobClient _kubeClient;
     private readonly WorkItemTransitionService _transitionService;
     private readonly DispatchServiceOptions _options;
-    private readonly JobTemplateProvider _templateProvider;
+    private readonly JobTemplateStore _templateStore;
     private readonly ILabelService? _labelService;
     private readonly ITokenVendingService? _tokenVending;
     private readonly IAgentProfileStore? _agentProfileStore;
@@ -56,13 +56,13 @@ public sealed class DispatchService : BackgroundService
         IAgentProfileStore? agentProfileStore = null,
         IOrchestratorRunService? runService = null)
         : this(dbFactory, leaderElection, kubeClient, transitionService, configuration,
-               LoadTemplateProvider(configuration), labelService, tokenVending,
+               LoadTemplateStore(configuration), labelService, tokenVending,
                agentProfileStore, runService, null)
     { }
 
     /// <summary>
     /// Constructor overload accepting a ConsolidationK8sDispatcher (for DI registration).
-    /// Loads the JobTemplateProvider from configuration automatically.
+    /// Loads the JobTemplateStore from configuration automatically.
     /// </summary>
     internal DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -76,12 +76,12 @@ public sealed class DispatchService : BackgroundService
         IOrchestratorRunService? runService,
         ConsolidationK8sDispatcher? consolidationK8sDispatcher)
         : this(dbFactory, leaderElection, kubeClient, transitionService, configuration,
-               LoadTemplateProvider(configuration), labelService, tokenVending,
+               LoadTemplateStore(configuration), labelService, tokenVending,
                agentProfileStore, runService, consolidationK8sDispatcher)
     { }
 
     /// <summary>
-    /// Constructor overload accepting a pre-built JobTemplateProvider (for testing).
+    /// Constructor overload accepting a pre-built JobTemplateStore (for testing).
     /// </summary>
     internal DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -89,7 +89,7 @@ public sealed class DispatchService : BackgroundService
         IKubernetesJobClient kubeClient,
         WorkItemTransitionService transitionService,
         IConfiguration configuration,
-        JobTemplateProvider templateProvider,
+        JobTemplateStore templateStore,
         ILabelService? labelService = null,
         ITokenVendingService? tokenVending = null,
         IAgentProfileStore? agentProfileStore = null,
@@ -105,7 +105,7 @@ public sealed class DispatchService : BackgroundService
         _agentProfileStore = agentProfileStore;
         _runService = runService;
         _consolidationK8sDispatcher = consolidationK8sDispatcher;
-        _templateProvider = templateProvider;
+        _templateStore = templateStore;
         _options = new DispatchServiceOptions();
         InitializeOptions(configuration);
         _rateLimiter = CreateRateLimiter();
@@ -142,7 +142,7 @@ public sealed class DispatchService : BackgroundService
         AutoReplenishment = true
     });
 
-    private static JobTemplateProvider LoadTemplateProvider(IConfiguration configuration)
+    private static JobTemplateStore LoadTemplateStore(IConfiguration configuration)
     {
         var templatesPath = configuration.GetValue<string>("WorkDistribution:JobTemplatesPath") ?? DefaultJobTemplatesPath;
         // Also check .json path for format flexibility
@@ -152,7 +152,7 @@ public sealed class DispatchService : BackgroundService
             if (File.Exists(jsonFallback))
                 templatesPath = jsonFallback;
         }
-        var provider = JobTemplateProvider.LoadFromFile(templatesPath);
+        var provider = JobTemplateStore.LoadFromFile(templatesPath);
         Log.Information("DispatchService: loaded {Count} job template(s) from {Path}",
             provider.GetAllTemplates().Count, templatesPath);
         return provider;
@@ -281,7 +281,7 @@ public sealed class DispatchService : BackgroundService
             }
 
             // Check concurrency limit from template
-            var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
+            var maxConcurrent = _templateStore.GetMaxConcurrent(item.AgentSelector);
             if (maxConcurrent > 0)
             {
                 var current = concurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0);
@@ -294,7 +294,7 @@ public sealed class DispatchService : BackgroundService
             }
 
             // Resolve template — fail immediately if no match (before PVC gating)
-            var template = _templateProvider.Resolve(item.AgentSelector);
+            var template = _templateStore.Resolve(item.AgentSelector);
             var effectiveSelector = item.AgentSelector;
             if (template is null)
             {
@@ -775,7 +775,7 @@ public sealed class DispatchService : BackgroundService
         var profileSelector = string.Join(",",
             profile.MatchLabels.OrderBy(l => l, StringComparer.Ordinal));
 
-        var template = _templateProvider.Resolve(profileSelector);
+        var template = _templateStore.Resolve(profileSelector);
         if (template is not null)
         {
             Log.Warning("DispatchService: AgentSelector [{Selector}] required profile expansion to resolve template. " +
@@ -825,10 +825,10 @@ public sealed class DispatchService : BackgroundService
 
     /// <summary>
     /// Normalizes agent selector by sorting labels and joining with comma.
-    /// Delegates to <see cref="JobTemplateProvider.NormalizeLabels"/>.
+    /// Delegates to <see cref="JobTemplateStore.NormalizeLabels"/>.
     /// </summary>
     internal static string NormalizeSelector(string agentSelector)
-        => JobTemplateProvider.NormalizeLabels(agentSelector);
+        => JobTemplateStore.NormalizeLabels(agentSelector);
 
     /// <summary>
     /// Calculates available PVCs from the configured pool minus currently claimed.

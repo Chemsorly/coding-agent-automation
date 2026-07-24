@@ -1035,7 +1035,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             configData[$"WorkDistribution:CredentialPools:Kiro:{i}"] = pvcPool[i];
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
-        var templateProvider = BuildTemplateProvider();
+        var templateStore = BuildTemplateStore();
 
         var consolidationDispatcher = new ConsolidationK8sDispatcher(
             _transitionService,
@@ -1051,7 +1051,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             _mockProjectStore.Object);
 
         return new DispatchService(
-            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider,
+            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateStore,
             labelService,
             _mockTokenVending.Object,
             _mockAgentProfileStore.Object,
@@ -1059,14 +1059,14 @@ public class DispatchServiceConsolidationTests : IDisposable
             consolidationK8sDispatcher: consolidationDispatcher);
     }
 
-    private static JobTemplateProvider BuildTemplateProvider()
+    private static JobTemplateStore BuildTemplateStore()
     {
         var templates = new List<JobTemplate>
         {
             new() { Labels = "dotnet,kiro", Image = "ghcr.io/agent:latest", ProviderType = "kiro" }
         };
         var json = JsonSerializer.Serialize(templates);
-        return JobTemplateProvider.LoadFromJson(json);
+        return JobTemplateStore.LoadFromJson(json);
     }
 
     /// <summary>
@@ -1074,14 +1074,14 @@ public class DispatchServiceConsolidationTests : IDisposable
     /// Used to reproduce the subset selector bug where AgentSelector = "dotnet,dotnet10"
     /// fails to match template key "dotnet,dotnet10,kiro".
     /// </summary>
-    private static JobTemplateProvider BuildThreeLabelTemplateProvider()
+    private static JobTemplateStore BuildThreeLabelTemplateStore()
     {
         var templates = new List<JobTemplate>
         {
             new() { Labels = "kiro,dotnet,dotnet10", Image = "ghcr.io/agent:kiro-dotnet10", ProviderType = "kiro" }
         };
         var json = JsonSerializer.Serialize(templates);
-        return JobTemplateProvider.LoadFromJson(json);
+        return JobTemplateStore.LoadFromJson(json);
     }
 
     private DispatchService CreateServiceWithThreeLabelTemplate()
@@ -1098,7 +1098,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         };
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
-        var templateProvider = BuildThreeLabelTemplateProvider();
+        var templateStore = BuildThreeLabelTemplateStore();
 
         var consolidationDispatcher = new ConsolidationK8sDispatcher(
             _transitionService,
@@ -1114,7 +1114,7 @@ public class DispatchServiceConsolidationTests : IDisposable
             _mockProjectStore.Object);
 
         return new DispatchService(
-            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider,
+            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateStore,
             null,
             _mockTokenVending.Object,
             _mockAgentProfileStore.Object,
