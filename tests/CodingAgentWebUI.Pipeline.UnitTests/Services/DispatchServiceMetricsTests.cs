@@ -264,7 +264,7 @@ public class DispatchServiceMetricsTests : IDisposable
         };
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
-        var templateProvider = BuildTemplateProvider();
+        var templateStore = BuildTemplateStore();
 
         var consolidationDispatcher = new ConsolidationK8sDispatcher(
             _transitionService,
@@ -280,7 +280,7 @@ public class DispatchServiceMetricsTests : IDisposable
             _mockProjectStore.Object);
 
         return new DispatchService(
-            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider,
+            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateStore,
             null,
             _mockTokenVending.Object,
             _mockAgentProfileStore.Object,
@@ -288,14 +288,14 @@ public class DispatchServiceMetricsTests : IDisposable
             consolidationK8sDispatcher: consolidationDispatcher);
     }
 
-    private static JobTemplateProvider BuildTemplateProvider()
+    private static JobTemplateStore BuildTemplateStore()
     {
         var templates = new List<JobTemplate>
         {
             new() { Labels = "dotnet,kiro", Image = "ghcr.io/agent:latest", ProviderType = "kiro" }
         };
         var json = JsonSerializer.Serialize(templates);
-        return JobTemplateProvider.LoadFromJson(json);
+        return JobTemplateStore.LoadFromJson(json);
     }
 
     private async Task InsertWorkItem(

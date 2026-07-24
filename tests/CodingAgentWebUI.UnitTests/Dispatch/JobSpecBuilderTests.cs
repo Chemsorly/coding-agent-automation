@@ -28,13 +28,13 @@ public class JobSpecBuilderTests
             ProviderType = providerType,
             MaxConcurrent = 2,
             Resources = resourcesJson is not null
-                ? JsonSerializer.Deserialize<JobTemplateResources>(resourcesJson, JobTemplateProvider.JsonOptions)
+                ? JsonSerializer.Deserialize<JobTemplateResources>(resourcesJson, JobTemplateStore.JsonOptions)
                 : null,
             PodSecurityContext = podSecurityContextJson is not null
                 ? JsonDocument.Parse(podSecurityContextJson).RootElement
                 : null,
             NodeSelector = nodeSelectorJson is not null
-                ? JsonSerializer.Deserialize<Dictionary<string, string>>(nodeSelectorJson, JobTemplateProvider.JsonOptions)
+                ? JsonSerializer.Deserialize<Dictionary<string, string>>(nodeSelectorJson, JobTemplateStore.JsonOptions)
                 : null,
             InitContainers = initContainersJson is not null
                 ? JsonDocument.Parse(initContainersJson).RootElement
@@ -319,7 +319,7 @@ public class JobSpecBuilderTests
             fsGroup: 1000
         """;
 
-        var provider = JobTemplateProvider.LoadFromYaml(yaml);
+        var provider = JobTemplateStore.LoadFromYaml(yaml);
         var template = provider.Resolve("dotnet,dotnet10,kiro")!;
         var ctx = CreateContext();
 
@@ -337,7 +337,7 @@ public class JobSpecBuilderTests
     {
         // Guard against YAML→JSON type mismatches for ALL pass-through fields.
         // Uses the real k8s client serializer (KubernetesJson) to validate that
-        // the JsonElements produced by JobTemplateProvider are compatible with
+        // the JsonElements produced by JobTemplateStore are compatible with
         // the k8s model types. If a numeric field arrives as a JSON string,
         // KubernetesJson.Deserialize will throw — catching the bug at test time.
         const string yaml = """
@@ -360,7 +360,7 @@ public class JobSpecBuilderTests
               tolerationSeconds: 300
         """;
 
-        var provider = JobTemplateProvider.LoadFromYaml(yaml);
+        var provider = JobTemplateStore.LoadFromYaml(yaml);
         var template = provider.Resolve("dotnet,dotnet10,kiro")!;
 
         // Validate podSecurityContext via k8s client deserializer
@@ -537,7 +537,7 @@ public class JobSpecBuilderTests
               memory: "8Gi"
         """;
 
-        var provider = JobTemplateProvider.LoadFromYaml(yaml);
+        var provider = JobTemplateStore.LoadFromYaml(yaml);
         var template = provider.Resolve("dotnet,dotnet10,kiro")!;
         var ctx = CreateContext(claimedPvc: "caa-kiro-cli-data-0");
 

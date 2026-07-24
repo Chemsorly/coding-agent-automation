@@ -586,13 +586,13 @@ public class K8sLifecycleIntegrationTests : IDisposable
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
 
-        // Build JobTemplateProvider from imageMapping dictionary
-        var templateProvider = BuildTemplateProvider(imageMapping);
+        // Build JobTemplateStore from imageMapping dictionary
+        var templateStore = BuildTemplateStore(imageMapping);
 
-        return new DispatchService(_dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider);
+        return new DispatchService(_dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateStore);
     }
 
-    private static JobTemplateProvider BuildTemplateProvider(Dictionary<string, string> imageMapping)
+    private static JobTemplateStore BuildTemplateStore(Dictionary<string, string> imageMapping)
     {
         var templates = imageMapping.Select(kv => new JobTemplate
         {
@@ -602,7 +602,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
         }).ToList();
 
         var json = System.Text.Json.JsonSerializer.Serialize(templates);
-        return JobTemplateProvider.LoadFromJson(json);
+        return JobTemplateStore.LoadFromJson(json);
     }
 
     private ReconciliationService CreateReconciliationService(bool withLabelService = false)

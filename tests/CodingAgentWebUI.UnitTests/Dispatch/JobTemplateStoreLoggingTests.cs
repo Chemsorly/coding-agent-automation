@@ -6,15 +6,15 @@ using Serilog.Events;
 namespace CodingAgentWebUI.UnitTests.Dispatch;
 
 /// <summary>
-/// Verifies that JobTemplateProvider logs at Error level before throwing exceptions
+/// Verifies that JobTemplateStore logs at Error level before throwing exceptions
 /// for null deserialization results, missing files, and invalid template configs.
 /// </summary>
 [Collection("SerilogLoggerTests")]
-public class JobTemplateProviderLoggingTests
+public class JobTemplateStoreLoggingTests
 {
     /// <summary>
     /// Captures log events written to Serilog's global Log.Logger during test execution.
-    /// JobTemplateProvider is a non-DI static-factory class so it uses Log.Logger.
+    /// JobTemplateStore is a non-DI static-factory class so it uses Log.Logger.
     /// </summary>
     private sealed class LogCapture : IDisposable
     {
@@ -47,7 +47,7 @@ public class JobTemplateProviderLoggingTests
         using var capture = new LogCapture();
 
         // Empty YAML produces null deserialization
-        var act = () => JobTemplateProvider.LoadFromYaml("");
+        var act = () => JobTemplateStore.LoadFromYaml("");
 
         act.Should().Throw<InvalidOperationException>()
             .WithMessage("*null*");
@@ -61,7 +61,7 @@ public class JobTemplateProviderLoggingTests
         using var capture = new LogCapture();
 
         // "null" JSON string produces null deserialization
-        var act = () => JobTemplateProvider.LoadFromJson("null");
+        var act = () => JobTemplateStore.LoadFromJson("null");
 
         act.Should().Throw<System.Text.Json.JsonException>()
             .WithMessage("*null*");
@@ -74,7 +74,7 @@ public class JobTemplateProviderLoggingTests
     {
         using var capture = new LogCapture();
 
-        var act = () => JobTemplateProvider.LoadFromFile("/nonexistent/path/job-templates.yaml");
+        var act = () => JobTemplateStore.LoadFromFile("/nonexistent/path/job-templates.yaml");
 
         act.Should().Throw<FileNotFoundException>();
 
@@ -91,7 +91,7 @@ public class JobTemplateProviderLoggingTests
         [{ "labels": "kiro,dotnet", "image": "", "providerType": "kiro" }]
         """;
 
-        var act = () => JobTemplateProvider.LoadFromJson(json);
+        var act = () => JobTemplateStore.LoadFromJson(json);
 
         act.Should().Throw<InvalidOperationException>()
             .WithMessage("*empty Image*");
