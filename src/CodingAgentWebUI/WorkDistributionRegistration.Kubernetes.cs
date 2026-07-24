@@ -43,24 +43,55 @@ public static partial class WorkDistributionRegistration
                 ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
                 ?? "default",
             Log.Logger));
-        services.AddSingleton<ConsolidationK8sDispatcher>(sp => new ConsolidationK8sDispatcher(
+
+        // Shared dispatch lifecycle service
+        services.AddSingleton<DispatchLifecycleService>(sp =>
+        {
+            var options = new DispatchServiceOptions();
+            var config = sp.GetRequiredService<IConfiguration>();
+            config.GetSection("WorkDistribution:Dispatch").Bind(options);
+            var pvcList = config.GetSection("WorkDistribution:CredentialPools:Kiro").Get<List<string>>();
+            if (pvcList is not null) options.KiroPvcPool = pvcList;
+            options.OrchestratorUrl = config.GetValue<string>("WorkDistribution:OrchestratorUrl") ?? "";
+            options.AgentApiKeySecretName = config.GetValue<string>("WorkDistribution:AgentApiKeySecretName") ?? "";
+            options.AgentServiceAccountName = config.GetValue<string>("WorkDistribution:AgentServiceAccountName") ?? "";
+            options.Namespace = config.GetValue<string>("WorkDistribution:Namespace")
+                ?? Environment.GetEnvironmentVariable("POD_NAMESPACE") ?? "default";
+            options.OpencodeConfigSecretName = config.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
+            return new DispatchLifecycleService(
+                sp.GetRequiredService<IKubernetesJobClient>(),
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                options);
+        });
+
+        // DispatchService — handles regular (non-consolidation) work items
+        services.AddHostedService(sp => new DispatchService(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<ILeaderElectionService>(),
+            sp.GetRequiredService<DispatchLifecycleService>(),
+            sp.GetRequiredService<WorkItemTransitionService>(),
+            sp.GetRequiredService<IConfiguration>(),
+            sp.GetService<ILabelService>(),
+            sp.GetService<IAgentProfileStore>(),
+            sp.GetService<IOrchestratorRunService>()));
+
+        // ConsolidationDispatchHandler — handles consolidation work items
+        services.AddHostedService(sp => new ConsolidationDispatchHandler(
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<ILeaderElectionService>(),
+            sp.GetRequiredService<DispatchLifecycleService>(),
+            JobTemplateProvider.LoadFromFile(
+                configuration.GetValue<string>("WorkDistribution:JobTemplatesPath")
+                    ?? DispatchService.DefaultJobTemplatesPath),
+            sp.GetRequiredService<IConfiguration>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetService<IConsolidationRunStore>(),
             sp.GetService<IConsolidationService>(),
             sp.GetService<IConsolidationJobPreparationService>(),
             sp.GetService<IPipelineConfigStore>(),
-            sp.GetService<IProjectStore>()));
-        services.AddHostedService(sp => new DispatchService(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<ILeaderElectionService>(),
-            sp.GetRequiredService<IKubernetesJobClient>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<IConfiguration>(),
-            sp.GetService<ILabelService>(),
-            sp.GetService<ITokenVendingService>(),
-            sp.GetService<IAgentProfileStore>(),
-            sp.GetService<IOrchestratorRunService>(),
-            sp.GetService<ConsolidationK8sDispatcher>()));
+            sp.GetService<IProjectStore>(),
+            sp.GetService<IAgentProfileStore>()));
+
         services.AddHostedService(sp => new ReconciliationService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<ILeaderElectionService>(),
@@ -80,6 +111,6 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<IPendingWorkQuery>(sp =>
             new DbPendingWorkQuery(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
-        Log.Information("WorkDistribution: Kubernetes mode — DispatchService + ReconciliationService + LeaderElection registered");
+        Log.Information("WorkDistribution: Kubernetes mode — DispatchService + ConsolidationDispatchHandler + ReconciliationService + LeaderElection registered");
     }
 }

@@ -623,11 +623,16 @@ public class K8sEdgeCaseTests : IDisposable
             new JobTemplate { Labels = "dotnet,opencode", Image = "ghcr.io/opencode:latest", ProviderType = "opencode", MaxConcurrent = 10 }
         };
         var json = System.Text.Json.JsonSerializer.Serialize(templates);
-        var templateStore = JobTemplateStore.LoadFromJson(json);
+        var templateProvider = JobTemplateProvider.LoadFromJson(json);
 
         var service = new DispatchService(
-            _dbFactory, CreateAlwaysLeaderElection(), _mockKubeClient.Object,
-            _transitionService, config, templateStore);
+            _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+            {
+                PollIntervalSeconds = 10, RateLimitPerSecond = 100, Namespace = "default",
+                OrchestratorUrl = "http://orchestrator:8080", AgentApiKeySecretName = "agent-api-key",
+                KiroPvcPool = new List<string> { "pvc-kiro-1", "pvc-kiro-2" }
+            }),
+            _transitionService, config, templateProvider);
 
         _mockKubeClient
             .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -1006,15 +1011,26 @@ public class K8sEdgeCaseTests : IDisposable
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
 
-        var templateStore = BuildTemplateStore(
+        var templateProvider = BuildTemplateProvider(
             new Dictionary<string, string> { ["dotnet,kiro"] = "ghcr.io/agent:kiro-latest" });
 
+        var options = new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            AgentServiceAccountName = "caa-agent",
+            KiroPvcPool = pvcPool.ToList()
+        };
+
         return new DispatchService(
-            _dbFactory, CreateAlwaysLeaderElection(), _mockKubeClient.Object,
-            _transitionService, config, templateStore);
+            _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options),
+            _transitionService, config, templateProvider);
     }
 
-    private static JobTemplateStore BuildTemplateStore(Dictionary<string, string> imageMapping)
+    private static JobTemplateProvider BuildTemplateProvider(Dictionary<string, string> imageMapping)
     {
         var templates = imageMapping.Select(kv => new JobTemplate
         {
@@ -1025,7 +1041,7 @@ public class K8sEdgeCaseTests : IDisposable
         }).ToList();
 
         var json = System.Text.Json.JsonSerializer.Serialize(templates);
-        return JobTemplateStore.LoadFromJson(json);
+        return JobTemplateProvider.LoadFromJson(json);
     }
 
     private async Task InvokePollAndDispatch(DispatchService service)
