@@ -322,7 +322,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var dispatchService = new DispatchService(
             Fixture.DbContextFactory,
             leaderElection,
-            Fixture.K8sClient,
+            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
             transitionService,
             config,
             templateProvider);
@@ -386,7 +386,8 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
 
         var dispatchService = new DispatchService(
-            Fixture.DbContextFactory, leaderElection, Fixture.K8sClient,
+            Fixture.DbContextFactory, leaderElection,
+            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
             transitionService, config, templateProvider);
 
         // Act
@@ -419,7 +420,8 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
 
         var dispatchService = new DispatchService(
-            Fixture.DbContextFactory, leaderElection, Fixture.K8sClient,
+            Fixture.DbContextFactory, leaderElection,
+            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
             transitionService, config, templateProvider);
 
         // Act
@@ -467,6 +469,23 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
                 ["WorkDistribution:Namespace"] = ns
             })
             .Build();
+    }
+
+    private static DispatchServiceOptions BuildDispatchOptions(
+        string orchestratorUrl = "http://orchestrator:8080",
+        string agentApiKeySecretName = "caa-secret",
+        string agentServiceAccountName = "caa-agent",
+        string ns = "coding-agent")
+    {
+        return new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 1,
+            RateLimitPerSecond = 10,
+            OrchestratorUrl = orchestratorUrl,
+            AgentApiKeySecretName = agentApiKeySecretName,
+            AgentServiceAccountName = agentServiceAccountName,
+            Namespace = ns
+        };
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1192,7 +1211,8 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
 
         var dispatchService = new DispatchService(
-            Fixture.DbContextFactory, leaderElection, Fixture.K8sClient,
+            Fixture.DbContextFactory, leaderElection,
+            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
             transitionService, config, templateProvider);
 
         // Act: run one dispatch cycle
@@ -1251,7 +1271,8 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
 
         var dispatchService = new DispatchService(
-            Fixture.DbContextFactory, leaderElection, Fixture.K8sClient,
+            Fixture.DbContextFactory, leaderElection,
+            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
             transitionService, config, templateProvider);
 
         // Act
@@ -1292,7 +1313,8 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
 
         var dispatchService = new DispatchService(
-            Fixture.DbContextFactory, leaderElection, Fixture.K8sClient,
+            Fixture.DbContextFactory, leaderElection,
+            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
             transitionService, config, templateProvider);
 
         // Act

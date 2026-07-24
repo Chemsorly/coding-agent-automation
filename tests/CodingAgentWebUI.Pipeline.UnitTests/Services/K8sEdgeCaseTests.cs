@@ -626,7 +626,12 @@ public class K8sEdgeCaseTests : IDisposable
         var templateProvider = JobTemplateProvider.LoadFromJson(json);
 
         var service = new DispatchService(
-            _dbFactory, CreateAlwaysLeaderElection(), _mockKubeClient.Object,
+            _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+            {
+                PollIntervalSeconds = 10, RateLimitPerSecond = 100, Namespace = "default",
+                OrchestratorUrl = "http://orchestrator:8080", AgentApiKeySecretName = "agent-api-key",
+                KiroPvcPool = new List<string> { "pvc-kiro-1", "pvc-kiro-2" }
+            }),
             _transitionService, config, templateProvider);
 
         _mockKubeClient
@@ -952,8 +957,19 @@ public class K8sEdgeCaseTests : IDisposable
         var templateProvider = BuildTemplateProvider(
             new Dictionary<string, string> { ["dotnet,kiro"] = "ghcr.io/agent:kiro-latest" });
 
+        var options = new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            AgentServiceAccountName = "caa-agent",
+            KiroPvcPool = pvcPool.ToList()
+        };
+
         return new DispatchService(
-            _dbFactory, CreateAlwaysLeaderElection(), _mockKubeClient.Object,
+            _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options),
             _transitionService, config, templateProvider);
     }
 
