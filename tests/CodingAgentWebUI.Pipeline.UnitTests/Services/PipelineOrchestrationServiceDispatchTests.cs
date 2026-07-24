@@ -10,7 +10,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// <summary>
 /// Unit tests for DispatchRunCreationService.CreateDispatchedRunAsync.
 /// </summary>
-public class PipelineOrchestrationServiceDispatchTests : IDisposable
+public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProviderFactory> _mockFactory;
@@ -133,8 +133,8 @@ public class PipelineOrchestrationServiceDispatchTests : IDisposable
         run.IssueIdentifier.Value.Should().Be("42");
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        // DispatchRunCreationService has no IDisposable — no cleanup needed
+        await _service.DisposeAsync();
     }
 }
