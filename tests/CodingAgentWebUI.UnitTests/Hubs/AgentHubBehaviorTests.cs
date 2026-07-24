@@ -4,9 +4,7 @@ using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
-using CodingAgentWebUI.TestUtilities;
 using Microsoft.AspNetCore.SignalR;
 using Moq;
 using ILogger = Serilog.ILogger;
@@ -25,13 +23,13 @@ public sealed class AgentHubBehaviorTests : IDisposable
     private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IRunLifecycleManager> _mockLifecycleManager = new();
     private readonly Mock<ILogger> _mockLogger = new();
-    private readonly List<PipelineOrchestrationService> _orchestrationInstances = new();
 
     private AgentHub CreateHub(string connectionId = "conn-1")
     {
         var hub = new AgentHub(
             _mockFacade.Object,
-            null!,  // PipelineOrchestrationService — tests that need it use a mock below
+            Mock.Of<IChatNotifier>(),
+            Mock.Of<IChangeNotifier>(),
             null!,  // ModelFetchService
             _mockConsolidation.Object,
             _badgeService,
@@ -90,7 +88,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
 
-        // Use a hub with a real PipelineOrchestrationService mock to avoid NRE on NotifyChange
+        // Use a hub with a real lifecycle service to verify job completion state transitions
         var hub = CreateHubWithOrchestration();
 
         await hub.ReportJobCompleted("job-1", payload);
@@ -884,22 +882,23 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     #region Helpers
 
-    // TODO: Once AgentHub is decoupled from concrete PipelineOrchestrationService, replace
-    // CreateMinimalOrchestrationService() with a Mock<IChangeNotifier> to avoid constructing the
-    // heavy orchestration service just to satisfy the constructor. The lifecycle service already
-    // accepts IChangeNotifier — only AgentHub's concrete dependency forces the real instance here.
+    // TODO: Add verifiable Mock<IChatNotifier> to assert NotifyChatResponse/NotifyChatCompleted
+    // are called during chat tests, and Mock<IChangeNotifier> to verify NotifyChange() is invoked
+    // during ReportJobCompleted, ReportBrainSync, and ReportOutputLines.
     private AgentHub CreateHubWithOrchestration(string connectionId = "conn-1")
     {
-        var orchestration = CreateMinimalOrchestrationService();
+        var changeNotifier = Mock.Of<IChangeNotifier>();
+        var chatNotifier = Mock.Of<IChatNotifier>();
 
         var hub = new AgentHub(
             _mockFacade.Object,
-            orchestration,
+            chatNotifier,
+            changeNotifier,
             null!,  // ModelFetchService
             _mockConsolidation.Object,
             _badgeService,
             _mockIssueOps.Object,
-            CreateRealLifecycleService(orchestration),
+            CreateRealLifecycleService(changeNotifier),
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object);
@@ -913,16 +912,18 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     private AgentHub CreateHubWithRegistrationContext(string agentId, string connectionId)
     {
-        var orchestration = CreateMinimalOrchestrationService();
+        var changeNotifier = Mock.Of<IChangeNotifier>();
+        var chatNotifier = Mock.Of<IChatNotifier>();
 
         var hub = new AgentHub(
             _mockFacade.Object,
-            orchestration,
+            chatNotifier,
+            changeNotifier,
             null!,  // ModelFetchService
             _mockConsolidation.Object,
             _badgeService,
             _mockIssueOps.Object,
-            CreateRealLifecycleService(orchestration),
+            CreateRealLifecycleService(changeNotifier),
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object);
@@ -950,15 +951,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
     {
         public TestHttpContextFeature(Microsoft.AspNetCore.Http.HttpContext httpContext) => HttpContext = httpContext;
         public Microsoft.AspNetCore.Http.HttpContext? HttpContext { get; set; }
-    }
-
-    private PipelineOrchestrationService CreateMinimalOrchestrationService()
-    {
-        var service = TestOrchestrationFactory.CreateMinimal(
-            configStore: Mock.Of<IConfigurationStore>(),
-            providerFactory: Mock.Of<IProviderFactory>());
-        _orchestrationInstances.Add(service);
-        return service;
     }
 
     private IAgentJobLifecycleService CreateRealLifecycleService(IChangeNotifier changeNotifier)
@@ -1308,6 +1300,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     #region ReportChatResponse / ReportChatCompleted — Session Ownership
 
+    // TODO: Use verifiable Mock<IChatNotifier> and assert NotifyChatResponse() is invoked —
+    // currently this test only verifies no exception, not that the notification was dispatched.
     [Fact]
     public async Task ReportChatResponse_AgentOwnsSession_Succeeds()
     {
@@ -1348,6 +1342,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
         await act.Should().ThrowAsync<HubException>().WithMessage("*not assigned*");
     }
 
+    // TODO: Use verifiable Mock<IChatNotifier> and assert NotifyChatCompleted() is invoked —
+    // currently this test only verifies no exception, not that the notification was dispatched.
     [Fact]
     public async Task ReportChatCompleted_AgentOwnsSession_Succeeds()
     {
@@ -1759,7 +1755,6 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var orchestration in _orchestrationInstances)
-            orchestration.Dispose();
+        // No disposable resources to clean up after removing PipelineOrchestrationService dependency
     }
 }

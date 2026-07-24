@@ -15,25 +15,11 @@ public class AboutPageComponentTests : BunitContext
 {
     private void RegisterDefaults(IReadOnlyList<PipelineRunSummary>? history = null)
     {
-        Services.AddSingleton(CreateService(history));
-        Services.AddSingleton(new BuildInfo());
-    }
-
-    private PipelineOrchestrationService CreateService(IReadOnlyList<PipelineRunSummary>? history = null)
-    {
-        var store = new Mock<IConfigurationStore>();
-        store.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-
-        var factory = new Mock<IProviderFactory>();
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(history ?? Array.Empty<PipelineRunSummary>());
-
-        return TestOrchestrationFactory.CreateMinimal(
-            configStore: store.Object,
-            providerFactory: factory.Object,
-            historyService: mockHistory.Object);
+        Services.AddSingleton(mockHistory.Object);
+        Services.AddSingleton(new BuildInfo());
     }
 
     [Fact]
