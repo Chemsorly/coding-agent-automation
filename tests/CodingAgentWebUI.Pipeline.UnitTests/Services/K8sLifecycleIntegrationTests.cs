@@ -345,14 +345,15 @@ public class K8sLifecycleIntegrationTests : IDisposable
     [Fact]
     public async Task K8s_Reconcile_LabelSwapOnFailure_CallsLabelService()
     {
-        // Arrange: Insert a recently-terminal (Failed) WorkItem that still needs label swap
+        // Arrange: Insert a recently-terminal (Failed) WorkItem with retryable failure reason
         var workItemId = Guid.NewGuid();
         var issueId = "owner/repo#label-swap";
         var providerConfigId = "github-provider-1";
 
         await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Failed,
             issueProviderConfigId: providerConfigId,
-            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: FailureReason.Timeout);
 
         _mockLabelService
             .Setup(l => l.SwapLabelAsync(providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()))
@@ -364,6 +365,200 @@ public class K8sLifecycleIntegrationTests : IDisposable
         await InvokeReconcileStartupLabelsAsync(reconciliationService);
 
         // Assert: ILabelService.SwapLabelAsync was called for the terminal item
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task K8s_Reconcile_CancelledItem_NeverReQueued()
+    {
+        // Arrange: Insert a recently-terminal Cancelled WorkItem
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#cancelled";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Cancelled,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        var reconciliationService = CreateReconciliationService(withLabelService: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: SwapLabelAsync was NOT called — cancelled items are never re-queued
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task K8s_Reconcile_FailedWithAgentError_NotReQueued()
+    {
+        // Arrange: Insert a Failed WorkItem with permanent failure reason
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#agent-error";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Failed,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: FailureReason.AgentError);
+
+        var reconciliationService = CreateReconciliationService(withLabelService: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: SwapLabelAsync was NOT called — AgentError is a permanent failure
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task K8s_Reconcile_FailedWithTokenRefreshFailure_NotReQueued()
+    {
+        // Arrange: Insert a Failed WorkItem with permanent failure reason
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#token-refresh";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Failed,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: FailureReason.TokenRefreshFailure);
+
+        var reconciliationService = CreateReconciliationService(withLabelService: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: SwapLabelAsync was NOT called — TokenRefreshFailure is a permanent failure
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task K8s_Reconcile_FailedWithExitCodeFailure_NotReQueued()
+    {
+        // Arrange: Insert a Failed WorkItem with permanent failure reason
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#exit-code";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Failed,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: FailureReason.ExitCodeFailure);
+
+        var reconciliationService = CreateReconciliationService(withLabelService: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: SwapLabelAsync was NOT called — ExitCodeFailure is a permanent failure
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task K8s_Reconcile_FailedWithNullFailureReason_NotReQueued()
+    {
+        // Arrange: Insert a Failed WorkItem with null FailureReason (legacy/unknown — fail-safe)
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#null-reason";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Failed,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: null);
+
+        var reconciliationService = CreateReconciliationService(withLabelService: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: SwapLabelAsync was NOT called — null FailureReason defaults to not re-queued (fail-safe)
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task K8s_Reconcile_FailedWithTimeout_IsReQueued()
+    {
+        // Arrange: Insert a Failed WorkItem with retryable failure reason
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#timeout";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Failed,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: FailureReason.Timeout);
+
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync(providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var reconciliationService = CreateReconciliationService(withLabelService: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: SwapLabelAsync WAS called — Timeout is a retryable failure
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task K8s_Reconcile_FailedWithInfrastructureFailure_IsReQueued()
+    {
+        // Arrange: Insert a Failed WorkItem with retryable failure reason
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#infra-failure";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Failed,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1),
+            failureReason: FailureReason.InfrastructureFailure);
+
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync(providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var reconciliationService = CreateReconciliationService(withLabelService: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: SwapLabelAsync WAS called — InfrastructureFailure is a retryable failure
+        _mockLabelService.Verify(l => l.SwapLabelAsync(
+            providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task K8s_Reconcile_SucceededItem_IsReQueued()
+    {
+        // Arrange: Insert a recently-terminal Succeeded WorkItem
+        var workItemId = Guid.NewGuid();
+        var issueId = "owner/repo#succeeded";
+        var providerConfigId = "github-provider-1";
+
+        await InsertWorkItem(workItemId, issueId, "kiro,dotnet", WorkItemStatus.Succeeded,
+            issueProviderConfigId: providerConfigId,
+            completedAt: DateTimeOffset.UtcNow.AddMinutes(-1));
+
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync(providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var reconciliationService = CreateReconciliationService(withLabelService: true);
+
+        // Act
+        await InvokeReconcileStartupLabelsAsync(reconciliationService);
+
+        // Assert: SwapLabelAsync WAS called — Succeeded items still need label recovery
         _mockLabelService.Verify(l => l.SwapLabelAsync(
             providerConfigId, issueId, "agent:next", It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -466,7 +661,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
     private async Task InsertWorkItem(Guid id, string issueId, string selector, WorkItemStatus status,
         DateTimeOffset? createdAt = null, int timeoutSeconds = 1800,
         string? k8sJobName = null, DateTimeOffset? completedAt = null,
-        string? issueProviderConfigId = null)
+        string? issueProviderConfigId = null, FailureReason? failureReason = null)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
         var entity = new WorkItemEntity
@@ -480,6 +675,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
             TimeoutSeconds = timeoutSeconds,
             K8sJobName = k8sJobName,
             CompletedAt = completedAt,
+            FailureReason = failureReason,
             Payload = "{}"
         };
 

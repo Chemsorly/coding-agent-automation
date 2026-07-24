@@ -50,5 +50,13 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IHubIssueOperations>(),
             sp.GetRequiredService<IChangeNotifier>(),
             Log.Logger));
+
+        services.AddSingleton<IAgentTokenRefreshService>(sp => new AgentTokenRefreshService(
+            sp.GetRequiredService<IAgentHubFacade>(),
+            sp.GetRequiredService<ITokenVendingService>(),
+            Log.Logger));
+
+        services.AddSingleton<IGateCommentFormatter>(sp => new GateCommentFormatter(
+            Log.Logger));
     }
 }
