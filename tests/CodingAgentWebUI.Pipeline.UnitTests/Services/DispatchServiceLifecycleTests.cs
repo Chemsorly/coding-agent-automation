@@ -27,6 +27,10 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// Lifecycle tests for DispatchService using IKubernetesJobClient abstraction.
 /// Validates: Requirements 5.1-5.8, 5.13-5.14
 /// </summary>
+// TODO: Missing negative test — add a test that inserts a Consolidation WorkItem and asserts
+// DispatchService's PollAndDispatchAsync does NOT pick it up. This guards the critical boundary
+// at DispatchService.cs:190 (TaskType != Consolidation filter). Without it, accidental removal
+// of the filter would cause consolidation items to flow through the regular dispatch path.
 [Trait("Feature", "035a-kubernetes-dispatch")]
 public class DispatchServiceLifecycleTests : IDisposable
 {
@@ -460,7 +464,15 @@ public class DispatchServiceLifecycleTests : IDisposable
         // Build JobTemplateProvider from imageMapping + maxConcurrentPods
         var templateProvider = BuildTemplateProvider(imageMapping, maxConcurrentPods);
 
-        return new DispatchService(_dbFactory, leaderElection ?? _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider, runService: runService);
+        return new DispatchService(_dbFactory, leaderElection ?? _leaderElection, new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            KiroPvcPool = new List<string> { "pvc-test-1", "pvc-test-2" }
+        }), _transitionService, config, templateProvider, runService: runService);
     }
 
     private static JobTemplateProvider BuildTemplateProvider(

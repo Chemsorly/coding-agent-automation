@@ -35,13 +35,7 @@ public class DispatchServiceMetricsTests : IDisposable
     private readonly TestDbContextFactory _dbFactory;
     private readonly WorkItemTransitionService _transitionService;
     private readonly Mock<IKubernetesJobClient> _mockKubeClient = new();
-    private readonly Mock<ITokenVendingService> _mockTokenVending = new();
-    private readonly Mock<IConsolidationRunStore> _mockRunStore = new();
-    private readonly Mock<IConsolidationService> _mockConsolidationService = new();
-    private readonly Mock<IProviderConfigStore> _mockProviderConfigStore = new();
     private readonly Mock<IAgentProfileStore> _mockAgentProfileStore = new();
-    private readonly Mock<IProjectStore> _mockProjectStore = new();
-    private readonly Mock<IPipelineConfigStore> _mockPipelineConfigStore = new();
     private readonly LeaderElectionService _leaderElection;
 
     private readonly MeterListener _listener = new();
@@ -139,43 +133,6 @@ public class DispatchServiceMetricsTests : IDisposable
         _dispatchLatencies.Should().Contain(v => v >= 10.0 && v < 50.0, "latency should fall back to CreatedAt (15s ago)");
     }
 
-    [Fact]
-    public async Task ConsolidationDispatch_UsesOriginalEnqueuedAt_WhenPresent()
-    {
-        // Arrange: OriginalEnqueuedAt is 90s before CreatedAt (simulating re-dispatch of consolidation item)
-        var workItemId = Guid.NewGuid();
-        var runId = workItemId.ToString();
-        var now = DateTimeOffset.UtcNow;
-        var originalEnqueuedAt = now.AddSeconds(-90);
-        var createdAt = now.AddSeconds(-5);
-
-        await InsertWorkItem(workItemId, createdAt, originalEnqueuedAt, WorkItemTaskType.Consolidation, "kiro,dotnet",
-            issueIdentifier: runId, issueProviderConfigId: "consolidation");
-
-        _mockKubeClient
-            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns(Task.CompletedTask);
-
-        _mockRunStore
-            .Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new ConsolidationRun
-            {
-                RunId = runId,
-                Type = ConsolidationRunType.BrainConsolidation,
-                StartedAtUtc = DateTimeOffset.UtcNow,
-                Status = ConsolidationRunStatus.Queued
-            });
-
-        var service = CreateService();
-
-        // Act
-        await InvokePollAndDispatch(service);
-
-        // Assert: latency should be ~90s (DispatchedAt - OriginalEnqueuedAt), not ~5s
-        _dispatchLatencies.Should().Contain(v => v >= 85.0, "consolidation latency should reflect OriginalEnqueuedAt (90s ago)");
-        _pendingDurations.Should().Contain(v => v >= 85.0, "consolidation pending duration should reflect OriginalEnqueuedAt");
-    }
-
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private void SetupDefaultMocks()
@@ -195,59 +152,6 @@ public class DispatchServiceMetricsTests : IDisposable
                     Priority = 1
                 }
             });
-
-        // Provider config store
-        var agentConfig = new ProviderConfig
-        {
-            Id = "agent-provider-001",
-            DisplayName = "Agent",
-            Kind = ProviderKind.Agent,
-            ProviderType = "KiroCli"
-        };
-        var repoConfig = new ProviderConfig
-        {
-            Id = "repo-provider-001",
-            DisplayName = "Repo",
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub"
-        };
-
-        _mockProviderConfigStore
-            .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { agentConfig });
-        _mockProviderConfigStore
-            .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<ProviderConfig> { repoConfig });
-
-        // Project store: return a template
-        _mockProjectStore
-            .Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineJobTemplate>
-            {
-                new()
-                {
-                    Id = "template-001",
-                    Name = "Test Template",
-                    IssueProviderId = "issue-provider-001",
-                    RepoProviderId = "repo-provider-001"
-                }
-            });
-
-        // Pipeline config store
-        _mockPipelineConfigStore
-            .Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new PipelineConfiguration());
-
-        // Token vending: pass-through (return same configs)
-        _mockTokenVending
-            .Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Returns((IReadOnlyList<ProviderConfig> configs, string _, CancellationToken _, bool _) =>
-                Task.FromResult(configs));
-
-        // Consolidation run store: default no-op
-        _mockRunStore
-            .Setup(s => s.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ConsolidationRun?)null);
     }
 
     private DispatchService CreateService()
@@ -266,26 +170,26 @@ public class DispatchServiceMetricsTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
         var templateProvider = BuildTemplateProvider();
 
-        var consolidationDispatcher = new ConsolidationK8sDispatcher(
+        var options = new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            KiroPvcPool = new List<string> { "pvc-test-1", "pvc-test-2" }
+        };
+
+        var lifecycle = new DispatchLifecycleService(
+            _mockKubeClient.Object,
             _transitionService,
-            _mockRunStore.Object,
-            _mockConsolidationService.Object,
-            new ConsolidationJobPreparationService(
-                _mockProviderConfigStore.Object,
-                _mockProjectStore.Object,
-                _mockTokenVending.Object,
-                Serilog.Log.Logger,
-                _mockAgentProfileStore.Object),
-            _mockPipelineConfigStore.Object,
-            _mockProjectStore.Object);
+            options);
 
         return new DispatchService(
-            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider,
+            _dbFactory, _leaderElection, lifecycle, _transitionService, config, templateProvider,
             null,
-            _mockTokenVending.Object,
             _mockAgentProfileStore.Object,
-            runService: null,
-            consolidationK8sDispatcher: consolidationDispatcher);
+            runService: null);
     }
 
     private static JobTemplateProvider BuildTemplateProvider()

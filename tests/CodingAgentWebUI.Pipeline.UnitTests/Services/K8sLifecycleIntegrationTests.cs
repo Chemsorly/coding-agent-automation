@@ -394,7 +394,15 @@ public class K8sLifecycleIntegrationTests : IDisposable
         // Build JobTemplateProvider from imageMapping dictionary
         var templateProvider = BuildTemplateProvider(imageMapping);
 
-        return new DispatchService(_dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider);
+        return new DispatchService(_dbFactory, _leaderElection, new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            KiroPvcPool = Enumerable.Range(0, pvcCount).Select(i => $"pvc-test-{i + 1}").ToList()
+        }), _transitionService, config, templateProvider);
     }
 
     private static JobTemplateProvider BuildTemplateProvider(Dictionary<string, string> imageMapping)

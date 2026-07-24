@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Threading.RateLimiting;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
@@ -9,9 +8,6 @@ using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using k8s;
-using k8s.Autorest;
-using k8s.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
@@ -20,10 +16,11 @@ using Serilog;
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// K8s mode only: polls WorkItems WHERE Status=Pending ORDER BY CreatedAt ASC,
+/// K8s mode only: polls WorkItems WHERE Status=Pending AND TaskType!=Consolidation ORDER BY CreatedAt ASC,
 /// resolves container image via JobTemplateProvider, creates K8s Jobs via JobSpecBuilder,
 /// updates to Dispatched. Runs under leader election (same Lease as PipelineLoopService).
 /// Rate-limited: default 10 Jobs/s. Skips items whose selector group is at concurrency limit.
+/// Consolidation items are handled by <see cref="ConsolidationDispatchHandler"/>.
 /// </summary>
 public sealed class DispatchService : BackgroundService
 {
@@ -34,50 +31,26 @@ public sealed class DispatchService : BackgroundService
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly ILeaderElectionService _leaderElection;
-    private readonly IKubernetesJobClient _kubeClient;
-    private readonly WorkItemTransitionService _transitionService;
+    private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateProvider _templateProvider;
     private readonly ILabelService? _labelService;
-    private readonly ITokenVendingService? _tokenVending;
     private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IOrchestratorRunService? _runService;
-    private readonly ConsolidationK8sDispatcher? _consolidationK8sDispatcher;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
-    public DispatchService(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        ILeaderElectionService leaderElection,
-        IKubernetesJobClient kubeClient,
-        WorkItemTransitionService transitionService,
-        IConfiguration configuration,
-        ILabelService? labelService = null,
-        ITokenVendingService? tokenVending = null,
-        IAgentProfileStore? agentProfileStore = null,
-        IOrchestratorRunService? runService = null)
-        : this(dbFactory, leaderElection, kubeClient, transitionService, configuration,
-               LoadTemplateProvider(configuration), labelService, tokenVending,
-               agentProfileStore, runService, null)
-    { }
-
-    /// <summary>
-    /// Constructor overload accepting a ConsolidationK8sDispatcher (for DI registration).
-    /// Loads the JobTemplateProvider from configuration automatically.
-    /// </summary>
     internal DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
         ILeaderElectionService leaderElection,
-        IKubernetesJobClient kubeClient,
-        WorkItemTransitionService transitionService,
+        DispatchLifecycleService lifecycle,
+        WorkItemTransitionService transitionService, // TODO: Dead parameter — never stored or used after consolidation extraction. Remove from both constructor overloads and DI registration.
         IConfiguration configuration,
-        ILabelService? labelService,
-        ITokenVendingService? tokenVending,
-        IAgentProfileStore? agentProfileStore,
-        IOrchestratorRunService? runService,
-        ConsolidationK8sDispatcher? consolidationK8sDispatcher)
-        : this(dbFactory, leaderElection, kubeClient, transitionService, configuration,
-               LoadTemplateProvider(configuration), labelService, tokenVending,
-               agentProfileStore, runService, consolidationK8sDispatcher)
+        ILabelService? labelService = null,
+        IAgentProfileStore? agentProfileStore = null,
+        IOrchestratorRunService? runService = null)
+        : this(dbFactory, leaderElection, lifecycle, transitionService, configuration,
+               LoadTemplateProvider(configuration), labelService,
+               agentProfileStore, runService)
     { }
 
     /// <summary>
@@ -86,25 +59,20 @@ public sealed class DispatchService : BackgroundService
     internal DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
         ILeaderElectionService leaderElection,
-        IKubernetesJobClient kubeClient,
-        WorkItemTransitionService transitionService,
+        DispatchLifecycleService lifecycle,
+        WorkItemTransitionService transitionService, // TODO: Dead parameter — never stored or used after consolidation extraction. Remove from both constructor overloads and DI registration.
         IConfiguration configuration,
         JobTemplateProvider templateProvider,
         ILabelService? labelService = null,
-        ITokenVendingService? tokenVending = null,
         IAgentProfileStore? agentProfileStore = null,
-        IOrchestratorRunService? runService = null,
-        ConsolidationK8sDispatcher? consolidationK8sDispatcher = null)
+        IOrchestratorRunService? runService = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
-        _kubeClient = kubeClient;
-        _transitionService = transitionService;
+        _lifecycle = lifecycle;
         _labelService = labelService;
-        _tokenVending = tokenVending;
         _agentProfileStore = agentProfileStore;
         _runService = runService;
-        _consolidationK8sDispatcher = consolidationK8sDispatcher;
         _templateProvider = templateProvider;
         _options = new DispatchServiceOptions();
         InitializeOptions(configuration);
@@ -217,9 +185,9 @@ public sealed class DispatchService : BackgroundService
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-        // Column projection — no Payload loading
+        // Column projection — no Payload loading. Excludes consolidation items (handled by ConsolidationDispatchHandler).
         var pendingItems = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Pending)
+            .Where(w => w.Status == WorkItemStatus.Pending && w.TaskType != WorkItemTaskType.Consolidation)
             .OrderBy(w => w.CreatedAt)
             .Select(w => new PendingWorkItemProjection
             {
@@ -298,14 +266,12 @@ public sealed class DispatchService : BackgroundService
             var effectiveSelector = item.AgentSelector;
             if (template is null)
             {
-                // Fallback: AgentSelector might be a subset of the template's label set
-                // (e.g., consolidation items store requiredLabels ["dotnet","dotnet10"] but template
-                // is keyed by full profile MatchLabels ["dotnet","dotnet10","kiro"]).
+                // Fallback: AgentSelector might be a subset of the template's label set.
                 // Resolve profile to get the full label set, then retry template lookup.
                 var (fallbackTemplate, resolvedSelector) = await ResolveTemplateViaProfileAsync(item.AgentSelector, ct);
                 if (fallbackTemplate is null)
                 {
-                    await FailWorkItem(item.Id, $"No job template for selector: {item.AgentSelector}", item.TaskType, item.IssueIdentifier, ct);
+                    await _lifecycle.FailWorkItemAsync(item.Id, $"No job template for selector: {item.AgentSelector}", ct);
                     continue;
                 }
                 template = fallbackTemplate;
@@ -349,27 +315,14 @@ public sealed class DispatchService : BackgroundService
         Dictionary<string, int> concurrencyBySelector,
         CancellationToken ct)
     {
-        // Route consolidation items to their dedicated dispatch path
-        if (item.TaskType == WorkItemTaskType.Consolidation)
-        {
-            // TODO: When _consolidationK8sDispatcher is null, consolidation items silently remain Pending
-            // and are re-polled indefinitely. Consider logging a warning or failing the work item to avoid
-            // silent infinite re-queuing. In production K8s mode the dispatcher is always registered.
-            if (_consolidationK8sDispatcher is not null)
-                await _consolidationK8sDispatcher.DispatchAsync(
-                    db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector,
-                    ExecuteDispatchLifecycleAsync, FailWorkItem, LoadProjectSecretsAsync, ct);
-            return;
-        }
-
-        await ExecuteDispatchLifecycleAsync(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, "",
+        await _lifecycle.ExecuteDispatchLifecycleAsync(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, "",
             async _ =>
             {
                 // Load project secrets if project has them
                 Dictionary<string, string>? projectSecrets = null;
                 if (!string.IsNullOrEmpty(item.ProjectId))
                 {
-                    projectSecrets = await LoadProjectSecretsAsync(db, item.ProjectId, ct);
+                    projectSecrets = await _lifecycle.LoadProjectSecretsAsync(db, item.ProjectId, ct);
                 }
                 return (true, projectSecrets);
             },
@@ -401,338 +354,9 @@ public sealed class DispatchService : BackgroundService
             ct);
     }
 
-    // ── Shared K8s Job Dispatch Lifecycle ──────────────────────────────────
-
-    /// <summary>
-    /// Shared dispatch lifecycle for both regular and consolidation WorkItems.
-    /// Handles: PVC claim, WorkItem load, pre-write, K8s Job creation, secret creation,
-    /// race detection, status transition to Dispatched, and metric recording.
-    /// Variant-specific behavior is injected via delegates.
-    /// </summary>
-    /// <param name="prepareVariant">
-    /// Called after WorkItem is loaded. Returns (shouldContinue, projectSecrets).
-    /// May mutate workItem entity fields (e.g., Payload). Return (false, null) to abort.
-    /// Must handle its own error logging and FailWorkItem calls before returning false.
-    /// </param>
-    /// <param name="onDispatchSuccess">
-    /// Called inside the final try block after successful Dispatched save.
-    /// For regular: resets StartedAt + swaps label. For consolidation: transitions run to Running.
-    /// </param>
-    internal async Task ExecuteDispatchLifecycleAsync(
-        PipelineDbContext db,
-        PendingWorkItemProjection item,
-        JobTemplate template,
-        bool isKiroAgent,
-        List<string> availablePvcs,
-        Dictionary<string, int> concurrencyBySelector,
-        string logPrefix,
-        Func<WorkItemEntity, Task<(bool shouldContinue, Dictionary<string, string>? projectSecrets)>> prepareVariant,
-        Func<WorkItemEntity, Task>? onDispatchSuccess,
-        CancellationToken ct)
-    {
-        // Generate deterministic job name
-        var jobName = GenerateJobName(item.Id);
-
-        // Claim PVC for kiro agents
-        string? claimedPvc = null;
-        if (isKiroAgent)
-        {
-            claimedPvc = availablePvcs[0];
-            availablePvcs.RemoveAt(0);
-        }
-
-        // Load full WorkItem
-        var workItem = await db.WorkItems.FindAsync([item.Id], ct);
-        if (workItem is null || workItem.Status != WorkItemStatus.Pending)
-        {
-            // Item was modified by another process
-            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            return;
-        }
-
-        // Variant-specific preparation (may mutate workItem, load secrets, or signal abort)
-        // TODO: Wrap prepareVariant in try/catch to release claimedPvc on unhandled exception (PVC leak risk if e.g. LoadProjectSecretsAsync throws)
-        var (shouldProceed, projectSecrets) = await prepareVariant(workItem);
-        if (!shouldProceed)
-        {
-            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            return;
-        }
-
-        // Pre-write K8sJobName (and ClaimedPvcName) to WorkItem BEFORE K8s API call.
-        // EF change tracking also persists any entity mutations from prepareVariant (e.g., Payload).
-        workItem.K8sJobName = jobName;
-        if (claimedPvc is not null)
-            workItem.ClaimedPvcName = claimedPvc;
-
-        try
-        {
-            await db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            Log.Warning("DispatchService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
-            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
-            return;
-        }
-
-        // Create K8s Job via JobSpecBuilder
-        if (!await CreateK8sJobAsync(db, item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, logPrefix, ct))
-            return;
-
-        // Create per-job K8s Secret if project has secrets
-        await CreateJobSecretIfNeededAsync(jobName, item.Id, projectSecrets, logPrefix, ct);
-
-        // Update to Dispatched — clear change tracker first to get fresh state
-        // (avoids stale entity if another service modified the item during K8s API call)
-        var (shouldContinue, reloadedWorkItem) = await HandleOrphanedJobIfRaceDetectedAsync(db, item.Id, jobName, claimedPvc, availablePvcs, logPrefix, ct);
-        if (!shouldContinue)
-            return;
-
-        workItem = reloadedWorkItem!;
-        workItem.Status = WorkItemStatus.Dispatched;
-        workItem.DispatchedAt = DateTimeOffset.UtcNow;
-
-        try
-        {
-            await db.SaveChangesAsync(ct);
-
-            // Record dispatch latency / pending duration metric
-            var latency = (workItem.DispatchedAt.Value - (workItem.OriginalEnqueuedAt ?? workItem.CreatedAt)).TotalSeconds;
-            WorkDistributionTelemetry.DispatchLatency.Record(latency,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
-            WorkDistributionTelemetry.PendingDuration.Record(latency,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
-
-            // Track concurrency
-            concurrencyBySelector[item.AgentSelector ?? ""] =
-                concurrencyBySelector.GetValueOrDefault(item.AgentSelector ?? "", 0) + 1;
-
-            Log.Information(
-                "DispatchService: {LogPrefix}WorkItem {WorkItemId} dispatched as Job {JobName} (selector={Selector}, pvc={Pvc})",
-                logPrefix, item.Id, jobName, item.AgentSelector, claimedPvc ?? "none");
-
-            // Variant-specific post-dispatch success action
-            if (onDispatchSuccess is not null)
-                await onDispatchSuccess(workItem);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            Log.Warning("DispatchService: concurrency conflict updating {LogPrefix}WorkItem {WorkItemId} to Dispatched", logPrefix, item.Id);
-            // Job exists in K8s — ReconciliationService will reconcile
-        }
-    }
-
-    // ── Shared K8s Job Dispatch Lifecycle Helpers ────────────────────────
-
-    /// <summary>
-    /// Creates a K8s Job via JobSpecBuilder. Handles 409 Conflict (idempotent) and general failures
-    /// (releases PVC, fails WorkItem). Returns true if job creation succeeded (or 409), false if the
-    /// caller should return early due to an error.
-    /// </summary>
-    private async Task<bool> CreateK8sJobAsync(
-        PipelineDbContext db,
-        PendingWorkItemProjection item,
-        WorkItemEntity workItem,
-        JobTemplate template,
-        string jobName,
-        string? claimedPvc,
-        List<string> availablePvcs,
-        Dictionary<string, string>? projectSecrets,
-        string logPrefix,
-        CancellationToken ct)
-    {
-        try
-        {
-            var buildCtx = new JobSpecBuilder.BuildContext
-            {
-                WorkItemId = item.Id,
-                AgentSelector = item.AgentSelector,
-                TimeoutSeconds = item.TimeoutSeconds,
-                JobName = jobName,
-                ClaimedPvc = claimedPvc,
-                OrchestratorUrl = _options.OrchestratorUrl,
-                AgentApiKeySecretName = _options.AgentApiKeySecretName,
-                AgentServiceAccountName = _options.AgentServiceAccountName,
-                Namespace = _options.Namespace,
-                OpencodeConfigSecretName = _options.OpencodeConfigSecretName,
-                ProjectSecrets = projectSecrets
-            };
-            var job = JobSpecBuilder.Build(template, buildCtx);
-            await _kubeClient.CreateJobAsync(job, _options.Namespace, ct);
-        }
-        catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
-        {
-            // 409 Conflict = Job already exists = success (idempotent)
-            Log.Information("DispatchService: K8s Job {JobName} already exists (409 Conflict), treating as success", jobName);
-        }
-        catch (Exception ex)
-        {
-            Log.Error(ex, "DispatchService: failed to create K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", jobName, logPrefix, item.Id);
-            if (claimedPvc is not null)
-            {
-                workItem.ClaimedPvcName = null;
-                availablePvcs.Add(claimedPvc);
-                // TODO: SaveChangesAsync can throw DbUpdateConcurrencyException if another process modified
-                // the work item concurrently, which would bypass FailWorkItem. Window is narrow and this is
-                // strictly better than the prior behavior (permanent PVC orphan), but consider wrapping in try-catch.
-                await db.SaveChangesAsync(ct);
-            }
-            await FailWorkItem(item.Id, $"K8s Job creation failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
-            return false;
-        }
-
-        return true;
-    }
-
-    /// <summary>
-    /// Creates a per-job K8s Secret if the project has secrets. Handles 409 Conflict (idempotent)
-    /// and treats all other failures as non-fatal warnings.
-    /// </summary>
-    private async Task CreateJobSecretIfNeededAsync(
-        string jobName,
-        Guid workItemId,
-        Dictionary<string, string>? projectSecrets,
-        string logPrefix,
-        CancellationToken ct)
-    {
-        if (projectSecrets is null || projectSecrets.Count == 0)
-            return;
-
-        try
-        {
-            await CreateJobSecretAsync(jobName, workItemId, projectSecrets, ct);
-        }
-        catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Conflict)
-        {
-            // Secret already exists — idempotent
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "DispatchService: failed to create project-secrets K8s Secret for {LogPrefix}Job {JobName}", logPrefix, jobName);
-            // Non-fatal: job can still run without project secrets in degraded mode
-        }
-    }
-
-    /// <summary>
-    /// Clears the change tracker, re-fetches the WorkItem, and checks for race conditions.
-    /// If the WorkItem is no longer Pending, releases the PVC and deletes the orphaned K8s Job.
-    /// Returns (true, reloadedWorkItem) if the caller should continue, or (false, null) if the caller
-    /// should return early due to a detected race condition.
-    /// </summary>
-    private async Task<(bool shouldContinue, WorkItemEntity? reloadedWorkItem)> HandleOrphanedJobIfRaceDetectedAsync(
-        PipelineDbContext db,
-        Guid workItemId,
-        string jobName,
-        string? claimedPvc,
-        List<string> availablePvcs,
-        string logPrefix,
-        CancellationToken ct)
-    {
-        db.ChangeTracker.Clear();
-        var workItem = await db.WorkItems.FindAsync([workItemId], ct);
-        if (workItem is null || workItem.Status != WorkItemStatus.Pending)
-        {
-            // Race condition: another process transitioned the work item while we were creating the K8s Job.
-            // Release the claimed PVC back to the pool and attempt to delete the orphaned Job.
-            // The per-job K8s Secret (if created) has an OwnerReference to the Job,
-            // so K8s garbage collection will automatically delete it when the Job is deleted.
-            if (claimedPvc is not null)
-                availablePvcs.Add(claimedPvc);
-
-            try
-            {
-                await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
-                Log.Information("DispatchService: deleted orphaned K8s Job {JobName} — {LogPrefix}WorkItem {WorkItemId} no longer Pending", jobName, logPrefix, workItemId);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "DispatchService: failed to delete orphaned K8s Job {JobName} for {LogPrefix}WorkItem {WorkItemId}", jobName, logPrefix, workItemId);
-            }
-
-            return (false, null);
-        }
-
-        return (true, workItem);
-    }
-
-    private async Task CreateJobSecretAsync(
-        string jobName, Guid workItemId, Dictionary<string, string> secrets, CancellationToken ct)
-    {
-        var secretName = $"caa-secrets-{workItemId.ToString("N")[..8]}";
-
-        var secret = new V1Secret
-        {
-            Metadata = new V1ObjectMeta
-            {
-                Name = secretName,
-                NamespaceProperty = _options.Namespace,
-                OwnerReferences =
-                [
-                    new V1OwnerReference
-                    {
-                        ApiVersion = "batch/v1",
-                        Kind = "Job",
-                        Name = jobName,
-                        Uid = await GetJobUidAsync(jobName, ct) ?? ""
-                    }
-                ]
-            },
-            StringData = secrets
-        };
-
-        await _kubeClient.CreateSecretAsync(secret, _options.Namespace, ct);
-    }
-
-    private async Task<string?> GetJobUidAsync(string jobName, CancellationToken ct)
-    {
-        try
-        {
-            var job = await _kubeClient.ReadJobAsync(jobName, _options.Namespace, ct);
-            return job.Metadata?.Uid;
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    internal async Task<Dictionary<string, string>?> LoadProjectSecretsAsync(
-        PipelineDbContext db, string projectId, CancellationToken ct)
-    {
-        if (!Guid.TryParse(projectId, out var projGuid))
-            return null;
-
-        var settingsJson = await db.Projects
-            .AsNoTracking()
-            .Where(p => p.Id == projGuid)
-            .Select(p => p.Settings)
-            .FirstOrDefaultAsync(ct);
-
-        if (settingsJson is null)
-            return null;
-
-        // Read Secrets from the Settings JSONB — stored under a "Secrets" property
-        using var project = JsonDocument.Parse(settingsJson);
-        if (project.RootElement.TryGetProperty("Secrets", out var secretsElement) &&
-            secretsElement.ValueKind == JsonValueKind.Object)
-        {
-            var result = new Dictionary<string, string>();
-            foreach (var prop in secretsElement.EnumerateObject())
-            {
-                result[prop.Name] = prop.Value.GetString() ?? "";
-            }
-            return result.Count > 0 ? result : null;
-        }
-
-        return null;
-    }
-
     /// <summary>
     /// Fallback template resolution: when the work item's AgentSelector is a subset of the template's
-    /// label set (e.g., consolidation items that store only requiredLabels), resolve the matching profile
-    /// to get the full MatchLabels, then retry template lookup with the profile's labels.
-    /// This aligns with how DispatchOrchestrationService uses profile.MatchLabels as the AgentSelector.
+    /// label set, resolve the matching profile to get the full MatchLabels, then retry template lookup.
     /// </summary>
     private async Task<(JobTemplate? Template, string? ResolvedSelector)> ResolveTemplateViaProfileAsync(string agentSelector, CancellationToken ct)
     {
@@ -772,34 +396,6 @@ public sealed class DispatchService : BackgroundService
         }
 
         return (template, profileSelector);
-    }
-
-    internal async Task FailWorkItem(Guid workItemId, string errorMessage,
-        WorkItemTaskType taskType, string? issueIdentifier, CancellationToken ct)
-    {
-        await _transitionService.TransitionAsync(
-            workItemId,
-            WorkItemStatus.Failed,
-            item =>
-            {
-                item.ErrorMessage = errorMessage;
-                item.FailureReason = FailureReason.InfrastructureFailure;
-                item.CompletedAt = DateTimeOffset.UtcNow;
-            },
-            ct);
-
-        Log.Warning("DispatchService: WorkItem {WorkItemId} failed: {Error}", workItemId, errorMessage);
-
-        // Cascade to ConsolidationRun: transition to Failed so it doesn't stay stuck in Queued/Running
-        // TODO: When _consolidationK8sDispatcher is null, the ConsolidationRun status is never updated
-        // and stays stuck in Queued/Running permanently. This widens the gap from the original defensive
-        // behavior where cascade was attempted with internal null-checks on individual services. If a
-        // future caller invokes FailWorkItem for consolidation items without the dispatcher registered,
-        // the run will remain stuck. Consider extracting cascade logic to be independent of the
-        // dispatcher, or log a warning when cascade is skipped.
-        if (taskType == WorkItemTaskType.Consolidation && issueIdentifier is not null
-            && _consolidationK8sDispatcher is not null)
-            await _consolidationK8sDispatcher.CascadeFailureAsync(issueIdentifier, errorMessage, ct);
     }
 
     // ── Static helpers (internal for testability) ────────────────────────
