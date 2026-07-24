@@ -153,6 +153,30 @@ public sealed class AgentJobSlotManager
     }
 
     /// <summary>
+    /// Atomically verifies that the active job matches <paramref name="jobId"/>
+    /// and cancels it. Returns <c>true</c> if cancellation was performed, <c>false</c> if the
+    /// job did not match (or no job is active).
+    /// </summary>
+    /// <remarks>
+    /// This eliminates the TOCTOU window where a caller could verify the job ID via
+    /// <see cref="ActiveJobId"/> and then call <see cref="CancelCurrentJob"/>, during
+    /// which time the job could have been released and a new one acquired.
+    /// </remarks>
+    public bool CancelJobIfMatch(string jobId)
+    {
+        lock (_busyLock)
+        {
+            if (_activeJobId != jobId)
+                return false;
+
+            var cts = _jobCts;
+            try { cts?.Cancel(); }
+            catch (ObjectDisposedException) { }
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Attempts to acquire the job slot for the given job ID.
     /// Returns <c>false</c> if the agent is already busy (with a job or chat).
     /// </summary>
