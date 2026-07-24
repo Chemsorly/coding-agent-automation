@@ -182,7 +182,7 @@ public sealed class ConsolidationDispatcherTests : IDisposable
     /// Regression test for root-cause fix: ConsolidationDispatcher must set AgentSelector to the
     /// full profile MatchLabels (not just requiredLabels) when enqueueing via IWorkDistributor.
     /// Without this, K8s DispatchService fails with "No job template for selector" because
-    /// JobTemplateProvider.Resolve() requires exact match on the full template key.
+    /// JobTemplateStore.Resolve() requires exact match on the full template key.
     /// </summary>
     [Fact]
     public async Task TryDispatchAsync_NoIdleAgent_AgentSelectorUsesProfileMatchLabels_NotRawRequiredLabels()

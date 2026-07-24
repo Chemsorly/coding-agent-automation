@@ -623,11 +623,11 @@ public class K8sEdgeCaseTests : IDisposable
             new JobTemplate { Labels = "dotnet,opencode", Image = "ghcr.io/opencode:latest", ProviderType = "opencode", MaxConcurrent = 10 }
         };
         var json = System.Text.Json.JsonSerializer.Serialize(templates);
-        var templateProvider = JobTemplateProvider.LoadFromJson(json);
+        var templateStore = JobTemplateStore.LoadFromJson(json);
 
         var service = new DispatchService(
             _dbFactory, CreateAlwaysLeaderElection(), _mockKubeClient.Object,
-            _transitionService, config, templateProvider);
+            _transitionService, config, templateStore);
 
         _mockKubeClient
             .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -1006,15 +1006,15 @@ public class K8sEdgeCaseTests : IDisposable
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
 
-        var templateProvider = BuildTemplateProvider(
+        var templateStore = BuildTemplateStore(
             new Dictionary<string, string> { ["dotnet,kiro"] = "ghcr.io/agent:kiro-latest" });
 
         return new DispatchService(
             _dbFactory, CreateAlwaysLeaderElection(), _mockKubeClient.Object,
-            _transitionService, config, templateProvider);
+            _transitionService, config, templateStore);
     }
 
-    private static JobTemplateProvider BuildTemplateProvider(Dictionary<string, string> imageMapping)
+    private static JobTemplateStore BuildTemplateStore(Dictionary<string, string> imageMapping)
     {
         var templates = imageMapping.Select(kv => new JobTemplate
         {
@@ -1025,7 +1025,7 @@ public class K8sEdgeCaseTests : IDisposable
         }).ToList();
 
         var json = System.Text.Json.JsonSerializer.Serialize(templates);
-        return JobTemplateProvider.LoadFromJson(json);
+        return JobTemplateStore.LoadFromJson(json);
     }
 
     private async Task InvokePollAndDispatch(DispatchService service)
