@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 /// 2. DispatchRunCreationService correctly implements the interface.
 /// 3. A mock of the interface can fully replace the concrete dependency.
 /// </summary>
-public class DispatchRunCreatorContractTests : IDisposable
+public class DispatchRunCreatorContractTests : IAsyncDisposable
 {
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IProviderFactory> _mockFactory;
@@ -204,9 +204,9 @@ public class DispatchRunCreatorContractTests : IDisposable
         result!.RunId.Should().Be("run-1");
     }
 
-    public void Dispose()
+    public async ValueTask DisposeAsync()
     {
-        // DispatchRunCreationService has no IDisposable — no cleanup needed
+        await _service.DisposeAsync();
     }
 
     // ── Contract Test 6: ReserveRunIdAsync reserves ID and activates dedup guard ──
