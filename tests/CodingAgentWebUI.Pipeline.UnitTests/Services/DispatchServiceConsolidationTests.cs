@@ -1037,22 +1037,26 @@ public class DispatchServiceConsolidationTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
         var templateProvider = BuildTemplateProvider();
 
-        return new DispatchService(
-            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider,
-            labelService,
-            _mockTokenVending.Object,
+        var consolidationDispatcher = new ConsolidationK8sDispatcher(
+            _transitionService,
             _mockRunStore.Object,
             _mockConsolidationService.Object,
-            _mockProviderConfigStore.Object,
-            _mockAgentProfileStore.Object,
-            _mockProjectStore.Object,
-            _mockPipelineConfigStore.Object,
             new ConsolidationJobPreparationService(
                 _mockProviderConfigStore.Object,
                 _mockProjectStore.Object,
                 _mockTokenVending.Object,
                 Serilog.Log.Logger,
-                _mockAgentProfileStore.Object));
+                _mockAgentProfileStore.Object),
+            _mockPipelineConfigStore.Object,
+            _mockProjectStore.Object);
+
+        return new DispatchService(
+            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider,
+            labelService,
+            _mockTokenVending.Object,
+            _mockAgentProfileStore.Object,
+            runService: null,
+            consolidationK8sDispatcher: consolidationDispatcher);
     }
 
     private static JobTemplateProvider BuildTemplateProvider()
@@ -1096,22 +1100,26 @@ public class DispatchServiceConsolidationTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
         var templateProvider = BuildThreeLabelTemplateProvider();
 
-        return new DispatchService(
-            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider,
-            null,
-            _mockTokenVending.Object,
+        var consolidationDispatcher = new ConsolidationK8sDispatcher(
+            _transitionService,
             _mockRunStore.Object,
             _mockConsolidationService.Object,
-            _mockProviderConfigStore.Object,
-            _mockAgentProfileStore.Object,
-            _mockProjectStore.Object,
-            _mockPipelineConfigStore.Object,
             new ConsolidationJobPreparationService(
                 _mockProviderConfigStore.Object,
                 _mockProjectStore.Object,
                 _mockTokenVending.Object,
                 Serilog.Log.Logger,
-                _mockAgentProfileStore.Object));
+                _mockAgentProfileStore.Object),
+            _mockPipelineConfigStore.Object,
+            _mockProjectStore.Object);
+
+        return new DispatchService(
+            _dbFactory, _leaderElection, _mockKubeClient.Object, _transitionService, config, templateProvider,
+            null,
+            _mockTokenVending.Object,
+            _mockAgentProfileStore.Object,
+            runService: null,
+            consolidationK8sDispatcher: consolidationDispatcher);
     }
 
     private async Task InsertConsolidationWorkItem(Guid id, string runId, string selector)

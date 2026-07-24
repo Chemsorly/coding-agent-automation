@@ -40,14 +40,9 @@ public sealed class DispatchService : BackgroundService
     private readonly JobTemplateProvider _templateProvider;
     private readonly ILabelService? _labelService;
     private readonly ITokenVendingService? _tokenVending;
-    private readonly IConsolidationRunStore? _consolidationRunStore;
-    private readonly IConsolidationService? _consolidationService;
-    private readonly IProviderConfigStore? _providerConfigStore;
     private readonly IAgentProfileStore? _agentProfileStore;
-    private readonly IProjectStore? _projectStore;
-    private readonly IPipelineConfigStore? _pipelineConfigStore;
-    private readonly IConsolidationJobPreparationService? _consolidationJobPreparer;
     private readonly IOrchestratorRunService? _runService;
+    private readonly ConsolidationK8sDispatcher? _consolidationK8sDispatcher;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
     public DispatchService(
@@ -58,19 +53,31 @@ public sealed class DispatchService : BackgroundService
         IConfiguration configuration,
         ILabelService? labelService = null,
         ITokenVendingService? tokenVending = null,
-        IConsolidationRunStore? consolidationRunStore = null,
-        IConsolidationService? consolidationService = null,
-        IProviderConfigStore? providerConfigStore = null,
         IAgentProfileStore? agentProfileStore = null,
-        IProjectStore? projectStore = null,
-        IPipelineConfigStore? pipelineConfigStore = null,
-        IConsolidationJobPreparationService? consolidationJobPreparer = null,
         IOrchestratorRunService? runService = null)
         : this(dbFactory, leaderElection, kubeClient, transitionService, configuration,
                LoadTemplateProvider(configuration), labelService, tokenVending,
-               consolidationRunStore, consolidationService, providerConfigStore,
-               agentProfileStore, projectStore, pipelineConfigStore,
-               consolidationJobPreparer, runService)
+               agentProfileStore, runService, null)
+    { }
+
+    /// <summary>
+    /// Constructor overload accepting a ConsolidationK8sDispatcher (for DI registration).
+    /// Loads the JobTemplateProvider from configuration automatically.
+    /// </summary>
+    internal DispatchService(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        ILeaderElectionService leaderElection,
+        IKubernetesJobClient kubeClient,
+        WorkItemTransitionService transitionService,
+        IConfiguration configuration,
+        ILabelService? labelService,
+        ITokenVendingService? tokenVending,
+        IAgentProfileStore? agentProfileStore,
+        IOrchestratorRunService? runService,
+        ConsolidationK8sDispatcher? consolidationK8sDispatcher)
+        : this(dbFactory, leaderElection, kubeClient, transitionService, configuration,
+               LoadTemplateProvider(configuration), labelService, tokenVending,
+               agentProfileStore, runService, consolidationK8sDispatcher)
     { }
 
     /// <summary>
@@ -85,14 +92,9 @@ public sealed class DispatchService : BackgroundService
         JobTemplateProvider templateProvider,
         ILabelService? labelService = null,
         ITokenVendingService? tokenVending = null,
-        IConsolidationRunStore? consolidationRunStore = null,
-        IConsolidationService? consolidationService = null,
-        IProviderConfigStore? providerConfigStore = null,
         IAgentProfileStore? agentProfileStore = null,
-        IProjectStore? projectStore = null,
-        IPipelineConfigStore? pipelineConfigStore = null,
-        IConsolidationJobPreparationService? consolidationJobPreparer = null,
-        IOrchestratorRunService? runService = null)
+        IOrchestratorRunService? runService = null,
+        ConsolidationK8sDispatcher? consolidationK8sDispatcher = null)
     {
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
@@ -100,14 +102,9 @@ public sealed class DispatchService : BackgroundService
         _transitionService = transitionService;
         _labelService = labelService;
         _tokenVending = tokenVending;
-        _consolidationRunStore = consolidationRunStore;
-        _consolidationService = consolidationService;
-        _providerConfigStore = providerConfigStore;
         _agentProfileStore = agentProfileStore;
-        _projectStore = projectStore;
-        _pipelineConfigStore = pipelineConfigStore;
-        _consolidationJobPreparer = consolidationJobPreparer;
         _runService = runService;
+        _consolidationK8sDispatcher = consolidationK8sDispatcher;
         _templateProvider = templateProvider;
         _options = new DispatchServiceOptions();
         InitializeOptions(configuration);
@@ -355,7 +352,13 @@ public sealed class DispatchService : BackgroundService
         // Route consolidation items to their dedicated dispatch path
         if (item.TaskType == WorkItemTaskType.Consolidation)
         {
-            await DispatchConsolidationItemAsync(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, ct);
+            // TODO: When _consolidationK8sDispatcher is null, consolidation items silently remain Pending
+            // and are re-polled indefinitely. Consider logging a warning or failing the work item to avoid
+            // silent infinite re-queuing. In production K8s mode the dispatcher is always registered.
+            if (_consolidationK8sDispatcher is not null)
+                await _consolidationK8sDispatcher.DispatchAsync(
+                    db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector,
+                    ExecuteDispatchLifecycleAsync, FailWorkItem, LoadProjectSecretsAsync, ct);
             return;
         }
 
@@ -398,152 +401,6 @@ public sealed class DispatchService : BackgroundService
             ct);
     }
 
-    // ── Consolidation Dispatch ─────────────────────────────────────────────
-
-    /// <summary>
-    /// Dispatches a consolidation WorkItem as a K8s Job.
-    /// Builds provider configs from scratch (not present in payload), vends tokens,
-    /// updates payload, creates K8s Job, transitions ConsolidationRunStatus.
-    /// </summary>
-    private async Task DispatchConsolidationItemAsync(
-        PipelineDbContext db,
-        PendingWorkItemProjection item,
-        JobTemplate template,
-        bool isKiroAgent,
-        List<string> availablePvcs,
-        Dictionary<string, int> concurrencyBySelector,
-        CancellationToken ct)
-    {
-        // Cancel-during-dispatch race guard: check if run was cancelled while queued
-        // TODO: Consider also cancelling when consolidationRun is null (record not found/purged),
-        // aligning with PendingWorkItemDrainService (line 183) which uses `consolidationRun is null ||`.
-        // Current behavior: missing record allows dispatch to proceed (defensive for K8s timing issues).
-        if (_consolidationRunStore is not null && !string.IsNullOrEmpty(item.IssueIdentifier))
-        {
-            var runId = item.IssueIdentifier;
-            var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
-            if (consolidationRun is not null &&
-                (consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
-                 consolidationRun.Status == ConsolidationRunStatus.Failed))
-            {
-                Log.Information(
-                    "DispatchService: consolidation run {RunId} is {Status}, skipping dispatch for WorkItem {WorkItemId}",
-                    runId, consolidationRun.Status, item.Id);
-                await _transitionService.TransitionAsync(
-                    item.Id, WorkItemStatus.Cancelled,
-                    entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct);
-                return;
-            }
-        }
-
-        // Capture updatedRequest outside the delegate so onDispatchSuccess can reference it
-        JobDistributionRequest? updatedRequest = null;
-
-        await ExecuteDispatchLifecycleAsync(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, "consolidation ",
-            async workItem =>
-            {
-                // Deserialize payload to extract consolidation fields
-                JobDistributionRequest? request = null;
-                if (!string.IsNullOrEmpty(workItem.Payload))
-                {
-                    try
-                    {
-                        request = JsonSerializer.Deserialize<JobDistributionRequest>(workItem.Payload, PipelineJsonOptions.Default);
-                    }
-                    catch (JsonException ex)
-                    {
-                        Log.Warning(ex, "DispatchService: failed to deserialize consolidation WorkItem {WorkItemId} payload", item.Id);
-                    }
-                }
-
-                if (request is null)
-                {
-                    await FailWorkItem(item.Id, "Consolidation WorkItem has no valid payload", item.TaskType, item.IssueIdentifier, ct);
-                    return (false, null);
-                }
-
-                // Build provider configs and vend tokens at dispatch time
-                IReadOnlyList<ProviderConfig>? vendedConfigs = null;
-                string repoProviderId = "";
-                PipelineConfiguration? pipelineConfig = null;
-
-                try
-                {
-                    // Parse agent labels from selector string
-                    var agentLabels = (item.AgentSelector ?? "")
-                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                        .ToList()
-                        .AsReadOnly();
-
-                    // Delegate config resolution and token vending to shared preparer
-                    if (_consolidationJobPreparer is null)
-                    {
-                        Log.Error("DispatchService: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
-                        await FailWorkItem(item.Id, "IConsolidationJobPreparationService not registered", item.TaskType, item.IssueIdentifier, ct);
-                        return (false, null);
-                    }
-
-                    var preparation = await _consolidationJobPreparer.PrepareAsync(
-                        request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-                        request.ConsolidationTemplateId,
-                        agentLabels,
-                        ct);
-                    vendedConfigs = preparation.ProviderConfigs;
-                    repoProviderId = preparation.RepoProviderConfigId;
-
-                    // Load pipeline configuration for the agent
-                    if (_pipelineConfigStore is not null)
-                    {
-                        pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "DispatchService: failed to resolve provider configs for consolidation WorkItem {WorkItemId}", item.Id);
-                    await FailWorkItem(item.Id, $"Provider config resolution failed: {ex.Message}", item.TaskType, item.IssueIdentifier, ct);
-                    return (false, null);
-                }
-
-                // Update payload with resolved configs so GET /api/work-items/{id}/assignment returns complete data
-                updatedRequest = request with
-                {
-                    ProviderConfigs = vendedConfigs ?? [],
-                    RepoProviderConfigId = repoProviderId,
-                    PipelineConfiguration = pipelineConfig ?? new PipelineConfiguration()
-                };
-                workItem.Payload = JsonSerializer.Serialize(updatedRequest, PipelineJsonOptions.Default);
-
-                // Load project secrets if project has them (resolve project from template if needed)
-                Dictionary<string, string>? projectSecrets = null;
-                string? resolvedProjectId = item.ProjectId;
-                if (string.IsNullOrEmpty(resolvedProjectId) && _projectStore is not null
-                    && !string.IsNullOrEmpty(request.ConsolidationTemplateId))
-                {
-                    var projects = await _projectStore.LoadProjectsAsync(ct);
-                    if (projects is not null)
-                    {
-                        var ownerProject = projects.FirstOrDefault(p =>
-                            p.Enabled && p.TemplateIds.Contains(request.ConsolidationTemplateId));
-                        resolvedProjectId = ownerProject?.Id;
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(resolvedProjectId))
-                {
-                    projectSecrets = await LoadProjectSecretsAsync(db, resolvedProjectId, ct);
-                }
-
-                return (true, projectSecrets);
-            },
-            async _ =>
-            {
-                // Transition ConsolidationRunStatus: Queued → Running (best-effort, after successful dispatch)
-                if (updatedRequest is not null)
-                    await TransitionConsolidationRunToRunningAsync(updatedRequest, ct);
-            },
-            ct);
-    }
-
     // ── Shared K8s Job Dispatch Lifecycle ──────────────────────────────────
 
     /// <summary>
@@ -561,7 +418,7 @@ public sealed class DispatchService : BackgroundService
     /// Called inside the final try block after successful Dispatched save.
     /// For regular: resets StartedAt + swaps label. For consolidation: transitions run to Running.
     /// </param>
-    private async Task ExecuteDispatchLifecycleAsync(
+    internal async Task ExecuteDispatchLifecycleAsync(
         PipelineDbContext db,
         PendingWorkItemProjection item,
         JobTemplate template,
@@ -585,6 +442,9 @@ public sealed class DispatchService : BackgroundService
         }
 
         // Load full WorkItem
+        // TODO: If FindAsync throws (OperationCanceledException, DB failure) after PVC is claimed above,
+        // the PVC leaks. Consider wrapping the entire post-claim section in a try/catch that returns
+        // claimedPvc to availablePvcs, similar to the prepareVariant guard below. (#1609 review finding)
         var workItem = await db.WorkItems.FindAsync([item.Id], ct);
         if (workItem is null || workItem.Status != WorkItemStatus.Pending)
         {
@@ -594,8 +454,18 @@ public sealed class DispatchService : BackgroundService
         }
 
         // Variant-specific preparation (may mutate workItem, load secrets, or signal abort)
-        // TODO: Wrap prepareVariant in try/catch to release claimedPvc on unhandled exception (PVC leak risk if e.g. LoadProjectSecretsAsync throws)
-        var (shouldProceed, projectSecrets) = await prepareVariant(workItem);
+        (bool shouldProceed, Dictionary<string, string>? projectSecrets) result;
+        try
+        {
+            result = await prepareVariant(workItem);
+        }
+        catch
+        {
+            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+            throw;
+        }
+
+        var (shouldProceed, projectSecrets) = result;
         if (!shouldProceed)
         {
             if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
@@ -799,56 +669,6 @@ public sealed class DispatchService : BackgroundService
         return (true, workItem);
     }
 
-    /// <summary>
-    /// Transitions the ConsolidationRun status from Queued → Running after successful K8s Job creation.
-    /// Guarded: only transitions if current status is Queued. No-op if run not found.
-    /// </summary>
-    private async Task TransitionConsolidationRunToRunningAsync(JobDistributionRequest request, CancellationToken ct)
-    {
-        var runId = request.RunId ?? request.IssueIdentifier;
-        if (string.IsNullOrEmpty(runId))
-            return;
-
-        // Use IConsolidationService.TransitionToRunningAsync to ensure StartedAtUtc is reset
-        // (timeout anchor), the in-memory _runningRuns tracker is updated, and the
-        // GetRunHistoryAsync cache is invalidated.
-        if (_consolidationService is not null)
-        {
-            try
-            {
-                await _consolidationService.TransitionToRunningAsync(runId, ct);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "DispatchService: failed to transition consolidation run {RunId} to Running (non-fatal)", runId);
-            }
-            return;
-        }
-
-        // TODO: This fallback path performs a direct store write without updating the in-memory tracker,
-        // which replicates the same stale-state bug pattern this refactoring aimed to eliminate.
-        // If _consolidationService is ever null at runtime, HeartbeatMonitorService will observe stale
-        // StartedAtUtc. Consider removing this fallback or routing through IConsolidationRunTracker.
-        // Fallback: direct store write when IConsolidationService not available (shouldn't happen in production)
-        if (_consolidationRunStore is null)
-            return;
-
-        try
-        {
-            var run = await _consolidationRunStore.GetByIdAsync(runId, ct);
-            if (run is not null && run.Status == ConsolidationRunStatus.Queued)
-            {
-                run.Status = ConsolidationRunStatus.Running;
-                run.StartedAtUtc = DateTimeOffset.UtcNow;
-                await _consolidationRunStore.SaveRunAsync(run, ct);
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "DispatchService: failed to transition consolidation run {RunId} to Running (non-fatal)", runId);
-        }
-    }
-
     private async Task CreateJobSecretAsync(
         string jobName, Guid workItemId, Dictionary<string, string> secrets, CancellationToken ct)
     {
@@ -890,7 +710,7 @@ public sealed class DispatchService : BackgroundService
         }
     }
 
-    private async Task<Dictionary<string, string>?> LoadProjectSecretsAsync(
+    internal async Task<Dictionary<string, string>?> LoadProjectSecretsAsync(
         PipelineDbContext db, string projectId, CancellationToken ct)
     {
         if (!Guid.TryParse(projectId, out var projGuid))
@@ -967,7 +787,7 @@ public sealed class DispatchService : BackgroundService
         return (template, profileSelector);
     }
 
-    private async Task FailWorkItem(Guid workItemId, string errorMessage,
+    internal async Task FailWorkItem(Guid workItemId, string errorMessage,
         WorkItemTaskType taskType, string? issueIdentifier, CancellationToken ct)
     {
         await _transitionService.TransitionAsync(
@@ -984,70 +804,15 @@ public sealed class DispatchService : BackgroundService
         Log.Warning("DispatchService: WorkItem {WorkItemId} failed: {Error}", workItemId, errorMessage);
 
         // Cascade to ConsolidationRun: transition to Failed so it doesn't stay stuck in Queued/Running
-        if (taskType == WorkItemTaskType.Consolidation && issueIdentifier is not null)
-            await CascadeFailureToConsolidationRunAsync(issueIdentifier, errorMessage, ct);
-    }
-
-    /// <summary>
-    /// Cascades a failure to a ConsolidationRun, transitioning it from Queued/Running to Failed.
-    /// Delegates to <see cref="IConsolidationService.UpdateRunAsync"/> which handles cache invalidation,
-    /// _runningRuns cleanup, OnChange event, and workspace management.
-    /// Falls back to direct store write if IConsolidationService is unavailable.
-    /// Safe to call from any failure path (DispatchService, ReconciliationService).
-    /// </summary>
-    internal async Task CascadeFailureToConsolidationRunAsync(string runId, string errorMessage, CancellationToken ct)
-    {
-        if (_consolidationService is not null)
-        {
-            try
-            {
-                await _consolidationService.UpdateRunAsync(
-                    runId,
-                    ConsolidationRunStatus.Failed,
-                    $"WorkItem dispatch failed: {errorMessage}",
-                    ct);
-                Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId} via IConsolidationService", runId);
-            }
-            catch (OperationCanceledException)
-            {
-                // Graceful shutdown — cascade skipped, ReconciliationService or startup cleanup will handle it
-                Log.Debug("DispatchService: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
-            }
-            return;
-        }
-
-        // Fallback: direct store write — skips _runningRuns cleanup, OnChange, workspace cleanup.
-        // Only executes in test scenarios or misconfigured DI. Log at Warning for visibility.
-        Log.Warning("DispatchService: IConsolidationService unavailable, using direct store fallback for ConsolidationRun {RunId}. " +
-            "This skips cache invalidation and OnChange events.", runId);
-
-        if (_consolidationRunStore is null)
-            return;
-
-        try
-        {
-            var run = await _consolidationRunStore.GetByIdAsync(runId, ct);
-            if (run is not null && run.Status is ConsolidationRunStatus.Queued or ConsolidationRunStatus.Running)
-            {
-                run.Status = ConsolidationRunStatus.Failed;
-                run.Summary = $"WorkItem dispatch failed: {errorMessage}";
-                run.CompletedAtUtc = DateTimeOffset.UtcNow;
-                await _consolidationRunStore.SaveRunAsync(run, ct);
-                Log.Information("DispatchService: cascaded failure to ConsolidationRun {RunId} (direct store)", runId);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            Log.Debug("DispatchService: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "DispatchService: failed to cascade failure to ConsolidationRun {RunId} (non-fatal)", runId);
-        }
+        // TODO: When _consolidationK8sDispatcher is null, the ConsolidationRun status is never updated
+        // and stays stuck in Queued/Running permanently. This widens the gap from the original defensive
+        // behavior where cascade was attempted with internal null-checks on individual services. If a
+        // future caller invokes FailWorkItem for consolidation items without the dispatcher registered,
+        // the run will remain stuck. Consider extracting cascade logic to be independent of the
+        // dispatcher, or log a warning when cascade is skipped.
+        if (taskType == WorkItemTaskType.Consolidation && issueIdentifier is not null
+            && _consolidationK8sDispatcher is not null)
+            await _consolidationK8sDispatcher.CascadeFailureAsync(issueIdentifier, errorMessage, ct);
     }
 
     // ── Static helpers (internal for testability) ────────────────────────

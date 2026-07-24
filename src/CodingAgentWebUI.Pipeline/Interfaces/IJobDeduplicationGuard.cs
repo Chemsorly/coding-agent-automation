@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
 /// <summary>
@@ -11,5 +13,5 @@ public interface IJobDeduplicationGuard
     /// Marks an issue as no longer being processed, releasing the dedup guard.
     /// After this call, the issue can be re-enqueued for dispatch.
     /// </summary>
-    void MarkIssueComplete(string issueIdentifier, string issueProviderConfigId);
+    void MarkIssueComplete(string issueIdentifier, ProviderConfigId issueProviderConfigId);
 }
