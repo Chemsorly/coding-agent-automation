@@ -227,6 +227,77 @@ public class DispatchServiceLifecycleTests : IDisposable
         _mockKubeClient.Verify(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    // ── Consolidation Exclusion ─────────────────────────────────────────
+
+    [Fact]
+    public async Task PollAndDispatch_ConsolidationItem_IsNotPickedUp()
+    {
+        // This guards the critical boundary at DispatchService.cs:190 (TaskType != Consolidation filter).
+        // Accidental removal of the filter would cause consolidation items to flow through the
+        // regular dispatch path, producing duplicate K8s Jobs.
+        var consolidationId = Guid.NewGuid();
+        await InsertWorkItem(consolidationId, "consolidation-run-1", "kiro,dotnet", WorkItemStatus.Pending,
+            taskType: WorkItemTaskType.Consolidation);
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateService(imageMapping: new Dictionary<string, string>
+        {
+            ["dotnet,kiro"] = "ghcr.io/agent:latest"
+        });
+
+        await InvokePollAndDispatch(service);
+
+        // Assert: consolidation item is NOT dispatched by DispatchService
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(consolidationId);
+        item!.Status.Should().Be(WorkItemStatus.Pending,
+            "Consolidation items must not be processed by DispatchService — ConsolidationDispatchHandler handles them");
+
+        _mockKubeClient.Verify(
+            k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "No K8s Job should be created for consolidation items by DispatchService");
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_MixedItems_OnlyDispatchesNonConsolidation()
+    {
+        // Both a regular and a consolidation item pending — only regular should be dispatched
+        var regularId = Guid.NewGuid();
+        var consolidationId = Guid.NewGuid();
+        await InsertWorkItem(regularId, "owner/repo#regular", "kiro,dotnet", WorkItemStatus.Pending);
+        await InsertWorkItem(consolidationId, "consolidation-run-2", "kiro,dotnet", WorkItemStatus.Pending,
+            taskType: WorkItemTaskType.Consolidation);
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateService(imageMapping: new Dictionary<string, string>
+        {
+            ["dotnet,kiro"] = "ghcr.io/agent:latest"
+        });
+
+        await InvokePollAndDispatch(service);
+
+        // Assert: only the regular item was dispatched
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var regular = await db.WorkItems.FindAsync(regularId);
+        regular!.Status.Should().Be(WorkItemStatus.Dispatched);
+
+        var consolidation = await db.WorkItems.FindAsync(consolidationId);
+        consolidation!.Status.Should().Be(WorkItemStatus.Pending,
+            "Consolidation item must remain Pending — only ConsolidationDispatchHandler processes it");
+
+        _mockKubeClient.Verify(
+            k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once,
+            "Only one K8s Job should be created (for the regular item)");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     [Fact]
@@ -458,12 +529,20 @@ public class DispatchServiceLifecycleTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
 
         // Build JobTemplateStore from imageMapping + maxConcurrentPods
-        var templateStore = BuildTemplateStore(imageMapping, maxConcurrentPods);
+        var templateProvider = BuildTemplateProvider(imageMapping, maxConcurrentPods);
 
-        return new DispatchService(_dbFactory, leaderElection ?? _leaderElection, _mockKubeClient.Object, _transitionService, config, templateStore, runService: runService);
+        return new DispatchService(_dbFactory, leaderElection ?? _leaderElection, new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            KiroPvcPool = new List<string> { "pvc-test-1", "pvc-test-2" }
+        }), config, templateProvider, runService: runService);
     }
 
-    private static JobTemplateStore BuildTemplateStore(
+    private static JobTemplateStore BuildTemplateProvider(
         Dictionary<string, string> imageMapping,
         Dictionary<string, int>? maxConcurrentPods = null)
     {
@@ -484,6 +563,10 @@ public class DispatchServiceLifecycleTests : IDisposable
         return JobTemplateStore.LoadFromJson(json);
     }
 
+    // TODO: Replace reflection-based invocation with a direct call to service.PollAndDispatchAsync()
+    // via InternalsVisibleTo, matching the pattern established in DispatchServiceConsolidationTests.
+    // The reflection approach is fragile — if PollAndDispatchAsync is renamed, GetMethod returns null
+    // and the null-forgiving operator throws NullReferenceException with no clear diagnostic.
     private async Task InvokePollAndDispatch(DispatchService service)
     {
         var method = typeof(DispatchService).GetMethod("PollAndDispatchAsync",
@@ -519,7 +602,7 @@ public class DispatchServiceLifecycleTests : IDisposable
     }
 
     private async Task InsertWorkItem(Guid id, string issueId, string selector, WorkItemStatus status,
-        DateTimeOffset? createdAt = null)
+        DateTimeOffset? createdAt = null, WorkItemTaskType taskType = WorkItemTaskType.Implementation)
     {
         await using var db = await _dbFactory.CreateDbContextAsync();
         db.WorkItems.Add(new WorkItemEntity
@@ -529,6 +612,7 @@ public class DispatchServiceLifecycleTests : IDisposable
             IssueProviderConfigId = "provider-1",
             Status = status,
             AgentSelector = selector,
+            TaskType = taskType,
             CreatedAt = createdAt ?? DateTimeOffset.UtcNow,
             TimeoutSeconds = 1800,
             Payload = "{}"

@@ -623,11 +623,16 @@ public class K8sEdgeCaseTests : IDisposable
             new JobTemplate { Labels = "dotnet,opencode", Image = "ghcr.io/opencode:latest", ProviderType = "opencode", MaxConcurrent = 10 }
         };
         var json = System.Text.Json.JsonSerializer.Serialize(templates);
-        var templateStore = JobTemplateStore.LoadFromJson(json);
+        var templateProvider = JobTemplateStore.LoadFromJson(json);
 
         var service = new DispatchService(
-            _dbFactory, CreateAlwaysLeaderElection(), _mockKubeClient.Object,
-            _transitionService, config, templateStore);
+            _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+            {
+                PollIntervalSeconds = 10, RateLimitPerSecond = 100, Namespace = "default",
+                OrchestratorUrl = "http://orchestrator:8080", AgentApiKeySecretName = "agent-api-key",
+                KiroPvcPool = new List<string> { "pvc-kiro-1", "pvc-kiro-2" }
+            }),
+            config, templateProvider);
 
         _mockKubeClient
             .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -690,7 +695,7 @@ public class K8sEdgeCaseTests : IDisposable
         var pendingId = Guid.NewGuid();
         await InsertWorkItem(pendingId, "owner/repo#prepare-fail", "kiro,dotnet", WorkItemStatus.Pending);
 
-        var service = CreateDispatchService(pvcPool: new[] { "pvc-leak-test" });
+        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-leak-test" });
         await using var db = await _dbFactory.CreateDbContextAsync();
 
         var projection = new DispatchService.PendingWorkItemProjection
@@ -713,7 +718,7 @@ public class K8sEdgeCaseTests : IDisposable
         var concurrency = new Dictionary<string, int>();
 
         // Act: prepareVariant throws — PVC must still be returned to pool
-        Func<Task> act = () => service.ExecuteDispatchLifecycleAsync(
+        Func<Task> act = () => lifecycle.ExecuteDispatchLifecycleAsync(
             db, projection, template,
             isKiroAgent: true,
             availablePvcs,
@@ -730,6 +735,10 @@ public class K8sEdgeCaseTests : IDisposable
         // Assert: PVC was returned to pool (the critical fix)
         availablePvcs.Should().ContainSingle()
             .Which.Should().Be("pvc-leak-test");
+
+        // Assert: inflight claims set is also cleared (prevents other services from seeing stale claims)
+        lifecycle.GetInflightPvcClaims().Should().BeEmpty(
+            "inflight PVC claims must be released on prepareVariant exception to prevent cross-service stale claim");
 
         // Assert: work item stays Pending (no FailWorkItem called — exception propagates to caller)
         var workItem = await db.WorkItems.FindAsync(pendingId);
@@ -988,6 +997,24 @@ public class K8sEdgeCaseTests : IDisposable
             });
     }
 
+    private DispatchLifecycleService CreateDispatchLifecycleService(string[]? pvcPool = null)
+    {
+        pvcPool ??= new[] { "pvc-test-1", "pvc-test-2" };
+
+        var options = new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            AgentServiceAccountName = "caa-agent",
+            KiroPvcPool = pvcPool.ToList()
+        };
+
+        return new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options);
+    }
+
     private DispatchService CreateDispatchService(string[]? pvcPool = null)
     {
         pvcPool ??= new[] { "pvc-test-1", "pvc-test-2" };
@@ -1006,15 +1033,26 @@ public class K8sEdgeCaseTests : IDisposable
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
 
-        var templateStore = BuildTemplateStore(
+        var templateProvider = BuildTemplateProvider(
             new Dictionary<string, string> { ["dotnet,kiro"] = "ghcr.io/agent:kiro-latest" });
 
+        var options = new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            AgentServiceAccountName = "caa-agent",
+            KiroPvcPool = pvcPool.ToList()
+        };
+
         return new DispatchService(
-            _dbFactory, CreateAlwaysLeaderElection(), _mockKubeClient.Object,
-            _transitionService, config, templateStore);
+            _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options),
+            config, templateProvider);
     }
 
-    private static JobTemplateStore BuildTemplateStore(Dictionary<string, string> imageMapping)
+    private static JobTemplateStore BuildTemplateProvider(Dictionary<string, string> imageMapping)
     {
         var templates = imageMapping.Select(kv => new JobTemplate
         {
