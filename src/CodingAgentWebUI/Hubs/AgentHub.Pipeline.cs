@@ -1,8 +1,5 @@
-using System.Text.Json;
-using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.AspNetCore.SignalR;
 
 namespace CodingAgentWebUI.Hubs;
@@ -171,11 +168,11 @@ public sealed partial class AgentHub
                 break;
 
             case CommentType.GateRejection:
-                commentBody = BuildGateComment(payload.AssessmentJson, isWontDo: false);
+                commentBody = _gateCommentFormatter.FormatGateComment(payload.AssessmentJson, isWontDo: false);
                 break;
 
             case CommentType.GateWontDo:
-                commentBody = BuildGateComment(payload.AssessmentJson, isWontDo: true);
+                commentBody = _gateCommentFormatter.FormatGateComment(payload.AssessmentJson, isWontDo: true);
                 break;
 
             default:
@@ -222,99 +219,12 @@ public sealed partial class AgentHub
     // ── Token refresh ───────────────────────────────────────────────────
 
     /// <summary>
-    /// Generates a fresh short-lived token via <see cref="ITokenVendingService"/>.
+    /// Generates a fresh short-lived token via <see cref="IAgentTokenRefreshService"/>.
     /// Supports both SignalR mode (PipelineRun in memory) and K8s mode (WorkItem payload in DB).
     /// </summary>
     [RequiresActiveJob]
-    public async Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind)
-    {
-        // Resolve provider config IDs — from PipelineRun (SignalR mode) or WorkItem payload (K8s mode)
-        string? repoProviderConfigId;
-        string? brainProviderConfigId;
-
-        var run = _facade.GetRun(jobId.Value);
-        if (run is not null)
-        {
-            repoProviderConfigId = run.RepoProviderConfigId;
-            brainProviderConfigId = run.BrainProviderConfigId;
-        }
-        else
-        {
-            // K8s mode fallback: resolve from WorkItem payload in DB
-            var configIds = await _facade.GetWorkItemProviderConfigIdsAsync(jobId.Value, CancellationToken.None);
-            if (configIds is null)
-            {
-                _logger.Warning("No active run or work item found for job {JobId}", jobId.Value);
-                throw new HubException($"No active run or work item found for job {jobId.Value}");
-            }
-
-            repoProviderConfigId = configIds.Value.RepoProviderConfigId;
-            brainProviderConfigId = configIds.Value.BrainProviderConfigId;
-
-            if (string.IsNullOrEmpty(repoProviderConfigId))
-            {
-                _logger.Warning("WorkItem {JobId} has no repoProviderConfigId in payload", jobId.Value);
-                throw new HubException($"WorkItem {jobId.Value} has no repoProviderConfigId in payload");
-            }
-        }
-
-        // Resolve the correct provider config based on the requested kind.
-        // Brain repos need their own scoped token (different repository scope).
-        ProviderConfig? targetConfig = null;
-
-        if (providerKind == ProviderKind.Brain && !string.IsNullOrEmpty(brainProviderConfigId))
-        {
-            targetConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId, ProviderKind.Repository, CancellationToken.None);
-        }
-
-        if (targetConfig is null)
-        {
-            // Default: use the work repo config (covers Repository kind and fallback)
-            targetConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId!, ProviderKind.Repository, CancellationToken.None);
-        }
-
-        if (targetConfig is null)
-        {
-            _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId.Value, providerKind);
-            throw new HubException($"Provider config not found for job {jobId.Value} (kind: {providerKind})");
-        }
-
-        // GitHub App auth: generate a short-lived scoped token via JWT exchange
-        if (targetConfig.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64))
-        {
-            var (token, expiresAt) = await _tokenVending.GenerateAgentTokenAsync(targetConfig, CancellationToken.None);
-
-            _logger.Information("Token refreshed for job {JobId} (kind: {ProviderKind}), expires at {ExpiresAt}",
-                jobId.Value, providerKind, expiresAt);
-
-            return new TokenRefreshResponse { Token = token, ExpiresAt = expiresAt };
-        }
-
-        // GitLab PAT / static token: return the access token directly (no vending needed)
-        if (targetConfig.Settings.TryGetValue(ProviderSettingKeys.AccessToken, out var accessToken)
-            && !string.IsNullOrWhiteSpace(accessToken))
-        {
-            _logger.Information("Returning static access token for job {JobId} (kind: {ProviderKind})",
-                jobId.Value, providerKind);
-
-            // Use a far-future expiry since PATs don't expire through this mechanism
-            return new TokenRefreshResponse { Token = accessToken, ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) };
-        }
-
-        // Fallback: check if a pre-vended token already exists in settings
-        if (targetConfig.Settings.TryGetValue(ProviderSettingKeys.Token, out var existingToken)
-            && !string.IsNullOrWhiteSpace(existingToken))
-        {
-            _logger.Information("Returning existing token for job {JobId} (kind: {ProviderKind})",
-                jobId.Value, providerKind);
-
-            return new TokenRefreshResponse { Token = existingToken, ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) };
-        }
-
-        _logger.Warning("Provider config for job {JobId} (kind: {ProviderKind}) has no supported authentication method", jobId.Value, providerKind);
-        throw new HubException($"Provider config for job {jobId.Value} (kind: {providerKind}) has no supported authentication method. " +
-            "Expected 'privateKeyBase64' (GitHub App), 'accessToken' (GitLab PAT), or 'token'.");
-    }
+    public Task<TokenRefreshResponse> RequestTokenRefresh(JobId jobId, ProviderKind providerKind)
+        => _tokenRefreshService.RefreshTokenAsync(jobId.Value, providerKind, CancellationToken.None);
 
     // ── Decomposition issue operations (proxied through orchestrator) ──
 
@@ -508,40 +418,4 @@ public sealed partial class AgentHub
         return (run, _facade.CreateIssueProvider(issueConfig));
     }
 
-    /// <summary>
-    /// Builds a gate comment (not-ready or wont-do) from the assessment JSON.
-    /// Falls back to the raw JSON if deserialization fails.
-    /// </summary>
-    /// <remarks>
-    /// Currently only invoked via <see cref="RequestPostComment"/> when the agent sends
-    /// <see cref="CommentType.GateRejection"/> or <see cref="CommentType.GateWontDo"/>.
-    /// In practice, <see cref="CodingAgentWebUI.Pipeline.Services.AgentPhaseExecutor"/>
-    /// formats gate comments locally and posts via <see cref="CommentType.Analysis"/>,
-    /// so this path is currently unused.
-    /// </remarks>
-    private string BuildGateComment(string? assessmentJson, bool isWontDo)
-    {
-        if (string.IsNullOrWhiteSpace(assessmentJson))
-            return isWontDo ? "## 🚫 Analysis Gate: Won't Do" : "## ⚠️ Analysis Gate: Needs Refinement";
-
-        try
-        {
-            var assessment = JsonSerializer.Deserialize<AnalysisAssessment>(assessmentJson);
-            if (assessment is not null)
-            {
-                return isWontDo
-                    ? Pipeline.Services.AgentPhaseExecutor.BuildWontDoComment(assessment)
-                    : Pipeline.Services.AgentPhaseExecutor.BuildNotReadyComment(assessment);
-            }
-        }
-        catch (JsonException ex)
-        {
-            _logger.Warning(ex, "Failed to deserialize assessment JSON for gate comment");
-        }
-
-        // Fallback: wrap raw JSON in a code block
-        return isWontDo
-            ? $"## 🚫 Analysis Gate: Won't Do\n\n```json\n{assessmentJson}\n```"
-            : $"## ⚠️ Analysis Gate: Needs Refinement\n\n```json\n{assessmentJson}\n```";
-    }
 }

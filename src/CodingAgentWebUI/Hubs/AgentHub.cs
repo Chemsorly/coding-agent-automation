@@ -22,7 +22,6 @@ namespace CodingAgentWebUI.Hubs;
 public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 {
     private readonly IAgentHubFacade _facade;
-    private readonly ITokenVendingService _tokenVending;
     // TODO: Replace concrete PipelineOrchestrationService with IChangeNotifier once AgentHub.Chat.cs
     // methods (NotifyChatResponse, NotifyChatCompleted) are moved behind a narrow interface.
     // AgentHub.Pipeline.cs and AgentHub.Consolidation.cs only call NotifyChange() and could use IChangeNotifier.
@@ -32,29 +31,33 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly ConsolidationBadgeService _badgeService;
     private readonly IHubIssueOperations _issueOps;
     private readonly IAgentJobLifecycleService _lifecycleService;
+    private readonly IAgentTokenRefreshService _tokenRefreshService;
+    private readonly IGateCommentFormatter _gateCommentFormatter;
     private readonly IAgentOrphanRecoveryService _orphanRecoveryService;
     private readonly ILogger _logger;
 
     public AgentHub(
         IAgentHubFacade facade,
-        ITokenVendingService tokenVending,
         PipelineOrchestrationService orchestration,
         ModelFetchService modelFetchService,
         IConsolidationService consolidationService,
         ConsolidationBadgeService badgeService,
         IHubIssueOperations issueOps,
         IAgentJobLifecycleService lifecycleService,
+        IAgentTokenRefreshService tokenRefreshService,
+        IGateCommentFormatter gateCommentFormatter,
         ILogger logger,
         IAgentOrphanRecoveryService? orphanRecoveryService = null)
     {
         _facade = facade;
-        _tokenVending = tokenVending;
         _orchestration = orchestration;
         _modelFetchService = modelFetchService;
         _consolidationService = consolidationService;
         _badgeService = badgeService;
         _issueOps = issueOps;
         _lifecycleService = lifecycleService;
+        _tokenRefreshService = tokenRefreshService;
+        _gateCommentFormatter = gateCommentFormatter;
         // TODO: Make IAgentOrphanRecoveryService a required (non-nullable) constructor parameter.
         // The service is registered in DI as a singleton — the nullable fallback couples the Hub
         // to the concrete type and creates an unmanaged instance if DI misconfiguration occurs.
