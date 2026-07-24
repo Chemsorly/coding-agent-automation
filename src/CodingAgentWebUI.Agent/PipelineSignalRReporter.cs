@@ -37,6 +37,7 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
     private readonly PipelineRun _run;
     private readonly Action<PipelineStep?>? _onStepChanged;
     private readonly Serilog.ILogger _logger;
+    private int _disposed;
 
     public PipelineSignalRReporter(
         HubConnection connection,
@@ -297,16 +298,16 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
     // ── IAsyncDisposable ────────────────────────────────────────────────
 
     /// <summary>
-    /// Drains in-flight serialized sends before disposing the semaphore.
+    /// Drains in-flight serialized sends before disposing the semaphore. Idempotent —
+    /// second and subsequent calls return immediately without side effects.
     /// <see cref="SerializedSendAsync"/> catches <see cref="ObjectDisposedException"/>,
     /// so tasks arriving after disposal are handled gracefully without unobserved exceptions.
     /// </summary>
-    // TODO: Add _disposed idempotency guard. Currently DisposeAsync is not idempotent —
-    // calling it twice will invoke _signalrLock.Dispose() on an already-disposed SemaphoreSlim.
-    // Now that PipelineExecutionBuildResult introduces a second disposal path for the reporter,
-    // the lack of idempotency is a latent risk if code paths ever converge.
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
         try { await _signalrLock.WaitAsync(CancellationToken.None); _signalrLock.Release(); }
         catch { /* best-effort drain */ }
         _signalrLock.Dispose();

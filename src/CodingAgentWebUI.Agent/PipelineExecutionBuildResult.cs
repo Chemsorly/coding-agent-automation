@@ -36,12 +36,6 @@ internal sealed class PipelineExecutionBuildResult : IAsyncDisposable
     /// path to prevent resource leaks. The normal success path continues to use
     /// <see cref="PipelineCleanup.RunAsync"/> for disposal.
     /// </summary>
-    // TODO: The _disposed guard prevents double-dispose within this class, but cannot prevent
-    // external code from calling reporter.DisposeAsync() directly via PipelineCleanup.RunAsync.
-    // PipelineSignalRReporter.DisposeAsync is not idempotent (see TODO at PipelineSignalRReporter.cs:304).
-    // If a future refactor wraps buildResult in `await using` inside LocalPipelineExecutor's try block,
-    // PipelineCleanup.RunAsync in the finally block would call reporter.DisposeAsync() a second time,
-    // triggering ObjectDisposedException. Consider making PipelineSignalRReporter.DisposeAsync idempotent.
     public async ValueTask DisposeAsync()
     {
         if (_disposed) return;
