@@ -184,8 +184,9 @@ public sealed class ReconciliationService : BackgroundService
 
     /// <summary>
     /// Issues with in-progress labels but no matching non-terminal work item → swap to agent:next.
+    /// Only re-queues Succeeded items (label recovery) and Failed items with retryable failure reasons
+    /// (Timeout, InfrastructureFailure). Cancelled items and permanently-failed items are excluded.
     /// </summary>
-    // TODO: This still swaps recently-terminal items back to agent:next on restart (including removing agent:cancelled labels), creating unnecessary label churn. Consider Option C from BUG-10: skip items whose terminal state indicates infrastructure failure (heartbeat timeout, orphan detected) rather than genuine business failure (see BUG-10 review findings)
     private async Task ReconcileStartupLabelsAsync(CancellationToken ct)
     {
         if (_labelService is null) return;
@@ -204,12 +205,15 @@ public sealed class ReconciliationService : BackgroundService
             .Select(x => (x.IssueIdentifier, x.IssueProviderConfigId))
             .ToHashSet();
 
-        // Get recently terminal items that might still have in-progress labels
+        // Get recently terminal items that might still have in-progress labels.
+        // Excludes: Cancelled (user-intentional), Failed with permanent/unknown reasons.
+        // Includes: Succeeded (label recovery), Failed with retryable reasons (Timeout, InfrastructureFailure).
         var recentTerminal = await db.WorkItems
-            .Where(w => (w.Status == WorkItemStatus.Succeeded ||
-                         w.Status == WorkItemStatus.Failed ||
-                         w.Status == WorkItemStatus.Cancelled) &&
-                        w.CompletedAt > DateTimeOffset.UtcNow.AddMinutes(-5))
+            .Where(w => w.CompletedAt > DateTimeOffset.UtcNow.AddMinutes(-5) &&
+                        (w.Status == WorkItemStatus.Succeeded ||
+                         (w.Status == WorkItemStatus.Failed &&
+                          (w.FailureReason == FailureReason.Timeout ||
+                           w.FailureReason == FailureReason.InfrastructureFailure))))
             .Select(w => new { w.IssueIdentifier, w.IssueProviderConfigId })
             .ToListAsync(ct);
 
