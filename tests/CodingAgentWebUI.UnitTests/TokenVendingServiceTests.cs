@@ -431,6 +431,77 @@ public class TokenVendingServiceTests
 
     #endregion
 
+    #region PrepareAgentConfigsAsync preserves SteeringContent
+
+    /// <summary>
+    /// Verifies that PrepareAgentConfigsAsync preserves SteeringContent through the
+    /// non-GitHub-App clone path (no privateKeyBase64). This guards against the regression
+    /// where CloneWithSettings omitted SteeringContent from the object initializer.
+    /// </summary>
+    [Fact]
+    public async Task PrepareAgentConfigsAsync_PreservesSteeringContent()
+    {
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
+        const string expectedSteering = "# Repo Steering\n\nUse conventional commits. Always run tests before pushing.";
+
+        var configs = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "repo-1",
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitHub",
+                DisplayName = "myorg/my-repo",
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.Owner] = "myorg",
+                    [ProviderSettingKeys.Repo] = "my-repo",
+                    [ProviderSettingKeys.BaseBranch] = "main"
+                },
+                SteeringContent = expectedSteering
+            }
+        };
+
+        var result = await service.PrepareAgentConfigsAsync(configs, "repo-1", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        result[0].SteeringContent.Should().Be(expectedSteering);
+    }
+
+    /// <summary>
+    /// Verifies that PrepareAgentConfigsAsync preserves null SteeringContent without error.
+    /// </summary>
+    [Fact]
+    public async Task PrepareAgentConfigsAsync_NullSteeringContent_PreservedAsNull()
+    {
+        var service = new TokenVendingService(_mockLogger.Object, new HttpClient());
+
+        var configs = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "repo-1",
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitHub",
+                DisplayName = "myorg/my-repo",
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.Owner] = "myorg",
+                    [ProviderSettingKeys.Repo] = "my-repo",
+                    [ProviderSettingKeys.BaseBranch] = "main"
+                }
+                // SteeringContent intentionally not set (null)
+            }
+        };
+
+        var result = await service.PrepareAgentConfigsAsync(configs, "repo-1", CancellationToken.None);
+
+        result.Should().HaveCount(1);
+        result[0].SteeringContent.Should().BeNull();
+    }
+
+    #endregion
+
     #region PrepareAgentConfigsAsync preserves all ProviderConfig properties
 
     /// <summary>

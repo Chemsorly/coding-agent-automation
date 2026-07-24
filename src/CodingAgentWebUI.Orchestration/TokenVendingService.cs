@@ -254,7 +254,8 @@ public sealed partial class TokenVendingService : ITokenVendingService
             RequiredLabels = original.RequiredLabels,
             BlacklistedPaths = original.BlacklistedPaths,
             Secrets = original.Secrets,
-            SetupSteps = original.SetupSteps
+            SetupSteps = original.SetupSteps,
+            SteeringContent = original.SteeringContent
         };
     }
 
