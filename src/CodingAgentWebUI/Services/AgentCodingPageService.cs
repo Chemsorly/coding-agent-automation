@@ -609,11 +609,9 @@ public class AgentCodingPageService : IDisposable
         ClearDrawerIssues();
     }
 
-    // TODO: DrawerIssues.Count is evaluated before HideOtherDrawers runs (argument evaluation order).
-    // Currently safe because HideOtherDrawers only toggles booleans, but if it ever clears data collections this will break.
     public Task<string?> SwitchToIssueDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
         => SwitchToDrawerCoreAsync("issue", templateId, notifyStateChanged,
-            IssueDrawerTemplate, DrawerIssues.Count > 0,
+            IssueDrawerTemplate, () => DrawerIssues.Count > 0,
             () => IsIssueDrawerOpen = true,
             OpenIssueDrawerAsync);
 
@@ -644,10 +642,9 @@ public class AgentCodingPageService : IDisposable
         ClearPrDrawerLabelFilter();
     }
 
-    // TODO: Same evaluation-order concern as SwitchToIssueDrawerAsync — PrDrawerPrs.Count evaluated before HideOtherDrawers.
     public Task<string?> SwitchToPrDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
         => SwitchToDrawerCoreAsync("pr", templateId, notifyStateChanged,
-            PrDrawerTemplate, PrDrawerPrs.Count > 0,
+            PrDrawerTemplate, () => PrDrawerPrs.Count > 0,
             () => IsPrDrawerOpen = true,
             OpenPrDrawerAsync);
 
@@ -678,10 +675,9 @@ public class AgentCodingPageService : IDisposable
         ClearEpicDrawerIssues();
     }
 
-    // TODO: Same evaluation-order concern as SwitchToIssueDrawerAsync — EpicDrawerIssues.Count evaluated before HideOtherDrawers.
     public Task<string?> SwitchToEpicDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
         => SwitchToDrawerCoreAsync("epic", templateId, notifyStateChanged,
-            EpicDrawerTemplate, EpicDrawerIssues.Count > 0,
+            EpicDrawerTemplate, () => EpicDrawerIssues.Count > 0,
             () => IsEpicDrawerOpen = true,
             OpenEpicDrawerAsync);
 
@@ -725,7 +721,9 @@ public class AgentCodingPageService : IDisposable
     }
 
     /// <summary>
-    /// Shared switch lifecycle: hide other drawers → check cache → reuse or do a full open.
+    /// Shared switch lifecycle: hide other drawers → evaluate hasData → check cache → reuse or do a full open.
+    /// The hasData func is evaluated after HideOtherDrawers to avoid stale reads if HideOtherDrawers
+    /// is ever modified to clear data collections.
     /// Note: HideOtherDrawers is called here AND inside openAsync (via OpenDrawerCoreAsync).
     /// The double-call is harmless (idempotent) and preserves pre-existing behavior.
     /// </summary>
@@ -734,12 +732,12 @@ public class AgentCodingPageService : IDisposable
         string templateId,
         Func<Task>? notifyStateChanged,
         PipelineJobTemplate? cachedTemplate,
-        bool hasData,
+        Func<bool> hasData,
         Action setOpen,
         Func<string, Func<Task>?, Task<string?>> openAsync)
     {
         HideOtherDrawers(drawerKind);
-        if (cachedTemplate != null && hasData)
+        if (cachedTemplate != null && hasData())
         {
             setOpen();
             return null;
