@@ -13,12 +13,11 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// merges findings, runs acceptance criteria checks, and sends fix prompts.
 /// Extracted from <see cref="AgentPhaseExecutor"/> to reduce nesting and eliminate goto patterns.
 /// </summary>
-// TODO: Change to `internal class` — this class is only instantiated by AgentPhaseExecutor and should not be part of the public API surface
-public class CodeReviewOrchestrator
+internal class CodeReviewOrchestrator
 {
     private readonly Serilog.ILogger _logger;
 
-    public CodeReviewOrchestrator(Serilog.ILogger logger)
+    internal CodeReviewOrchestrator(Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(logger);
         _logger = logger;
@@ -34,7 +33,7 @@ public class CodeReviewOrchestrator
     /// <c>goto exitLoop</c> pattern that was previously used in the inlined loop.
     /// </remarks>
     // TODO: Add ArgumentNullException.ThrowIfNull for `context` and `agents` parameters to match constructor validation pattern
-    public async Task RunReviewLoopAsync(
+    internal async Task RunReviewLoopAsync(
         AgentPhaseContext context,
         IReadOnlyList<ReviewAgentConfig> agents,
         int maxIterations,
