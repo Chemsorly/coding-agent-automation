@@ -31,6 +31,7 @@ public sealed class AgentJobSlotManager
     private DateTimeOffset? _activeJobStartedAt;
     private PipelineRunType _activeJobRunType;
     private int _currentStep = NullStep;
+    private int _jobReleased; // 0 = not released, 1 = released (Interlocked guard for exactly-once signaling)
 
     private const int NullStep = -1;
 
@@ -171,6 +172,7 @@ public sealed class AgentJobSlotManager
             _activeJobId = jobId;
             _activeJobStartedAt = DateTimeOffset.UtcNow;
             _jobCts = new CancellationTokenSource();
+            Interlocked.Exchange(ref _jobReleased, 0); // Reset guard for new job
             busyWith = null;
             return true;
         }
@@ -238,9 +240,16 @@ public sealed class AgentJobSlotManager
 
     /// <summary>
     /// Releases the job slot, disposes the CTS, and signals the orchestrator that the agent is ready.
+    /// Uses an atomic guard to ensure exactly-once signaling even if called concurrently from
+    /// multiple paths (e.g., job completion and DrainBufferAsync on reconnection).
     /// </summary>
     public async Task ReleaseJobSlotAndSignalReadyAsync()
     {
+        // Atomic guard: only the first caller proceeds with release and signal.
+        // Subsequent concurrent or sequential calls are no-ops.
+        if (Interlocked.CompareExchange(ref _jobReleased, 1, 0) != 0)
+            return;
+
         lock (_busyLock)
         {
             _activeJobId = null;
@@ -301,6 +310,11 @@ public sealed class AgentJobSlotManager
     // clearing logic end-to-end and catch regressions.
     public void ForceReleaseJobSlot()
     {
+        // Mark as released so no concurrent path attempts to signal via ReleaseJobSlotAndSignalReadyAsync.
+        // In practice, ForceReleaseJobSlot is called before the job task starts (on JobAccepted failure),
+        // so there's no concurrent release to race with — this is defensive/future-proofing.
+        Interlocked.Exchange(ref _jobReleased, 1);
+
         lock (_busyLock)
         {
             _activeJobId = null;
