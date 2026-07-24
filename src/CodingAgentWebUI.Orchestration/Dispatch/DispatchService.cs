@@ -442,6 +442,9 @@ public sealed class DispatchService : BackgroundService
         }
 
         // Load full WorkItem
+        // TODO: If FindAsync throws (OperationCanceledException, DB failure) after PVC is claimed above,
+        // the PVC leaks. Consider wrapping the entire post-claim section in a try/catch that returns
+        // claimedPvc to availablePvcs, similar to the prepareVariant guard below. (#1609 review finding)
         var workItem = await db.WorkItems.FindAsync([item.Id], ct);
         if (workItem is null || workItem.Status != WorkItemStatus.Pending)
         {
@@ -451,8 +454,18 @@ public sealed class DispatchService : BackgroundService
         }
 
         // Variant-specific preparation (may mutate workItem, load secrets, or signal abort)
-        // TODO: Wrap prepareVariant in try/catch to release claimedPvc on unhandled exception (PVC leak risk if e.g. LoadProjectSecretsAsync throws)
-        var (shouldProceed, projectSecrets) = await prepareVariant(workItem);
+        (bool shouldProceed, Dictionary<string, string>? projectSecrets) result;
+        try
+        {
+            result = await prepareVariant(workItem);
+        }
+        catch
+        {
+            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+            throw;
+        }
+
+        var (shouldProceed, projectSecrets) = result;
         if (!shouldProceed)
         {
             if (claimedPvc is not null) availablePvcs.Add(claimedPvc);

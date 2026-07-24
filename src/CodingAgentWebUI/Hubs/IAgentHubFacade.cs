@@ -99,7 +99,7 @@ public interface IAgentHubFacade
     /// <summary>
     /// Marks an issue as no longer being processed in the dispatcher.
     /// </summary>
-    void MarkIssueComplete(string issueIdentifier, string issueProviderConfigId);
+    void MarkIssueComplete(string issueIdentifier, ProviderConfigId issueProviderConfigId);
 
     /// <summary>
     /// Signals the drain service to attempt dispatch for idle agents.
