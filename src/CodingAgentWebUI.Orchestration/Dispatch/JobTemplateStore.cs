@@ -10,7 +10,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Templates are keyed by normalized (sorted, trimmed) label set for O(1) lookup.
 /// Supports both YAML (.yaml/.yml) and JSON (.json) — YAML is the primary format for K8s-native readability.
 /// </summary>
-public sealed class JobTemplateProvider
+public sealed class JobTemplateStore
 {
     /// <summary>JSON serializer options used for deserializing job-templates.json (legacy/fallback).</summary>
     public static readonly JsonSerializerOptions JsonOptions = new()
@@ -27,7 +27,7 @@ public sealed class JobTemplateProvider
 
     private readonly Dictionary<string, JobTemplate> _templates;
 
-    private JobTemplateProvider(Dictionary<string, JobTemplate> templates)
+    private JobTemplateStore(Dictionary<string, JobTemplate> templates)
     {
         _templates = templates;
     }
@@ -37,7 +37,7 @@ public sealed class JobTemplateProvider
     /// Duplicate label sets: last entry wins.
     /// </summary>
     /// <exception cref="YamlDotNet.Core.YamlException">Thrown if YAML is malformed.</exception>
-    public static JobTemplateProvider LoadFromYaml(string yaml)
+    public static JobTemplateStore LoadFromYaml(string yaml)
     {
         var dtos = YamlDeserializer.Deserialize<List<JobTemplateYamlDto>>(yaml);
         if (dtos is null)
@@ -55,7 +55,7 @@ public sealed class JobTemplateProvider
     /// Duplicate label sets: last entry wins.
     /// </summary>
     /// <exception cref="JsonException">Thrown if JSON is malformed.</exception>
-    public static JobTemplateProvider LoadFromJson(string json)
+    public static JobTemplateStore LoadFromJson(string json)
     {
         var list = JsonSerializer.Deserialize<List<JobTemplate>>(json, JsonOptions);
         if (list is null)
@@ -74,7 +74,7 @@ public sealed class JobTemplateProvider
     /// <exception cref="FileNotFoundException">Thrown if file does not exist.</exception>
     /// <exception cref="JsonException">Thrown if JSON content is malformed.</exception>
     /// <exception cref="YamlDotNet.Core.YamlException">Thrown if YAML content is malformed.</exception>
-    public static JobTemplateProvider LoadFromFile(string filePath)
+    public static JobTemplateStore LoadFromFile(string filePath)
     {
         if (!File.Exists(filePath))
         {
@@ -133,7 +133,7 @@ public sealed class JobTemplateProvider
         return string.Join(",", parts);
     }
 
-    private static JobTemplateProvider BuildLookup(List<JobTemplate> templates)
+    private static JobTemplateStore BuildLookup(List<JobTemplate> templates)
     {
         var dict = new Dictionary<string, JobTemplate>(StringComparer.Ordinal);
         foreach (var template in templates)
@@ -148,7 +148,7 @@ public sealed class JobTemplateProvider
             var key = NormalizeLabels(template.Labels);
             dict[key] = template;
         }
-        return new JobTemplateProvider(dict);
+        return new JobTemplateStore(dict);
     }
 }
 
