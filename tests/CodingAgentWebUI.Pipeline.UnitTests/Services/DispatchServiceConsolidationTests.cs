@@ -478,11 +478,11 @@ public class DispatchServiceConsolidationTests : IDisposable
     // ── Label Resolution: AgentSelector must match template key ────────
 
     /// <summary>
-    /// Regression test: When ConsolidationDispatcher produces an AgentSelector that is a SUBSET
+    /// Regression test: When ConsolidationDispatchService produces an AgentSelector that is a SUBSET
     /// of the template's label set (e.g., "dotnet,dotnet10" vs template "kiro,dotnet,dotnet10"),
     /// DispatchService must still resolve the template correctly.
     ///
-    /// Root cause: ConsolidationDispatcher uses raw requiredLabels as AgentSelector instead of
+    /// Root cause: ConsolidationDispatchService uses raw requiredLabels as AgentSelector instead of
     /// resolving the profile's MatchLabels (which IS the template key). Normal pipeline dispatch
     /// uses profile.MatchLabels and works fine.
     ///
@@ -498,7 +498,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         var workItemId = Guid.NewGuid();
         var runId = workItemId.ToString();
 
-        // Insert with subset selector — what ConsolidationDispatcher actually produces
+        // Insert with subset selector — what ConsolidationDispatchService actually produces
         // when DefaultRequiredAgentLabels = "dotnet,dotnet10" (missing "kiro")
         await InsertConsolidationWorkItem(workItemId, runId, "dotnet,dotnet10");
 
