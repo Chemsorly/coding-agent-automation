@@ -152,10 +152,10 @@ public sealed class DispatchService : BackgroundService
             if (File.Exists(jsonFallback))
                 templatesPath = jsonFallback;
         }
-        var provider = JobTemplateStore.LoadFromFile(templatesPath);
+        var store = JobTemplateStore.LoadFromFile(templatesPath);
         Log.Information("DispatchService: loaded {Count} job template(s) from {Path}",
-            provider.GetAllTemplates().Count, templatesPath);
-        return provider;
+            store.GetAllTemplates().Count, templatesPath);
+        return store;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
