@@ -24,6 +24,12 @@ public class QualityGateValidator : IQualityGateValidator
         _logger = logger;
     }
 
+    /// <summary>
+    /// Timeout for draining stdout/stderr pipes after the process exits.
+    /// Overridable for testing with shorter durations.
+    /// </summary>
+    protected virtual TimeSpan PipeDrainTimeout => TimeSpan.FromSeconds(30);
+
     /// <inheritdoc />
     public virtual async Task<QualityGateReport> ValidateAsync(
         string workspacePath, IReadOnlyList<QualityGateConfiguration> qualityGateConfigs, CancellationToken ct, string? baseBranch = null)
@@ -566,35 +572,34 @@ public class QualityGateValidator : IQualityGateValidator
         {
             try { process.Kill(entireProcessTree: true); } catch { }
             using var drainCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            try { await stdoutTask.WaitAsync(drainCts.Token); } catch { }
-            try { await stderrTask.WaitAsync(drainCts.Token); } catch { }
+            try { await Task.WhenAll(stdoutTask.WaitAsync(drainCts.Token), stderrTask.WaitAsync(drainCts.Token)); } catch { }
             throw new TimeoutException($"Process '{fileName} {arguments}' timed out after {timeout.TotalSeconds}s");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             try { process.Kill(entireProcessTree: true); } catch { }
             using var drainCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            try { await stdoutTask.WaitAsync(drainCts.Token); } catch { }
-            try { await stderrTask.WaitAsync(drainCts.Token); } catch { }
+            try { await Task.WhenAll(stdoutTask.WaitAsync(drainCts.Token), stderrTask.WaitAsync(drainCts.Token)); } catch { }
             throw;
         }
 
         // Bound the pipe drain to prevent indefinite hang if a grandchild process inherits
         // stdout/stderr handles and outlives the parent.
-        // TODO: The two awaits share a single 30s CTS — if stdoutTask takes close to 30s,
-        // stderrTask gets almost no time. Consider using Task.WhenAll with a single WaitAsync
-        // or creating a fresh timeout for the second await.
         string stdout, stderr;
-        using (var pipeDrainCts = new CancellationTokenSource(TimeSpan.FromSeconds(30)))
+        using (var pipeDrainCts = new CancellationTokenSource(PipeDrainTimeout))
         {
             try
             {
-                stdout = await stdoutTask.WaitAsync(pipeDrainCts.Token);
-                stderr = await stderrTask.WaitAsync(pipeDrainCts.Token);
+                var results = await Task.WhenAll(
+                    stdoutTask.WaitAsync(pipeDrainCts.Token),
+                    stderrTask.WaitAsync(pipeDrainCts.Token));
+                stdout = results[0];
+                stderr = results[1];
             }
             catch (OperationCanceledException)
             {
-                _logger.Warning("Pipe drain timed out after 30s for process that exited with code {ExitCode}; output may be incomplete", process.ExitCode);
+                _logger.Warning("Pipe drain timed out after {TimeoutSeconds}s for process that exited with code {ExitCode}; output may be incomplete",
+                    PipeDrainTimeout.TotalSeconds, process.ExitCode);
                 stdout = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : string.Empty;
                 stderr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : string.Empty;
             }
