@@ -31,13 +31,14 @@ public sealed class AgentHubBehaviorTests : IDisposable
     {
         var hub = new AgentHub(
             _mockFacade.Object,
-            _mockTokenVending.Object,
             null!,  // PipelineOrchestrationService — tests that need it use a mock below
             null!,  // ModelFetchService
             _mockConsolidation.Object,
             _badgeService,
             _mockIssueOps.Object,
             _mockLifecycleService.Object,
+            new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
+            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object);
 
         var mockContext = new Mock<HubCallerContext>();
@@ -893,13 +894,14 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var hub = new AgentHub(
             _mockFacade.Object,
-            _mockTokenVending.Object,
             orchestration,
             null!,  // ModelFetchService
             _mockConsolidation.Object,
             _badgeService,
             _mockIssueOps.Object,
             CreateRealLifecycleService(orchestration),
+            new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
+            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object);
 
         var mockContext = new Mock<HubCallerContext>();
@@ -915,13 +917,14 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         var hub = new AgentHub(
             _mockFacade.Object,
-            _mockTokenVending.Object,
             orchestration,
             null!,  // ModelFetchService
             _mockConsolidation.Object,
             _badgeService,
             _mockIssueOps.Object,
             CreateRealLifecycleService(orchestration),
+            new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
+            Mock.Of<IGateCommentFormatter>(),
             _mockLogger.Object);
 
         // Build a real HttpContext with the agentId query param

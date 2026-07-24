@@ -2,22 +2,20 @@ using AwesomeAssertions;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline;
-using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using Microsoft.AspNetCore.SignalR;
 using Moq;
 using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.UnitTests.Hubs;
 
 /// <summary>
-/// Regression tests for brain repository token refresh in AgentHub.
+/// Regression tests for brain repository token refresh.
 ///
 /// Background: RequestTokenRefresh always resolved the work repo config regardless of
 /// the requested ProviderKind. This meant brain providers got tokens scoped to the work
 /// repo and couldn't access the brain repo (GitHub returned 404).
 ///
-/// Fix: RequestTokenRefresh now resolves the brain provider config when ProviderKind.Brain
+/// Fix: The token refresh service now resolves the brain provider config when ProviderKind.Brain
 /// is requested, generating a correctly-scoped token.
 /// </summary>
 public class BrainTokenRefreshRegressionTests
@@ -26,36 +24,21 @@ public class BrainTokenRefreshRegressionTests
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
     private readonly Mock<ILogger> _mockLogger = new();
 
-    private AgentHub CreateHub()
+    private AgentTokenRefreshService CreateService()
     {
-        // RequestTokenRefresh only uses _facade and _tokenVending,
-        // so we can pass null for unused dependencies.
-        var hub = new AgentHub(
+        return new AgentTokenRefreshService(
             _mockFacade.Object,
             _mockTokenVending.Object,
-            null!,  // PipelineOrchestrationService — not used by RequestTokenRefresh
-            null!,  // ModelFetchService — not used by RequestTokenRefresh
-            null!,  // IConsolidationService — not used by RequestTokenRefresh
-            null!,  // ConsolidationBadgeService — not used by RequestTokenRefresh
-            Mock.Of<IHubIssueOperations>(),
-            Mock.Of<IAgentJobLifecycleService>(),
             _mockLogger.Object);
-
-        // Set up a mock HubCallerContext
-        var mockContext = new Mock<HubCallerContext>();
-        mockContext.Setup(c => c.ConnectionId).Returns("conn-1");
-        hub.Context = mockContext.Object;
-
-        return hub;
     }
 
     /// <summary>
-    /// Regression: When ProviderKind.Brain is requested, the hub must resolve the brain
+    /// Regression: When ProviderKind.Brain is requested, the service must resolve the brain
     /// provider config (using BrainProviderConfigId) and generate a token from it.
     /// Previously it always used the work repo config, causing 404 on brain repo access.
     /// </summary>
     [Fact]
-    public async Task RequestTokenRefresh_BrainKind_UsesbrainProviderConfig()
+    public async Task RefreshToken_BrainKind_UsesBrainProviderConfig()
     {
         // Arrange
         var workConfig = new ProviderConfig
@@ -114,10 +97,10 @@ public class BrainTokenRefreshRegressionTests
             .Callback<ProviderConfig, CancellationToken, bool>((config, _, _) => capturedConfig = config)
             .ReturnsAsync(("ghs_brain_token", DateTimeOffset.UtcNow.AddHours(1)));
 
-        var hub = CreateHub();
+        var service = CreateService();
 
         // Act
-        var response = await hub.RequestTokenRefresh("job-1", ProviderKind.Brain);
+        var response = await service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
 
         // Assert: Token was generated from the BRAIN config, not the work config
         capturedConfig.Should().NotBeNull();
@@ -127,11 +110,11 @@ public class BrainTokenRefreshRegressionTests
     }
 
     /// <summary>
-    /// Regression: When ProviderKind.Repository is requested, the hub must still use
+    /// Regression: When ProviderKind.Repository is requested, the service must still use
     /// the work repo config (existing behavior preserved).
     /// </summary>
     [Fact]
-    public async Task RequestTokenRefresh_RepositoryKind_UsesWorkRepoConfig()
+    public async Task RefreshToken_RepositoryKind_UsesWorkRepoConfig()
     {
         // Arrange
         var workConfig = new ProviderConfig
@@ -171,10 +154,10 @@ public class BrainTokenRefreshRegressionTests
             .Callback<ProviderConfig, CancellationToken, bool>((config, _, _) => capturedConfig = config)
             .ReturnsAsync(("ghs_work_token", DateTimeOffset.UtcNow.AddHours(1)));
 
-        var hub = CreateHub();
+        var service = CreateService();
 
         // Act
-        var response = await hub.RequestTokenRefresh("job-1", ProviderKind.Repository);
+        var response = await service.RefreshTokenAsync("job-1", ProviderKind.Repository, CancellationToken.None);
 
         // Assert: Token was generated from the WORK config
         capturedConfig.Should().NotBeNull();
@@ -188,7 +171,7 @@ public class BrainTokenRefreshRegressionTests
     /// falls back to work repo config gracefully.
     /// </summary>
     [Fact]
-    public async Task RequestTokenRefresh_BrainKind_BrainConfigMissing_FallsBackToWorkConfig()
+    public async Task RefreshToken_BrainKind_BrainConfigMissing_FallsBackToWorkConfig()
     {
         // Arrange: Only work config exists, brain config was removed
         var workConfig = new ProviderConfig
@@ -229,10 +212,10 @@ public class BrainTokenRefreshRegressionTests
             .Callback<ProviderConfig, CancellationToken, bool>((config, _, _) => capturedConfig = config)
             .ReturnsAsync(("ghs_fallback_token", DateTimeOffset.UtcNow.AddHours(1)));
 
-        var hub = CreateHub();
+        var service = CreateService();
 
         // Act: Should not throw, falls back to work config
-        var response = await hub.RequestTokenRefresh("job-1", ProviderKind.Brain);
+        var response = await service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
 
         // Assert: Fell back to work config
         capturedConfig.Should().NotBeNull();
@@ -245,7 +228,7 @@ public class BrainTokenRefreshRegressionTests
     /// to work config (brain sync was never configured for this run).
     /// </summary>
     [Fact]
-    public async Task RequestTokenRefresh_BrainKind_NoBrainConfigId_FallsBackToWorkConfig()
+    public async Task RefreshToken_BrainKind_NoBrainConfigId_FallsBackToWorkConfig()
     {
         var workConfig = new ProviderConfig
         {
@@ -283,10 +266,10 @@ public class BrainTokenRefreshRegressionTests
             .Callback<ProviderConfig, CancellationToken, bool>((config, _, _) => capturedConfig = config)
             .ReturnsAsync(("ghs_work_token", DateTimeOffset.UtcNow.AddHours(1)));
 
-        var hub = CreateHub();
+        var service = CreateService();
 
         // Act
-        var response = await hub.RequestTokenRefresh("job-1", ProviderKind.Brain);
+        var response = await service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
 
         // Assert: Falls back to work config since no brain is configured
         capturedConfig.Should().NotBeNull();
