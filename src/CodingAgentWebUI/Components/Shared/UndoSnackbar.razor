@@ -1,3 +1,5 @@
+@implements IDisposable
+
 @if (_visible)
 {
     <div class="undo-snackbar">
@@ -7,34 +9,34 @@
 }
 
 @code {
-    // TODO: Implement IDisposable — _dismissCts is never disposed (Cancel != Dispose), leaking unmanaged timer handles on repeated Show() calls and risking ObjectDisposedException if component is removed while Task.Delay is pending.
     private bool _visible;
     private string _message = "";
     private Func<Task>? _undoAction;
     private CancellationTokenSource? _dismissCts;
 
-    public async Task Show(string message, Func<Task> undoAction)
+    public Task Show(string message, Func<Task> undoAction)
     {
         _dismissCts?.Cancel();
-        // TODO: Dispose the old CTS before replacing — _dismissCts?.Dispose() should be called here.
+        _dismissCts?.Dispose();
         _dismissCts = new CancellationTokenSource();
         _message = message;
         _undoAction = undoAction;
         _visible = true;
         StateHasChanged();
 
-        var cts = _dismissCts;
-        // TODO: Task.Run is unnecessary in Blazor Server — use a simple async method to avoid the extra thread-pool hop.
-        _ = Task.Run(async () =>
+        _ = DismissAfterDelayAsync(_dismissCts.Token);
+        return Task.CompletedTask;
+    }
+
+    private async Task DismissAfterDelayAsync(CancellationToken token)
+    {
+        try
         {
-            try
-            {
-                await Task.Delay(5000, cts.Token);
-                await InvokeAsync(() => { _visible = false; StateHasChanged(); });
-            }
-            catch (OperationCanceledException) { }
-            catch (ObjectDisposedException) { }
-        });
+            await Task.Delay(5000, token);
+            await InvokeAsync(() => { _visible = false; StateHasChanged(); });
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
     }
 
     private async Task UndoClicked()
@@ -42,6 +44,12 @@
         _dismissCts?.Cancel();
         _visible = false;
         if (_undoAction is not null)
-            await _undoAction(); // TODO: Undo callback ignores success/error return value — if the toggle fails, user gets no feedback and UI state becomes inconsistent.
+            await _undoAction();
+    }
+
+    public void Dispose()
+    {
+        _dismissCts?.Cancel();
+        _dismissCts?.Dispose();
     }
 }

@@ -161,7 +161,7 @@ public class AgentPhaseExecutorCodeGenTests
     {
         _mockAgent.Setup(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>?>()))
             .ReturnsAsync(new AgentResult { ExitCode = ExitCodes.Success, OutputLines = Array.Empty<string>() });
-        _mockAgent.Setup(a => a.GetLatestSessionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockAgent.Setup(a => a.GetLatestSessionIdAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("session-abc");
 
         await _executor.ExecuteCodeGenerationAsync(BuildContext(), CancellationToken.None);

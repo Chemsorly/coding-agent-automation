@@ -680,6 +680,63 @@ public class K8sEdgeCaseTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    // PVC claim leak on prepareVariant exception — PVC returned when delegate throws (#1609)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ExecuteDispatchLifecycle_PrepareVariantThrows_PvcReturnedToPool()
+    {
+        // Arrange: insert a Pending work item so ExecuteDispatchLifecycleAsync can load it
+        var pendingId = Guid.NewGuid();
+        await InsertWorkItem(pendingId, "owner/repo#prepare-fail", "kiro,dotnet", WorkItemStatus.Pending);
+
+        var service = CreateDispatchService(pvcPool: new[] { "pvc-leak-test" });
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var projection = new DispatchService.PendingWorkItemProjection
+        {
+            Id = pendingId,
+            AgentSelector = "kiro,dotnet",
+            CreatedAt = DateTimeOffset.UtcNow,
+            TimeoutSeconds = 3600
+        };
+
+        var template = new JobTemplate
+        {
+            Labels = "dotnet,kiro",
+            Image = "ghcr.io/agent:kiro-latest",
+            ProviderType = "kiro",
+            MaxConcurrent = 10
+        };
+
+        var availablePvcs = new List<string> { "pvc-leak-test" };
+        var concurrency = new Dictionary<string, int>();
+
+        // Act: prepareVariant throws — PVC must still be returned to pool
+        Func<Task> act = () => service.ExecuteDispatchLifecycleAsync(
+            db, projection, template,
+            isKiroAgent: true,
+            availablePvcs,
+            concurrency,
+            logPrefix: "",
+            prepareVariant: _ => throw new InvalidOperationException("simulated prepareVariant failure"),
+            onDispatchSuccess: null,
+            ct: CancellationToken.None);
+
+        // Assert: exception propagates
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("simulated prepareVariant failure");
+
+        // Assert: PVC was returned to pool (the critical fix)
+        availablePvcs.Should().ContainSingle()
+            .Which.Should().Be("pvc-leak-test");
+
+        // Assert: work item stays Pending (no FailWorkItem called — exception propagates to caller)
+        var workItem = await db.WorkItems.FindAsync(pendingId);
+        workItem!.Status.Should().Be(WorkItemStatus.Pending);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     // Race condition: WorkItem no longer Pending after Job creation
     // PVC must be released and orphaned Job must be deleted (#1488)
     // ═══════════════════════════════════════════════════════════════════════

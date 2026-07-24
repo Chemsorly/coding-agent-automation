@@ -83,10 +83,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         };
     }
 
-    public async Task EnsureSessionAsync(string workspacePath, CancellationToken ct)
+    public async Task EnsureSessionAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(workspacePath);
-
         try
         {
             var absolutePath = Path.GetFullPath(workspacePath);
@@ -488,7 +486,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         }
     }
 
-    public Task<string?> GetLatestSessionIdAsync(string workspacePath, CancellationToken ct)
+    public Task<string?> GetLatestSessionIdAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
         return Task.FromResult(_currentSessionId);
     }

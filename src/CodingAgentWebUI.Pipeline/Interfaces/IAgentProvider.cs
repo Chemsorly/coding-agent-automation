@@ -40,7 +40,7 @@ public interface IAgentProvider : IAsyncDisposable
     /// execution are caught, logged as warnings, and not rethrown; the session is not
     /// marked as established on failure so the next call will retry.
     /// </summary>
-    Task EnsureSessionAsync(string workspacePath, CancellationToken ct);
+    Task EnsureSessionAsync(WorkspacePath workspacePath, CancellationToken ct);
 
     Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null);
 
@@ -61,7 +61,7 @@ public interface IAgentProvider : IAsyncDisposable
     /// Retrieves the most recent session ID for the given workspace.
     /// Returns null if no sessions exist or the operation is not supported.
     /// </summary>
-    Task<string?> GetLatestSessionIdAsync(string workspacePath, CancellationToken ct);
+    Task<string?> GetLatestSessionIdAsync(WorkspacePath workspacePath, CancellationToken ct);
 
     /// <summary>
     /// Whether the configured model supports vision/image input.
