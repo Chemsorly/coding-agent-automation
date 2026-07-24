@@ -226,7 +226,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
         msg.ProjectName.Should().Be("TestProject");
         msg.ProjectSecrets.Should().ContainKey("SECRET_KEY");
         msg.ProjectSteeringContent.Should().Be("project steering content");
-        msg.RepoSteeringContent.Should().BeNull(); // TokenVendingService.CloneWithSettings does not copy SteeringContent
+        msg.RepoSteeringContent.Should().Be("repo steering content");
         msg.TraceContext.Should().BeNull(); // No active trace in test
         msg.IssueProviderConfigId.Should().Be("ip");
 
@@ -326,7 +326,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
         msg.ProjectName.Should().Be("ReviewProject");
         msg.ProjectSecrets.Should().ContainKey("REVIEW_SECRET");
         msg.ProjectSteeringContent.Should().Be("review project steering");
-        msg.RepoSteeringContent.Should().BeNull(); // TokenVendingService.CloneWithSettings does not copy SteeringContent
+        msg.RepoSteeringContent.Should().Be("repo steering for review");
         msg.IssueProviderConfigId.Should().Be("ip");
 
         // Review-specific properties
@@ -406,7 +406,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
         msg.ProjectName.Should().Be("DecompProject");
         msg.ProjectSecrets.Should().ContainKey("DECOMP_SECRET");
         msg.ProjectSteeringContent.Should().Be("decomp project steering");
-        msg.RepoSteeringContent.Should().BeNull(); // TokenVendingService.CloneWithSettings does not copy SteeringContent
+        msg.RepoSteeringContent.Should().Be("repo steering for decomp");
         msg.IssueProviderConfigId.Should().Be("ip");
 
         // Decomposition-specific properties
@@ -486,7 +486,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
         msg.ProjectName.Should().Be("DecompProject2");
         msg.ProjectSecrets.Should().ContainKey("SECRET");
         msg.ProjectSteeringContent.Should().Be("steering");
-        msg.RepoSteeringContent.Should().BeNull(); // TokenVendingService.CloneWithSettings does not copy SteeringContent
+        msg.RepoSteeringContent.Should().BeNull(); // No SteeringContent configured on repo config
         msg.IssueProviderConfigId.Should().Be("ip");
 
         // Decomposition Phase 2-specific properties
