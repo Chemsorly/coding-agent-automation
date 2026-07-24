@@ -597,7 +597,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
             OrchestratorUrl = "http://orchestrator:8080",
             AgentApiKeySecretName = "agent-api-key",
             KiroPvcPool = Enumerable.Range(0, pvcCount).Select(i => $"pvc-test-{i + 1}").ToList()
-        }), _transitionService, config, templateProvider);
+        }), config, templateProvider);
     }
 
     private static JobTemplateProvider BuildTemplateProvider(Dictionary<string, string> imageMapping)

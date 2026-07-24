@@ -26,6 +26,15 @@ internal sealed class DispatchLifecycleService
     private readonly WorkItemTransitionService _transitionService;
     private readonly DispatchServiceOptions _options;
 
+    /// <summary>
+    /// Tracks PVC names that have been claimed in-memory but not yet persisted to the database.
+    /// Prevents the PVC double-claim race between DispatchService and ConsolidationDispatchHandler:
+    /// both services poll independently and could otherwise observe the same PVC as available
+    /// between the DB query and the SaveChangesAsync that persists ClaimedPvcName.
+    /// </summary>
+    private readonly HashSet<string> _inflightPvcClaims = new(StringComparer.Ordinal);
+    private readonly object _inflightPvcLock = new();
+
     public DispatchLifecycleService(
         IKubernetesJobClient kubeClient,
         WorkItemTransitionService transitionService,
@@ -34,6 +43,30 @@ internal sealed class DispatchLifecycleService
         _kubeClient = kubeClient;
         _transitionService = transitionService;
         _options = options;
+    }
+
+    /// <summary>
+    /// Returns a snapshot of PVC names currently claimed in-memory but not yet persisted.
+    /// Callers should exclude these from their available PVC list to prevent double-claims.
+    /// </summary>
+    public IReadOnlySet<string> GetInflightPvcClaims()
+    {
+        lock (_inflightPvcLock)
+        {
+            return new HashSet<string>(_inflightPvcClaims, StringComparer.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// Removes a PVC from the inflight claims set. Called when the claim is either
+    /// persisted to the database or when the claim is being released (abort/failure).
+    /// </summary>
+    private void ReleaseInflightPvc(string pvcName)
+    {
+        lock (_inflightPvcLock)
+        {
+            _inflightPvcClaims.Remove(pvcName);
+        }
     }
 
     /// <summary>
@@ -67,12 +100,35 @@ internal sealed class DispatchLifecycleService
         // Generate deterministic job name
         var jobName = GenerateJobName(item.Id);
 
-        // Claim PVC for kiro agents
+        // Claim PVC for kiro agents — atomically check-and-add to inflight set to prevent
+        // cross-service double-claim between DispatchService and ConsolidationDispatchHandler.
+        // Both services poll independently and may hold stale availablePvcs snapshots; the lock
+        // ensures only one service can claim a given PVC.
         string? claimedPvc = null;
         if (isKiroAgent)
         {
-            claimedPvc = availablePvcs[0];
-            availablePvcs.RemoveAt(0);
+            lock (_inflightPvcLock)
+            {
+                claimedPvc = null;
+                for (int i = 0; i < availablePvcs.Count; i++)
+                {
+                    if (!_inflightPvcClaims.Contains(availablePvcs[i]))
+                    {
+                        claimedPvc = availablePvcs[i];
+                        availablePvcs.RemoveAt(i);
+                        _inflightPvcClaims.Add(claimedPvc);
+                        break;
+                    }
+                }
+            }
+
+            if (claimedPvc is null)
+            {
+                // All PVCs in local snapshot already claimed by another dispatch service
+                Log.Information("DispatchLifecycleService: {LogPrefix}no unclaimed PVC available for WorkItem {WorkItemId}, skipping",
+                    logPrefix, item.Id);
+                return;
+            }
         }
 
         // Load full WorkItem
@@ -80,15 +136,25 @@ internal sealed class DispatchLifecycleService
         if (workItem is null || workItem.Status != WorkItemStatus.Pending)
         {
             // Item was modified by another process
-            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+            if (claimedPvc is not null) { ReleaseInflightPvc(claimedPvc); availablePvcs.Add(claimedPvc); }
             return;
         }
 
         // Variant-specific preparation (may mutate workItem, load secrets, or signal abort)
-        var (shouldProceed, projectSecrets) = await prepareVariant(workItem);
+        (bool shouldProceed, Dictionary<string, string>? projectSecrets) prepareResult;
+        try
+        {
+            prepareResult = await prepareVariant(workItem);
+        }
+        catch
+        {
+            if (claimedPvc is not null) { ReleaseInflightPvc(claimedPvc); availablePvcs.Add(claimedPvc); }
+            throw;
+        }
+        var (shouldProceed, projectSecrets) = prepareResult;
         if (!shouldProceed)
         {
-            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+            if (claimedPvc is not null) { ReleaseInflightPvc(claimedPvc); availablePvcs.Add(claimedPvc); }
             return;
         }
 
@@ -101,11 +167,13 @@ internal sealed class DispatchLifecycleService
         try
         {
             await db.SaveChangesAsync(ct);
+            // PVC claim is now persisted in DB — remove from inflight set since DB is source of truth
+            if (claimedPvc is not null) ReleaseInflightPvc(claimedPvc);
         }
         catch (DbUpdateConcurrencyException)
         {
             Log.Warning("DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
-            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+            if (claimedPvc is not null) { ReleaseInflightPvc(claimedPvc); availablePvcs.Add(claimedPvc); }
             return;
         }
 

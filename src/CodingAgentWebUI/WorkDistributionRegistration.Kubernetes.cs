@@ -69,7 +69,6 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<ILeaderElectionService>(),
             sp.GetRequiredService<DispatchLifecycleService>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetRequiredService<IConfiguration>(),
             sp.GetService<ILabelService>(),
             sp.GetService<IAgentProfileStore>(),

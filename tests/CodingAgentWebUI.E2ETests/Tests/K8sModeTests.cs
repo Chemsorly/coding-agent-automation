@@ -323,7 +323,6 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
             Fixture.DbContextFactory,
             leaderElection,
             new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
-            transitionService,
             config,
             templateProvider);
 
@@ -388,7 +387,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var dispatchService = new DispatchService(
             Fixture.DbContextFactory, leaderElection,
             new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
-            transitionService, config, templateProvider);
+            config, templateProvider);
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -422,7 +421,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var dispatchService = new DispatchService(
             Fixture.DbContextFactory, leaderElection,
             new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
-            transitionService, config, templateProvider);
+            config, templateProvider);
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -1213,7 +1212,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var dispatchService = new DispatchService(
             Fixture.DbContextFactory, leaderElection,
             new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
-            transitionService, config, templateProvider);
+            config, templateProvider);
 
         // Act: run one dispatch cycle
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -1273,7 +1272,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var dispatchService = new DispatchService(
             Fixture.DbContextFactory, leaderElection,
             new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
-            transitionService, config, templateProvider);
+            config, templateProvider);
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -1315,7 +1314,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var dispatchService = new DispatchService(
             Fixture.DbContextFactory, leaderElection,
             new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
-            transitionService, config, templateProvider);
+            config, templateProvider);
 
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));

@@ -1147,6 +1147,10 @@ public class DispatchServiceConsolidationTests : IDisposable
         await db.SaveChangesAsync();
     }
 
+    // TODO: PollAndDispatchConsolidationAsync is internal (not private) and this project has
+    // InternalsVisibleTo — call the method directly instead of via reflection. Reflection bypasses
+    // compile-time safety: if the method is renamed or its signature changes, these tests will
+    // silently fail at runtime rather than producing a build error.
     private async Task InvokePollAndDispatch(ConsolidationDispatchHandler service)
     {
         var method = typeof(ConsolidationDispatchHandler).GetMethod("PollAndDispatchConsolidationAsync",

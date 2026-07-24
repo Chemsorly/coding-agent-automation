@@ -133,6 +133,13 @@ public class DispatchServiceMetricsTests : IDisposable
         _dispatchLatencies.Should().Contain(v => v >= 10.0 && v < 50.0, "latency should fall back to CreatedAt (15s ago)");
     }
 
+    // TODO: Missing test — ConsolidationDispatch_UsesOriginalEnqueuedAt_WhenPresent was removed when
+    // consolidation logic moved to ConsolidationDispatchHandler, but no equivalent test was added in
+    // DispatchServiceConsolidationTests. The OriginalEnqueuedAt latency path (re-dispatched items with
+    // OriginalEnqueuedAt much earlier than CreatedAt) in DispatchLifecycleService is no longer covered
+    // for the consolidation dispatch code path. Add a test in DispatchServiceConsolidationTests that
+    // verifies dispatch latency uses OriginalEnqueuedAt when present.
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private void SetupDefaultMocks()
@@ -186,7 +193,7 @@ public class DispatchServiceMetricsTests : IDisposable
             options);
 
         return new DispatchService(
-            _dbFactory, _leaderElection, lifecycle, _transitionService, config, templateProvider,
+            _dbFactory, _leaderElection, lifecycle, config, templateProvider,
             null,
             _mockAgentProfileStore.Object,
             runService: null);

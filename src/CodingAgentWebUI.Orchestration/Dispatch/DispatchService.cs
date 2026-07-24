@@ -1,7 +1,6 @@
 using System.Threading.RateLimiting;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
-using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline;
@@ -37,18 +36,20 @@ public sealed class DispatchService : BackgroundService
     private readonly ILabelService? _labelService;
     private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IOrchestratorRunService? _runService;
+    // TODO: TokenBucketRateLimiter implements IDisposable but this class does not override
+    // Dispose(bool) to dispose it. The internal Timer will leak on host shutdown.
+    // Add: override void Dispose(bool disposing) { _rateLimiter.Dispose(); base.Dispose(disposing); }
     private readonly TokenBucketRateLimiter _rateLimiter;
 
     internal DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
         ILeaderElectionService leaderElection,
         DispatchLifecycleService lifecycle,
-        WorkItemTransitionService transitionService, // TODO: Dead parameter — never stored or used after consolidation extraction. Remove from both constructor overloads and DI registration.
         IConfiguration configuration,
         ILabelService? labelService = null,
         IAgentProfileStore? agentProfileStore = null,
         IOrchestratorRunService? runService = null)
-        : this(dbFactory, leaderElection, lifecycle, transitionService, configuration,
+        : this(dbFactory, leaderElection, lifecycle, configuration,
                LoadTemplateProvider(configuration), labelService,
                agentProfileStore, runService)
     { }
@@ -60,7 +61,6 @@ public sealed class DispatchService : BackgroundService
         IDbContextFactory<PipelineDbContext> dbFactory,
         ILeaderElectionService leaderElection,
         DispatchLifecycleService lifecycle,
-        WorkItemTransitionService transitionService, // TODO: Dead parameter — never stored or used after consolidation extraction. Remove from both constructor overloads and DI registration.
         IConfiguration configuration,
         JobTemplateProvider templateProvider,
         ILabelService? labelService = null,
@@ -228,8 +228,12 @@ public sealed class DispatchService : BackgroundService
             .Select(w => w.ClaimedPvcName!)
             .ToListAsync(ct);
 
+        // Exclude PVCs claimed in-memory by ConsolidationDispatchHandler (not yet persisted to DB)
+        var inflightClaims = _lifecycle.GetInflightPvcClaims();
+
         var availablePvcs = _options.KiroPvcPool
             .Except(claimedPvcs, StringComparer.Ordinal)
+            .Where(pvc => !inflightClaims.Contains(pvc))
             .ToList();
 
         // Update credential pool metrics

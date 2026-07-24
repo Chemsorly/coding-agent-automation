@@ -472,7 +472,7 @@ public class DispatchServiceLifecycleTests : IDisposable
             OrchestratorUrl = "http://orchestrator:8080",
             AgentApiKeySecretName = "agent-api-key",
             KiroPvcPool = new List<string> { "pvc-test-1", "pvc-test-2" }
-        }), _transitionService, config, templateProvider, runService: runService);
+        }), config, templateProvider, runService: runService);
     }
 
     private static JobTemplateProvider BuildTemplateProvider(

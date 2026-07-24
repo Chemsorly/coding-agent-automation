@@ -632,7 +632,7 @@ public class K8sEdgeCaseTests : IDisposable
                 OrchestratorUrl = "http://orchestrator:8080", AgentApiKeySecretName = "agent-api-key",
                 KiroPvcPool = new List<string> { "pvc-kiro-1", "pvc-kiro-2" }
             }),
-            _transitionService, config, templateProvider);
+            config, templateProvider);
 
         _mockKubeClient
             .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -695,7 +695,7 @@ public class K8sEdgeCaseTests : IDisposable
         var pendingId = Guid.NewGuid();
         await InsertWorkItem(pendingId, "owner/repo#prepare-fail", "kiro,dotnet", WorkItemStatus.Pending);
 
-        var service = CreateDispatchService(pvcPool: new[] { "pvc-leak-test" });
+        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-leak-test" });
         await using var db = await _dbFactory.CreateDbContextAsync();
 
         var projection = new DispatchService.PendingWorkItemProjection
@@ -718,7 +718,7 @@ public class K8sEdgeCaseTests : IDisposable
         var concurrency = new Dictionary<string, int>();
 
         // Act: prepareVariant throws — PVC must still be returned to pool
-        Func<Task> act = () => service.ExecuteDispatchLifecycleAsync(
+        Func<Task> act = () => lifecycle.ExecuteDispatchLifecycleAsync(
             db, projection, template,
             isKiroAgent: true,
             availablePvcs,
@@ -993,6 +993,24 @@ public class K8sEdgeCaseTests : IDisposable
             });
     }
 
+    private DispatchLifecycleService CreateDispatchLifecycleService(string[]? pvcPool = null)
+    {
+        pvcPool ??= new[] { "pvc-test-1", "pvc-test-2" };
+
+        var options = new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 10,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            AgentServiceAccountName = "caa-agent",
+            KiroPvcPool = pvcPool.ToList()
+        };
+
+        return new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options);
+    }
+
     private DispatchService CreateDispatchService(string[]? pvcPool = null)
     {
         pvcPool ??= new[] { "pvc-test-1", "pvc-test-2" };
@@ -1027,7 +1045,7 @@ public class K8sEdgeCaseTests : IDisposable
 
         return new DispatchService(
             _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options),
-            _transitionService, config, templateProvider);
+            config, templateProvider);
     }
 
     private static JobTemplateProvider BuildTemplateProvider(Dictionary<string, string> imageMapping)

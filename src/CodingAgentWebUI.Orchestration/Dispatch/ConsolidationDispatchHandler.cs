@@ -221,10 +221,6 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
         var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
 
-        // TODO: PVC double-claim race — both DispatchService and ConsolidationDispatchHandler independently
-        // query claimed PVCs and build separate availablePvcs lists. Between the DB query and SaveChangesAsync
-        // that persists ClaimedPvcName, both services can see the same PVC as available, leading to two K8s Jobs
-        // mounting the same ReadWriteOnce PVC. Consider a shared PVC allocation mechanism or DB-level locking.
         // PVC pool: determine available PVCs for kiro agents
         var claimedPvcs = await db.WorkItems
             .Where(w => w.ClaimedPvcName != null &&
@@ -234,8 +230,12 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
             .Select(w => w.ClaimedPvcName!)
             .ToListAsync(ct);
 
+        // Exclude PVCs claimed in-memory by DispatchService (not yet persisted to DB)
+        var inflightClaims = _lifecycle.GetInflightPvcClaims();
+
         var availablePvcs = _options.KiroPvcPool
             .Except(claimedPvcs, StringComparer.Ordinal)
+            .Where(pvc => !inflightClaims.Contains(pvc))
             .ToList();
 
         foreach (var item in pendingItems)
