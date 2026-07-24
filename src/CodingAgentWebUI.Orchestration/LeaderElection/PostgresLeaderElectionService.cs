@@ -79,11 +79,7 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        // TODO: _serviceCts?.Dispose() is not thread-safe — if StopAsync is concurrently awaiting
-        // _serviceCts.CancelAsync(), this could cause ObjectDisposedException. The IHostedService
-        // contract prevents concurrent Start/Stop, but consider using Interlocked.Exchange for
-        // defensive safety consistent with _leaderCts handling.
-        _serviceCts?.Dispose();
+        Interlocked.Exchange(ref _serviceCts, null)?.Dispose();
         Interlocked.Exchange(ref _leaderCts, null)?.Dispose();
 
         // Defensive reset: if StartAsync is called without a preceding StopAsync (e.g., crash
@@ -426,7 +422,7 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
 
     public void Dispose()
     {
-        _serviceCts?.Dispose();
+        Interlocked.Exchange(ref _serviceCts, null)?.Dispose();
         Interlocked.Exchange(ref _leaderCts, null)?.Dispose();
         (_lockConnection as IDisposable)?.Dispose();
     }
