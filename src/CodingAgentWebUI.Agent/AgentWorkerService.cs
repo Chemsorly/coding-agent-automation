@@ -219,10 +219,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
                 // Only release slot if buffer is empty — otherwise keep _activeJobId set
                 // so reconnection re-registers with ActiveJob state, allowing replay
-                // TODO: Potential double slot release if DrainBufferAsync (on reconnection thread)
-                // and this code path both call ReleaseJobSlotAndSignalReadyAsync concurrently.
-                // Not a crash (null-conditional on CTS, _busyLock guards _activeJobId), but could
-                // send duplicate AgentReady signals. Consider adding a guard or idempotent check.
                 if (_completionReporter is SignalRCompletionReporter signalRReporter && signalRReporter.HasPendingMessages)
                 {
                     _logger.Warning("Job slot held for {JobId} — buffer has pending messages awaiting replay", message.JobId);
