@@ -28,16 +28,19 @@ public sealed partial class PipelineRun
     /// WorkItem transitions Pending→Dispatched, replacing the preparation-time
     /// timestamp with the true agent start time.
     /// </summary>
-    // TODO: ResetStartedAt writes StartedAt and StartedAtOffset non-atomically without synchronization.
-    // The class uses Interlocked for LastStepChangeAt (analogous concurrent-read pattern). Consider
-    // adding a lock or Interlocked pattern here for consistency, especially since this is called from
-    // DispatchService background thread while UI threads may read StartedAtOffset concurrently.
+    /// <remarks>
+    /// Thread-safety: Both writes are guarded by <see cref="_startedAtLock"/> so that
+    /// no reader can observe the new StartedAt with the stale StartedAtOffset (or vice versa).
+    /// </remarks>
     public void ResetStartedAt(DateTimeOffset actualStart)
     {
+        lock (_startedAtLock)
+        {
 #pragma warning disable CS0618
-        StartedAt = actualStart.UtcDateTime;
+            StartedAt = actualStart.UtcDateTime;
 #pragma warning restore CS0618
-        StartedAtOffset = actualStart;
+            StartedAtOffset = actualStart;
+        }
     }
 
     /// <summary>Atomically adds to the code review severity counters. Use when accumulating counts from concurrent review agents.</summary>

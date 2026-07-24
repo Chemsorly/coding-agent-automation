@@ -133,7 +133,7 @@ public class SessionIdSpanAttributeTests : IDisposable
             .ReturnsAsync(true);
 
         _agentProvider
-            .Setup(p => p.GetLatestSessionIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(p => p.GetLatestSessionIdAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(expectedSessionId);
 
         var context = BuildContext(run);

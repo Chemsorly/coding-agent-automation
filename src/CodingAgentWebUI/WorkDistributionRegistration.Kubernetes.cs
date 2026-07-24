@@ -43,6 +43,13 @@ public static partial class WorkDistributionRegistration
                 ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
                 ?? "default",
             Log.Logger));
+        services.AddSingleton<ConsolidationK8sDispatcher>(sp => new ConsolidationK8sDispatcher(
+            sp.GetRequiredService<WorkItemTransitionService>(),
+            sp.GetService<IConsolidationRunStore>(),
+            sp.GetService<IConsolidationService>(),
+            sp.GetService<IConsolidationJobPreparationService>(),
+            sp.GetService<IPipelineConfigStore>(),
+            sp.GetService<IProjectStore>()));
         services.AddHostedService(sp => new DispatchService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<ILeaderElectionService>(),
@@ -51,14 +58,9 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<IConfiguration>(),
             sp.GetService<ILabelService>(),
             sp.GetService<ITokenVendingService>(),
-            sp.GetService<IConsolidationRunStore>(),
-            sp.GetService<IConsolidationService>(),
-            sp.GetService<IProviderConfigStore>(),
             sp.GetService<IAgentProfileStore>(),
-            sp.GetService<IProjectStore>(),
-            sp.GetService<IPipelineConfigStore>(),
-            sp.GetService<IConsolidationJobPreparationService>(),
-            sp.GetService<IOrchestratorRunService>()));
+            sp.GetService<IOrchestratorRunService>(),
+            sp.GetService<ConsolidationK8sDispatcher>()));
         services.AddHostedService(sp => new ReconciliationService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<ILeaderElectionService>(),

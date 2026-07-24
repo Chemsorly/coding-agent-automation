@@ -56,7 +56,7 @@ public class ThrowLoggingTests : IDisposable
 
         _mockAgent.Setup(a => a.GetHealthStatus())
             .Returns(new AgentHealthStatus { IsExecuting = true, ProcessId = 1, IsProcessAlive = true, LastOutputTime = DateTime.UtcNow });
-        _mockAgent.Setup(a => a.EnsureSessionAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockAgent.Setup(a => a.EnsureSessionAsync(It.IsAny<WorkspacePath>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         _mockIssueOps.Setup(o => o.SwapLabelAsync(It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
