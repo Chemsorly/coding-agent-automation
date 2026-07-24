@@ -19,7 +19,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 // RemoveAllAgentLabels, and CreatePullRequest. A separate facade would add indirection
 // without meaningful simplification. Revisit if pipeline steps accumulate more
 // provider-operation parameters beyond what IPipelineCallbacks covers.
-public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrchestrationShutdownAction, IChangeNotifier
+public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrchestrationShutdownAction
 {
     private readonly PipelineRunLifecycleService _lifecycle;
     private readonly IPipelineConfigStore _pipelineConfigStore;
@@ -31,66 +31,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     private readonly Serilog.ILogger _logger;
 
     protected readonly PipelineProviderManager _providerManager;
-    protected PipelineConfiguration? _activeConfig;
-
-    protected IssueDetail? _activeIssue;
-    protected ParsedIssue? _activeParsedIssue;
-    protected IReadOnlyList<IssueComment>? _activeIssueComments;
-
-    // ── Delegating properties (backward compatibility) ───────────────────
-
-    /// <summary>Fired after each state transition for UI binding. Delegates to lifecycle service.</summary>
-    public event Action? OnChange
-    {
-        add => _lifecycle.OnChange += value;
-        remove => _lifecycle.OnChange -= value;
-    }
-
-    /// <summary>Fired for each agent output line for real-time display. Delegates to lifecycle service.</summary>
-    public event Action<string>? OnOutputLine
-    {
-        add => _lifecycle.OnOutputLine += value;
-        remove => _lifecycle.OnOutputLine -= value;
-    }
-
-    /// <summary>Fired when chat response lines are received from an agent. Delegates to lifecycle service.</summary>
-    public event Action<string, IReadOnlyList<string>>? OnChatResponse
-    {
-        add => _lifecycle.OnChatResponse += value;
-        remove => _lifecycle.OnChatResponse -= value;
-    }
-
-    /// <summary>Fired when a chat session completes on an agent. Delegates to lifecycle service.</summary>
-    public event Action<string, int, string?>? OnChatCompleted
-    {
-        add => _lifecycle.OnChatCompleted += value;
-        remove => _lifecycle.OnChatCompleted -= value;
-    }
-
-    /// <summary>The currently active pipeline run (used by test infrastructure), or null if idle. Delegates to lifecycle service.</summary>
-    public PipelineRun? ActiveRun
-    {
-        get => _lifecycle.ActiveRun;
-        protected set => _lifecycle.ActiveRun = value;
-    }
-
-    /// <summary>Whether a pipeline run is currently in progress (test infrastructure only in production). Delegates to lifecycle service.</summary>
-    public bool IsRunning => _lifecycle.IsRunning;
-
-    /// <summary>Whether any pipeline run is active (in-process or agent-dispatched). Delegates to lifecycle service.</summary>
-    public bool HasAnyActiveRuns => _lifecycle.HasAnyActiveRuns;
-
-    /// <summary>
-    /// Returns all active runs — both the in-process run (if any) and all agent-dispatched runs.
-    /// Delegates to lifecycle service.
-    /// </summary>
-    public IReadOnlyList<PipelineRun> GetAllActiveRuns() => _lifecycle.GetAllActiveRuns();
-
-    /// <summary>
-    /// Checks whether the given issue is being processed by any active run (in-process or agent-dispatched).
-    /// Delegates to lifecycle service.
-    /// </summary>
-    public bool IsIssueBeingProcessed(string issueIdentifier, ProviderConfigId issueProviderConfigId) => _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId.Value);
 
     public PipelineOrchestrationService(
         IPipelineConfigStore pipelineConfigStore,
@@ -129,8 +69,8 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     /// <summary>Cancels the active pipeline run. Delegates state transitions to lifecycle service.</summary>
     public async Task CancelPipelineAsync()
     {
-        if (ActiveRun == null || !IsRunning) return;
-        var run = ActiveRun;
+        if (_lifecycle.ActiveRun == null || !_lifecycle.IsRunning) return;
+        var run = _lifecycle.ActiveRun;
         using var _ = LogContext.PushProperty("PipelineRunId", run.RunId);
 
         // Label swap requires the active issue provider (orchestration concern)
@@ -200,10 +140,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         }
     }
 
-    /// <summary>Returns the run history.</summary>
-    public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
-        => _completionFacade.HistoryService.GetRunHistoryAsync(ct);
-
     public async ValueTask DisposeAsync()
     {
         await _providerManager.DisposeAsync();
@@ -216,25 +152,5 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         // DisposeAsync() is the correct disposal path; sync Dispose handles only sync resources.
         GC.SuppressFinalize(this);
     }
-
-    /// <summary>
-    /// Notifies subscribers that chat response lines were received for a session.
-    /// Delegates to lifecycle service.
-    /// </summary>
-    public void NotifyChatResponse(string sessionId, IReadOnlyList<string> lines)
-        => _lifecycle.NotifyChatResponse(sessionId, lines);
-
-    /// <summary>
-    /// Notifies subscribers that a chat session has completed.
-    /// Delegates to lifecycle service.
-    /// </summary>
-    public void NotifyChatCompleted(string sessionId, int exitCode, string? error)
-        => _lifecycle.NotifyChatCompleted(sessionId, exitCode, error);
-
-    /// <summary>
-    /// Notifies subscribers of a state change. Delegates to lifecycle service.
-    /// Called by AgentHub for agent-dispatched run state updates.
-    /// </summary>
-    public void NotifyChange() => _lifecycle.NotifyChange();
 
 }

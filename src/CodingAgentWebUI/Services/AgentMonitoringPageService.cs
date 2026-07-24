@@ -26,7 +26,7 @@ public class AgentMonitoringPageService
     private readonly IAgentRegistryService _registry;
     private readonly JobDeduplicationGuardService _dispatcher;
     private readonly IOrchestratorRunService _runService;
-    private readonly PipelineOrchestrationService _pipelineService;
+    private readonly PipelineRunLifecycleService _lifecycle;
     private readonly IConfigurationStore _configStore;
     private readonly IConsolidationService _consolidationService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
@@ -41,7 +41,7 @@ public class AgentMonitoringPageService
         IAgentRegistryService registry,
         JobDeduplicationGuardService dispatcher,
         IOrchestratorRunService runService,
-        PipelineOrchestrationService pipelineService,
+        PipelineRunLifecycleService lifecycle,
         IConfigurationStore configStore,
         IConsolidationService consolidationService,
         IPendingWorkQuery pendingWorkQuery,
@@ -55,7 +55,7 @@ public class AgentMonitoringPageService
         _registry = registry;
         _dispatcher = dispatcher;
         _runService = runService;
-        _pipelineService = pipelineService;
+        _lifecycle = lifecycle;
         _configStore = configStore;
         _consolidationService = consolidationService;
         _pendingWorkQuery = pendingWorkQuery;
@@ -137,7 +137,7 @@ public class AgentMonitoringPageService
             .Where(r => !string.IsNullOrEmpty(r.AgentId))
             .ToList();
         Agents = _registry.GetAllAgents();
-        RunHistory = await _pipelineService.GetRunHistoryAsync();
+        RunHistory = await _historyService.GetRunHistoryAsync();
         var allQueuedJobs = await _pendingWorkQuery.GetPendingJobsAsync();
         var consolidationJobs = allQueuedJobs.Where(j => j.IsConsolidation).ToList();
         QueuedJobs = allQueuedJobs.Where(j => !j.IsConsolidation).ToList();
@@ -287,7 +287,7 @@ public class AgentMonitoringPageService
 
             if (agent.ActiveJobId != null)
             {
-                var activeRun = _pipelineService.GetAllActiveRuns()
+                var activeRun = _lifecycle.GetAllActiveRuns()
                     .FirstOrDefault(r => r.RunId == agent.ActiveJobId);
                 if (activeRun != null)
                 {

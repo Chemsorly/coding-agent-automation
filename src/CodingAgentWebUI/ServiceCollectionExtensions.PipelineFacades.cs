@@ -52,6 +52,8 @@ public static partial class ServiceCollectionExtensions
                 Log.Logger));
         services.AddSingleton<IDispatchRunCreator>(sp => sp.GetRequiredService<DispatchRunCreationService>());
         services.AddSingleton<IChangeNotifier>(sp =>
-            sp.GetRequiredService<PipelineOrchestrationService>());
+            sp.GetRequiredService<PipelineRunLifecycleService>());
+        services.AddSingleton<IChatNotifier>(sp =>
+            sp.GetRequiredService<PipelineRunLifecycleService>());
     }
 }

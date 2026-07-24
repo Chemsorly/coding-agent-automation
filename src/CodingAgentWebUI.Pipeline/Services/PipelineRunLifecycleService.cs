@@ -7,7 +7,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// Single source of truth for pipeline run state, lifecycle transitions, events, and cancellation.
 /// Registered as a singleton. Consumers inject this for state/event access.
 /// </summary>
-public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifecycleShutdownAction
+public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifecycleShutdownAction, IChangeNotifier, IChatNotifier
 {
     // ── Dependencies ────────────────────────────────────────────────────
     private readonly IPipelineRunHistoryService _historyService;

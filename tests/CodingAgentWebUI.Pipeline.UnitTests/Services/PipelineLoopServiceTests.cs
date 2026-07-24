@@ -14,6 +14,7 @@ public class PipelineLoopServiceTests : IAsyncDisposable
     private readonly Mock<Serilog.ILogger> _mockLogger;
     private readonly DispatchRunCreationService _runCreator;
     private readonly PipelineOrchestrationService _orchestration;
+    private readonly PipelineRunLifecycleService _lifecycle;
     private PipelineLoopService? _loopService;
 
     public PipelineLoopServiceTests()
@@ -23,14 +24,19 @@ public class PipelineLoopServiceTests : IAsyncDisposable
         _mockIssueProvider = new Mock<IIssueProvider>();
         _mockLogger = new Mock<Serilog.ILogger>();
 
+        _lifecycle = new PipelineRunLifecycleService(
+            new TestOrchestrationFactory.NullHistoryService(), null, _mockLogger.Object);
+
         _orchestration = TestOrchestrationFactory.CreateMinimal(
             configStore: _mockStore.Object,
             providerFactory: _mockFactory.Object,
+            lifecycle: _lifecycle,
             logger: _mockLogger.Object);
 
         _runCreator = TestOrchestrationFactory.CreateMinimalRunCreator(
             configStore: _mockStore.Object,
             providerFactory: _mockFactory.Object,
+            lifecycle: _lifecycle,
             logger: _mockLogger.Object);
 
         SetupDefaults();
@@ -177,10 +183,10 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
         // Track which issues are started (will fail since we don't have full provider setup, but we can check order)
         var startedIssues = new List<string>();
-        _orchestration.OnChange += () =>
+        _lifecycle.OnChange += () =>
         {
-            if (_orchestration.ActiveRun is { CurrentStep: PipelineStep.Created })
-                startedIssues.Add(_orchestration.ActiveRun.IssueIdentifier);
+            if (_lifecycle.ActiveRun is { CurrentStep: PipelineStep.Created })
+                startedIssues.Add(_lifecycle.ActiveRun.IssueIdentifier);
         };
 
         // The loop will fail on the actual pipeline run (no real providers), but we can verify FIFO ordering

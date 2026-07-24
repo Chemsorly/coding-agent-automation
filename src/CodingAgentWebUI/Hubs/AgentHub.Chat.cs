@@ -24,7 +24,7 @@ public sealed partial class AgentHub
             throw new HubException($"Session {message.SessionId} not assigned to agent {agentId}");
         }
 
-        _orchestration.NotifyChatResponse(message.SessionId, message.Lines);
+        _chatNotifier.NotifyChatResponse(message.SessionId, message.Lines);
         return Task.CompletedTask;
     }
 
@@ -52,7 +52,7 @@ public sealed partial class AgentHub
         _logger.Information("Chat prompt completed for session {SessionId} on agent {AgentId} (exit={ExitCode})",
             message.SessionId, agent.AgentId, message.ExitCode);
 
-        _orchestration.NotifyChatCompleted(message.SessionId, message.ExitCode, message.Error);
+        _chatNotifier.NotifyChatCompleted(message.SessionId, message.ExitCode, message.Error);
         return Task.CompletedTask;
     }
 }

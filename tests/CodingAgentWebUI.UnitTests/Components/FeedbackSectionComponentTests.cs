@@ -42,18 +42,16 @@ public class FeedbackSectionComponentTests : BunitContext
         var mockFactory = new Mock<IProviderFactory>();
         var mockValidator = new Mock<IQualityGateValidator>();
 
-        var pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockStore.Object,
-            providerFactory: mockFactory.Object,
-            historyService: _mockHistoryService.Object);
+        var runService = new OrchestratorRunService(mockLogger.Object);
+        var lifecycle = new PipelineRunLifecycleService(_mockHistoryService.Object, runService, mockLogger.Object);
 
         var registry = new AgentRegistryService(mockLogger.Object);
 
-        Services.AddSingleton(pipelineService);
+        Services.AddSingleton(lifecycle);
+        Services.AddSingleton<IChangeNotifier>(lifecycle);
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
         Services.AddSingleton(new JobDeduplicationGuardService(registry, mockLogger.Object));
-        var runService = new OrchestratorRunService(mockLogger.Object);
         Services.AddSingleton(runService);
         Services.AddSingleton<IOrchestratorRunService>(runService);
         Services.AddSingleton(_mockStore.Object);
