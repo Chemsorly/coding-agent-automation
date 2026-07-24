@@ -49,10 +49,9 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
         PipelineRunType runType = PipelineRunType.Implementation)
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
-        // TODO: Validate that ProviderConfigId.Value is not null/empty for issueProviderId,
-        // repoProviderId, and agentProviderId. The previous string parameters had
-        // ArgumentNullException.ThrowIfNull guards that are now lost because structs can't be null,
-        // but default(ProviderConfigId) or implicit conversion from null still produces Value = null.
+        ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value, nameof(issueProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value, nameof(repoProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(agentProviderId.Value, nameof(agentProviderId));
 
         if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
         {
@@ -81,6 +80,9 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
         string initiatedBy = "dispatch")
     {
         ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value, nameof(issueProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value, nameof(repoProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(agentProviderId.Value, nameof(agentProviderId));
 
         if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
         {

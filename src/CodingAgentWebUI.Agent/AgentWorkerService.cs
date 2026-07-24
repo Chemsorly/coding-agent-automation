@@ -234,11 +234,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
     private Task HandleCancelJobAsync(string jobId)
     {
-        // TODO: ActiveJobId is read without lock — a concurrent ReleaseJobSlotAndSignalReadyAsync could
-        // clear _activeJobId between this check and the CancelCurrentJob() call. Impact is limited to a
-        // spurious no-op cancellation or a missed cancel (orchestrator retries), but consider acquiring
-        // _busyLock for the comparison to match the original code's thread-safety contract.
-        if (_slotManager.ActiveJobId != jobId)
+        if (!_slotManager.CancelJobIfMatch(jobId))
         {
             _logger.Warning("Received CancelJob for {JobId} but active job is {ActiveJobId}",
                 jobId, _slotManager.ActiveJobId);
@@ -246,7 +242,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         }
 
         _logger.Information("Cancelling job {JobId}", jobId);
-        _slotManager.CancelCurrentJob();
         return Task.CompletedTask;
     }
 
