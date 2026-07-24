@@ -132,6 +132,12 @@ internal sealed class DispatchLifecycleService
         }
 
         // Load full WorkItem
+        // TODO: Wrap FindAsync (and the first SaveChangesAsync below) in a try/catch that releases the
+        // inflight PVC on non-cancellation exceptions (e.g., transient NpgsqlException). Currently, if
+        // FindAsync throws a transient DB exception after the PVC is claimed in _inflightPvcClaims, the
+        // PVC remains in the inflight set for the lifetime of the process, shrinking the effective pool
+        // on each occurrence. The prepareVariant path already handles this correctly — apply the same
+        // pattern here. See review finding: "Inflight PVC claim leak on non-cancellation exceptions."
         var workItem = await db.WorkItems.FindAsync([item.Id], ct);
         if (workItem is null || workItem.Status != WorkItemStatus.Pending)
         {

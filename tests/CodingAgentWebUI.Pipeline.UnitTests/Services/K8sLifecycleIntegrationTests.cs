@@ -586,7 +586,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
 
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
 
-        // Build JobTemplateProvider from imageMapping dictionary
+        // Build JobTemplateStore from imageMapping dictionary
         var templateProvider = BuildTemplateProvider(imageMapping);
 
         return new DispatchService(_dbFactory, _leaderElection, new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
@@ -600,7 +600,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
         }), config, templateProvider);
     }
 
-    private static JobTemplateProvider BuildTemplateProvider(Dictionary<string, string> imageMapping)
+    private static JobTemplateStore BuildTemplateProvider(Dictionary<string, string> imageMapping)
     {
         var templates = imageMapping.Select(kv => new JobTemplate
         {
@@ -610,7 +610,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
         }).ToList();
 
         var json = System.Text.Json.JsonSerializer.Serialize(templates);
-        return JobTemplateProvider.LoadFromJson(json);
+        return JobTemplateStore.LoadFromJson(json);
     }
 
     private ReconciliationService CreateReconciliationService(bool withLabelService = false)

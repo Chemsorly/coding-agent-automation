@@ -16,7 +16,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// K8s mode only: polls WorkItems WHERE Status=Pending AND TaskType!=Consolidation ORDER BY CreatedAt ASC,
-/// resolves container image via JobTemplateProvider, creates K8s Jobs via JobSpecBuilder,
+/// resolves container image via JobTemplateStore, creates K8s Jobs via JobSpecBuilder,
 /// updates to Dispatched. Runs under leader election (same Lease as PipelineLoopService).
 /// Rate-limited: default 10 Jobs/s. Skips items whose selector group is at concurrency limit.
 /// Consolidation items are handled by <see cref="ConsolidationDispatchHandler"/>.
@@ -32,13 +32,10 @@ public sealed class DispatchService : BackgroundService
     private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
-    private readonly JobTemplateProvider _templateProvider;
+    private readonly JobTemplateStore _templateProvider;
     private readonly ILabelService? _labelService;
     private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IOrchestratorRunService? _runService;
-    // TODO: TokenBucketRateLimiter implements IDisposable but this class does not override
-    // Dispose(bool) to dispose it. The internal Timer will leak on host shutdown.
-    // Add: override void Dispose(bool disposing) { _rateLimiter.Dispose(); base.Dispose(disposing); }
     private readonly TokenBucketRateLimiter _rateLimiter;
 
     internal DispatchService(
@@ -55,14 +52,14 @@ public sealed class DispatchService : BackgroundService
     { }
 
     /// <summary>
-    /// Constructor overload accepting a pre-built JobTemplateProvider (for testing).
+    /// Constructor overload accepting a pre-built JobTemplateStore (for testing).
     /// </summary>
     internal DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
         ILeaderElectionService leaderElection,
         DispatchLifecycleService lifecycle,
         IConfiguration configuration,
-        JobTemplateProvider templateProvider,
+        JobTemplateStore templateProvider,
         ILabelService? labelService = null,
         IAgentProfileStore? agentProfileStore = null,
         IOrchestratorRunService? runService = null)
@@ -110,7 +107,7 @@ public sealed class DispatchService : BackgroundService
         AutoReplenishment = true
     });
 
-    private static JobTemplateProvider LoadTemplateProvider(IConfiguration configuration)
+    private static JobTemplateStore LoadTemplateProvider(IConfiguration configuration)
     {
         var templatesPath = configuration.GetValue<string>("WorkDistribution:JobTemplatesPath") ?? DefaultJobTemplatesPath;
         // Also check .json path for format flexibility
@@ -120,7 +117,7 @@ public sealed class DispatchService : BackgroundService
             if (File.Exists(jsonFallback))
                 templatesPath = jsonFallback;
         }
-        var provider = JobTemplateProvider.LoadFromFile(templatesPath);
+        var provider = JobTemplateStore.LoadFromFile(templatesPath);
         Log.Information("DispatchService: loaded {Count} job template(s) from {Path}",
             provider.GetAllTemplates().Count, templatesPath);
         return provider;
@@ -179,6 +176,13 @@ public sealed class DispatchService : BackgroundService
         }
 
         Log.Information("DispatchService: exiting (stopping)");
+    }
+
+    /// <inheritdoc/>
+    public override void Dispose()
+    {
+        _rateLimiter.Dispose();
+        base.Dispose();
     }
 
     private async Task PollAndDispatchAsync(CancellationToken ct)
@@ -412,10 +416,10 @@ public sealed class DispatchService : BackgroundService
 
     /// <summary>
     /// Normalizes agent selector by sorting labels and joining with comma.
-    /// Delegates to <see cref="JobTemplateProvider.NormalizeLabels"/>.
+    /// Delegates to <see cref="JobTemplateStore.NormalizeLabels"/>.
     /// </summary>
     internal static string NormalizeSelector(string agentSelector)
-        => JobTemplateProvider.NormalizeLabels(agentSelector);
+        => JobTemplateStore.NormalizeLabels(agentSelector);
 
     /// <summary>
     /// Calculates available PVCs from the configured pool minus currently claimed.

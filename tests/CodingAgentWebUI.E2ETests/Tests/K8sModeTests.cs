@@ -306,7 +306,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
               providerType: "kiro"
               maxConcurrent: 5
             """;
-        var templateProvider = JobTemplateProvider.LoadFromYaml(templateYaml);
+        var templateProvider = JobTemplateStore.LoadFromYaml(templateYaml);
 
         // Create a DispatchService with real DB, fake K8s client, always-leader
         var leaderElection = CreateAlwaysLeaderElection();
@@ -379,7 +379,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
               providerType: "kiro"
               maxConcurrent: 5
             """;
-        var templateProvider = JobTemplateProvider.LoadFromYaml(templateYaml);
+        var templateProvider = JobTemplateStore.LoadFromYaml(templateYaml);
         var leaderElection = CreateAlwaysLeaderElection();
         var config = BuildDispatchConfig();
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
@@ -413,7 +413,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
               providerType: "kiro"
               maxConcurrent: 5
             """;
-        var templateProvider = JobTemplateProvider.LoadFromYaml(templateYaml);
+        var templateProvider = JobTemplateStore.LoadFromYaml(templateYaml);
         var leaderElection = CreateAlwaysLeaderElection();
         var config = BuildDispatchConfig();
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
@@ -1204,7 +1204,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
               providerType: "kiro"
               maxConcurrent: 2
             """;
-        var templateProvider = JobTemplateProvider.LoadFromYaml(templateYaml);
+        var templateProvider = JobTemplateStore.LoadFromYaml(templateYaml);
         var leaderElection = CreateAlwaysLeaderElection();
         var config = BuildDispatchConfig();
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
@@ -1250,7 +1250,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
               providerType: "kiro"
               maxConcurrent: 10
             """;
-        var templateProvider = JobTemplateProvider.LoadFromYaml(templateYaml);
+        var templateProvider = JobTemplateStore.LoadFromYaml(templateYaml);
         var leaderElection = CreateAlwaysLeaderElection();
 
         // Config with an empty PVC pool (no available PVCs)
@@ -1306,7 +1306,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
               providerType: "kiro"
               maxConcurrent: 10
             """;
-        var templateProvider = JobTemplateProvider.LoadFromYaml(templateYaml);
+        var templateProvider = JobTemplateStore.LoadFromYaml(templateYaml);
         var leaderElection = CreateAlwaysLeaderElection();
         var config = BuildDispatchConfig();
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();

@@ -623,7 +623,7 @@ public class K8sEdgeCaseTests : IDisposable
             new JobTemplate { Labels = "dotnet,opencode", Image = "ghcr.io/opencode:latest", ProviderType = "opencode", MaxConcurrent = 10 }
         };
         var json = System.Text.Json.JsonSerializer.Serialize(templates);
-        var templateProvider = JobTemplateProvider.LoadFromJson(json);
+        var templateProvider = JobTemplateStore.LoadFromJson(json);
 
         var service = new DispatchService(
             _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
@@ -735,6 +735,10 @@ public class K8sEdgeCaseTests : IDisposable
         // Assert: PVC was returned to pool (the critical fix)
         availablePvcs.Should().ContainSingle()
             .Which.Should().Be("pvc-leak-test");
+
+        // Assert: inflight claims set is also cleared (prevents other services from seeing stale claims)
+        lifecycle.GetInflightPvcClaims().Should().BeEmpty(
+            "inflight PVC claims must be released on prepareVariant exception to prevent cross-service stale claim");
 
         // Assert: work item stays Pending (no FailWorkItem called — exception propagates to caller)
         var workItem = await db.WorkItems.FindAsync(pendingId);
@@ -1048,7 +1052,7 @@ public class K8sEdgeCaseTests : IDisposable
             config, templateProvider);
     }
 
-    private static JobTemplateProvider BuildTemplateProvider(Dictionary<string, string> imageMapping)
+    private static JobTemplateStore BuildTemplateProvider(Dictionary<string, string> imageMapping)
     {
         var templates = imageMapping.Select(kv => new JobTemplate
         {
@@ -1059,7 +1063,7 @@ public class K8sEdgeCaseTests : IDisposable
         }).ToList();
 
         var json = System.Text.Json.JsonSerializer.Serialize(templates);
-        return JobTemplateProvider.LoadFromJson(json);
+        return JobTemplateStore.LoadFromJson(json);
     }
 
     private async Task InvokePollAndDispatch(DispatchService service)

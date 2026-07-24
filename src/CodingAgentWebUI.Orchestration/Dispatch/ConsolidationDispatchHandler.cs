@@ -30,7 +30,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
-    private readonly JobTemplateProvider _templateProvider;
+    private readonly JobTemplateStore _templateProvider;
     private readonly DispatchServiceOptions _options;
     private readonly WorkItemTransitionService _transitionService;
     private readonly IConsolidationRunStore? _consolidationRunStore;
@@ -39,16 +39,13 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private readonly IPipelineConfigStore? _pipelineConfigStore;
     private readonly IProjectStore? _projectStore;
     private readonly IAgentProfileStore? _agentProfileStore;
-    // TODO: TokenBucketRateLimiter implements IDisposable but this class does not override
-    // Dispose(bool) to dispose it. The internal Timer will leak on host shutdown.
-    // Add: override void Dispose(bool disposing) { _rateLimiter.Dispose(); base.Dispose(disposing); }
     private readonly TokenBucketRateLimiter _rateLimiter;
 
     public ConsolidationDispatchHandler(
         IDbContextFactory<PipelineDbContext> dbFactory,
         ILeaderElectionService leaderElection,
         DispatchLifecycleService lifecycle,
-        JobTemplateProvider templateProvider,
+        JobTemplateStore templateProvider,
         IConfiguration configuration,
         WorkItemTransitionService transitionService,
         IConsolidationRunStore? consolidationRunStore = null,
@@ -75,13 +72,13 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     }
 
     /// <summary>
-    /// Test constructor accepting a pre-built JobTemplateProvider.
+    /// Test constructor accepting a pre-built JobTemplateStore.
     /// </summary>
     internal ConsolidationDispatchHandler(
         IDbContextFactory<PipelineDbContext> dbFactory,
         ILeaderElectionService leaderElection,
         DispatchLifecycleService lifecycle,
-        JobTemplateProvider templateProvider,
+        JobTemplateStore templateProvider,
         DispatchServiceOptions options,
         WorkItemTransitionService transitionService,
         IConsolidationRunStore? consolidationRunStore = null,
@@ -186,6 +183,13 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         }
 
         Log.Information("ConsolidationDispatchHandler: exiting (stopping)");
+    }
+
+    /// <inheritdoc/>
+    public override void Dispose()
+    {
+        _rateLimiter.Dispose();
+        base.Dispose();
     }
 
     internal async Task PollAndDispatchConsolidationAsync(CancellationToken ct)
