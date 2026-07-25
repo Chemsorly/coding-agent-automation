@@ -33,8 +33,8 @@ public sealed class DispatchService : BackgroundService
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateStore _templateProvider;
+    private readonly DispatchTemplateResolver _templateResolver;
     private readonly ILabelService? _labelService;
-    private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IOrchestratorRunService? _runService;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
@@ -68,44 +68,36 @@ public sealed class DispatchService : BackgroundService
         _leaderElection = leaderElection;
         _lifecycle = lifecycle;
         _labelService = labelService;
-        _agentProfileStore = agentProfileStore;
         _runService = runService;
         _templateProvider = templateProvider;
-        _options = new DispatchServiceOptions();
-        InitializeOptions(configuration);
-        _rateLimiter = CreateRateLimiter();
+        _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
+        _options = DispatchServiceOptionsFactory.Create(configuration);
+        _rateLimiter = _options.CreateRateLimiter();
     }
 
     /// <summary>
-    /// Reads configuration values and binds them to <see cref="_options"/>.
-    /// Called from the primary constructor; the public constructor delegates here via chaining.
+    /// Test constructor accepting pre-built options (skips IConfiguration binding).
     /// </summary>
-    private void InitializeOptions(IConfiguration configuration)
+    internal DispatchService(
+        IDbContextFactory<PipelineDbContext> dbFactory,
+        ILeaderElectionService leaderElection,
+        DispatchLifecycleService lifecycle,
+        JobTemplateStore templateProvider,
+        DispatchServiceOptions options,
+        ILabelService? labelService = null,
+        IAgentProfileStore? agentProfileStore = null,
+        IOrchestratorRunService? runService = null)
     {
-        configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
-
-        var pvcList = configuration.GetSection("WorkDistribution:CredentialPools:Kiro").Get<List<string>>();
-        if (pvcList is not null)
-            _options.KiroPvcPool = pvcList;
-
-        _options.OrchestratorUrl = configuration.GetValue<string>("WorkDistribution:OrchestratorUrl") ?? "";
-        _options.AgentApiKeySecretName = configuration.GetValue<string>("WorkDistribution:AgentApiKeySecretName") ?? "";
-        _options.AgentServiceAccountName = configuration.GetValue<string>("WorkDistribution:AgentServiceAccountName") ?? "";
-        _options.Namespace = configuration.GetValue<string>("WorkDistribution:Namespace")
-            ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
-            ?? "default";
-        _options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
+        _dbFactory = dbFactory;
+        _leaderElection = leaderElection;
+        _lifecycle = lifecycle;
+        _labelService = labelService;
+        _runService = runService;
+        _templateProvider = templateProvider;
+        _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
+        _options = options;
+        _rateLimiter = _options.CreateRateLimiter();
     }
-
-    private TokenBucketRateLimiter CreateRateLimiter() => new(new TokenBucketRateLimiterOptions
-    {
-        TokenLimit = _options.RateLimitPerSecond,
-        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-        QueueLimit = 0,
-        ReplenishmentPeriod = TimeSpan.FromSeconds(1),
-        TokensPerPeriod = _options.RateLimitPerSecond,
-        AutoReplenishment = true
-    });
 
     private static JobTemplateStore LoadTemplateProvider(IConfiguration configuration)
     {
@@ -224,24 +216,11 @@ public sealed class DispatchService : BackgroundService
         var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
 
         // PVC pool: determine available PVCs for kiro agents
-        var claimedPvcs = await db.WorkItems
-            .Where(w => w.ClaimedPvcName != null &&
-                        (w.Status == WorkItemStatus.Pending ||
-                         w.Status == WorkItemStatus.Dispatched ||
-                         w.Status == WorkItemStatus.Running))
-            .Select(w => w.ClaimedPvcName!)
-            .ToListAsync(ct);
-
-        // Exclude PVCs claimed in-memory by ConsolidationDispatchHandler (not yet persisted to DB)
-        var inflightClaims = _lifecycle.GetInflightPvcClaims();
-
-        var availablePvcs = _options.KiroPvcPool
-            .Except(claimedPvcs, StringComparer.Ordinal)
-            .Where(pvc => !inflightClaims.Contains(pvc))
-            .ToList();
+        var pvcResult = await _lifecycle.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
+        var availablePvcs = pvcResult.AvailablePvcs;
 
         // Update credential pool metrics
-        WorkDistributionTelemetry.UpdateCredentialPoolMetrics(availablePvcs.Count, claimedPvcs.Count);
+        WorkDistributionTelemetry.UpdateCredentialPoolMetrics(availablePvcs.Count, pvcResult.ClaimedCount);
 
         foreach (var item in pendingItems)
         {
@@ -276,7 +255,8 @@ public sealed class DispatchService : BackgroundService
             {
                 // Fallback: AgentSelector might be a subset of the template's label set.
                 // Resolve profile to get the full label set, then retry template lookup.
-                var (fallbackTemplate, resolvedSelector) = await ResolveTemplateViaProfileAsync(item.AgentSelector, ct);
+                var (fallbackTemplate, resolvedSelector) = await _templateResolver.ResolveTemplateViaProfileAsync(
+                    item.AgentSelector, nameof(DispatchService), ct);
                 if (fallbackTemplate is null)
                 {
                     await _lifecycle.FailWorkItemAsync(item.Id, $"No job template for selector: {item.AgentSelector}", ct);
@@ -360,50 +340,6 @@ public sealed class DispatchService : BackgroundService
                 }
             },
             ct);
-    }
-
-    /// <summary>
-    /// Fallback template resolution: when the work item's AgentSelector is a subset of the template's
-    /// label set, resolve the matching profile to get the full MatchLabels, then retry template lookup.
-    /// </summary>
-    private async Task<(JobTemplate? Template, string? ResolvedSelector)> ResolveTemplateViaProfileAsync(string agentSelector, CancellationToken ct)
-    {
-        if (_agentProfileStore is null)
-            return (null, null);
-
-        var selectorLabels = agentSelector
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToList();
-
-        if (selectorLabels.Count == 0)
-            return (null, null);
-
-        var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-
-        var resolver = new ProfileResolver();
-        var profile = resolver.ResolveByRequiredLabels(profiles, selectorLabels);
-
-        if (profile is null)
-        {
-            Log.Debug("DispatchService: no profile covers selector [{Selector}] for fallback template resolution",
-                agentSelector);
-            return (null, null);
-        }
-
-        // Use profile's MatchLabels as the template key (same as DispatchOrchestrationService.MapToRequest)
-        var profileSelector = string.Join(",",
-            profile.MatchLabels.OrderBy(l => l, StringComparer.Ordinal));
-
-        var template = _templateProvider.Resolve(profileSelector);
-        if (template is not null)
-        {
-            Log.Warning("DispatchService: AgentSelector [{Selector}] required profile expansion to resolve template. " +
-                "Upstream code path may not be setting AgentSelector to full profile.MatchLabels. " +
-                "Resolved via profile '{ProfileId}' → [{ProfileSelector}]",
-                agentSelector, profile.Id, profileSelector);
-        }
-
-        return (template, profileSelector);
     }
 
     // ── Static helpers (internal for testability) ────────────────────────
