@@ -1,0 +1,132 @@
+@using CodingAgentWebUI.Pipeline
+@using CodingAgentWebUI.Pipeline.Interfaces
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Orchestration
+@using CodingAgentWebUI.Orchestration.Registry
+@using Microsoft.AspNetCore.Components.Web
+
+<section class="settings-section" style="margin: 16px 20px;">
+    <h2><Icon Name="refresh-cw" Size="16" /> Active Runs (@(ActiveRuns.Count + ActiveConsolidationRuns.Count))</h2>
+    @{
+        var implRuns = ActiveRuns.Count(r => r.RunType == PipelineRunType.Implementation);
+        var reviewRuns = ActiveRuns.Count(r => r.RunType == PipelineRunType.Review);
+        var decompRuns = ActiveRuns.Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
+        var consolidationRuns = ActiveConsolidationRuns.Count;
+    }
+    @if (ActiveRuns.Count + ActiveConsolidationRuns.Count > 0)
+    {
+        <div class="monitoring-run-counts" style="margin-bottom: 8px; font-size: 0.85rem; color: var(--text-muted);">
+            <Icon Name="hammer" Size="14" /> @implRuns implementation · <Icon Name="search" Size="14" /> @reviewRuns review · <Icon Name="puzzle" Size="14" /> @decompRuns decomposition · <Icon Name="brain" Size="14" /> @consolidationRuns consolidation
+        </div>
+    }
+    @if (ActiveRuns.Count == 0 && ActiveConsolidationRuns.Count == 0)
+    {
+        <div class="monitoring-empty">No active pipeline runs.</div>
+    }
+    else
+    {
+        <div class="monitoring-table-wrap">
+            <table class="monitoring-table">
+                <thead>
+                    <tr>
+                        <th>Run ID</th>
+                        <th>Type</th>
+                        <th>Project</th>
+                        <th>Issue</th>
+                        <th>Agent</th>
+                        <th>Step</th>
+                        <th>Started</th>
+                        <th>Elapsed</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var run in ActiveRuns)
+                    {
+                        var elapsed = DateTimeOffset.UtcNow - run.StartedAt;
+                        <tr class="monitoring-row-clickable"
+                            @onclick="() => OnRunSelected.InvokeAsync(run.RunId)">
+                            <td class="monitoring-mono" title="@run.RunId">@run.RunId</td>
+                            <td>
+                                @if (run.RunType == PipelineRunType.Review)
+                                {
+                                    <span class="run-type-badge run-type-review" title="PR Review"><Icon Name="search" Size="14" /> Review</span>
+                                }
+                                else if (run.RunType == PipelineRunType.DecompositionAnalysis)
+                                {
+                                    <span class="run-type-badge run-type-decomp" title="Decomposition Analysis"><Icon Name="puzzle" Size="14" /> Decomp (Analysis)</span>
+                                }
+                                else if (run.RunType == PipelineRunType.Decomposition)
+                                {
+                                    <span class="run-type-badge run-type-decomp" title="Decomposition"><Icon Name="puzzle" Size="14" /> Decomp</span>
+                                }
+                                else
+                                {
+                                    <span class="run-type-badge run-type-impl" title="Implementation"><Icon Name="hammer" Size="14" /> Impl</span>
+                                }
+                            </td>
+                            <td>@(string.IsNullOrEmpty(run.ProjectName) ? "—" : run.ProjectName)</td>
+                            <td title="#@run.IssueIdentifier @run.IssueTitle">
+                                @if (run.RunType == PipelineRunType.Review)
+                                {
+                                    <text>PR #@run.IssueIdentifier @run.IssueTitle</text>
+                                }
+                                else
+                                {
+                                    <text>#@run.IssueIdentifier @run.IssueTitle</text>
+                                }
+                            </td>
+                            <td title="@(run.AgentId ?? "—")">@(run.AgentId ?? "—")</td>
+                            <td>
+                                <span class="monitoring-step monitoring-step-@run.CurrentStep.ToString().ToLowerInvariant()">
+                                    @run.CurrentStep.ToDisplayName()
+                                </span>
+                            </td>
+                            <td>@run.StartedAt.ToLocalTime().ToString("HH:mm:ss")</td>
+                            <td>@elapsed.ToString(@"hh\:mm\:ss")</td>
+                            <td>
+                                <button class="btn-cancel-small" @onclick:stopPropagation="true"
+                                        @onclick="() => OnCancelRun.InvokeAsync(run.RunId)">
+                                    Cancel
+                                </button>
+                            </td>
+                        </tr>
+                    }
+                    @foreach (var cRun in ActiveConsolidationRuns)
+                    {
+                        var cElapsed = DateTime.UtcNow - cRun.StartedAtUtc;
+                        var cAgent = Agents.FirstOrDefault(a => a.ActiveJobId == cRun.RunId);
+                        <tr>
+                            <td class="monitoring-mono" title="@cRun.RunId">@cRun.RunId</td>
+                            <td>
+                                <span class="run-type-badge run-type-consolidation" title="@FormatConsolidationRunType(cRun.Type)">
+                                    <Icon Name="@GetConsolidationTypeIconName(cRun.Type)" Size="14" /> @FormatConsolidationRunTypeShort(cRun.Type)
+                                </span>
+                            </td>
+                            <td>@(string.IsNullOrEmpty(cRun.ProjectName) ? "—" : cRun.ProjectName)</td>
+                            <td title="@(cRun.TemplateName ?? "Global")">@(cRun.TemplateName ?? "Global")</td>
+                            <td title="@(cAgent?.AgentId ?? "—")">@(cAgent?.AgentId ?? "—")</td>
+                            <td>
+                                <span class="monitoring-step monitoring-step-running">Running</span>
+                            </td>
+                            <td>@cRun.StartedAtUtc.ToLocalTime().ToString("HH:mm:ss")</td>
+                            <td>@cElapsed.ToString(@"hh\:mm\:ss")</td>
+                            <td>—</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+</section>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ActiveRunSummary> ActiveRuns { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<ConsolidationRun> ActiveConsolidationRuns { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<AgentEntry> Agents { get; set; } = [];
+    [Parameter] public EventCallback<string> OnRunSelected { get; set; }
+    [Parameter] public EventCallback<string> OnCancelRun { get; set; }
+    [Parameter] public EventCallback<string> OnCancelConsolidation { get; set; }
+}

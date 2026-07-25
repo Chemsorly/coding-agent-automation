@@ -46,7 +46,6 @@ public partial class AgentMonitoring : IDisposable
     private ElementReference _modalOverlayRef;
     private PipelineRunSummary? _selectedHistoryRun;
     private bool _showHistoryDetailModal;
-    private ElementReference _historyModalOverlayRef;
     private bool _disposed;
     private Timer? _refreshTimer;
     private bool _showDisconnectConfirm;
@@ -172,12 +171,6 @@ public partial class AgentMonitoring : IDisposable
         _selectedHistoryRun = null;
     }
 
-    private void HandleHistoryModalKeyDown(KeyboardEventArgs e)
-    {
-        if (e.Key == "Escape")
-            DismissHistoryDetailModal();
-    }
-
     private void HandleModalKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Escape")
@@ -239,63 +232,11 @@ public partial class AgentMonitoring : IDisposable
 
     private string ResolveQgcName(string qgcId) => PageService.ResolveQgcName(qgcId);
 
-    // ── Static UI Formatters ──
+    // ── Sub-component callback adapters ──
 
-    private static string GetStatusColorClass(AgentStatus status) => status switch
+    private async Task HandleRemoveFromQueue((string IssueIdentifier, string IssueProviderId) args)
     {
-        AgentStatus.Idle => "text-success",
-        AgentStatus.Busy => "text-warning",
-        AgentStatus.Disconnected => "text-danger",
-        _ => ""
-    };
-
-    private static string FormatRunType(PipelineRunType runType) => runType switch
-    {
-        PipelineRunType.Review => "PR Review",
-        PipelineRunType.DecompositionAnalysis => "Decomposition (Analysis)",
-        PipelineRunType.Decomposition => "Decomposition",
-        _ => "Implementation"
-    };
-
-    private static string FormatConsolidationRunType(ConsolidationRunType type) => type switch
-    {
-        ConsolidationRunType.BrainConsolidation => "Brain Consolidation",
-        ConsolidationRunType.RefactoringDetection => "Refactoring Detection",
-        ConsolidationRunType.HarnessSuggestions => "Harness Suggestions",
-        _ => type.ToString()
-    };
-
-    private static string FormatConsolidationRunTypeShort(ConsolidationRunType type) => type switch
-    {
-        ConsolidationRunType.BrainConsolidation => "Brain",
-        ConsolidationRunType.RefactoringDetection => "Refactor",
-        ConsolidationRunType.HarnessSuggestions => "Harness",
-        _ => type.ToString()
-    };
-
-    private static string GetConsolidationTypeIconName(ConsolidationRunType type) => type switch
-    {
-        ConsolidationRunType.BrainConsolidation => "brain",
-        ConsolidationRunType.RefactoringDetection => "refresh-cw",
-        ConsolidationRunType.HarnessSuggestions => "sparkles",
-        _ => "clipboard-list"
-    };
-
-    private static string FormatDuration(DateTime startedAt, DateTime? completedAt)
-    {
-        if (completedAt is null) return "—";
-        var duration = completedAt.Value - startedAt;
-        return duration.ToString(@"hh\:mm\:ss");
-    }
-
-    private static string FormatTimestamp(DateTime timestamp)
-    {
-        var local = timestamp.Kind == DateTimeKind.Utc ? timestamp.ToLocalTime() : timestamp;
-        var ago = DateTime.Now - local;
-        if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
-        if (ago.TotalHours < 24) return $"{(int)ago.TotalHours}h ago";
-        if (ago.TotalDays < 7) return $"{(int)ago.TotalDays}d ago";
-        return local.ToString("yyyy-MM-dd HH:mm");
+        await RemoveFromQueue(args.IssueIdentifier, args.IssueProviderId);
     }
 
     // ── Dispose ──
