@@ -6,15 +6,17 @@ namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
 /// Controls whether review agents share the codegen session or run in isolation.
+/// Isolated is the zero value so that default(ReviewIsolation) matches the intended default
+/// — MessagePack source-generated formatters use default(T) for missing array elements.
 /// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum ReviewIsolation
 {
-    /// <summary>Review agents share the codegen session (legacy behavior).</summary>
-    Shared,
+    /// <summary>Review agents run in fresh sessions with no shared context (default).</summary>
+    Isolated = 0,
 
-    /// <summary>Review agents run in fresh sessions with no shared context.</summary>
-    Isolated
+    /// <summary>Review agents share the codegen session (legacy behavior).</summary>
+    Shared = 1
 }
 
 [MessagePackObject]
@@ -40,14 +42,15 @@ public sealed record CodeReviewConfiguration
     [Key(2)]
     public int MaxIterations { get; init; } = 2;
 
+    // Key(3) is retired — was previously used, then briefly reused for ReviewIsolation.
+    // Old payloads carry a stale value at index 3 (typically 0). Moved to Key(4) so that
+    // stale Key(3) values are silently ignored and ReviewIsolation defaults to Isolated.
+
     /// <summary>
     /// Controls whether review agents share the codegen session or run in fresh isolated sessions.
     /// Default is Isolated to eliminate self-attribution bias.
     /// </summary>
-    // TODO: Key(3) was previously retired. Old MessagePack payloads with Key(3)=0 (Shared) will
-    // now deserialize into ReviewIsolation.Shared, potentially downgrading isolation. Verify that
-    // backward-compat tests (CodeReviewIsolationRetiredKeyTests) are updated accordingly.
-    [Key(3)]
+    [Key(4)]
     public ReviewIsolation ReviewIsolation { get; init; } = ReviewIsolation.Isolated;
 
     /// <summary>
