@@ -105,4 +105,12 @@ public class RunIdTests
 
         set.Should().HaveCount(1);
     }
+
+    [Fact]
+    public void DefaultToString_ReturnsEmptyString()
+    {
+        var id = default(RunId);
+
+        id.ToString().Should().Be(string.Empty);
+    }
 }

@@ -16,11 +16,11 @@ public readonly record struct JobId(string Value)
 {
     public static implicit operator JobId(string value)
     {
-        ArgumentNullException.ThrowIfNull(value);
+        ArgumentException.ThrowIfNullOrEmpty(value);
         return new(value);
     }
 
-    public override string ToString() => Value;
+    public override string ToString() => Value ?? string.Empty;
 }
 
 /// <summary>

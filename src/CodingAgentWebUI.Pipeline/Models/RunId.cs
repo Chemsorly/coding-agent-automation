@@ -13,7 +13,5 @@ public readonly record struct RunId(string Value)
         return new(value);
     }
 
-    // TODO: Consider returning Value ?? string.Empty to satisfy the .NET contract that ToString()
-    // returns a non-null string. default(RunId) currently produces null from ToString().
-    public override string ToString() => Value;
+    public override string ToString() => Value ?? string.Empty;
 }
