@@ -6,7 +6,6 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Services;
 using Microsoft.AspNetCore.SignalR;
 using ILogger = Serilog.ILogger;
@@ -22,10 +21,8 @@ namespace CodingAgentWebUI.Hubs;
 public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 {
     private readonly IAgentHubFacade _facade;
-    // TODO: Replace concrete PipelineOrchestrationService with IChangeNotifier once AgentHub.Chat.cs
-    // methods (NotifyChatResponse, NotifyChatCompleted) are moved behind a narrow interface.
-    // AgentHub.Pipeline.cs and AgentHub.Consolidation.cs only call NotifyChange() and could use IChangeNotifier.
-    private readonly PipelineOrchestrationService _orchestration;
+    private readonly IChatNotifier _chatNotifier;
+    private readonly IChangeNotifier _changeNotifier;
     private readonly ModelFetchService _modelFetchService;
     private readonly IConsolidationService _consolidationService;
     private readonly ConsolidationBadgeService _badgeService;
@@ -38,7 +35,8 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
     public AgentHub(
         IAgentHubFacade facade,
-        PipelineOrchestrationService orchestration,
+        IChatNotifier chatNotifier,
+        IChangeNotifier changeNotifier,
         ModelFetchService modelFetchService,
         IConsolidationService consolidationService,
         ConsolidationBadgeService badgeService,
@@ -50,7 +48,8 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         IAgentOrphanRecoveryService? orphanRecoveryService = null)
     {
         _facade = facade;
-        _orchestration = orchestration;
+        _chatNotifier = chatNotifier;
+        _changeNotifier = changeNotifier;
         _modelFetchService = modelFetchService;
         _consolidationService = consolidationService;
         _badgeService = badgeService;
@@ -61,9 +60,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         // TODO: Make IAgentOrphanRecoveryService a required (non-nullable) constructor parameter.
         // The service is registered in DI as a singleton — the nullable fallback couples the Hub
         // to the concrete type and creates an unmanaged instance if DI misconfiguration occurs.
-        // It also forces AgentHub to keep the concrete PipelineOrchestrationService import just
-        // to pass it as IChangeNotifier in the fallback construction below.
-        _orphanRecoveryService = orphanRecoveryService ?? new AgentOrphanRecoveryService(facade, orchestration, logger);
+        _orphanRecoveryService = orphanRecoveryService ?? new AgentOrphanRecoveryService(facade, _changeNotifier, logger);
         _logger = logger;
     }
 

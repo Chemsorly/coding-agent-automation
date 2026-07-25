@@ -13,7 +13,7 @@
 @using Serilog
 @inject AgentRegistryService Registry
 @inject IConfigurationStore ConfigStore
-@inject PipelineOrchestrationService PipelineService
+@inject PipelineRunLifecycleService PipelineLifecycle
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
 @inject IJSRuntime JS
 
@@ -127,9 +127,9 @@
     protected override void OnInitialized()
     {
         RefreshIdleAgents();
-        PipelineService.OnChatResponse += HandleChatResponse;
-        PipelineService.OnChatCompleted += HandleChatCompleted;
-        PipelineService.OnChange += HandleStateChange;
+        PipelineLifecycle.OnChatResponse += HandleChatResponse;
+        PipelineLifecycle.OnChatCompleted += HandleChatCompleted;
+        PipelineLifecycle.OnChange += HandleStateChange;
 
         // Refresh idle agents every 5 seconds
         _refreshTimer = new System.Threading.Timer(_ =>
@@ -378,9 +378,9 @@
 
     public async ValueTask DisposeAsync()
     {
-        PipelineService.OnChatResponse -= HandleChatResponse;
-        PipelineService.OnChatCompleted -= HandleChatCompleted;
-        PipelineService.OnChange -= HandleStateChange;
+        PipelineLifecycle.OnChatResponse -= HandleChatResponse;
+        PipelineLifecycle.OnChatCompleted -= HandleChatCompleted;
+        PipelineLifecycle.OnChange -= HandleStateChange;
         _refreshTimer?.Dispose();
 
         // Return agent to idle if chat was active when navigating away

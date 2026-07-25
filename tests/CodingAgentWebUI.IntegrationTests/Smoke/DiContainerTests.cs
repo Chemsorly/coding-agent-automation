@@ -27,6 +27,7 @@ public class DiContainerTests : IClassFixture<CustomWebApplicationFactory>
     [InlineData(typeof(IQualityGateExecutor))]
     [InlineData(typeof(IssueDescriptionParser))]
     [InlineData(typeof(GitHubValidationService))]
+    [InlineData(typeof(IChatNotifier))]
     public void Key_Service_Resolves_Without_Error(Type serviceType)
     {
         using var scope = _factory.Services.CreateScope();

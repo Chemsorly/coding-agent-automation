@@ -40,7 +40,7 @@ public sealed class AgentMonitoringPageServiceTests
     private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
     private readonly Mock<IRunLifecycleManager> _mockLifecycleManager = new();
-    private readonly PipelineOrchestrationService _pipelineService;
+    private readonly PipelineRunLifecycleService _lifecycle;
     private readonly AgentMonitoringPageService _sut;
 
     public AgentMonitoringPageServiceTests()
@@ -66,18 +66,17 @@ public sealed class AgentMonitoringPageServiceTests
         _mockHistoryService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
-        _pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockConfigStore.Object,
-            providerFactory: new Mock<IProviderFactory>().Object,
-            runService: _runService,
-            historyService: _mockHistoryService.Object);
+        _lifecycle = new PipelineRunLifecycleService(
+            _mockHistoryService.Object,
+            _runService,
+            _mockLogger.Object);
 
         _sut = new AgentMonitoringPageService(
             _mockActiveRunQuery.Object,
             _registry,
             _dispatcher,
             _runService,
-            _pipelineService,
+            _lifecycle,
             _mockConfigStore.Object,
             _mockConsolidationService.Object,
             _mockPendingWorkQuery.Object,
