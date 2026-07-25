@@ -83,7 +83,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         var finalization = new PullRequestFinalizationService(logger);
         _contextBuilder = new PipelineExecutionContextBuilder(
             qualityGateValidator, _reporterFactory, feedbackService, _agentIdentity, logger,
-            brainUpdateService, historyService, finalization);
+            finalization, brainUpdateService, historyService);
         _logger = logger;
     }
 

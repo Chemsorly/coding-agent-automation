@@ -8,7 +8,7 @@ namespace CodingAgentWebUI.Orchestration;
 /// <summary>
 /// Shared consolidation job preparation: resolves provider configs from template,
 /// vends scoped GitHub tokens, and determines correct permission scope.
-/// Used by both ConsolidationDispatcher (SignalR) and DispatchService (K8s).
+/// Used by both ConsolidationDispatchService (SignalR) and DispatchService (K8s).
 /// </summary>
 public sealed class ConsolidationJobPreparationService : IConsolidationJobPreparationService
 {

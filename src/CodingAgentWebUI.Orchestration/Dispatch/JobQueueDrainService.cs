@@ -34,7 +34,7 @@ public sealed class JobQueueDrainService : BackgroundService
     private readonly IAgentRegistryService _registry;
     private readonly IJobDispatcher _jobDispatcher;
     private readonly IConfigurationStore _configStore;
-    private readonly IConsolidationDispatcher _consolidationDispatcher;
+    private readonly IConsolidationDispatchService _consolidationDispatcher;
     private readonly IConsolidationRunStore? _consolidationRunStore;
     private readonly IShutdownSignal _shutdownSignal;
     private readonly ILogger _logger;
@@ -51,7 +51,7 @@ public sealed class JobQueueDrainService : BackgroundService
         IAgentRegistryService registry,
         IJobDispatcher jobDispatcher,
         IConfigurationStore configStore,
-        IConsolidationDispatcher consolidationDispatcher,
+        IConsolidationDispatchService consolidationDispatcher,
         IShutdownSignal shutdownSignal,
         ILogger logger,
         IConsolidationRunStore? consolidationRunStore = null)
@@ -196,7 +196,7 @@ public sealed class JobQueueDrainService : BackgroundService
 
             try
             {
-                // Consolidation jobs: dispatch via IConsolidationDispatcher
+                // Consolidation jobs: dispatch via IConsolidationDispatchService
                 if (pendingJob.IsConsolidation)
                 {
                     // Cancel-during-dispatch race guard

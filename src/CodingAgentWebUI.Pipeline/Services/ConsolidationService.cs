@@ -16,7 +16,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     private readonly PipelineConfiguration _config;
     private readonly IProjectStore _projectStore;
     private readonly IPipelineRunHistoryService _runHistoryService;
-    private readonly IConsolidationDispatcher? _dispatcher;
+    private readonly IConsolidationDispatchService? _dispatcher;
     private readonly IConsolidationRunStore _runStore;
     private readonly IHarnessSuggestionStore _harnessSuggestionStore;
 
@@ -53,7 +53,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         IPipelineRunHistoryService runHistoryService,
         IConsolidationRunStore runStore,
         IHarnessSuggestionStore harnessSuggestionStore,
-        IConsolidationDispatcher? dispatcher = null)
+        IConsolidationDispatchService? dispatcher = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(config);

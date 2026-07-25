@@ -72,7 +72,7 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>(),
             sp.GetService<IProjectStore>(),
-            sp.GetRequiredService<IConsolidationDispatcher>(),
+            sp.GetRequiredService<IConsolidationDispatchService>(),
             sp.GetRequiredService<IConsolidationRunStore>()));
         services.AddHostedService(sp => sp.GetRequiredService<PendingWorkItemDrainService>());
 
