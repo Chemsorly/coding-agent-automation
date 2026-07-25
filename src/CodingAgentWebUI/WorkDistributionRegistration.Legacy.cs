@@ -24,7 +24,7 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<JobDeduplicationGuardService>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
             Log.Logger,
-            new Lazy<IConsolidationDispatcher>(() => sp.GetRequiredService<IConsolidationDispatcher>())));
+            new Lazy<IConsolidationDispatchService>(() => sp.GetRequiredService<IConsolidationDispatchService>())));
         services.AddSingleton<IActiveRunQueryService>(sp => new InMemoryActiveRunQueryService(
             sp.GetRequiredService<IOrchestratorRunService>()));
         services.AddSingleton<IConsolidationRunStore>(sp =>

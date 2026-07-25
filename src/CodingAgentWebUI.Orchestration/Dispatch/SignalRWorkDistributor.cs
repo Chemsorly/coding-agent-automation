@@ -59,7 +59,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         ArgumentNullException.ThrowIfNull(request);
 
         // Consolidation items always insert as Pending and let PendingWorkItemDrainService handle dispatch.
-        // This avoids a circular DI dependency (SignalRWorkDistributor -> IConsolidationDispatcher -> IWorkDistributor).
+        // This avoids a circular DI dependency (SignalRWorkDistributor -> IConsolidationDispatchService -> IWorkDistributor).
         // The drain service picks it up within 5 seconds (acceptable for low-priority background work).
         if (request.TaskType == WorkItemTaskType.Consolidation)
         {

@@ -68,17 +68,13 @@ public sealed class AnalysisStalenessDetector
 
         var analysisSince = new DateTimeOffset(DateTime.SpecifyKind(analysisComment.CreatedAt, DateTimeKind.Utc), TimeSpan.Zero);
 
-        // Max refresh cap: count hash-marker analyses since last success
+        // Max refresh cap: count hash-marker analyses since last success, excluding the
+        // current comment being evaluated (it is the "current" analysis, not a prior refresh).
         var lastSuccess = await _workItemQuery.GetLastSuccessfulCompletionAsync(
             issueIdentifier, issueProviderConfigId, ct);
-        // TODO: Potential off-by-one in max refresh cap — the count includes the current
-        // (un-refreshed) analysisComment because it also has a hash marker. The first analysis
-        // posted for any issue gets a hash marker, so refreshCount starts at 1 before any
-        // forced refresh has occurred. With >= 3, only 2 actual forced refreshes happen before
-        // suppression. Consider excluding analysisComment.Id from the count (add && c.Id != analysisComment.Id)
-        // or raising the threshold to >= 4.
         var refreshCount = issueComments.Count(c =>
-            c.Body.Contains(CommentMarkers.AnalysisHeader)
+            c.Id != analysisComment.Id
+            && c.Body.Contains(CommentMarkers.AnalysisHeader)
             && AnalysisBodyHash.Extract(c.Body) is not null
             && c.CreatedAt > (lastSuccess?.UtcDateTime ?? DateTime.MinValue));
 
