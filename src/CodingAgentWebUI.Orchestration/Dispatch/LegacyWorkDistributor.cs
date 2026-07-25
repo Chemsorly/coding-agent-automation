@@ -15,7 +15,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
     private readonly IJobDispatcher _jobDispatcher;
     private readonly JobDeduplicationGuardService _dispatcherService;
     private readonly IOrchestratorRunService _runService;
-    private readonly Lazy<IConsolidationDispatcher>? _consolidationDispatcher;
+    private readonly Lazy<IConsolidationDispatchService>? _consolidationDispatcher;
     private readonly ILogger _logger;
 
     /// <summary>
@@ -32,7 +32,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
         JobDeduplicationGuardService dispatcherService,
         IOrchestratorRunService runService,
         ILogger logger,
-        Lazy<IConsolidationDispatcher>? consolidationDispatcher = null)
+        Lazy<IConsolidationDispatchService>? consolidationDispatcher = null)
     {
         ArgumentNullException.ThrowIfNull(jobDispatcher);
         ArgumentNullException.ThrowIfNull(dispatcherService);
@@ -95,7 +95,7 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
 
             case WorkItemTaskType.Consolidation:
                 // Enqueue directly into the in-memory queue for drain by JobQueueDrainService.
-                // Do NOT call ConsolidationDispatcher.TryDispatchAsync here — that would recurse
+                // Do NOT call ConsolidationDispatchService.TryDispatchAsync here — that would recurse
                 // back to IWorkDistributor.DistributeAsync (this method) causing a StackOverflow.
                 var requiredLabels = string.IsNullOrEmpty(request.AgentSelector)
                     ? Array.Empty<string>()

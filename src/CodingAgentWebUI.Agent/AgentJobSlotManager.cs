@@ -365,11 +365,7 @@ public sealed class AgentJobSlotManager
             if (_activeJobId is null || _activeJobAssignment is null)
                 return null;
 
-            // TODO: Consider using Volatile.Read(ref _currentStep) here for consistency with the
-            // CurrentStep property. Although _busyLock provides acquire/release fences, SetCurrentStep()
-            // writes outside the lock using Volatile.Write, so a plain read here relies on the CLR's
-            // current lock implementation emitting full barriers (which is not guaranteed by the spec).
-            var step = _currentStep;
+            var step = Volatile.Read(ref _currentStep);
             return ActiveJobStateFactory.Create(
                 _activeJobId, _activeJobAssignment,
                 step == NullStep ? PipelineStep.GeneratingCode : (PipelineStep)step,

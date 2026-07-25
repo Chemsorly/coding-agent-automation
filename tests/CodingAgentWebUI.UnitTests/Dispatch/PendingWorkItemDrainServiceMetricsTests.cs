@@ -33,7 +33,7 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
     private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
-    private readonly Mock<IConsolidationDispatcher> _mockConsolidationDispatcher = new();
+    private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
     private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
     private readonly OrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
@@ -151,7 +151,7 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
                 Status = ConsolidationRunStatus.Queued
             });
 
-        _mockConsolidationDispatcher
+        _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(
                 It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(),
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -202,7 +202,7 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
             _mockLabelService.Object,
             NullLogger<PendingWorkItemDrainService>.Instance,
             _mockProjectStore.Object,
-            _mockConsolidationDispatcher.Object,
+            _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
     }
 

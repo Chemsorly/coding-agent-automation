@@ -37,6 +37,8 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         await _connection.DisposeAsync();
     }
 
+    // TODO: Add a test that invokes the PrContext.CreatePullRequest callback and verifies it delegates
+    // to PullRequestFinalizationService.RunFullPrCreationAsync to cover the fixed null-dereference path.
     private PipelineExecutionContextBuilder CreateBuilder(
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null)
@@ -47,6 +49,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
             _feedbackService,
             _agentIdentity,
             _mockLogger.Object,
+            new PullRequestFinalizationService(_mockLogger.Object),
             brainUpdateService,
             historyService);
     }
