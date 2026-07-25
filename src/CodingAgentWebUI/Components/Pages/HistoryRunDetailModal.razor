@@ -1,0 +1,162 @@
+@using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Pipeline.Services
+
+@if (IsVisible && Run != null)
+{
+    <div class="modal-overlay" tabindex="-1" @ref="_overlayRef"
+         @onclick="OnDismiss" @onkeydown="HandleKeyDown">
+        <div class="modal-card" @onclick:stopPropagation="true"
+             role="dialog" aria-modal="true" aria-labelledby="history-detail-title">
+            <h3 id="history-detail-title">
+                @if (Run.RunType == PipelineRunType.Review)
+                {
+                    <span class="run-type-badge run-type-review"><Icon Name="search" Size="14" /> Review</span>
+                }
+                else if (Run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+                {
+                    <span class="run-type-badge run-type-decomp"><Icon Name="puzzle" Size="14" /> Decomp</span>
+                }
+                Run @Truncate(Run.RunId, 12) — #@Run.IssueIdentifier @Truncate(Run.IssueTitle, 40)
+            </h3>
+
+            @if (!string.IsNullOrEmpty(Run.FailureReason))
+            {
+                <div class="summary-failure-callout" role="alert"><Icon Name="alert-triangle" Size="14" /> @Run.FailureReason</div>
+            }
+
+            <div class="modal-provider-list">
+                <div><strong>Run Type:</strong> @FormatRunType(Run.RunType)</div>
+                <div><strong>Result:</strong>
+                    @{
+                        var detailResult = Run.FinalStep switch
+                        {
+                            PipelineStep.Completed => "Completed",
+                            PipelineStep.Failed => "Failed",
+                            PipelineStep.Cancelled => "Cancelled",
+                            _ => "Failed"
+                        };
+                        var detailResultClass = Run.FinalStep switch
+                        {
+                            PipelineStep.Completed => "step-completed",
+                            PipelineStep.Cancelled => "step-cancelled",
+                            _ => "step-failed"
+                        };
+                    }
+                    <span class="step-badge @detailResultClass">@detailResult</span>
+                    @if (Run.FinalStep is not PipelineStep.Completed and not PipelineStep.Failed and not PipelineStep.Cancelled)
+                    {
+                        <span style="font-size: 0.8rem; color: var(--text-muted); margin-left: 6px;">(at @Run.FinalStep.ToDisplayName())</span>
+                    }
+                </div>
+                <div><strong>Duration:</strong> @FormatDuration(Run.StartedAt, Run.CompletedAt)</div>
+                @* TODO: [UX-24] Add AgentProviderConfigId to PipelineRunSummary and resolve display name/type here *@
+                <div><strong>Agent:</strong> @(Run.AgentId ?? "—")</div>
+                <div><strong>Initiated By:</strong> @Run.InitiatedBy</div>
+                @if (Run.RunType == PipelineRunType.Review)
+                {
+                    @if (!string.IsNullOrEmpty(Run.ReviewPrUrl))
+                    {
+                        <div><strong>PR Under Review:</strong> <a href="@Run.ReviewPrUrl" target="_blank" rel="noopener">@Run.ReviewPrUrl</a></div>
+                    }
+                    @if (Run.CodeReviewAgentsRun.Count > 0)
+                    {
+                        <div><strong>Review Agents:</strong> @string.Join(", ", Run.CodeReviewAgentsRun)</div>
+                    }
+                    @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
+                    {
+                        @* TODO: CSS classes text-danger, text-warning, text-info are not defined in app.css — icons will not be colored until these are added (dependency #906) *@
+                        <div><strong>Findings:</strong> <Icon Name="circle" Size="12" Class="text-danger" /> @Run.CodeReviewCriticalCount critical · <Icon Name="circle" Size="12" Class="text-warning" /> @Run.CodeReviewWarningCount warning · <Icon Name="circle" Size="12" Class="text-info" /> @Run.CodeReviewSuggestionCount suggestion</div>
+                    }
+                    else
+                    {
+                        <div><strong>Findings:</strong> <Icon Name="check-circle" Size="14" /> No issues found</div>
+                    }
+                }
+                @if (Run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+                {
+                    @if (Run.DecompositionSubIssuesAttempted > 0)
+                    {
+                        <div><strong>Sub-Issues:</strong> @Run.DecompositionSubIssuesCreated/@Run.DecompositionSubIssuesAttempted created</div>
+                    }
+                }
+                @if (Run.TotalCost is not null and > 0m)
+                {
+                    <div><strong>Cost:</strong> @CostFormatter.FormatCost(Run.TotalCost)</div>
+                }
+                @if (Run.TotalTokens > 0)
+                {
+                    <div><strong>Tokens:</strong> @CostFormatter.FormatTokens(Run.TotalTokens)</div>
+                }
+                @if (Run.PhaseBreakdown is { Count: > 0 } historyPhases)
+                {
+                    <Collapsible CssClass="phase-breakdown" HeaderClass="phase-breakdown-header" BodyClass="phase-breakdown-body">
+                        <Header>
+                            <span>Cost Breakdown (@historyPhases.Count phases)</span>
+                        </Header>
+                        <ChildContent>
+                            <table class="monitoring-table" style="margin-top: 6px;">
+                                <thead><tr><th>Phase</th><th>Tokens</th><th>Cost</th></tr></thead>
+                                <tbody>
+                                @foreach (var phase in historyPhases
+                                    .OrderByDescending(p => p.Value.Cost ?? 0m)
+                                    .ThenByDescending(p => p.Value.Tokens))
+                                {
+                                    <tr>
+                                        <td>@PhaseNameFormatter.HumanizePhase(phase.Key)</td>
+                                        <td>@CostFormatter.FormatTokens(phase.Value.Tokens)</td>
+                                        <td>@CostFormatter.FormatCost(phase.Value.Cost)</td>
+                                    </tr>
+                                }
+                                </tbody>
+                            </table>
+                        </ChildContent>
+                    </Collapsible>
+                }
+                @if (Run.ModelName != null)
+                {
+                    <div><strong>Model:</strong> @Run.ModelName</div>
+                }
+                @if (Run.BrainRepoUsed)
+                {
+                    <div><strong>Brain:</strong> Used @(Run.BrainUpdatesPushed ? "(updates pushed)" : "(read-only)")</div>
+                }
+                @if (Run.IsRework)
+                {
+                    <div><strong>Rework:</strong> Yes</div>
+                }
+                @if (!string.IsNullOrEmpty(Run.PullRequestUrl) && Run.RunType != PipelineRunType.Review)
+                {
+                    <div><strong>PR:</strong> <a href="@Run.PullRequestUrl" target="_blank" rel="noopener">@Run.PullRequestUrl</a></div>
+                }
+                @if (Run.RetryCount > 0)
+                {
+                    <div><strong>Retries:</strong> @Run.RetryCount</div>
+                }
+            </div>
+
+            @* ── Feedback Section ── *@
+            <CodingAgentWebUI.Components.Shared.FeedbackSection Feedback="Run.Feedback" />
+
+            <div style="margin-top: 12px; text-align: right;">
+                <button class="btn-cancel" @onclick="OnDismiss">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public PipelineRunSummary? Run { get; set; }
+    [Parameter] public bool IsVisible { get; set; }
+    [Parameter] public EventCallback OnDismiss { get; set; }
+
+    private ElementReference _overlayRef;
+
+    // TODO: Change to `private async Task HandleKeyDown(KeyboardEventArgs e)` and await OnDismiss.InvokeAsync().
+    // Currently fire-and-forget — if the parent callback becomes async and throws, the exception will be unobserved
+    // and Blazor will not re-render the component tree after the async operation completes.
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape")
+            OnDismiss.InvokeAsync();
+    }
+}
