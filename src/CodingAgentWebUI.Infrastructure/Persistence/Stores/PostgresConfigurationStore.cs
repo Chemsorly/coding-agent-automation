@@ -762,13 +762,13 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     }
 
     public async Task DeleteTemplateAsync(
-        string projectId, string templateId, CancellationToken ct)
+        string projectId, TemplateId templateId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(projectId);
-        ArgumentNullException.ThrowIfNull(templateId);
+        var templateIdValue = templateId.Value;
         if (!Guid.TryParse(projectId, out var projectGuid))
             return;
-        if (!Guid.TryParse(templateId, out var templateGuid))
+        if (!Guid.TryParse(templateIdValue, out var templateGuid))
             return;
 
         await _projectLock.WaitAsync(ct);
@@ -784,7 +784,7 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
             // Remove template ID from project's TemplateIds
             var project = await db.Projects.FirstOrDefaultAsync(e => e.Id == projectGuid, ct);
             if (project is not null)
-                project.TemplateIds.Remove(templateId);
+                project.TemplateIds.Remove(templateIdValue);
 
             await db.SaveChangesAsync(ct);
             InvalidateProjectCaches();
@@ -796,16 +796,16 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
     }
 
     public async Task MoveTemplateAsync(
-        string sourceProjectId, string targetProjectId, string templateId, CancellationToken ct)
+        string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(sourceProjectId);
         ArgumentNullException.ThrowIfNull(targetProjectId);
-        ArgumentNullException.ThrowIfNull(templateId);
+        var templateIdValue = templateId.Value;
         if (!Guid.TryParse(sourceProjectId, out var sourceGuid))
             return;
         if (!Guid.TryParse(targetProjectId, out var targetGuid))
             return;
-        if (!Guid.TryParse(templateId, out var templateGuid))
+        if (!Guid.TryParse(templateIdValue, out var templateGuid))
             return;
 
         await _projectLock.WaitAsync(ct);
@@ -824,16 +824,16 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
                 .FirstOrDefaultAsync(e => e.Id == sourceGuid, ct);
             if (sourceProject is not null)
             {
-                sourceProject.TemplateIds.Remove(templateId);
+                sourceProject.TemplateIds.Remove(templateIdValue);
                 ResyncSettingsJson(sourceProject);
             }
 
             // Add to target project's TemplateIds
             var targetProject = await db.Projects
                 .FirstOrDefaultAsync(e => e.Id == targetGuid, ct);
-            if (targetProject is not null && !targetProject.TemplateIds.Contains(templateId))
+            if (targetProject is not null && !targetProject.TemplateIds.Contains(templateIdValue))
             {
-                targetProject.TemplateIds.Add(templateId);
+                targetProject.TemplateIds.Add(templateIdValue);
                 ResyncSettingsJson(targetProject);
             }
 
