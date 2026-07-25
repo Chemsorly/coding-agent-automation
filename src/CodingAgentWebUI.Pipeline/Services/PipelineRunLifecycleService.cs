@@ -13,6 +13,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IOrchestratorRunService? _runService;
     private readonly Serilog.ILogger _logger;
+    private readonly IAgentCancellationSender? _agentCancellationSender;
 
     // ── State ───────────────────────────────────────────────────────────
     private CancellationTokenSource? _cancellationTokenSource;
@@ -24,7 +25,8 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
     public PipelineRunLifecycleService(
         IPipelineRunHistoryService historyService,
         IOrchestratorRunService? runService,
-        Serilog.ILogger logger)
+        Serilog.ILogger logger,
+        IAgentCancellationSender? agentCancellationSender = null)
     {
         ArgumentNullException.ThrowIfNull(historyService);
         ArgumentNullException.ThrowIfNull(logger);
@@ -32,6 +34,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         _historyService = historyService;
         _runService = runService;
         _logger = logger;
+        _agentCancellationSender = agentCancellationSender;
     }
 
     // ── Run State Properties ────────────────────────────────────────────
@@ -191,8 +194,28 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         {
             Interlocked.CompareExchange(ref _cancellationTokenSource, null, null)?.Cancel();
         }
-        // TODO: The catch block is load-bearing — a race window exists between the atomic read and .Cancel(). Consider logging at Debug level here so silent cancellation failures are observable.
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException)
+        {
+            _logger.Warning(
+                "Pipeline {RunId} cancellation encountered disposed CancellationTokenSource — " +
+                "CTS race between cancel and dispose. Attempting fallback cancel signal",
+                run.RunId);
+
+            if (_agentCancellationSender is not null && !string.IsNullOrEmpty(run.AgentId))
+            {
+                try
+                {
+                    await _agentCancellationSender.SendCancelJobAsync(
+                        run.AgentId, run.RunId, CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _logger.Warning(ex,
+                        "Pipeline {RunId} fallback cancel signal to agent {AgentId} also failed",
+                        run.RunId, run.AgentId);
+                }
+            }
+        }
         run.MarkCompleted();
         EmitOutputLine("🚫 Pipeline cancelled");
         TransitionTo(run, PipelineStep.Cancelled);

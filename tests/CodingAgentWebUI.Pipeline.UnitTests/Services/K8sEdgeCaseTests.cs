@@ -698,7 +698,7 @@ public class K8sEdgeCaseTests : IDisposable
         var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-leak-test" });
         await using var db = await _dbFactory.CreateDbContextAsync();
 
-        var projection = new DispatchService.PendingWorkItemProjection
+        var projection = new PendingWorkItemProjection
         {
             Id = pendingId,
             AgentSelector = "kiro,dotnet",

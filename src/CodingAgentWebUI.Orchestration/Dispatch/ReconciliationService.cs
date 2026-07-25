@@ -10,7 +10,6 @@ using k8s.Autorest;
 using k8s.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
 using Serilog;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
@@ -21,7 +20,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// stale work item cleanup, PVC release, and PipelineRuns retention.
 /// Runs under leader election (same Lease as DispatchService).
 /// </summary>
-public sealed class ReconciliationService : BackgroundService
+public sealed class ReconciliationService : LeaderElectedPollingService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<ReconciliationService>();
 
@@ -30,7 +29,6 @@ public sealed class ReconciliationService : BackgroundService
     private const string WorkItemIdLabel = "caa/work-item-id";
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly ILeaderElectionService _leaderElection;
     private readonly IKubernetes _kubeClient;
     private readonly WorkItemTransitionService _transitionService;
     private readonly ILabelService? _labelService;
@@ -41,6 +39,9 @@ public sealed class ReconciliationService : BackgroundService
     private readonly ReconciliationServiceOptions _options;
 
     private string? _lastResourceVersion;
+
+    protected override string ServiceName => "ReconciliationService";
+    protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
 
     public ReconciliationService(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -53,9 +54,9 @@ public sealed class ReconciliationService : BackgroundService
         IConsolidationService? consolidationService = null,
         IConfigurationStore? configStore = null,
         IJobDeduplicationGuard? dedupGuard = null)
+        : base(leaderElection)
     {
         _dbFactory = dbFactory;
-        _leaderElection = leaderElection;
         _kubeClient = kubeClient;
         _transitionService = transitionService;
         _labelService = labelService;
@@ -71,67 +72,51 @@ public sealed class ReconciliationService : BackgroundService
             ?? "default";
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    /// <summary>
+    /// Overrides the default poll loop to run startup reconciliation followed by
+    /// concurrent Watch + Poll loops. The linked CancellationToken (from the base class)
+    /// fires on leadership loss or host stop.
+    /// </summary>
+    protected override async Task RunLeadershipTermAsync(CancellationToken ct)
     {
-        Log.Information("ReconciliationService started — waiting for leader election");
+        Log.Information("ReconciliationService: leader acquired, running startup reconciliation");
 
-        while (!stoppingToken.IsCancellationRequested)
+        // Reset watch state for new leadership term (avoids 410 Gone with stale resourceVersion)
+        _lastResourceVersion = null;
+
+        await RunStartupReconciliationAsync(ct);
+
+        // Run Watch and Poll concurrently
+        var watchTask = RunWatchLoopAsync(ct);
+        var pollTask = RunPollLoopAsync(ct);
+
+        // Exit when leadership lost or stopping
+        await Task.WhenAny(watchTask, pollTask);
+
+        // TODO: Stale comment — no local CTS is created here. The original code had explicit
+        // cancellation (`await linked.CancelAsync()`) between WhenAny and WhenAll to stop the
+        // surviving loop when the other exited. That path was removed in the refactoring.
+        // Both loops only exit via ct cancellation (leadership loss or host stop), so this is
+        // safe in practice, but if loop logic changes in the future, consider re-adding explicit
+        // cancellation to stop the surviving loop immediately rather than waiting for its delay.
+        // Note: The base class owns the linked CTS, so cancellation propagates from LeaderToken.
+        // If one loop faults, we need to propagate exception after cleanup.
+        try { await Task.WhenAll(watchTask, pollTask); }
+        catch (OperationCanceledException) { /* expected */ }
+        catch (Exception ex)
         {
-            // Wait for leadership
-            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-            }
-
-            if (stoppingToken.IsCancellationRequested) break;
-
-            Log.Information("ReconciliationService: leader acquired, running startup reconciliation");
-
-            // Reset watch state for new leadership term (avoids 410 Gone with stale resourceVersion)
-            _lastResourceVersion = null;
-
-            // Create linked token: cancels on EITHER host stop OR leadership loss
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken, _leaderElection.LeaderToken);
-            var ct = linked.Token;
-
-            try
-            {
-                await RunStartupReconciliationAsync(ct);
-
-                // Run Watch and Poll concurrently
-                var watchTask = RunWatchLoopAsync(ct);
-                var pollTask = RunPollLoopAsync(ct);
-
-                // Exit when leadership lost or stopping
-                await Task.WhenAny(watchTask, pollTask);
-
-                // If neither stoppingToken nor LeaderToken caused the exit, cancel manually
-                if (!ct.IsCancellationRequested)
-                    await linked.CancelAsync();
-
-                try { await Task.WhenAll(watchTask, pollTask); }
-                catch (OperationCanceledException) { /* expected */ }
-                catch (Exception ex)
-                {
-                    // Catch non-OCE exceptions from WhenAll to prevent BackgroundService termination.
-                    // Log and re-enter the leader wait loop so reconciliation resumes on next leadership acquisition.
-                    Log.Error(ex, "ReconciliationService: watch/poll loop faulted unexpectedly — will re-enter leader wait loop");
-                }
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested && !stoppingToken.IsCancellationRequested)
-            {
-                // Leadership lost during startup reconciliation or work loop — fall through to re-enter wait loop
-            }
-
-            if (!stoppingToken.IsCancellationRequested)
-            {
-                Log.Information("ReconciliationService: leadership lost, re-entering wait loop");
-            }
+            // Catch non-OCE exceptions from WhenAll to prevent BackgroundService termination.
+            // Log and let the base class re-enter the leader wait loop.
+            Log.Error(ex, "ReconciliationService: watch/poll loop faulted unexpectedly — will re-enter leader wait loop");
         }
-
-        Log.Information("ReconciliationService: exiting (stopping)");
     }
+
+    /// <summary>
+    /// Not used directly — ReconciliationService overrides <see cref="RunLeadershipTermAsync"/>
+    /// instead of using the default poll loop. This is never called by the base class when
+    /// <see cref="RunLeadershipTermAsync"/> is overridden.
+    /// </summary>
+    protected override Task OnPollCycleAsync(CancellationToken ct) => RunReconciliationCycleAsync(ct);
 
     // ── Startup Reconciliation ───────────────────────────────────────────
 
@@ -243,7 +228,7 @@ public sealed class ReconciliationService : BackgroundService
 
     private async Task RunWatchLoopAsync(CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested && _leaderElection.IsLeader)
+        while (!ct.IsCancellationRequested && LeaderElection.IsLeader)
         {
             try
             {
@@ -265,7 +250,7 @@ public sealed class ReconciliationService : BackgroundService
                 Log.Warning(ex, "ReconciliationService: Watch disconnected, reconnecting in 1s");
             }
 
-            if (!ct.IsCancellationRequested && _leaderElection.IsLeader)
+            if (!ct.IsCancellationRequested && LeaderElection.IsLeader)
             {
                 try { await Task.Delay(TimeSpan.FromSeconds(1), ct); }
                 catch (OperationCanceledException) { break; }
@@ -492,7 +477,7 @@ public sealed class ReconciliationService : BackgroundService
 
     private async Task RunPollLoopAsync(CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested && _leaderElection.IsLeader)
+        while (!ct.IsCancellationRequested && LeaderElection.IsLeader)
         {
             try
             {
@@ -527,6 +512,7 @@ public sealed class ReconciliationService : BackgroundService
         await DetectPodStartupFailuresAsync(ct);
         await CleanupStaleWorkItemsAsync(ct);
         await CleanupStalePipelineRunsAsync(ct);
+        await CleanupStaleConsolidationRunsAsync(ct);
         await ReconcilePvcsFromPollAsync(ct);
     }
 
@@ -894,6 +880,49 @@ public sealed class ReconciliationService : BackgroundService
         {
             Log.Information("ReconciliationService: cleaned up {Count} stale pipeline runs (retention={Days}d)",
                 deletedCount, _options.PipelineRunRetentionDays);
+        }
+    }
+
+    /// <summary>
+    /// Terminal ConsolidationRuns older than retention period → DELETE via IConsolidationService.
+    /// Uses client-side filtering because CompletedAtUtc is stored inside JSONB (no server-side filter).
+    /// </summary>
+    private async Task CleanupStaleConsolidationRunsAsync(CancellationToken ct)
+    {
+        if (_consolidationService is null) return;
+
+        try
+        {
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-_options.ConsolidationRunRetentionDays);
+            var runs = await _consolidationService.GetRunHistoryAsync(ct);
+            var deletedCount = 0;
+
+            foreach (var run in runs)
+            {
+                if (ct.IsCancellationRequested) break;
+
+                // Only delete terminal runs
+                if (run.Status is not (ConsolidationRunStatus.Succeeded or ConsolidationRunStatus.Failed or ConsolidationRunStatus.Cancelled))
+                    continue;
+
+                // Use CompletedAtUtc if available, fall back to StartedAtUtc
+                var anchor = run.CompletedAtUtc ?? run.StartedAtUtc;
+                if (anchor >= cutoff)
+                    continue;
+
+                await _consolidationService.DeleteRunAsync(run.RunId, ct);
+                deletedCount++;
+            }
+
+            if (deletedCount > 0)
+            {
+                Log.Information("ReconciliationService: cleaned up {Count} stale consolidation runs (retention={Days}d)",
+                    deletedCount, _options.ConsolidationRunRetentionDays);
+            }
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            Log.Warning(ex, "ReconciliationService: failed to cleanup stale consolidation runs (non-fatal)");
         }
     }
 
