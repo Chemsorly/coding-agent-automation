@@ -556,6 +556,14 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         }
     }
 
+    /// <inheritdoc />
+    public async Task DeleteRunAsync(string runId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(runId);
+        await _runStore.DeleteRunAsync(runId, ct);
+        _runHistoryCache = null;
+    }
+
     /// <summary>
     /// Deletes a persisted run synchronously (used in fire-and-forget cleanup paths).
     /// </summary>

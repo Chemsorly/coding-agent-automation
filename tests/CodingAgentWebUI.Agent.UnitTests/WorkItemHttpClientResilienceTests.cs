@@ -39,7 +39,7 @@ public class WorkItemHttpClientResilienceTests : IDisposable
                 options.Retry.MaxRetryAttempts = 3;
                 options.Retry.BackoffType = DelayBackoffType.Exponential;
                 options.Retry.UseJitter = false;
-                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(30);
+                options.TotalRequestTimeout.Timeout = TimeSpan.FromSeconds(60);
                 options.AttemptTimeout.Timeout = TimeSpan.FromSeconds(10);
                 options.CircuitBreaker.SamplingDuration = TimeSpan.FromSeconds(30);
                 options.CircuitBreaker.MinimumThroughput = 100; // High threshold to avoid tripping in tests

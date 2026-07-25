@@ -8,7 +8,6 @@ using k8s.Autorest;
 using k8s.Models;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
-using static CodingAgentWebUI.Orchestration.Dispatch.DispatchService;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
@@ -129,7 +128,7 @@ internal sealed class DispatchLifecycleService
         Func<Guid, string, Task>? onFailure = null)
     {
         // Generate deterministic job name
-        var jobName = GenerateJobName(item.Id);
+        var jobName = DispatchService.GenerateJobName(item.Id);
 
         // Claim PVC for kiro agents — atomically check-and-add to inflight set to prevent
         // cross-service double-claim between DispatchService and ConsolidationDispatchHandler.

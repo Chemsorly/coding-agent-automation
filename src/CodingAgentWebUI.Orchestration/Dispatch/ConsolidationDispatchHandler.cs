@@ -11,9 +11,7 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
 using Serilog;
-using static CodingAgentWebUI.Orchestration.Dispatch.DispatchService;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
@@ -23,12 +21,11 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Extracted from DispatchService to separate consolidation-specific concerns (run status transitions,
 /// provider config resolution, cascade failure) from regular issue dispatch.
 /// </summary>
-internal sealed class ConsolidationDispatchHandler : BackgroundService
+internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<ConsolidationDispatchHandler>();
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly JobTemplateStore _templateProvider;
     private readonly DispatchTemplateResolver _templateResolver;
@@ -40,6 +37,10 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private readonly IPipelineConfigStore? _pipelineConfigStore;
     private readonly IProjectStore? _projectStore;
     private readonly TokenBucketRateLimiter _rateLimiter;
+    private readonly DispatchStateBuilder _stateBuilder;
+
+    protected override string ServiceName => "ConsolidationDispatchHandler";
+    protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
 
     public ConsolidationDispatchHandler(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -54,9 +55,9 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         IPipelineConfigStore? pipelineConfigStore = null,
         IProjectStore? projectStore = null,
         IAgentProfileStore? agentProfileStore = null)
+        : base(leaderElection)
     {
         _dbFactory = dbFactory;
-        _leaderElection = leaderElection;
         _lifecycle = lifecycle;
         _templateProvider = templateProvider;
         _transitionService = transitionService;
@@ -68,6 +69,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
         _options = DispatchServiceOptionsFactory.Create(configuration);
         _rateLimiter = _options.CreateRateLimiter();
+        _stateBuilder = new DispatchStateBuilder(dbFactory, lifecycle, templateProvider, _templateResolver, _options);
     }
 
     /// <summary>
@@ -86,9 +88,9 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         IPipelineConfigStore? pipelineConfigStore = null,
         IProjectStore? projectStore = null,
         IAgentProfileStore? agentProfileStore = null)
+        : base(leaderElection)
     {
         _dbFactory = dbFactory;
-        _leaderElection = leaderElection;
         _lifecycle = lifecycle;
         _templateProvider = templateProvider;
         _transitionService = transitionService;
@@ -100,62 +102,10 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
         _options = options;
         _rateLimiter = _options.CreateRateLimiter();
+        _stateBuilder = new DispatchStateBuilder(dbFactory, lifecycle, templateProvider, _templateResolver, _options);
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        Log.Information("ConsolidationDispatchHandler started — waiting for leader election");
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            // Wait for leadership
-            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-            }
-
-            if (stoppingToken.IsCancellationRequested) break;
-
-            Log.Information("ConsolidationDispatchHandler: leader acquired, entering poll loop");
-
-            // Create linked token: cancels on EITHER host stop OR leadership loss
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken, _leaderElection.LeaderToken);
-            var ct = linked.Token;
-
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    await PollAndDispatchConsolidationAsync(ct);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "ConsolidationDispatchHandler: unhandled error in poll cycle");
-                }
-
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
-
-            if (!stoppingToken.IsCancellationRequested)
-            {
-                Log.Information("ConsolidationDispatchHandler: leadership lost, re-entering wait loop");
-            }
-        }
-
-        Log.Information("ConsolidationDispatchHandler: exiting (stopping)");
-    }
+    protected override Task OnPollCycleAsync(CancellationToken ct) => PollAndDispatchConsolidationAsync(ct);
 
     /// <inheritdoc/>
     public override void Dispose()
@@ -166,106 +116,27 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
     internal async Task PollAndDispatchConsolidationAsync(CancellationToken ct)
     {
-        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var state = await _stateBuilder.BuildStateAsync(
+            w => w.TaskType == WorkItemTaskType.Consolidation,
+            recordTelemetry: false,
+            ct);
 
-        // Query only consolidation items
-        var pendingItems = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Pending && w.TaskType == WorkItemTaskType.Consolidation)
-            .OrderBy(w => w.CreatedAt)
-            .Select(w => new PendingWorkItemProjection
-            {
-                Id = w.Id,
-                AgentSelector = w.AgentSelector,
-                CreatedAt = w.CreatedAt,
-                TimeoutSeconds = w.TimeoutSeconds,
-                ProjectId = w.ProjectId,
-                IssueIdentifier = w.IssueIdentifier,
-                IssueProviderConfigId = w.IssueProviderConfigId,
-                TaskType = w.TaskType
-            })
-            .ToListAsync(ct);
-
-        if (pendingItems.Count == 0)
+        if (state is null)
             return;
 
-        // Build concurrency state: count running/dispatched per selector group
-        var activeCounts = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
-            .GroupBy(w => w.AgentSelector)
-            .Select(g => new { Selector = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-
-        var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
-
-        // PVC pool: determine available PVCs for kiro agents
-        var pvcResult = await _lifecycle.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
-        var availablePvcs = pvcResult.AvailablePvcs;
-
-        foreach (var item in pendingItems)
+        await using (state.Db)
         {
-            if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
-                break;
-
-            // Rate limit
-            using var lease = await _rateLimiter.AcquireAsync(1, ct);
-            if (!lease.IsAcquired)
-            {
-                Log.Warning("ConsolidationDispatchHandler: rate limit hit, stopping dispatch cycle");
-                break;
-            }
-
-            // Check concurrency limit from template
-            var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
-            if (maxConcurrent > 0)
-            {
-                var current = concurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0);
-                if (current >= maxConcurrent)
+            await foreach (var candidate in _stateBuilder.GetEligibleCandidatesAsync(
+                state, LeaderElection, _rateLimiter, nameof(ConsolidationDispatchHandler),
+                async (item, errorMessage, innerCt) =>
                 {
-                    Log.Debug("ConsolidationDispatchHandler: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
-                        item.AgentSelector, current, maxConcurrent, item.Id);
-                    continue;
-                }
-            }
-
-            // Resolve template
-            var template = _templateProvider.Resolve(item.AgentSelector);
-            var effectiveSelector = item.AgentSelector;
-            if (template is null)
+                    await FailConsolidationWorkItemAsync(item.Id, errorMessage, item.IssueIdentifier, innerCt);
+                },
+                ct))
             {
-                // Fallback: AgentSelector might be a subset of the template's label set
-                var (fallbackTemplate, resolvedSelector) = await _templateResolver.ResolveTemplateViaProfileAsync(
-                    item.AgentSelector, nameof(ConsolidationDispatchHandler), ct);
-                if (fallbackTemplate is null)
-                {
-                    await FailConsolidationWorkItemAsync(item.Id, $"No job template for selector: {item.AgentSelector}", item.IssueIdentifier, ct);
-                    continue;
-                }
-                template = fallbackTemplate;
-                effectiveSelector = resolvedSelector!;
-
-                // Re-check concurrency limit against the resolved selector
-                var resolvedMaxConcurrent = template.MaxConcurrent;
-                if (resolvedMaxConcurrent > 0)
-                {
-                    var current = concurrencyBySelector.GetValueOrDefault(effectiveSelector, 0);
-                    if (current >= resolvedMaxConcurrent)
-                    {
-                        Log.Debug("ConsolidationDispatchHandler: resolved selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
-                            effectiveSelector, current, resolvedMaxConcurrent, item.Id);
-                        continue;
-                    }
-                }
+                await DispatchConsolidationItemAsync(state.Db, candidate.Item, candidate.Template,
+                    candidate.IsKiroAgent, state.AvailablePvcs, state.ConcurrencyBySelector, ct);
             }
-
-            var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-
-            if (isKiroAgent && availablePvcs.Count == 0)
-            {
-                Log.Information("ConsolidationDispatchHandler: no PVC available for kiro agent, skipping WorkItem {WorkItemId}", item.Id);
-                continue;
-            }
-
-            await DispatchConsolidationItemAsync(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, ct);
         }
     }
 
