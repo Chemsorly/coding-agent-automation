@@ -314,7 +314,7 @@ public class DatabaseMaintenanceServiceTests : IDisposable
             .Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ConsolidationRun> { oldRun });
 
-        var service = CreateServiceWithLeaderElection();
+        var service = CreateService();
 
         // Act: run one cycle manually via ExecuteAsync (will skip because not leader)
         using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
@@ -394,16 +394,6 @@ public class DatabaseMaintenanceServiceTests : IDisposable
     // ── Helper Methods ──────────────────────────────────────────────────
 
     private DatabaseMaintenanceService CreateService()
-    {
-        var mockProvider = new Mock<IServiceProvider>();
-        mockProvider.Setup(p => p.GetService(typeof(ILeaderElectionService)))
-            .Returns(_mockLeaderElection.Object);
-
-        return new DatabaseMaintenanceService(
-            _dbFactory, _mockConsolidationService.Object, mockProvider.Object, _configuration);
-    }
-
-    private DatabaseMaintenanceService CreateServiceWithLeaderElection()
     {
         var mockProvider = new Mock<IServiceProvider>();
         mockProvider.Setup(p => p.GetService(typeof(ILeaderElectionService)))
