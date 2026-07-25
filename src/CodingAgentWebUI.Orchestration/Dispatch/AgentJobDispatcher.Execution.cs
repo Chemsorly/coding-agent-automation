@@ -33,46 +33,6 @@ public sealed partial class AgentJobDispatcher
         public required string InitiatedBy { get; init; }
         public required PipelineProject Project { get; init; }
 
-        /// <summary>
-        /// Creates a new <see cref="DispatchPipelineContext"/> from explicit parameters.
-        /// All three dispatch paths (implementation, review, decomposition) use this factory
-        /// to avoid triplicated object-initializer blocks.
-        /// </summary>
-        public static DispatchPipelineContext Create(
-            AgentEntry agent,
-            PipelineRun run,
-            AgentProfile profile,
-            string issueIdentifier,
-            IssueDetail issueDetail,
-            ParsedIssue parsedIssue,
-            IReadOnlyList<IssueComment> issueComments,
-            string repoProviderId,
-            string agentProviderId,
-            string? brainProviderId,
-            string? pipelineProviderId,
-            string? issueProviderId,
-            IReadOnlyList<ProviderConfig> providerConfigs,
-            PipelineConfiguration config,
-            string initiatedBy,
-            PipelineProject project) => new()
-        {
-            Agent = agent,
-            Run = run,
-            Profile = profile,
-            IssueIdentifier = issueIdentifier,
-            IssueDetail = issueDetail,
-            ParsedIssue = parsedIssue,
-            IssueComments = issueComments,
-            RepoProviderId = repoProviderId,
-            AgentProviderId = agentProviderId,
-            BrainProviderId = brainProviderId,
-            PipelineProviderId = pipelineProviderId,
-            IssueProviderId = issueProviderId,
-            ProviderConfigs = providerConfigs,
-            Config = config,
-            InitiatedBy = initiatedBy,
-            Project = project
-        };
     }
 
     /// <summary>
@@ -371,12 +331,25 @@ public sealed partial class AgentJobDispatcher
         run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
         run.IssueTitle = issueContext.IssueDetail.Title;
 
-        var pipelineCtx = DispatchPipelineContext.Create(
-            agent, run, profile, issueIdentifier,
-            issueContext.IssueDetail, issueContext.ParsedIssue, issueContext.IssueComments,
-            repoProviderId, agentProviderId, brainProviderId,
-            pipelineProviderId, issueProviderId, providerConfigs,
-            config, initiatedBy, project);
+        var pipelineCtx = new DispatchPipelineContext
+        {
+            Agent = agent,
+            Run = run,
+            Profile = profile,
+            IssueIdentifier = issueIdentifier,
+            IssueDetail = issueContext.IssueDetail,
+            ParsedIssue = issueContext.ParsedIssue,
+            IssueComments = issueContext.IssueComments,
+            RepoProviderId = repoProviderId,
+            AgentProviderId = agentProviderId,
+            BrainProviderId = brainProviderId,
+            PipelineProviderId = pipelineProviderId,
+            IssueProviderId = issueProviderId,
+            ProviderConfigs = providerConfigs,
+            Config = config,
+            InitiatedBy = initiatedBy,
+            Project = project
+        };
 
         Func<JobAssignmentMessage, JobAssignmentMessage> customize = msg => msg with
         {
@@ -504,12 +477,25 @@ public sealed partial class AgentJobDispatcher
         var (syntheticIssueDetail, syntheticParsedIssue) = BuildSyntheticIssueContext(
             request.PrIdentifier, request.PrTitle, request.PrDescription);
 
-        var pipelineCtx = DispatchPipelineContext.Create(
-            agent, run, profile, request.PrIdentifier,
-            syntheticIssueDetail, syntheticParsedIssue, Array.Empty<IssueComment>(),
-            request.RepoProviderId, agentProviderId, request.BrainProviderId,
-            null, request.IssueProviderId, providerConfigs,
-            config, request.InitiatedBy, project);
+        var pipelineCtx = new DispatchPipelineContext
+        {
+            Agent = agent,
+            Run = run,
+            Profile = profile,
+            IssueIdentifier = request.PrIdentifier,
+            IssueDetail = syntheticIssueDetail,
+            ParsedIssue = syntheticParsedIssue,
+            IssueComments = Array.Empty<IssueComment>(),
+            RepoProviderId = request.RepoProviderId,
+            AgentProviderId = agentProviderId,
+            BrainProviderId = request.BrainProviderId,
+            PipelineProviderId = null,
+            IssueProviderId = request.IssueProviderId,
+            ProviderConfigs = providerConfigs,
+            Config = config,
+            InitiatedBy = request.InitiatedBy,
+            Project = project
+        };
 
         Func<JobAssignmentMessage, JobAssignmentMessage> customize = msg => msg with
         {
@@ -689,12 +675,25 @@ public sealed partial class AgentJobDispatcher
             _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
             project, repoProviderId, brainProviderId, providerConfigs, ct);
 
-        var pipelineCtx = DispatchPipelineContext.Create(
-            agent, run, profile, epicIdentifier,
-            syntheticIssueDetail, syntheticParsedIssue, Array.Empty<IssueComment>(),
-            repoProviderId, agentProviderId, brainProviderId,
-            null, issueProviderId, providerConfigs,
-            config, initiatedBy, project);
+        var pipelineCtx = new DispatchPipelineContext
+        {
+            Agent = agent,
+            Run = run,
+            Profile = profile,
+            IssueIdentifier = epicIdentifier,
+            IssueDetail = syntheticIssueDetail,
+            ParsedIssue = syntheticParsedIssue,
+            IssueComments = Array.Empty<IssueComment>(),
+            RepoProviderId = repoProviderId,
+            AgentProviderId = agentProviderId,
+            BrainProviderId = brainProviderId,
+            PipelineProviderId = null,
+            IssueProviderId = issueProviderId,
+            ProviderConfigs = providerConfigs,
+            Config = config,
+            InitiatedBy = initiatedBy,
+            Project = project
+        };
 
         Func<JobAssignmentMessage, JobAssignmentMessage> customize = msg => msg with
         {
