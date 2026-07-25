@@ -359,8 +359,15 @@ public class DispatchServiceLifecycleTests : IDisposable
         // Act: start ExecuteAsync
         var executeTask = InvokeExecuteAsync(service, hostStopCts.Token);
 
-        // Allow service to run a poll cycle (should dispatch the item)
-        await Task.Delay(500);
+        // Wait for first item to be dispatched
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var pollDb = await _dbFactory.CreateDbContextAsync();
+            var item = await pollDb.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == workItemId);
+            if (item?.Status == WorkItemStatus.Dispatched) break;
+            await Task.Delay(50);
+        }
 
         // Simulate leadership loss
         leaderCts.Cancel();
@@ -374,8 +381,15 @@ public class DispatchServiceLifecycleTests : IDisposable
         var resumedItemId = Guid.NewGuid();
         await InsertWorkItem(resumedItemId, "owner/repo#resumed", "kiro,dotnet", WorkItemStatus.Pending);
 
-        // Allow service to re-enter leader loop and dispatch
-        await Task.Delay(3000); // Wait for leadership re-check + poll interval
+        // Wait for the resumed item to be dispatched (leadership re-check loop is 2s max)
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            await using var pollDb = await _dbFactory.CreateDbContextAsync();
+            var item = await pollDb.WorkItems.AsNoTracking().FirstOrDefaultAsync(w => w.Id == resumedItemId);
+            if (item?.Status == WorkItemStatus.Dispatched) break;
+            await Task.Delay(50);
+        }
 
         // Stop the host
         hostStopCts.Cancel();
