@@ -38,7 +38,7 @@ public sealed class AgentHubFacadeDbFactoryWiringTests
         services.AddSingleton(Moq.Mock.Of<CodingAgentWebUI.Pipeline.Interfaces.IConfigurationStore>());
         services.AddSingleton(Moq.Mock.Of<CodingAgentWebUI.Pipeline.Interfaces.IProviderFactory>());
         services.AddSingleton(Moq.Mock.Of<CodingAgentWebUI.Pipeline.Interfaces.IPipelineRunHistoryService>());
-        services.AddSingleton(Moq.Mock.Of<CodingAgentWebUI.Pipeline.Interfaces.IConsolidationDispatcher>());
+        services.AddSingleton(Moq.Mock.Of<CodingAgentWebUI.Pipeline.Interfaces.IConsolidationDispatchService>());
         services.AddSingleton(Moq.Mock.Of<CodingAgentWebUI.Pipeline.Interfaces.IJobDispatcher>());
         services.AddSingleton<CodingAgentWebUI.Pipeline.Interfaces.IShutdownSignal>(
             new CodingAgentWebUI.Pipeline.Services.ShutdownSignal());
