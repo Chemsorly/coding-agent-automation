@@ -22,6 +22,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     /// <summary>Maximum number of run summaries returned by <see cref="GetRunHistoryAsync"/>.</summary>
     internal const int MaxHistorySize = 1000;
 
+    /// <summary>Default page size for paginated queries.</summary>
+    internal const int DefaultPageSize = 50;
+
     private static readonly JsonSerializerOptions JsonOptions = PipelineJsonOptions.Default;
 
     public PostgresPipelineRunHistoryService(
@@ -72,6 +75,16 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     public async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
     {
         return await GetRunHistoryInternalAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
+
+        return await GetRunHistoryPagedInternalAsync(page, pageSize, ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -166,6 +179,36 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             .Select(DeserializeSummary)
             .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
             .ToList()!;
+    }
+
+    private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedInternalAsync(int page, int pageSize, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+
+        // Fetch one extra to determine HasMore without a separate COUNT query
+        var entities = await db.PipelineRuns
+            .AsNoTracking()
+            .OrderByDescending(r => r.StartedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize + 1)
+            .ToListAsync(ct).ConfigureAwait(false);
+
+        var items = entities
+            .Select(DeserializeSummary)
+            .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+            .ToList()!;
+
+        var hasMore = items.Count > pageSize;
+        if (hasMore)
+            items = items.Take(pageSize).ToList();
+
+        return new PagedResult<PipelineRunSummary>
+        {
+            Items = items!,
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        };
     }
 
     private async Task AddRunToHistoryInternalAsync(PipelineRunSummary summary, CancellationToken ct)

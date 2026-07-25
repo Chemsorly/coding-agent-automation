@@ -15,6 +15,21 @@ public sealed class InMemoryPipelineRunHistoryService : IPipelineRunHistoryServi
     public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
         => Task.FromResult<IReadOnlyList<PipelineRunSummary>>(_history.ToList().AsReadOnly());
 
+    public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default)
+    {
+        var items = _history.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+        var hasMore = items.Count > pageSize;
+        if (hasMore)
+            items = items.Take(pageSize).ToList();
+        return Task.FromResult(new PagedResult<PipelineRunSummary>
+        {
+            Items = items.AsReadOnly(),
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        });
+    }
+
     public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
     {
         _history.Insert(0, run.ToSummary());
