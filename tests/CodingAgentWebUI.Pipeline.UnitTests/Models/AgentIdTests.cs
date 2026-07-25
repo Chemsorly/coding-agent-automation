@@ -90,4 +90,28 @@ public class AgentIdTests
 
         set.Should().HaveCount(1);
     }
+
+    [Fact]
+    public void ImplicitConversion_FromNull_ThrowsArgumentException()
+    {
+        var act = () => { AgentId id = (string)null!; };
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void ImplicitConversion_FromEmpty_ThrowsArgumentException()
+    {
+        var act = () => { AgentId id = ""; };
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void DefaultToString_ReturnsEmptyString()
+    {
+        var id = default(AgentId);
+
+        id.ToString().Should().Be(string.Empty);
+    }
 }
