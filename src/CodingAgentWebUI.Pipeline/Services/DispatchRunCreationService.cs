@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 
@@ -15,6 +16,15 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     private readonly PipelineProviderManager _providerManager;
     private readonly IProviderFactory _providerFactory;
     private readonly Serilog.ILogger _logger;
+
+    /// <summary>
+    /// Atomic in-flight reservation set. Prevents the TOCTOU race between
+    /// <see cref="PipelineRunLifecycleService.IsIssueBeingProcessed"/> and
+    /// <see cref="PipelineRunLifecycleService.RegisterDispatchedRun"/> by ensuring only one
+    /// concurrent caller can proceed through the async provider resolution gap for a given issue.
+    /// Key format: "{issueProviderConfigId}:{issueIdentifier}"
+    /// </summary>
+    private readonly ConcurrentDictionary<string, byte> _dispatchingIssues = new();
 
     public DispatchRunCreationService(
         PipelineRunLifecycleService lifecycle,
@@ -53,23 +63,39 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
         ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value, nameof(repoProviderId));
         ArgumentException.ThrowIfNullOrEmpty(agentProviderId.Value, nameof(agentProviderId));
 
-        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
+        var compositeKey = $"{issueProviderId.Value}:{issueIdentifier}";
+
+        // Atomic reservation — TryAdd fails if another thread is already dispatching this issue
+        if (!_dispatchingIssues.TryAdd(compositeKey, 0))
         {
-            _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping dispatch", issueIdentifier);
+            _logger.Warning("Issue {IssueIdentifier} is already being dispatched by another caller, skipping", issueIdentifier);
             return null;
         }
 
-        var run = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
-            issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy, runType, ct);
+        try
+        {
+            if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
+            {
+                _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping dispatch", issueIdentifier);
+                return null;
+            }
 
-        if (!_lifecycle.RegisterDispatchedRun(run))
-            return null;
+            var run = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
+                issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy, runType, ct);
 
-        _logger.Information(
-            "Dispatched run {RunId} created for issue {IssueIdentifier} → agent {AgentId}",
-            run.RunId, issueIdentifier, agentId);
+            if (!_lifecycle.RegisterDispatchedRun(run))
+                return null;
 
-        return run;
+            _logger.Information(
+                "Dispatched run {RunId} created for issue {IssueIdentifier} → agent {AgentId}",
+                run.RunId, issueIdentifier, agentId);
+
+            return run;
+        }
+        finally
+        {
+            _dispatchingIssues.TryRemove(compositeKey, out _);
+        }
     }
 
     /// <inheritdoc />
@@ -84,29 +110,45 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
         ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value, nameof(repoProviderId));
         ArgumentException.ThrowIfNullOrEmpty(agentProviderId.Value, nameof(agentProviderId));
 
-        if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
+        var compositeKey = $"{issueProviderId.Value}:{issueIdentifier}";
+
+        // Atomic reservation — TryAdd fails if another thread is already dispatching this issue
+        if (!_dispatchingIssues.TryAdd(compositeKey, 0))
         {
-            _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping reservation", issueIdentifier);
+            _logger.Warning("Issue {IssueIdentifier} is already being dispatched by another caller, skipping reservation", issueIdentifier);
             return null;
         }
 
-        // TODO: startedAt is captured before ResolveAndCreateRunAsync (provider resolution).
-        // Original code captured it after provider resolution. If excluding provider resolution
-        // latency from start time matters, move this assignment after the helper call.
-        var startedAt = DateTimeOffset.UtcNow;
+        try
+        {
+            if (_lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderId.Value))
+            {
+                _logger.Warning("Issue {IssueIdentifier} is already being processed, skipping reservation", issueIdentifier);
+                return null;
+            }
 
-        var sentinel = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
-            issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy,
-            PipelineRunType.Implementation, ct);
+            // TODO: startedAt is captured before ResolveAndCreateRunAsync (provider resolution).
+            // Original code captured it after provider resolution. If excluding provider resolution
+            // latency from start time matters, move this assignment after the helper call.
+            var startedAt = DateTimeOffset.UtcNow;
 
-        if (!_lifecycle.RegisterDispatchedRun(sentinel))
-            return null;
+            var sentinel = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
+                issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy,
+                PipelineRunType.Implementation, ct);
 
-        _logger.Information(
-            "Reserved run {RunId} for issue {IssueIdentifier}",
-            sentinel.RunId, issueIdentifier);
+            if (!_lifecycle.RegisterDispatchedRun(sentinel))
+                return null;
 
-        return new RunReservation(sentinel.RunId, sentinel.RepositoryName!, sentinel.ModelName!, startedAt);
+            _logger.Information(
+                "Reserved run {RunId} for issue {IssueIdentifier}",
+                sentinel.RunId, issueIdentifier);
+
+            return new RunReservation(sentinel.RunId, sentinel.RepositoryName!, sentinel.ModelName!, startedAt);
+        }
+        finally
+        {
+            _dispatchingIssues.TryRemove(compositeKey, out _);
+        }
     }
 
     /// <inheritdoc />
