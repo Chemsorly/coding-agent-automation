@@ -19,7 +19,7 @@ public interface IConsolidationService
     /// <returns>The created <see cref="ConsolidationRun"/>, or <c>null</c> if the trigger was rejected.</returns>
     // TODO: CancellationToken should be the last parameter per .NET convention. Changing this
     // signature is a breaking change across all callers — defer to a separate cleanup pass.
-    Task<ConsolidationRun?> TriggerAsync(ConsolidationRunType type, string? templateId, CancellationToken ct, bool autoDispatch = false);
+    Task<ConsolidationRun?> TriggerAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct, bool autoDispatch = false);
 
     /// <summary>
     /// Returns all consolidation runs, ordered by <see cref="ConsolidationRun.StartedAtUtc"/> descending.
@@ -33,7 +33,7 @@ public interface IConsolidationService
     /// <param name="type">The consolidation run type to filter by.</param>
     /// <param name="templateId">The template ID to filter by (null for global/harness suggestions).</param>
     /// <param name="ct">Cancellation token.</param>
-    Task<ConsolidationRun?> GetLastRunAsync(ConsolidationRunType type, string? templateId, CancellationToken ct);
+    Task<ConsolidationRun?> GetLastRunAsync(ConsolidationRunType type, TemplateId? templateId, CancellationToken ct);
 
     /// <summary>
     /// Updates a run's status and summary after completion.
@@ -108,4 +108,12 @@ public interface IConsolidationService
     /// Used by HeartbeatMonitor to detect stuck consolidation runs that exceed the progress timeout.
     /// </summary>
     DateTimeOffset? GetActiveRunStartedAt(string runId);
+
+    /// <summary>
+    /// Deletes a consolidation run by ID. Invalidates the run history cache.
+    /// Used by retention cleanup services.
+    /// </summary>
+    /// <param name="runId">The run ID to delete.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task DeleteRunAsync(string runId, CancellationToken ct);
 }

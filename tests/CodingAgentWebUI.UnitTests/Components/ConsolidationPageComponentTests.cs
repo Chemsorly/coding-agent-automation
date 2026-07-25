@@ -35,7 +35,7 @@ public class ConsolidationPageComponentTests : BunitContext
             .ReturnsAsync(harnessSuggestions);
 
         _mockConsolidationService.Setup(s => s.GetLastRunAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ConsolidationRun?)null);
 
         Services.AddSingleton<IConsolidationService>(_mockConsolidationService.Object);
@@ -366,8 +366,11 @@ public class ConsolidationPageComponentTests : BunitContext
         };
         RegisterServices(templates: templates);
 
+        // TODO: Mock uses It.IsAny<TemplateId?>() which doesn't verify the correct template ID
+        // value flows through the Razor page's string→TemplateId conversion. Add a test that
+        // asserts the specific TemplateId value passed to TriggerAsync matches the expected template.
         _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync((ConsolidationRun?)null);
 
         var cut = Render<Consolidation>();
@@ -495,7 +498,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(new ConsolidationRun
             {
                 RunId = "run-1",
@@ -532,7 +535,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(new ConsolidationRun
             {
                 RunId = "run-1",
@@ -586,7 +589,7 @@ public class ConsolidationPageComponentTests : BunitContext
 
         Assert.Empty(cut.FindAll(".modal-overlay"));
         _mockConsolidationService.Verify(s => s.TriggerAsync(
-            It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
+            It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
     }
 
     /// <summary>
@@ -602,7 +605,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(new ConsolidationRun
             {
                 RunId = "run-1",
@@ -637,7 +640,7 @@ public class ConsolidationPageComponentTests : BunitContext
         RegisterServices(templates: templates);
 
         _mockConsolidationService.Setup(s => s.TriggerAsync(
-                It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+                It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(new ConsolidationRun
             {
                 RunId = "run-1",

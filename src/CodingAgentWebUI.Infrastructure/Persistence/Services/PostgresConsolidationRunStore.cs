@@ -42,7 +42,11 @@ public sealed class PostgresConsolidationRunStore : IConsolidationRunStore
     public async Task<IReadOnlyList<ConsolidationRun>> LoadAllRunsAsync(CancellationToken ct)
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
-        var entities = await db.ConsolidationRuns.AsNoTracking().ToListAsync(ct);
+        var entities = await db.ConsolidationRuns
+            .AsNoTracking()
+            .OrderByDescending(e => e.Id)
+            .Take(1000)
+            .ToListAsync(ct);
 
         var runs = new List<ConsolidationRun>();
         foreach (var entity in entities)

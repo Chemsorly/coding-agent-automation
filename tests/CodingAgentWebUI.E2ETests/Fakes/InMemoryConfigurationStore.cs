@@ -225,33 +225,35 @@ public sealed class InMemoryConfigurationStore : IConfigurationStore
         return Task.CompletedTask;
     }
 
-    public Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct)
+    public Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
     {
-        _templates.RemoveAll(t => t.Id == templateId);
+        var templateIdValue = templateId.Value;
+        _templates.RemoveAll(t => t.Id == templateIdValue);
 
         var project = _projects.FirstOrDefault(p => p.Id == projectId);
         if (project != null)
         {
             _projects.Remove(project);
-            _projects.Add(project with { TemplateIds = project.TemplateIds.Where(id => id != templateId).ToList() });
+            _projects.Add(project with { TemplateIds = project.TemplateIds.Where(id => id != templateIdValue).ToList() });
         }
         return Task.CompletedTask;
     }
 
-    public Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, string templateId, CancellationToken ct)
+    public Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct)
     {
+        var templateIdValue = templateId.Value;
         var source = _projects.FirstOrDefault(p => p.Id == sourceProjectId);
         if (source is not null)
         {
             _projects.Remove(source);
-            _projects.Add(source with { TemplateIds = source.TemplateIds.Where(id => id != templateId).ToList() });
+            _projects.Add(source with { TemplateIds = source.TemplateIds.Where(id => id != templateIdValue).ToList() });
         }
 
         var target = _projects.FirstOrDefault(p => p.Id == targetProjectId);
-        if (target is not null && !target.TemplateIds.Contains(templateId))
+        if (target is not null && !target.TemplateIds.Contains(templateIdValue))
         {
             _projects.Remove(target);
-            _projects.Add(target with { TemplateIds = target.TemplateIds.Append(templateId).ToList() });
+            _projects.Add(target with { TemplateIds = target.TemplateIds.Append(templateIdValue).ToList() });
         }
 
         return Task.CompletedTask;

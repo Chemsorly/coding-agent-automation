@@ -577,26 +577,26 @@ public class JsonConfigurationStore : IConfigurationStore
         }
     }
 
-    public async Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct)
+    public async Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(projectId);
-        ArgumentNullException.ThrowIfNull(templateId);
+        var templateIdValue = templateId.Value;
         ValidateProjectId(projectId);
-        ValidateTemplateId(templateId);
+        ValidateTemplateId(templateIdValue);
 
         await _projectLock.WaitAsync(ct);
         try
         {
-            var path = Path.Combine(_baseDirectory, "projects", projectId, "templates", $"{templateId}.json");
+            var path = Path.Combine(_baseDirectory, "projects", projectId, "templates", $"{templateIdValue}.json");
             if (File.Exists(path))
                 File.Delete(path);
 
             // Remove template ID from project's TemplateIds
             var project = await GetProjectByIdAsync(projectId, ct);
-            if (project is not null && project.TemplateIds.Contains(templateId))
+            if (project is not null && project.TemplateIds.Contains(templateIdValue))
             {
                 var updatedIds = project.TemplateIds.ToList();
-                updatedIds.Remove(templateId);
+                updatedIds.Remove(templateIdValue);
                 var updated = project with { TemplateIds = updatedIds };
                 await SaveEntityAsync(updated, "projects", p => p.Id, ct);
             }
@@ -610,23 +610,23 @@ public class JsonConfigurationStore : IConfigurationStore
         }
     }
 
-    public async Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, string templateId, CancellationToken ct)
+    public async Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(sourceProjectId);
         ArgumentNullException.ThrowIfNull(targetProjectId);
-        ArgumentNullException.ThrowIfNull(templateId);
+        var templateIdValue = templateId.Value;
         ValidateProjectId(sourceProjectId);
         ValidateProjectId(targetProjectId);
-        ValidateTemplateId(templateId);
+        ValidateTemplateId(templateIdValue);
 
         await _projectLock.WaitAsync(ct);
         try
         {
             // Move template file
-            var sourcePath = Path.Combine(_baseDirectory, "projects", sourceProjectId, "templates", $"{templateId}.json");
+            var sourcePath = Path.Combine(_baseDirectory, "projects", sourceProjectId, "templates", $"{templateIdValue}.json");
             var targetDir = Path.Combine(_baseDirectory, "projects", targetProjectId, "templates");
             Directory.CreateDirectory(targetDir);
-            var targetPath = Path.Combine(targetDir, $"{templateId}.json");
+            var targetPath = Path.Combine(targetDir, $"{templateIdValue}.json");
 
             if (File.Exists(sourcePath))
             {
@@ -636,20 +636,20 @@ public class JsonConfigurationStore : IConfigurationStore
 
             // Remove from source project's TemplateIds
             var sourceProject = await GetProjectByIdAsync(sourceProjectId, ct);
-            if (sourceProject is not null && sourceProject.TemplateIds.Contains(templateId))
+            if (sourceProject is not null && sourceProject.TemplateIds.Contains(templateIdValue))
             {
                 var updatedIds = sourceProject.TemplateIds.ToList();
-                updatedIds.Remove(templateId);
+                updatedIds.Remove(templateIdValue);
                 var updated = sourceProject with { TemplateIds = updatedIds };
                 await SaveEntityAsync(updated, "projects", p => p.Id, ct);
             }
 
             // Add to target project's TemplateIds
             var targetProject = await GetProjectByIdAsync(targetProjectId, ct);
-            if (targetProject is not null && !targetProject.TemplateIds.Contains(templateId))
+            if (targetProject is not null && !targetProject.TemplateIds.Contains(templateIdValue))
             {
                 var updatedIds = targetProject.TemplateIds.ToList();
-                updatedIds.Add(templateId);
+                updatedIds.Add(templateIdValue);
                 var updated = targetProject with { TemplateIds = updatedIds };
                 await SaveEntityAsync(updated, "projects", p => p.Id, ct);
             }

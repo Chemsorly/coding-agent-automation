@@ -17,6 +17,10 @@ public class JobIdTests
     }
 
     [Fact]
+    // TODO: Consider asserting .Throw<ArgumentException>() instead of ArgumentNullException to match the
+    // acceptance criteria contract ("throws ArgumentException on null or empty"). Currently passes because
+    // ArgumentNullException derives from ArgumentException, but would break if the implementation changed
+    // to throw plain ArgumentException for null inputs. See AgentIdTests for the broader assertion pattern.
     public void ImplicitConversion_FromNull_ThrowsArgumentNullException()
     {
         var act = () => { JobId id = (string)null!; };
@@ -94,6 +98,22 @@ public class JobIdTests
         };
 
         set.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public void ImplicitConversion_FromEmpty_ThrowsArgumentException()
+    {
+        var act = () => { JobId id = ""; };
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void DefaultToString_ReturnsEmptyString()
+    {
+        var id = default(JobId);
+
+        id.ToString().Should().Be(string.Empty);
     }
 }
 
