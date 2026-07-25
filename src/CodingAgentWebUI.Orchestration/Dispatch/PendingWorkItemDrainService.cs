@@ -26,7 +26,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly ILabelService _labelService;
     private readonly IProjectStore? _projectStore;
-    private readonly IConsolidationDispatcher? _consolidationDispatcher;
+    private readonly IConsolidationDispatchService? _consolidationDispatcher;
     private readonly IConsolidationRunStore? _consolidationRunStore;
     private readonly ILogger<PendingWorkItemDrainService> _logger;
 
@@ -44,7 +44,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         ILabelService labelService,
         ILogger<PendingWorkItemDrainService> logger,
         IProjectStore? projectStore = null,
-        IConsolidationDispatcher? consolidationDispatcher = null,
+        IConsolidationDispatchService? consolidationDispatcher = null,
         IConsolidationRunStore? consolidationRunStore = null)
     {
         _dbFactory = dbFactory;
@@ -168,7 +168,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             var connectionId = resolveResult.ConnectionId;
             var agentId = resolveResult.AgentId;
 
-            // --- Consolidation items: dispatch via IConsolidationDispatcher (token vending at drain time) ---
+            // --- Consolidation items: dispatch via IConsolidationDispatchService (token vending at drain time) ---
             if (item.TaskType == WorkItemTaskType.Consolidation)
             {
                 if (_consolidationDispatcher is null || _consolidationRunStore is null)

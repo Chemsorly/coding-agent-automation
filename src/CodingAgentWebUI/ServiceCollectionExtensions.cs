@@ -117,7 +117,7 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<ITokenVendingService>(),
             Log.Logger));
 
-        services.AddSingleton<IConsolidationDispatcher>(sp => new ConsolidationDispatcher(
+        services.AddSingleton<IConsolidationDispatchService>(sp => new ConsolidationDispatchService(
             sp.GetRequiredService<AgentRegistryService>(),
             sp.GetRequiredService<JobDeduplicationGuardService>(),
             sp.GetRequiredService<IAgentCommunication>(),
@@ -139,7 +139,7 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IConsolidationRunStore>(),
             sp.GetRequiredService<IHarnessSuggestionStore>(),
-            sp.GetRequiredService<IConsolidationDispatcher>()));
+            sp.GetRequiredService<IConsolidationDispatchService>()));
 
         services.AddSingleton<IConsolidationRunTracker>(sp =>
             (IConsolidationRunTracker)sp.GetRequiredService<IConsolidationService>());

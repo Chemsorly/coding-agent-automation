@@ -57,7 +57,7 @@ public class QueueWaitTimeMetricsTests : IDisposable
 
         _drainService = new JobQueueDrainService(
             _dispatcher, _registry, _mockJobDispatcher.Object,
-            mockConfigStore.Object, new Mock<IConsolidationDispatcher>().Object, new ShutdownSignal(), logger);
+            mockConfigStore.Object, new Mock<IConsolidationDispatchService>().Object, new ShutdownSignal(), logger);
     }
 
     public void Dispose() => _listener.Dispose();

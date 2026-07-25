@@ -19,7 +19,7 @@ public sealed record ConsolidationJobPreparationResult
 /// <summary>
 /// Shared consolidation job preparation: resolves provider configs from template,
 /// vends scoped GitHub tokens, and determines correct permission scope.
-/// Eliminates duplication between <c>ConsolidationDispatcher</c> (SignalR path)
+/// Eliminates duplication between <c>ConsolidationDispatchService</c> (SignalR path)
 /// and <c>DispatchService</c> (K8s path).
 /// </summary>
 public interface IConsolidationJobPreparationService
