@@ -28,4 +28,13 @@ public sealed class ReconciliationServiceOptions
     /// Duration in seconds after Dispatched before warning about pod not Ready. Default: 60.
     /// </summary>
     public int PodStartupWarningSeconds { get; set; } = 60;
+
+    /// <summary>Retention period for ConsolidationRuns in days. Default: 90.</summary>
+    public int ConsolidationRunRetentionDays { get; set; } = 90;
+
+    /// <summary>
+    /// Interval in hours between DatabaseMaintenanceService retention cycles. Default: 6.
+    /// Only used by DatabaseMaintenanceService (not ReconciliationService).
+    /// </summary>
+    public int MaintenanceIntervalHours { get; set; } = 6;
 }

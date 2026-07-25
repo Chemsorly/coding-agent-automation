@@ -9,7 +9,6 @@ using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
 using Serilog;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
@@ -21,7 +20,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Rate-limited: default 10 Jobs/s. Skips items whose selector group is at concurrency limit.
 /// Consolidation items are handled by <see cref="ConsolidationDispatchHandler"/>.
 /// </summary>
-public sealed class DispatchService : BackgroundService
+public sealed class DispatchService : LeaderElectedPollingService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<DispatchService>();
 
@@ -29,7 +28,6 @@ public sealed class DispatchService : BackgroundService
     internal const string DefaultJobTemplatesPath = "/app/config/job-templates.yaml";
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateStore _templateProvider;
@@ -37,6 +35,10 @@ public sealed class DispatchService : BackgroundService
     private readonly ILabelService? _labelService;
     private readonly IOrchestratorRunService? _runService;
     private readonly TokenBucketRateLimiter _rateLimiter;
+    private readonly DispatchStateBuilder _stateBuilder;
+
+    protected override string ServiceName => "DispatchService";
+    protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
 
     internal DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -63,9 +65,9 @@ public sealed class DispatchService : BackgroundService
         ILabelService? labelService = null,
         IAgentProfileStore? agentProfileStore = null,
         IOrchestratorRunService? runService = null)
+        : base(leaderElection)
     {
         _dbFactory = dbFactory;
-        _leaderElection = leaderElection;
         _lifecycle = lifecycle;
         _labelService = labelService;
         _runService = runService;
@@ -73,6 +75,7 @@ public sealed class DispatchService : BackgroundService
         _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
         _options = DispatchServiceOptionsFactory.Create(configuration);
         _rateLimiter = _options.CreateRateLimiter();
+        _stateBuilder = new DispatchStateBuilder(dbFactory, lifecycle, templateProvider, _templateResolver, _options);
     }
 
     /// <summary>
@@ -87,9 +90,9 @@ public sealed class DispatchService : BackgroundService
         ILabelService? labelService = null,
         IAgentProfileStore? agentProfileStore = null,
         IOrchestratorRunService? runService = null)
+        : base(leaderElection)
     {
         _dbFactory = dbFactory;
-        _leaderElection = leaderElection;
         _lifecycle = lifecycle;
         _labelService = labelService;
         _runService = runService;
@@ -97,6 +100,7 @@ public sealed class DispatchService : BackgroundService
         _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
         _options = options;
         _rateLimiter = _options.CreateRateLimiter();
+        _stateBuilder = new DispatchStateBuilder(dbFactory, lifecycle, templateProvider, _templateResolver, _options);
     }
 
     private static JobTemplateStore LoadTemplateProvider(IConfiguration configuration)
@@ -115,60 +119,7 @@ public sealed class DispatchService : BackgroundService
         return provider;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        Log.Information("DispatchService started — waiting for leader election");
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            // Wait for leadership
-            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-            }
-
-            if (stoppingToken.IsCancellationRequested) break;
-
-            Log.Information("DispatchService: leader acquired, entering poll loop");
-
-            // Create linked token: cancels on EITHER host stop OR leadership loss
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken, _leaderElection.LeaderToken);
-            var ct = linked.Token;
-
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    await PollAndDispatchAsync(ct);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "DispatchService: unhandled error in poll cycle");
-                }
-
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
-
-            if (!stoppingToken.IsCancellationRequested)
-            {
-                Log.Information("DispatchService: leadership lost, re-entering wait loop");
-            }
-        }
-
-        Log.Information("DispatchService: exiting (stopping)");
-    }
+    protected override Task OnPollCycleAsync(CancellationToken ct) => PollAndDispatchAsync(ct);
 
     /// <inheritdoc/>
     public override void Dispose()
@@ -179,119 +130,30 @@ public sealed class DispatchService : BackgroundService
 
     private async Task PollAndDispatchAsync(CancellationToken ct)
     {
-        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var state = await _stateBuilder.BuildStateAsync(
+            w => w.TaskType != WorkItemTaskType.Consolidation,
+            recordTelemetry: true,
+            ct);
 
-        // Column projection — no Payload loading. Excludes consolidation items (handled by ConsolidationDispatchHandler).
-        var pendingItems = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Pending && w.TaskType != WorkItemTaskType.Consolidation)
-            .OrderBy(w => w.CreatedAt)
-            .Select(w => new PendingWorkItemProjection
-            {
-                Id = w.Id,
-                AgentSelector = w.AgentSelector,
-                CreatedAt = w.CreatedAt,
-                TimeoutSeconds = w.TimeoutSeconds,
-                ProjectId = w.ProjectId,
-                IssueIdentifier = w.IssueIdentifier,
-                IssueProviderConfigId = w.IssueProviderConfigId,
-                TaskType = w.TaskType
-            })
-            .ToListAsync(ct);
-
-        WorkDistributionTelemetry.RecordLastPollEpoch();
-
-        if (pendingItems.Count == 0)
-        {
-            WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+        if (state is null)
             return;
-        }
 
-        // Build concurrency state: count running/dispatched per selector group
-        var activeCounts = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
-            .GroupBy(w => w.AgentSelector)
-            .Select(g => new { Selector = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-
-        var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
-
-        // PVC pool: determine available PVCs for kiro agents
-        var pvcResult = await _lifecycle.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
-        var availablePvcs = pvcResult.AvailablePvcs;
-
-        // Update credential pool metrics
-        WorkDistributionTelemetry.UpdateCredentialPoolMetrics(availablePvcs.Count, pvcResult.ClaimedCount);
-
-        foreach (var item in pendingItems)
+        await using (state.Db)
         {
-            if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
-                break;
-
-            // Rate limit
-            using var lease = await _rateLimiter.AcquireAsync(1, ct);
-            if (!lease.IsAcquired)
-            {
-                Log.Warning("DispatchService: rate limit hit, stopping dispatch cycle");
-                break;
-            }
-
-            // Check concurrency limit from template
-            var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
-            if (maxConcurrent > 0)
-            {
-                var current = concurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0);
-                if (current >= maxConcurrent)
+            await foreach (var candidate in _stateBuilder.GetEligibleCandidatesAsync(
+                state, LeaderElection, _rateLimiter, nameof(DispatchService),
+                async (item, errorMessage, innerCt) =>
                 {
-                    Log.Debug("DispatchService: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
-                        item.AgentSelector, current, maxConcurrent, item.Id);
-                    continue;
-                }
-            }
-
-            // Resolve template — fail immediately if no match (before PVC gating)
-            var template = _templateProvider.Resolve(item.AgentSelector);
-            var effectiveSelector = item.AgentSelector;
-            if (template is null)
+                    await _lifecycle.FailWorkItemAsync(item.Id, errorMessage, innerCt);
+                },
+                ct))
             {
-                // Fallback: AgentSelector might be a subset of the template's label set.
-                // Resolve profile to get the full label set, then retry template lookup.
-                var (fallbackTemplate, resolvedSelector) = await _templateResolver.ResolveTemplateViaProfileAsync(
-                    item.AgentSelector, nameof(DispatchService), ct);
-                if (fallbackTemplate is null)
-                {
-                    await _lifecycle.FailWorkItemAsync(item.Id, $"No job template for selector: {item.AgentSelector}", ct);
-                    continue;
-                }
-                template = fallbackTemplate;
-                effectiveSelector = resolvedSelector!;
-
-                // Re-check concurrency limit against the resolved selector (the actual template key)
-                var resolvedMaxConcurrent = template.MaxConcurrent;
-                if (resolvedMaxConcurrent > 0)
-                {
-                    var current = concurrencyBySelector.GetValueOrDefault(effectiveSelector, 0);
-                    if (current >= resolvedMaxConcurrent)
-                    {
-                        Log.Debug("DispatchService: resolved selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
-                            effectiveSelector, current, resolvedMaxConcurrent, item.Id);
-                        continue;
-                    }
-                }
+                await DispatchSingleItemAsync(state.Db, candidate.Item, candidate.Template,
+                    candidate.IsKiroAgent, state.AvailablePvcs, state.ConcurrencyBySelector, ct);
             }
 
-            var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-
-            if (isKiroAgent && availablePvcs.Count == 0)
-            {
-                // No PVC available — skip, leave Pending for next poll cycle (NOT failed)
-                Log.Information("DispatchService: no PVC available for kiro agent, skipping WorkItem {WorkItemId}", item.Id);
-                continue;
-            }
-
-            await DispatchSingleItemAsync(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, ct);
+            WorkDistributionTelemetry.DispatcherPollCount.Add(1);
         }
-
-        WorkDistributionTelemetry.DispatcherPollCount.Add(1);
     }
 
     private async Task DispatchSingleItemAsync(
@@ -368,20 +230,5 @@ public sealed class DispatchService : BackgroundService
         return configuredPvcs
             .Except(claimedPvcs, StringComparer.Ordinal)
             .ToList();
-    }
-
-    /// <summary>
-    /// Lightweight projection of pending work items (no Payload loaded).
-    /// </summary>
-    internal sealed record PendingWorkItemProjection
-    {
-        public required Guid Id { get; init; }
-        public required string AgentSelector { get; init; }
-        public required DateTimeOffset CreatedAt { get; init; }
-        public required int TimeoutSeconds { get; init; }
-        public WorkItemTaskType TaskType { get; init; }
-        public string? ProjectId { get; init; }
-        public string? IssueIdentifier { get; init; }
-        public string? IssueProviderConfigId { get; init; }
     }
 }

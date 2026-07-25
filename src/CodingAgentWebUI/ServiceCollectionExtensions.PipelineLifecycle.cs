@@ -27,7 +27,8 @@ public static partial class ServiceCollectionExtensions
         services.AddSingleton(sp => new PipelineRunLifecycleService(
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
-            Log.Logger));
+            Log.Logger,
+            sp.GetService<IAgentCancellationSender>()));
         services.AddSingleton<ILifecycleShutdownAction>(sp =>
             sp.GetRequiredService<PipelineRunLifecycleService>());
 
