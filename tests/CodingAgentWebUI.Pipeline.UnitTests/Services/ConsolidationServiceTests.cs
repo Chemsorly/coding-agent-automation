@@ -92,7 +92,8 @@ public sealed class ConsolidationServiceTests : IDisposable
         _mockProjectStore.Object,
         _mockRunHistory.Object,
         new FileSystemConsolidationRunStore(_runsDir),
-        new FileSystemHarnessSuggestionStore(_suggestionsPath));
+        new FileSystemHarnessSuggestionStore(_suggestionsPath),
+        workspaceManager: new ConsolidationWorkspaceManager(_logger, _config));
 
     #region TriggerAsync — creates run and persists
 
@@ -494,7 +495,6 @@ public sealed class ConsolidationServiceTests : IDisposable
     public async Task GetLastSuccessfulHarnessRunTimestampAsync_WithSuccessfulRuns_ReturnsLatestTimestamp()
     {
         // Arrange
-        var sut = CreateSut();
         Directory.CreateDirectory(_runsDir);
 
         var olderTimestamp = new DateTime(2026, 1, 10, 12, 0, 0, DateTimeKind.Utc);
@@ -504,8 +504,11 @@ public sealed class ConsolidationServiceTests : IDisposable
         WriteConsolidationRunFile("run-2", ConsolidationRunType.HarnessSuggestions, ConsolidationRunStatus.Succeeded, newerTimestamp);
         WriteConsolidationRunFile("run-3", ConsolidationRunType.BrainConsolidation, ConsolidationRunStatus.Succeeded, newerTimestamp.AddDays(1));
 
+        var feedbackCache = new ConsolidationFeedbackCache(
+            _logger, new FileSystemConsolidationRunStore(_runsDir), _mockRunHistory.Object);
+
         // Act
-        var result = await sut.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
+        var result = await feedbackCache.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
 
         // Assert — returns the latest HarnessSuggestions succeeded timestamp, not the brain one
         result.Should().Be(newerTimestamp);
@@ -514,12 +517,12 @@ public sealed class ConsolidationServiceTests : IDisposable
     [Fact]
     public async Task GetLastSuccessfulHarnessRunTimestampAsync_NoRuns_ReturnsMinValue()
     {
-        // Arrange
-        var sut = CreateSut();
-        // Don't create the directory — simulates first run
+        // Arrange — Don't create the directory — simulates first run
+        var feedbackCache = new ConsolidationFeedbackCache(
+            _logger, new FileSystemConsolidationRunStore(_runsDir), _mockRunHistory.Object);
 
         // Act
-        var result = await sut.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
+        var result = await feedbackCache.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
 
         // Assert
         result.Should().Be(DateTimeOffset.MinValue);
@@ -529,12 +532,14 @@ public sealed class ConsolidationServiceTests : IDisposable
     public async Task GetLastSuccessfulHarnessRunTimestampAsync_OnlyFailedRuns_ReturnsMinValue()
     {
         // Arrange
-        var sut = CreateSut();
         Directory.CreateDirectory(_runsDir);
         WriteConsolidationRunFile("run-1", ConsolidationRunType.HarnessSuggestions, ConsolidationRunStatus.Failed, DateTimeOffset.UtcNow);
 
+        var feedbackCache = new ConsolidationFeedbackCache(
+            _logger, new FileSystemConsolidationRunStore(_runsDir), _mockRunHistory.Object);
+
         // Act
-        var result = await sut.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
+        var result = await feedbackCache.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
 
         // Assert
         result.Should().Be(DateTimeOffset.MinValue);

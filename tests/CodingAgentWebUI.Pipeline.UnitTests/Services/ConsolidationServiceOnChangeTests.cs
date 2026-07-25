@@ -44,7 +44,10 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
             mockProjectStore.Object,
             mockHistory.Object,
             new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs")),
-            new FileSystemHarnessSuggestionStore(Path.Combine(_tempDir, "h.json")));
+            new FileSystemHarnessSuggestionStore(Path.Combine(_tempDir, "h.json")),
+            workspaceManager: new ConsolidationWorkspaceManager(
+                new LoggerConfiguration().CreateLogger(),
+                new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir }));
 
         _sut.OnChange += () => _onChangeLog.Add(DateTime.UtcNow.ToString("O"));
     }

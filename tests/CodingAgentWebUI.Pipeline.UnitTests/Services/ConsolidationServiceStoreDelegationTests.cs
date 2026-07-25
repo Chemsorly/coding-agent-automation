@@ -39,7 +39,10 @@ public sealed class ConsolidationServiceStoreDelegationTests
         _mockProjectStore.Object,
         _mockRunHistory.Object,
         _mockRunStore.Object,
-        _mockHarnessStore.Object);
+        _mockHarnessStore.Object,
+        workspaceManager: new ConsolidationWorkspaceManager(
+            new LoggerConfiguration().CreateLogger(),
+            new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }));
 
     [Fact]
     public async Task UpdateRunAsync_Calls_GetByIdAsync_OnStore()
