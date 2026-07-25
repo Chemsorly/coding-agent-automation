@@ -20,26 +20,25 @@ public sealed class HttpPrimaryCompletionReporter : IJobCompletionReporter
     private readonly string _workItemId;
     private readonly IWorkItemLifecycleClient _lifecycleClient;
     private readonly IAgentConnectionManager _connectionManager;
-    private readonly AgentIdentity _agentIdentity;
+    private readonly AgentId _agentId;
     private readonly Serilog.ILogger _logger;
 
     public HttpPrimaryCompletionReporter(
         string workItemId,
         IWorkItemLifecycleClient lifecycleClient,
         IAgentConnectionManager connectionManager,
-        AgentIdentity agentIdentity,
+        AgentId agentId,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(workItemId);
         ArgumentNullException.ThrowIfNull(lifecycleClient);
         ArgumentNullException.ThrowIfNull(connectionManager);
-        ArgumentNullException.ThrowIfNull(agentIdentity);
         ArgumentNullException.ThrowIfNull(logger);
 
         _workItemId = workItemId;
         _lifecycleClient = lifecycleClient;
         _connectionManager = connectionManager;
-        _agentIdentity = agentIdentity;
+        _agentId = agentId;
         _logger = logger;
     }
 
@@ -60,7 +59,7 @@ public sealed class HttpPrimaryCompletionReporter : IJobCompletionReporter
         var terminalUpdate = new WorkItemStatusUpdate
         {
             Status = terminalStatus,
-            AgentId = _agentIdentity.Id,
+            AgentId = _agentId.Value,
             Result = SerializeResult(payload),
             ErrorMessage = payload.FailureReason,
             FailureReason = terminalStatus == "Failed"

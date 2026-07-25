@@ -21,7 +21,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
     private readonly Mock<IPipelineReporterFactory> _mockReporterFactory = new();
     private readonly Mock<Serilog.ILogger> _mockLogger = new();
     private readonly FeedbackService _feedbackService;
-    private readonly AgentIdentity _agentIdentity = new("test-agent");
+    private readonly AgentId _agentId = new("test-agent");
     private readonly HubConnection _connection;
     private readonly OutputBatcher _batcher = new();
 
@@ -47,7 +47,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
             _mockQualityGateValidator.Object,
             _mockReporterFactory.Object,
             _feedbackService,
-            _agentIdentity,
+            _agentId,
             _mockLogger.Object,
             new PullRequestFinalizationService(_mockLogger.Object),
             brainUpdateService,

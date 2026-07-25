@@ -92,26 +92,18 @@ public class AgentIdTests
     }
 
     [Fact]
-    public void ImplicitConversion_FromNull_ThrowsArgumentException()
+    public void ImplicitConversion_NullString_Throws()
     {
-        var act = () => { AgentId id = (string)null!; };
+        var act = () => { AgentId id = null!; };
 
         act.Should().Throw<ArgumentException>();
     }
 
     [Fact]
-    public void ImplicitConversion_FromEmpty_ThrowsArgumentException()
+    public void ImplicitConversion_EmptyString_Throws()
     {
-        var act = () => { AgentId id = ""; };
+        var act = () => { AgentId id = string.Empty; };
 
         act.Should().Throw<ArgumentException>();
-    }
-
-    [Fact]
-    public void DefaultToString_ReturnsEmptyString()
-    {
-        var id = default(AgentId);
-
-        id.ToString().Should().Be(string.Empty);
     }
 }

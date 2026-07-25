@@ -65,7 +65,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         HubConnectionManagerFactory hubManagerFactory,
         SignalRCompletionReporter completionReporter,
         AgentJobSlotManager slotManager,
-        AgentIdentity agentIdentity,
+        AgentId agentId,
         IHostApplicationLifetime hostApplicationLifetime,
         Serilog.ILogger logger)
     {
@@ -73,7 +73,6 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(hubManagerFactory);
         ArgumentNullException.ThrowIfNull(completionReporter);
         ArgumentNullException.ThrowIfNull(slotManager);
-        ArgumentNullException.ThrowIfNull(agentIdentity);
         ArgumentNullException.ThrowIfNull(hostApplicationLifetime);
         ArgumentNullException.ThrowIfNull(logger);
 
@@ -85,7 +84,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
 
-        _agentId = agentIdentity.Id;
+        _agentId = agentId.Value;
 
         var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;
         _labels = labelsEnv
