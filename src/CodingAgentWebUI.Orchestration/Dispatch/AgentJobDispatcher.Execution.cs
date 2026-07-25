@@ -76,6 +76,16 @@ public sealed partial class AgentJobDispatcher
     }
 
     /// <summary>
+    /// Result of a variant-specific dispatch preparation delegate. Replaces the anonymous tuple
+    /// <c>(DispatchPipelineContext, Func&lt;JobAssignmentMessage, JobAssignmentMessage&gt;, Action?)</c>
+    /// with a named type for improved readability and stack traces.
+    /// </summary>
+    internal sealed record DispatchPipelineResult(
+        DispatchPipelineContext Context,
+        Func<JobAssignmentMessage, JobAssignmentMessage> Customize,
+        Action? OnSuccess);
+
+    /// <summary>
     /// Builds a <see cref="JobAssignmentMessage"/> with properties shared across all dispatch paths.
     /// Variant-specific properties (RunType, QualityGateConfigs, ReviewerConfigs, etc.) must be set
     /// by the caller on the returned message using <c>with</c> expressions.
@@ -263,7 +273,7 @@ public sealed partial class AgentJobDispatcher
         string revertLabel,
         string failureMessageTemplate,
         PipelineProject? project,
-        Func<PipelineProject, AgentProfile, string, CancellationToken, Task<(DispatchPipelineContext Context, Func<JobAssignmentMessage, JobAssignmentMessage> Customize, Action? OnSuccess)?>> prepareAndCustomize,
+        Func<PipelineProject, AgentProfile, string, CancellationToken, Task<DispatchPipelineResult?>> prepareAndCustomize,
         CancellationToken ct,
         LabelTargetKind? revertTargetKind = null)
     {
@@ -277,7 +287,7 @@ public sealed partial class AgentJobDispatcher
 
             var result = await prepareAndCustomize(proj, profile, agentProviderId, ct);
             if (result is null) return false;
-            var (pipelineCtx, customize, onSuccess) = result.Value;
+            var (pipelineCtx, customize, onSuccess) = result;
 
             // TODO: ApplyRunMetadata is called AFTER RegisterDispatchedRun (which fires NotifyChange) in the
             // review and decomposition paths. Subscribers reading the run between registration and this point
@@ -307,6 +317,11 @@ public sealed partial class AgentJobDispatcher
         CancellationToken ct,
         PipelineProject? project = null)
     {
+        // TODO: These adapter lambdas could be replaced with method group references or named local functions
+        // to fully satisfy the acceptance criterion "each dispatch variant has a named method rather than an inline lambda."
+        // Currently the lambdas are thin pass-through wrappers that close over additional parameters — the core logic
+        // lives in the named Prepare*ContextAsync methods. Eliminating these would require refactoring
+        // ExecuteDispatchPipelineAsync's delegate signature to avoid the need for parameter closure.
         return await ExecuteDispatchPipelineAsync(
             agent, issueIdentifier, "issue",
             revertProviderConfigId: issueProviderId,
@@ -329,7 +344,7 @@ public sealed partial class AgentJobDispatcher
     /// Prepares the <see cref="DispatchPipelineContext"/> for an implementation dispatch.
     /// Performs QG/reviewer resolution, issue context fetching, run creation, and staleness detection.
     /// </summary>
-    private async Task<(DispatchPipelineContext Context, Func<JobAssignmentMessage, JobAssignmentMessage> Customize, Action? OnSuccess)?>
+    private async Task<DispatchPipelineResult?>
         PrepareImplementationContextAsync(
             AgentEntry agent,
             string issueIdentifier,
@@ -402,7 +417,7 @@ public sealed partial class AgentJobDispatcher
             }
         };
 
-        return (pipelineCtx, customize, onSuccess);
+        return new DispatchPipelineResult(pipelineCtx, customize, onSuccess);
     }
 
     /// <summary>
@@ -431,7 +446,7 @@ public sealed partial class AgentJobDispatcher
     /// Prepares the <see cref="DispatchPipelineContext"/> for a PR review dispatch.
     /// Resolves reviewer configs, reserves a run, pre-fetches linked issues, and builds synthetic issue context.
     /// </summary>
-    private async Task<(DispatchPipelineContext Context, Func<JobAssignmentMessage, JobAssignmentMessage> Customize, Action? OnSuccess)?>
+    private async Task<DispatchPipelineResult?>
         PrepareReviewContextAsync(
             AgentEntry agent,
             ReviewDispatchRequest request,
@@ -529,7 +544,7 @@ public sealed partial class AgentJobDispatcher
                 run.RunId, agent.AgentId, request.PrIdentifier, profile.Id, resolvedReviewerConfigs.Count, linkedIssueContexts.Count);
         };
 
-        return (pipelineCtx, customize, onSuccess);
+        return new DispatchPipelineResult(pipelineCtx, customize, onSuccess);
     }
 
     /// <summary>
@@ -574,7 +589,7 @@ public sealed partial class AgentJobDispatcher
     /// Reserves a run, loads config early for workspace path, builds cross-repo project context,
     /// and prepares provider configs with additional repo providers for project-level decomposition.
     /// </summary>
-    private async Task<(DispatchPipelineContext Context, Func<JobAssignmentMessage, JobAssignmentMessage> Customize, Action? OnSuccess)?>
+    private async Task<DispatchPipelineResult?>
         PrepareDecompositionContextAsync(
             AgentEntry agent,
             string epicIdentifier,
@@ -709,7 +724,7 @@ public sealed partial class AgentJobDispatcher
                 phaseType, run.RunId, agent.AgentId, epicIdentifier, profile.Id, project.Name);
         };
 
-        return (pipelineCtx, customize, onSuccess);
+        return new DispatchPipelineResult(pipelineCtx, customize, onSuccess);
     }
 
     /// <summary>
