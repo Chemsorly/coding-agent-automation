@@ -103,8 +103,8 @@ public sealed partial class AgentJobDispatcher
             ProjectSecrets = ctx.Project.Secrets,
             TraceContext = CaptureTraceContext(),
             ProjectSteeringContent = ctx.Project.SteeringContent,
-            // TODO: RepoSteeringContent lookup is effectively dead code — PrepareProviderConfigsAsync → TokenVendingService.CloneWithSettings
-            // does not copy SteeringContent, so this always resolves to null. Consider passing SteeringContent separately or fixing CloneWithSettings.
+            // TODO: This path was historically dead code (TokenVendingService.CloneWithSettings dropped SteeringContent).
+            // Fixed in #1628. Integration test in RepoSteeringContentIntegrationTests guards against regression.
             RepoSteeringContent = ctx.ProviderConfigs.FirstOrDefault(c => c.Id == ctx.RepoProviderId)?.SteeringContent,
             IssueProviderConfigId = ctx.IssueProviderId,
             // Variant-specific properties default to safe values; callers override via `with`
