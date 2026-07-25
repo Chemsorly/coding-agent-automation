@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using CodingAgentWebUI.Pipeline.Models;
 using Serilog;
 
@@ -27,13 +28,12 @@ public static class PipelineConfigurationResolver
         // Init setters are callable via reflection because they are regular setters at the IL level —
         // the runtime does not enforce init-only semantics during reflection. This is a stable .NET
         // contract relied upon by System.Text.Json and MessagePack serializers.
-        // TODO: Consider wrapping clone invocation in try block — if s_cloneMethod.Invoke throws
-        // (e.g., OOM), the exception propagates unhandled since the catch only handles TargetInvocationException
-        // wrapping ArgumentOutOfRangeException. Low probability but differs from original per-property `with` pattern.
-        var clone = (PipelineConfiguration)s_cloneMethod.Invoke(config, null)!;
+        PipelineConfiguration clone;
 
         try
         {
+            clone = (PipelineConfiguration)s_cloneMethod.Invoke(config, null)!;
+
             foreach (var mapping in s_overrideMappings)
             {
                 var projectValue = mapping.ProjectGetter(project);
@@ -42,13 +42,10 @@ public static class PipelineConfigurationResolver
                 if (mapping.DeepMerge)
                 {
                     // Deep-merge: read current config value, invoke ApplyOverrides, assign result
-                    // TODO: This assumes deep-merge properties are simple auto-properties (not delegating).
+                    // NOTE: This assumes deep-merge properties are simple auto-properties (not delegating).
                     // If a future deep-merge property delegates to a sub-config, GetValue after SetValue on
                     // a shallow clone could read stale data. Currently safe (CodeReview is the only deep-merge property).
                     var currentValue = mapping.ConfigProperty.GetValue(clone);
-                    // TODO: MethodInfo.Invoke wraps all exceptions in TargetInvocationException, changing
-                    // observable exception types for callers vs the original direct-call implementation.
-                    // Non-ArgumentOutOfRangeException failures from ApplyOverrides will propagate wrapped.
                     var merged = mapping.ApplyOverridesMethod!.Invoke(currentValue, [projectValue]);
                     mapping.ConfigProperty.SetValue(clone, merged);
                 }
@@ -69,6 +66,15 @@ public static class PipelineConfigurationResolver
                 "Project '{ProjectName}' (ID: {ProjectId}) has out-of-range override values — falling back to global defaults. {ErrorMessage}",
                 project.Name, project.Id, rangeEx.Message);
             return config;
+        }
+        catch (TargetInvocationException ex)
+        {
+            // Unwrap and re-throw with original exception type and stack trace preserved.
+            // All reflection calls (GetValue, SetValue, Invoke) wrap thrown exceptions in
+            // TargetInvocationException — this ensures callers observe the original exception type.
+            // TODO: Consider defensive null-check (ex.InnerException ?? ex) — InnerException is always non-null from MethodInfo.Invoke but the type is nullable
+            ExceptionDispatchInfo.Capture(ex.InnerException!).Throw();
+            throw; // Unreachable but satisfies compiler
         }
 
         return clone;

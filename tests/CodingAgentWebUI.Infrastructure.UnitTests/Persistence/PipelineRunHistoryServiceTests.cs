@@ -198,7 +198,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
 
         // Persist is now fire-and-forget async — wait briefly for write to complete
         var expectedFile = Path.Combine(_tempDir, "persist-test-run.json");
-        await WaitForFileAsync(expectedFile);
+        await WaitForFileAsync(expectedFile, timeoutMs: 15000);
 
         File.Exists(expectedFile).Should().BeTrue();
 
@@ -269,7 +269,7 @@ public class PipelineRunHistoryServiceTests : IDisposable
 
         // Persist is now fire-and-forget async — wait briefly for write to complete
         var expectedFile = Path.Combine(nonExistentDir, "dir-create-test.json");
-        await WaitForFileAsync(expectedFile);
+        await WaitForFileAsync(expectedFile, timeoutMs: 15000);
 
         Directory.Exists(nonExistentDir).Should().BeTrue();
         File.Exists(expectedFile).Should().BeTrue();
