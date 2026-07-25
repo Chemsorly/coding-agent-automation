@@ -24,12 +24,13 @@ public class PipelineRunLifecycleServiceTests
         _mockLogger = new Mock<Serilog.ILogger>();
     }
 
-    private PipelineRunLifecycleService CreateService(IOrchestratorRunService? runService = null)
+    private PipelineRunLifecycleService CreateService(IOrchestratorRunService? runService = null, IAgentCancellationSender? agentCancellationSender = null)
     {
         return new PipelineRunLifecycleService(
             _mockHistory.Object,
             runService ?? _mockRunService.Object,
-            _mockLogger.Object);
+            _mockLogger.Object,
+            agentCancellationSender);
     }
 
     private static PipelineRun CreateRun(string runId = "run-1", string issueId = "issue-1", PipelineStep step = PipelineStep.Created)
@@ -322,6 +323,142 @@ public class PipelineRunLifecycleServiceTests
 
         run.CurrentStep.Should().Be(PipelineStep.AnalyzingCode);
         run.HighWaterMark.Should().Be(PipelineStep.GeneratingCode); // unchanged
+    }
+
+    // ── CancelPipelineAsync CTS Race Condition ────────────────────────────
+
+    // TODO: This test does not verify that _logger.Warning(...) was actually called.
+    // The assertions only check state transition and history persistence, which pass even if the
+    // catch block is empty. Consider using a LogEventSink or similar approach to assert the warning
+    // log is emitted, so a regression removing the log statement would be caught.
+    [Fact]
+    public async Task CancelPipelineAsync_WhenCtsDisposed_LogsWarning()
+    {
+        var service = CreateService();
+        var run = CreateRun(step: PipelineStep.GeneratingCode);
+        service.ActiveRun = run;
+
+        // Populate and capture the CTS, then dispose to simulate the race
+        var externalCts = new CancellationTokenSource();
+        service.CreateLinkedCancellationToken(externalCts.Token);
+        var cts = service.CancellationTokenSource!;
+        cts.Dispose();
+
+        await service.CancelPipelineAsync();
+
+        // Verify state transition still occurs
+        run.CurrentStep.Should().Be(PipelineStep.Cancelled);
+        _mockHistory.Verify(h => h.AddRunToHistoryAsync(run, It.IsAny<CancellationToken>()), Times.Once);
+
+        externalCts.Dispose();
+    }
+
+    [Fact]
+    public async Task CancelPipelineAsync_WhenCtsDisposed_SendsFallbackCancelToAgent()
+    {
+        var mockSender = new Mock<IAgentCancellationSender>();
+        var service = CreateService(agentCancellationSender: mockSender.Object);
+        var run = CreateRun(step: PipelineStep.GeneratingCode);
+        run.AgentId = "agent-42";
+        service.ActiveRun = run;
+
+        // Populate and dispose CTS to trigger the race
+        var externalCts = new CancellationTokenSource();
+        service.CreateLinkedCancellationToken(externalCts.Token);
+        var cts = service.CancellationTokenSource!;
+        cts.Dispose();
+
+        await service.CancelPipelineAsync();
+
+        // Verify fallback cancel signal was sent
+        mockSender.Verify(
+            s => s.SendCancelJobAsync(
+                It.Is<AgentId>(a => a.Value == "agent-42"),
+                "run-1",
+                CancellationToken.None),
+            Times.Once);
+
+        externalCts.Dispose();
+    }
+
+    // TODO: This test does not verify that _logger.Warning(...) was actually called.
+    // The assertions only check that the sender was NOT called and state transitioned.
+    // This would pass with the old silent-swallow implementation. Consider adding a log assertion.
+    [Fact]
+    public async Task CancelPipelineAsync_WhenCtsDisposed_AndNoAgentId_StillLogsWarning()
+    {
+        var mockSender = new Mock<IAgentCancellationSender>();
+        var service = CreateService(agentCancellationSender: mockSender.Object);
+        var run = CreateRun(step: PipelineStep.GeneratingCode);
+        run.AgentId = null; // No agent assigned
+        service.ActiveRun = run;
+
+        // Populate and dispose CTS
+        var externalCts = new CancellationTokenSource();
+        service.CreateLinkedCancellationToken(externalCts.Token);
+        var cts = service.CancellationTokenSource!;
+        cts.Dispose();
+
+        await service.CancelPipelineAsync();
+
+        // State transition occurs but no fallback cancel sent
+        run.CurrentStep.Should().Be(PipelineStep.Cancelled);
+        mockSender.Verify(
+            s => s.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        externalCts.Dispose();
+    }
+
+    [Fact]
+    public async Task CancelPipelineAsync_WhenCtsDisposed_AndNoSender_StillCompletes()
+    {
+        var service = CreateService(agentCancellationSender: null);
+        var run = CreateRun(step: PipelineStep.GeneratingCode);
+        run.AgentId = "agent-42";
+        service.ActiveRun = run;
+
+        // Populate and dispose CTS
+        var externalCts = new CancellationTokenSource();
+        service.CreateLinkedCancellationToken(externalCts.Token);
+        var cts = service.CancellationTokenSource!;
+        cts.Dispose();
+
+        // Should complete without throwing — no sender means log-only path
+        await service.CancelPipelineAsync();
+
+        run.CurrentStep.Should().Be(PipelineStep.Cancelled);
+        _mockHistory.Verify(h => h.AddRunToHistoryAsync(run, It.IsAny<CancellationToken>()), Times.Once);
+
+        externalCts.Dispose();
+    }
+
+    [Fact]
+    public async Task CancelPipelineAsync_WhenFallbackCancelFails_DoesNotPropagate()
+    {
+        var mockSender = new Mock<IAgentCancellationSender>();
+        mockSender
+            .Setup(s => s.SendCancelJobAsync(It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Agent disconnected"));
+
+        var service = CreateService(agentCancellationSender: mockSender.Object);
+        var run = CreateRun(step: PipelineStep.GeneratingCode);
+        run.AgentId = "agent-42";
+        service.ActiveRun = run;
+
+        // Populate and dispose CTS
+        var externalCts = new CancellationTokenSource();
+        service.CreateLinkedCancellationToken(externalCts.Token);
+        var cts = service.CancellationTokenSource!;
+        cts.Dispose();
+
+        // Should complete without throwing despite fallback failure
+        await service.CancelPipelineAsync();
+
+        run.CurrentStep.Should().Be(PipelineStep.Cancelled);
+        _mockHistory.Verify(h => h.AddRunToHistoryAsync(run, It.IsAny<CancellationToken>()), Times.Once);
+
+        externalCts.Dispose();
     }
 
     /// <summary>
