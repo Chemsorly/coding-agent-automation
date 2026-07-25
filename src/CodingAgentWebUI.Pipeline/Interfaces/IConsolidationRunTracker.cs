@@ -4,7 +4,7 @@ namespace CodingAgentWebUI.Pipeline.Interfaces;
 /// Narrow interface for transitioning consolidation runs to Running state.
 /// Performs both the persistent store update AND the in-memory tracker update.
 /// Separated from <see cref="IConsolidationService"/> to allow
-/// <c>ConsolidationDispatcher</c> to call it without introducing a circular
+/// <c>ConsolidationDispatchService</c> to call it without introducing a circular
 /// dependency on the full <see cref="IConsolidationService"/>.
 /// </summary>
 public interface IConsolidationRunTracker

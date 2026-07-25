@@ -41,7 +41,7 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IAgentRegistryService>(),
             sp.GetRequiredService<IJobDispatcher>(),
             sp.GetRequiredService<IConfigurationStore>(),
-            sp.GetRequiredService<IConsolidationDispatcher>(),
+            sp.GetRequiredService<IConsolidationDispatchService>(),
             sp.GetRequiredService<IShutdownSignal>(),
             Log.Logger,
             sp.GetService<IConsolidationRunStore>()));

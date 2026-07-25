@@ -37,7 +37,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
             _mockLifecycleService.Object,
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
-            _mockLogger.Object);
+            _mockLogger.Object,
+            Mock.Of<IAgentOrphanRecoveryService>());
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -901,7 +902,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
             CreateRealLifecycleService(changeNotifier),
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
-            _mockLogger.Object);
+            _mockLogger.Object,
+            Mock.Of<IAgentOrphanRecoveryService>());
 
         var mockContext = new Mock<HubCallerContext>();
         mockContext.Setup(c => c.ConnectionId).Returns(connectionId);
@@ -926,7 +928,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
             CreateRealLifecycleService(changeNotifier),
             new AgentTokenRefreshService(_mockFacade.Object, _mockTokenVending.Object, _mockLogger.Object),
             Mock.Of<IGateCommentFormatter>(),
-            _mockLogger.Object);
+            _mockLogger.Object,
+            new AgentOrphanRecoveryService(_mockFacade.Object, changeNotifier, _mockLogger.Object));
 
         // Build a real HttpContext with the agentId query param
         var httpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext();

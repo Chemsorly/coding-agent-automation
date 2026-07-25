@@ -49,7 +49,7 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
         var drainService = new JobQueueDrainService(
             dispatcher, registry, Mock.Of<IJobDispatcher>(),
-            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatcher>(),
+            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
             new ShutdownSignal(), mockLogger.Object);
 
         _facade = new AgentHubFacade(
@@ -105,7 +105,7 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
         var drainService = new JobQueueDrainService(
             dispatcher, registry, Mock.Of<IJobDispatcher>(),
-            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatcher>(),
+            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
             new ShutdownSignal(), mockLogger.Object);
 
         var facadeWithoutTransition = new AgentHubFacade(

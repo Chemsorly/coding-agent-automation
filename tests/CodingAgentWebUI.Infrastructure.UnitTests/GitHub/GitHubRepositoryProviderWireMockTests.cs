@@ -1,9 +1,12 @@
+using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Infrastructure.GitHub;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure;
 using Octokit;
+using WireMock.RequestBuilders;
+using WireMock.ResponseBuilders;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests;
 
@@ -289,6 +292,89 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
         @base = new { @ref = "main", sha = "def456" },
         created_at = "2026-01-01T00:00:00Z",
         updated_at = "2026-01-01T00:00:00Z"
+    };
+
+    #endregion
+
+    #region GetCommitCountSinceAsync
+
+    [Fact]
+    public async Task GetCommitCountSinceAsync_SinglePage_ReturnsCount()
+    {
+        // TODO: This test uses 50 commits (below 100-item page size) and would still pass even if
+        // PageCount = 1 were reintroduced. It validates basic deserialization but does not guard
+        // against the pagination regression. Only the multi-page test catches the actual bug.
+        var commits = Enumerable.Range(1, 50).Select(i => BuildCommitJson($"sha{i:D3}")).ToArray();
+        StubGet(ApiPath($"/repos/{Owner}/{Repo}/commits"), commits);
+
+        await using var provider = CreateProvider();
+        var count = await provider.GetCommitCountSinceAsync(
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), CancellationToken.None);
+
+        count.Should().Be(50);
+    }
+
+    [Fact]
+    public async Task GetCommitCountSinceAsync_MultiplePages_ReturnsCorrectTotalCount()
+    {
+        var page1Commits = Enumerable.Range(1, 100).Select(i => BuildCommitJson($"sha{i:D3}")).ToArray();
+        var page2Commits = Enumerable.Range(101, 50).Select(i => BuildCommitJson($"sha{i:D3}")).ToArray();
+
+        var commitsPath = ApiPath($"/repos/{Owner}/{Repo}/commits");
+
+        // The Link header URL must be a full absolute URL that Octokit will follow.
+        // Octokit requests page 2 by following this URL directly.
+        var page2Url = $"{Server.Url}{commitsPath}?since=2026-01-01T00%3A00%3A00%2B00%3A00&per_page=100&page=2";
+
+        // Default stub: returns page 1 with Link header pointing to page 2
+        Server.Given(Request.Create().WithPath(commitsPath).UsingGet())
+            .AtPriority(10)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithHeader("Link", $"<{page2Url}>; rel=\"next\"")
+                .WithBody(SerializeJson(page1Commits)));
+
+        // Page 2 stub: higher priority, matches when page=2 param is present
+        Server.Given(Request.Create().WithPath(commitsPath).UsingGet()
+                .WithParam("page", "2"))
+            .AtPriority(1)
+            .RespondWith(Response.Create()
+                .WithStatusCode(200)
+                .WithHeader("Content-Type", "application/json")
+                .WithBody(SerializeJson(page2Commits)));
+
+        await using var provider = CreateProvider();
+        var count = await provider.GetCommitCountSinceAsync(
+            new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero), CancellationToken.None);
+
+        count.Should().Be(150);
+    }
+
+    private static string SerializeJson(object obj) =>
+        JsonSerializer.Serialize(obj, CommitJsonOptions);
+
+    private static object BuildCommitJson(string sha) => new
+    {
+        sha,
+        node_id = $"C_{sha}",
+        commit = new
+        {
+            message = $"commit {sha}",
+            author = new { name = "Test", email = "test@example.com", date = "2026-01-15T10:00:00Z" },
+            committer = new { name = "Test", email = "test@example.com", date = "2026-01-15T10:00:00Z" }
+        },
+        url = $"https://api.github.com/repos/test-owner/test-repo/commits/{sha}",
+        html_url = $"https://github.com/test-owner/test-repo/commit/{sha}",
+        author = new { login = "testuser", id = 1 },
+        committer = new { login = "testuser", id = 1 },
+        parents = Array.Empty<object>()
+    };
+
+    private static readonly JsonSerializerOptions CommitJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 
     #endregion
