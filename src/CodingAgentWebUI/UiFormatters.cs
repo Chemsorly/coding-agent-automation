@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Orchestration.Registry;
+using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI;
@@ -32,4 +34,61 @@ public static class UiFormatters
         AgentLabels.EpicReview => "label-agent-epic-review",
         _ => ""
     };
+
+    public static string GetStatusColorClass(AgentStatus status) => status switch
+    {
+        AgentStatus.Idle => "text-success",
+        AgentStatus.Busy => "text-warning",
+        AgentStatus.Disconnected => "text-danger",
+        _ => ""
+    };
+
+    public static string FormatRunType(PipelineRunType runType) => runType switch
+    {
+        PipelineRunType.Review => "PR Review",
+        PipelineRunType.DecompositionAnalysis => "Decomposition (Analysis)",
+        PipelineRunType.Decomposition => "Decomposition",
+        _ => "Implementation"
+    };
+
+    public static string FormatConsolidationRunType(ConsolidationRunType type) => type switch
+    {
+        ConsolidationRunType.BrainConsolidation => "Brain Consolidation",
+        ConsolidationRunType.RefactoringDetection => "Refactoring Detection",
+        ConsolidationRunType.HarnessSuggestions => "Harness Suggestions",
+        _ => type.ToString()
+    };
+
+    public static string FormatConsolidationRunTypeShort(ConsolidationRunType type) => type switch
+    {
+        ConsolidationRunType.BrainConsolidation => "Brain",
+        ConsolidationRunType.RefactoringDetection => "Refactor",
+        ConsolidationRunType.HarnessSuggestions => "Harness",
+        _ => type.ToString()
+    };
+
+    public static string GetConsolidationTypeIconName(ConsolidationRunType type) => type switch
+    {
+        ConsolidationRunType.BrainConsolidation => "brain",
+        ConsolidationRunType.RefactoringDetection => "refresh-cw",
+        ConsolidationRunType.HarnessSuggestions => "sparkles",
+        _ => "clipboard-list"
+    };
+
+    public static string FormatDuration(DateTime startedAt, DateTime? completedAt)
+    {
+        if (completedAt is null) return "—";
+        var duration = completedAt.Value - startedAt;
+        return duration.ToString(@"hh\:mm\:ss");
+    }
+
+    public static string FormatTimestamp(DateTime timestamp)
+    {
+        var local = timestamp.Kind == DateTimeKind.Utc ? timestamp.ToLocalTime() : timestamp;
+        var ago = DateTime.Now - local;
+        if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
+        if (ago.TotalHours < 24) return $"{(int)ago.TotalHours}h ago";
+        if (ago.TotalDays < 7) return $"{(int)ago.TotalDays}d ago";
+        return local.ToString("yyyy-MM-dd HH:mm");
+    }
 }

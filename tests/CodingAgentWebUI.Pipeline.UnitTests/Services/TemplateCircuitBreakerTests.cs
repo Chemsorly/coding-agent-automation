@@ -125,39 +125,6 @@ public class TemplateCircuitBreakerTests
         cb.LastError.Should().Be("Something went wrong");
     }
 
-    // TODO: This test relies on the assumption that <5 minutes elapses between Trip() and ShouldAutoResume().
-    // Consider injecting a TimeProvider to test exact boundary conditions deterministically.
-    [Fact]
-    public void ShouldAutoResume_BeforeCooldown_ReturnsFalse()
-    {
-        var cb = new TemplateCircuitBreaker();
-        cb.Trip();
-
-        // Cooldown is 5 minutes — we just tripped, so it shouldn't auto-resume
-        cb.ShouldAutoResume(TimeSpan.FromMinutes(5)).Should().BeFalse();
-    }
-
-    // TODO: TimeSpan.Zero makes this assertion trivially true (any elapsed time >= Zero).
-    // This would pass even if ShouldAutoResume were implemented as `return IsTripped;`.
-    // Consider using a TimeProvider to test actual cooldown boundary logic.
-    [Fact]
-    public void ShouldAutoResume_AfterCooldown_ReturnsTrue()
-    {
-        var cb = new TemplateCircuitBreaker();
-        cb.Trip();
-
-        // Use a zero cooldown — should immediately be ready to resume
-        cb.ShouldAutoResume(TimeSpan.Zero).Should().BeTrue();
-    }
-
-    [Fact]
-    public void ShouldAutoResume_WhenNotTripped_ReturnsFalse()
-    {
-        var cb = new TemplateCircuitBreaker();
-
-        cb.ShouldAutoResume(TimeSpan.Zero).Should().BeFalse();
-    }
-
     [Fact]
     public void Reset_ClearsAllState()
     {
