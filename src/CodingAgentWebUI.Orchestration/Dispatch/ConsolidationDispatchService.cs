@@ -1,5 +1,4 @@
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -7,15 +6,15 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using ILogger = Serilog.ILogger;
 
-namespace CodingAgentWebUI.Services;
+namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
-/// Implements <see cref="IConsolidationDispatcher"/> by selecting an idle agent from the
+/// Implements <see cref="IConsolidationDispatchService"/> by selecting an idle agent from the
 /// <see cref="AgentRegistryService"/>, building a <see cref="ConsolidationJobMessage"/>,
 /// and dispatching it via <see cref="IAgentCommunication"/>.
 /// When no idle agent is available, enqueues via <see cref="IWorkDistributor"/>.
 /// </summary>
-public sealed class ConsolidationDispatcher : IConsolidationDispatcher
+public sealed class ConsolidationDispatchService : IConsolidationDispatchService
 {
     private readonly IAgentRegistryService _registry;
     private readonly JobDeduplicationGuardService _jobDispatcher;
@@ -31,7 +30,7 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
     private readonly IConsolidationRunStore _runStore;
     private readonly Lazy<IConsolidationRunTracker>? _runTracker;
 
-    public ConsolidationDispatcher(
+    public ConsolidationDispatchService(
         IAgentRegistryService registry,
         JobDeduplicationGuardService jobDispatcher,
         IAgentCommunication agentComm,
@@ -399,14 +398,14 @@ public sealed class ConsolidationDispatcher : IConsolidationDispatcher
         if (profile is null)
         {
             _logger.Warning(
-                "ConsolidationDispatcher: no profile covers requiredLabels [{Labels}], using raw labels as selector. " +
+                "ConsolidationDispatchService: no profile covers requiredLabels [{Labels}], using raw labels as selector. " +
                 "Template resolution may fail in K8s mode if no template is keyed by this subset.",
                 string.Join(", ", requiredLabels));
             return requiredLabels;
         }
 
         _logger.Debug(
-            "ConsolidationDispatcher: resolved profile '{ProfileId}' for requiredLabels [{RequiredLabels}] → MatchLabels [{MatchLabels}]",
+            "ConsolidationDispatchService: resolved profile '{ProfileId}' for requiredLabels [{RequiredLabels}] → MatchLabels [{MatchLabels}]",
             profile.Id, string.Join(", ", requiredLabels), string.Join(", ", profile.MatchLabels));
 
         return profile.MatchLabels;
