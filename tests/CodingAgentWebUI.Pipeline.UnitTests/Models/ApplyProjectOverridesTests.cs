@@ -751,4 +751,35 @@ public class ApplyProjectOverridesTests
             "ApplyProjectOverrides. Test the override manually before changing this assertion.")
             .Which.Name.Should().Be(nameof(PipelineConfiguration.CodeReview));
     }
+
+    // ── Exception unwrapping ───────────────────────────────────────────────────
+
+    [Fact]
+    public void NonArgumentOutOfRange_FromApplyOverrides_PropagatesUnwrapped()
+    {
+        // Arrange: Create a PipelineConfiguration where CodeReview has null InlineComments.
+        // When the deep-merge path calls CodeReviewConfiguration.ApplyOverrides(overrides) via
+        // reflection, and overrides.InlineComments is non-null, the line:
+        //   result = result with { InlineComments = result.InlineComments.ApplyOverrides(...) }
+        // throws NullReferenceException because InlineComments is null.
+        // MethodInfo.Invoke wraps this in TargetInvocationException.
+        // After the fix, ExceptionDispatchInfo unwraps it back to NullReferenceException.
+        var config = TestPipelineConfig.Default() with
+        {
+            CodeReview = new CodeReviewConfiguration { InlineComments = null! }
+        };
+
+        var project = TestPipelineConfig.WithProject() with
+        {
+            CodeReview = new CodeReviewOverrides
+            {
+                InlineComments = new InlineCommentOverrides { MaxInlineComments = 5 }
+            }
+        };
+
+        // Act & Assert: Should throw NullReferenceException, NOT TargetInvocationException
+        var act = () => PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        act.Should().Throw<NullReferenceException>();
+    }
 }
