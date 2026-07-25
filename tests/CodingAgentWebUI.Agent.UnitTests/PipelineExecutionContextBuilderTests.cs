@@ -49,9 +49,9 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
             _feedbackService,
             _agentId,
             _mockLogger.Object,
-            new PullRequestFinalizationService(_mockLogger.Object),
             brainUpdateService,
-            historyService);
+            historyService,
+            new PullRequestFinalizationService(_mockLogger.Object));
     }
 
     private static JobAssignmentMessage CreateTestJob(PipelineRunType runType = PipelineRunType.Implementation)

@@ -32,6 +32,9 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
     // ── Constructor Guard Clauses ────────────────────────────────────────
 
     [Theory]
+    // TODO: Add a test for default(AgentId) — since AgentId is a value type, the removed
+    // [InlineData(5, "agentIdentity")] null guard test should be replaced with a characterization
+    // test verifying behavior when default(AgentId) (Value == null) is passed to the constructor.
     [InlineData(0, "workItemId")]
     [InlineData(1, "workItemClient")]
     [InlineData(2, "connectionManager")]
