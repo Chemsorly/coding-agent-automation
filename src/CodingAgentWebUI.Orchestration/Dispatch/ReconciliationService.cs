@@ -527,6 +527,7 @@ public sealed class ReconciliationService : BackgroundService
         await DetectPodStartupFailuresAsync(ct);
         await CleanupStaleWorkItemsAsync(ct);
         await CleanupStalePipelineRunsAsync(ct);
+        await CleanupStaleConsolidationRunsAsync(ct);
         await ReconcilePvcsFromPollAsync(ct);
     }
 
@@ -894,6 +895,49 @@ public sealed class ReconciliationService : BackgroundService
         {
             Log.Information("ReconciliationService: cleaned up {Count} stale pipeline runs (retention={Days}d)",
                 deletedCount, _options.PipelineRunRetentionDays);
+        }
+    }
+
+    /// <summary>
+    /// Terminal ConsolidationRuns older than retention period → DELETE via IConsolidationService.
+    /// Uses client-side filtering because CompletedAtUtc is stored inside JSONB (no server-side filter).
+    /// </summary>
+    private async Task CleanupStaleConsolidationRunsAsync(CancellationToken ct)
+    {
+        if (_consolidationService is null) return;
+
+        try
+        {
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-_options.ConsolidationRunRetentionDays);
+            var runs = await _consolidationService.GetRunHistoryAsync(ct);
+            var deletedCount = 0;
+
+            foreach (var run in runs)
+            {
+                if (ct.IsCancellationRequested) break;
+
+                // Only delete terminal runs
+                if (run.Status is not (ConsolidationRunStatus.Succeeded or ConsolidationRunStatus.Failed or ConsolidationRunStatus.Cancelled))
+                    continue;
+
+                // Use CompletedAtUtc if available, fall back to StartedAtUtc
+                var anchor = run.CompletedAtUtc ?? run.StartedAtUtc;
+                if (anchor >= cutoff)
+                    continue;
+
+                await _consolidationService.DeleteRunAsync(run.RunId, ct);
+                deletedCount++;
+            }
+
+            if (deletedCount > 0)
+            {
+                Log.Information("ReconciliationService: cleaned up {Count} stale consolidation runs (retention={Days}d)",
+                    deletedCount, _options.ConsolidationRunRetentionDays);
+            }
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            Log.Warning(ex, "ReconciliationService: failed to cleanup stale consolidation runs (non-fatal)");
         }
     }
 
