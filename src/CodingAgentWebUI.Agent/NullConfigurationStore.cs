@@ -82,9 +82,9 @@ internal sealed class NullConfigurationStore : IConfigurationStore
     public Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct) =>
         Task.CompletedTask;
 
-    public Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct) =>
+    public Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct) =>
         Task.CompletedTask;
 
-    public Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, string templateId, CancellationToken ct) =>
+    public Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct) =>
         Task.CompletedTask;
 }

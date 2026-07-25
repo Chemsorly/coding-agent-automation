@@ -23,7 +23,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     /// <summary>
     /// Tracks currently running consolidation runs by (type, templateId) to enforce concurrency guard.
     /// </summary>
-    private readonly ConcurrentDictionary<(ConsolidationRunType, string?), ConsolidationRun> _runningRuns = new();
+    private readonly ConcurrentDictionary<(ConsolidationRunType, TemplateId?), ConsolidationRun> _runningRuns = new();
 
     /// <summary>
     /// Write-through cache for run history. Populated on first read, invalidated on any write/delete.
@@ -91,7 +91,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     // signature is a breaking change across all callers — defer to a separate cleanup pass.
     public async Task<ConsolidationRun?> TriggerAsync(
         ConsolidationRunType type,
-        string? templateId,
+        TemplateId? templateId,
         CancellationToken ct,
         bool autoDispatch = false)
     {
@@ -101,12 +101,12 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         // Resolve template name for display using project-based lookup
         string? templateName = null;
         string? projectName = null;
-        if (templateId is not null)
+        if (templateId is { } tid)
         {
-            var (template, resolvedProjectName) = await ResolveTemplateWithProjectAsync(templateId, ct);
+            var (template, resolvedProjectName) = await ResolveTemplateWithProjectAsync(tid, ct);
             if (template is null)
             {
-                _logger.Warning("Consolidation run rejected: template {TemplateId} not found", templateId);
+                _logger.Warning("Consolidation run rejected: template {TemplateId} not found", tid.Value);
                 return null;
             }
             templateName = template.Name;
@@ -122,7 +122,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         {
             RunId = Guid.NewGuid().ToString(),
             Type = type,
-            TemplateId = templateId,
+            TemplateId = templateId?.Value,
             TemplateName = templateName,
             StartedAtUtc = DateTimeOffset.UtcNow,
             Status = ConsolidationRunStatus.Running,
@@ -135,7 +135,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         {
             _logger.Warning(
                 "Consolidation run rejected: {Type} for template {TemplateId} is already running or queued",
-                type, templateId ?? "Global");
+                type, templateId?.Value ?? "Global");
             return null;
         }
 
@@ -170,7 +170,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
                 var workspacePath = GetWorkspacePath(run.RunId);
 
                 var result = await _dispatcher.TryDispatchAsync(
-                    run, type, templateId, feedbackDataJson, workspacePath, ct);
+                    run, type, templateId?.Value, feedbackDataJson, workspacePath, ct);
 
                 if (result == ConsolidationDispatchResult.Queued)
                 {
@@ -245,13 +245,14 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     /// <inheritdoc />
     public async Task<ConsolidationRun?> GetLastRunAsync(
         ConsolidationRunType type,
-        string? templateId,
+        TemplateId? templateId,
         CancellationToken ct)
     {
         var allRuns = await GetRunHistoryAsync(ct);
+        var templateIdValue = templateId?.Value;
 
         return allRuns
-            .Where(r => r.Type == type && r.TemplateId == templateId)
+            .Where(r => r.Type == type && r.TemplateId == templateIdValue)
             .OrderByDescending(r => r.StartedAtUtc)
             .FirstOrDefault();
     }
@@ -312,7 +313,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             // Remove from running tracker if no longer running or queued
             if (status != ConsolidationRunStatus.Running && status != ConsolidationRunStatus.Queued)
             {
-                var key = (run.Type, run.TemplateId);
+                var key = (run.Type, (run.TemplateId is { } id ? new TemplateId(id) : (TemplateId?)null));
                 _runningRuns.TryRemove(key, out _);
             }
 
@@ -352,7 +353,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
             await PersistRunAsync(run, ct);
 
-            var key = (run.Type, run.TemplateId);
+            var key = (run.Type, (run.TemplateId is { } id ? new TemplateId(id) : (TemplateId?)null));
             _runningRuns.TryRemove(key, out _);
 
             if (_dispatcher is not null)
@@ -390,7 +391,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             // Update in-memory tracker so GetActiveRunStartedAt returns the corrected timestamp.
             // _runStore.GetByIdAsync deserializes a new object (not the same reference as _runningRuns),
             // so we must explicitly replace the stale entry.
-            var key = (run.Type, run.TemplateId);
+            var key = (run.Type, (run.TemplateId is { } id ? new TemplateId(id) : (TemplateId?)null));
             _runningRuns.AddOrUpdate(key, run, (_, _) => run);
 
             _logger.Information("Consolidation run {RunId} transitioned from Queued to Running (StartedAtUtc reset)", runId);
@@ -410,7 +411,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
         foreach (var run in allRuns.Where(r => r.Status == ConsolidationRunStatus.Queued))
         {
-            var key = (run.Type, run.TemplateId);
+            var key = (run.Type, (run.TemplateId is { } id ? new TemplateId(id) : (TemplateId?)null));
             _runningRuns.TryAdd(key, run);
             queuedRuns.Add(run);
 
@@ -630,7 +631,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     /// <summary>
     /// Resolves a template by ID from projects via IProjectStore.
     /// </summary>
-    private async Task<PipelineJobTemplate?> ResolveTemplateAsync(string templateId, CancellationToken ct)
+    private async Task<PipelineJobTemplate?> ResolveTemplateAsync(TemplateId templateId, CancellationToken ct)
     {
         var (template, _) = await ResolveTemplateWithProjectAsync(templateId, ct);
         return template;
@@ -640,14 +641,15 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     /// Resolves a template by ID and returns both the template and the owning project's display name.
     /// </summary>
     private async Task<(PipelineJobTemplate? Template, string? ProjectName)> ResolveTemplateWithProjectAsync(
-        string templateId, CancellationToken ct)
+        TemplateId templateId, CancellationToken ct)
     {
+        var templateIdValue = templateId.Value;
         var projects = await _projectStore.LoadProjectsAsync(ct);
         var templateLookup = (await _projectStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
 
         foreach (var project in projects.Where(p => p.Enabled))
         {
-            if (project.TemplateIds.Contains(templateId) && templateLookup.TryGetValue(templateId, out var template))
+            if (project.TemplateIds.Contains(templateIdValue) && templateLookup.TryGetValue(templateIdValue, out var template))
                 return (template, project.Name);
         }
 
