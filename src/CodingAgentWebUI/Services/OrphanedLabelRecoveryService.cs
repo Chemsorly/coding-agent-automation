@@ -180,6 +180,41 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
             {
                 if (!_runService.IsIssueBeingProcessed(issue.Identifier, providerConfigId))
                 {
+                    // Defense 2: Check if this issue had a run complete recently (grace period).
+                    // This is a cheap in-memory check that avoids the expensive API call below.
+                    if (_runService.WasRecentlyCompleted(issue.Identifier, providerConfigId))
+                    {
+                        _logger.Debug(
+                            "Orphaned label recovery: issue {Identifier} completed recently, skipping",
+                            issue.Identifier);
+                        continue;
+                    }
+
+                    // Defense 1: Re-fetch current labels to handle GitHub API eventual consistency.
+                    // The ListOpenIssuesAsync result may be stale — the label may have already
+                    // been swapped to a terminal state (agent:done, agent:error, etc.)
+                    IssueDetail currentIssue;
+                    try
+                    {
+                        currentIssue = await issueProvider.GetIssueAsync(issue.Identifier, ct);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        // TODO: Consider adding a retry with backoff for transient failures (rate limiting, 5xx)
+                        _logger.Warning(ex, "Orphaned label recovery: failed to fetch current labels for issue {Identifier}, skipping", issue.Identifier);
+                        continue;
+                    }
+
+                    if (AgentLabels.TerminalLabels.Any(tl => currentIssue.Labels.Contains(tl)))
+                    {
+                        _logger.Debug(
+                            "Orphaned label recovery: issue {Identifier} already has terminal label, skipping",
+                            issue.Identifier);
+                        continue;
+                    }
+
+                    // Genuinely orphaned — swap to agent:error
                     _logger.Information(
                         "Orphaned label recovery: issue {Identifier} on provider {ProviderId} is orphaned — swapping to agent:error",
                         issue.Identifier, providerConfigId);

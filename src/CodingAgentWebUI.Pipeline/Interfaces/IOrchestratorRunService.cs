@@ -39,4 +39,17 @@ public interface IOrchestratorRunService
 
     /// <summary>Returns the number of currently active runs.</summary>
     int ActiveRunCount { get; }
+
+    /// <summary>
+    /// Records that a run for this issue just completed. Used by orphan recovery grace period
+    /// to prevent race conditions between run removal and label swap.
+    /// </summary>
+    void MarkRecentlyCompleted(string issueIdentifier, string issueProviderConfigId);
+
+    /// <summary>
+    /// Returns <c>true</c> if this issue had a run complete within the last 120 seconds.
+    /// Used by <c>OrphanedLabelRecoveryService</c> to avoid incorrectly treating
+    /// recently-completed issues as orphaned.
+    /// </summary>
+    bool WasRecentlyCompleted(string issueIdentifier, string issueProviderConfigId);
 }

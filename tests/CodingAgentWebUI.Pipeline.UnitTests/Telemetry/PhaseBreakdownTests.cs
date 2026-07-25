@@ -132,10 +132,8 @@ public class PhaseBreakdownTests : IDisposable
     }
 
     [Fact]
-    public void AccumulateTokenUsage_BothCallsNullCost_ProducesZeroCost()
+    public void AccumulateTokenUsage_BothCallsNullCost_PreservesNull()
     {
-        // TODO: Known design choice — null+null coerces to 0m rather than preserving null ("no data").
-        // Display remains correct since FormatCost treats both null and 0m as "—".
         var run = CreateRun();
         var result1 = new AgentResult
         {
@@ -157,8 +155,34 @@ public class PhaseBreakdownTests : IDisposable
 
         var phase = run.Metrics.PhaseBreakdown["codegen"];
         phase.Tokens.Should().Be(225);
-        // After AddOrUpdate: (null ?? 0m) + (null ?? 0m) = 0m
-        phase.Cost.Should().Be(0m);
+        phase.Cost.Should().BeNull();
+    }
+
+    [Fact]
+    public void AccumulateTokenUsage_NullCostThenNonNullCost_SumsToNonNullValue()
+    {
+        var run = CreateRun();
+        var result1 = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = new TokenUsage { InputTokens = 50, OutputTokens = 25 },
+            Cost = null
+        };
+        var result2 = new AgentResult
+        {
+            ExitCode = 0,
+            OutputLines = [],
+            Usage = new TokenUsage { InputTokens = 100, OutputTokens = 50 },
+            Cost = 0.15m
+        };
+
+        run.AccumulateTokenUsage(result1, phase: "codegen");
+        run.AccumulateTokenUsage(result2, phase: "codegen");
+
+        var phase = run.Metrics.PhaseBreakdown["codegen"];
+        phase.Tokens.Should().Be(225);
+        phase.Cost.Should().Be(0.15m);
     }
 
     private static PipelineRun CreateRun() => new()
