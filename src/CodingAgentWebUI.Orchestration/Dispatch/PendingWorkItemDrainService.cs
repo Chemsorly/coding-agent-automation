@@ -424,37 +424,46 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     ? LabelTargetKind.PullRequest
                     : LabelTargetKind.Issue;
 
-                for (int attempt = 1; attempt <= maxLabelSwapAttempts; attempt++)
+                bool labelSwapCompleted = false;
+                try
                 {
-                    try
+                    for (int attempt = 1; attempt <= maxLabelSwapAttempts; attempt++)
                     {
-                        await _labelService.SwapLabelStrictAsync(
-                            providerForLabel, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
-                        break; // Success
+                        try
+                        {
+                            await _labelService.SwapLabelStrictAsync(
+                                providerForLabel, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
+                            labelSwapCompleted = true;
+                            break;
+                        }
+                        catch (Exception ex) when (ex is not OperationCanceledException)
+                        {
+                            if (attempt < maxLabelSwapAttempts)
+                            {
+                                var delay = TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt - 1)); // 200ms, 400ms
+                                _logger.LogWarning(ex,
+                                    "PendingWorkItemDrainService: label swap attempt {Attempt}/{Max} failed, retrying in {Delay}ms",
+                                    attempt, maxLabelSwapAttempts, delay.TotalMilliseconds);
+                                await Task.Delay(delay, ct);
+                            }
+                            else
+                            {
+                                _logger.LogWarning(ex,
+                                    "PendingWorkItemDrainService: label swap exhausted all {Max} attempts for WorkItem {WorkItemId} — flagging for reconciliation",
+                                    maxLabelSwapAttempts, item.Id);
+                                await FlagForLabelReconciliationAsync(item.Id);
+                            }
+                        }
                     }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
+                }
+                finally
+                {
+                    // If shutdown occurred during backoff (Task.Delay throws OCE) or during
+                    // SwapLabelStrictAsync itself, the label swap never completed. Flag for
+                    // reconciliation so OrphanedLabelRecoveryService can fix the stale label. (#1681)
+                    if (!labelSwapCompleted && ct.IsCancellationRequested)
                     {
-                        if (attempt < maxLabelSwapAttempts)
-                        {
-                            var delay = TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt - 1)); // 200ms, 400ms
-                            _logger.LogWarning(ex,
-                                "PendingWorkItemDrainService: label swap attempt {Attempt}/{Max} failed, retrying in {Delay}ms",
-                                attempt, maxLabelSwapAttempts, delay.TotalMilliseconds);
-                            // TODO: Task.Delay uses ct (stoppingToken), so if shutdown occurs during backoff,
-                            // the OCE propagates past the catch filter without flagging for reconciliation.
-                            // The work item remains dispatched with a stale label and NeedsLabelReconciliation=false.
-                            // Risk is low (200-400ms window, system is stopping) but consider using
-                            // CancellationToken.None here and checking ct after the delay, or flagging
-                            // for reconciliation in a finally block on partial retry failure.
-                            await Task.Delay(delay, ct);
-                        }
-                        else
-                        {
-                            _logger.LogWarning(ex,
-                                "PendingWorkItemDrainService: label swap exhausted all {Max} attempts for WorkItem {WorkItemId} — flagging for reconciliation",
-                                maxLabelSwapAttempts, item.Id);
-                            await FlagForLabelReconciliationAsync(item.Id);
-                        }
+                        await FlagForLabelReconciliationAsync(item.Id);
                     }
                 }
             }
