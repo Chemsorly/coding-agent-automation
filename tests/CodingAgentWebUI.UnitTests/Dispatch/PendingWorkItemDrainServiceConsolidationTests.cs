@@ -18,7 +18,7 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 /// <summary>
 /// Tests for <see cref="PendingWorkItemDrainService"/> consolidation dispatch path.
 /// Verifies that consolidation WorkItems (TaskType=Consolidation) are dispatched via
-/// <see cref="IConsolidationDispatcher.TryDispatchToAgentAsync"/> with token vending at drain time.
+/// <see cref="IConsolidationDispatchService.TryDispatchToAgentAsync"/> with token vending at drain time.
 /// </summary>
 public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 {
@@ -28,7 +28,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
     private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
-    private readonly Mock<IConsolidationDispatcher> _mockConsolidationDispatcher = new();
+    private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
     private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
     private readonly OrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
@@ -63,7 +63,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
             .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
 
         // Setup: dispatch succeeds (token vending happens inside TryDispatchToAgentAsync)
-        _mockConsolidationDispatcher
+        _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
@@ -73,7 +73,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         await InvokeDrainAsync(service);
 
         // Assert: TryDispatchToAgentAsync was called (token vending occurs within)
-        _mockConsolidationDispatcher.Verify(
+        _mockConsolidationDispatchService.Verify(
             d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()),
             Times.Once);
 
@@ -96,7 +96,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
             .Returns(new AgentResolveResult("conn-1", "agent-1"));
         _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.RefactoringDetection, StartedAtUtc = DateTime.UtcNow });
-        _mockConsolidationDispatcher
+        _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.RefactoringDetection, null, "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(false); // Dispatch failed
 
@@ -143,7 +143,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         item!.Status.Should().Be(WorkItemStatus.Cancelled);
         item.CompletedAt.Should().NotBeNull();
 
-        _mockConsolidationDispatcher.Verify(
+        _mockConsolidationDispatchService.Verify(
             d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
@@ -181,7 +181,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         item!.Status.Should().Be(WorkItemStatus.Pending);
 
         // Dispatch was never attempted
-        _mockConsolidationDispatcher.Verify(
+        _mockConsolidationDispatchService.Verify(
             d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
@@ -246,7 +246,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         _mockAgentComm.Verify(
             c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()),
             Times.Once);
-        _mockConsolidationDispatcher.Verify(
+        _mockConsolidationDispatchService.Verify(
             d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
@@ -263,7 +263,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
             _mockLabelService.Object,
             NullLogger<PendingWorkItemDrainService>.Instance,
             null, // IProjectStore
-            _mockConsolidationDispatcher.Object,
+            _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
     }
 
@@ -343,7 +343,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
     private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
-    private readonly Mock<IConsolidationDispatcher> _mockConsolidationDispatcher = new();
+    private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
     private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
     private readonly OrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
@@ -379,7 +379,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
             .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
 
         // Setup: dispatch THROWS an exception
-        _mockConsolidationDispatcher
+        _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Token vending failed"));
 
@@ -418,7 +418,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
 
         // Setup: dispatch simulates shutdown by cancelling CTS then throwing
         using var cts = new CancellationTokenSource();
-        _mockConsolidationDispatcher
+        _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .Returns((string _, ConsolidationRunType _, string? _, string _, string _, CancellationToken _) =>
             {
@@ -438,7 +438,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
             _mockLabelService.Object,
             NullLogger<PendingWorkItemDrainService>.Instance,
             null, // IProjectStore
-            _mockConsolidationDispatcher.Object,
+            _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
 
         // Act: start with the CTS that will be cancelled inside the mock
@@ -471,7 +471,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
             _mockLabelService.Object,
             NullLogger<PendingWorkItemDrainService>.Instance,
             null, // IProjectStore
-            _mockConsolidationDispatcher.Object,
+            _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
     }
 
