@@ -62,6 +62,10 @@ public sealed record PipelineProject
     /// Override for <see cref="PipelineConfiguration.AnalysisCommitThreshold"/>.
     /// Null = inherit from global configuration.
     /// </summary>
+    // TODO: This property has no inline range validation. Invalid values (e.g., 5000) are silently
+    // rejected during ApplyProjectOverrides via reflection, causing ALL project overrides to fall back
+    // to global defaults with no actionable feedback to the user. Consider adding range validation here
+    // or surfacing a warning when an override is rejected.
     public int? AnalysisCommitThreshold { get; init; }
 
     /// <summary>

@@ -46,6 +46,45 @@ public class PipelineConfigurationValidationTests
         var config = new PipelineConfiguration { ClosedLoopMaxPagesToFetch = value };
         config.ClosedLoopMaxPagesToFetch.Should().Be(value);
     }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(-100)]
+    public void AnalysisCommitThreshold_RejectsNegativeValues(int value)
+    {
+        var act = () => new PipelineConfiguration { AnalysisCommitThreshold = value };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("AnalysisCommitThreshold");
+    }
+
+    [Theory]
+    [InlineData(1001)]
+    [InlineData(5000)]
+    public void AnalysisCommitThreshold_RejectsValuesAbove1000(int value)
+    {
+        var act = () => new PipelineConfiguration { AnalysisCommitThreshold = value };
+        act.Should().Throw<ArgumentOutOfRangeException>()
+            .WithParameterName("AnalysisCommitThreshold");
+    }
+
+    [Fact]
+    public void AnalysisCommitThreshold_AcceptsZero()
+    {
+        var config = new PipelineConfiguration { AnalysisCommitThreshold = 0 };
+        config.AnalysisCommitThreshold.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(30)]
+    [InlineData(100)]
+    [InlineData(500)]
+    [InlineData(1000)]
+    public void AnalysisCommitThreshold_AcceptsValidValues(int value)
+    {
+        var config = new PipelineConfiguration { AnalysisCommitThreshold = value };
+        config.AnalysisCommitThreshold.Should().Be(value);
+    }
 }
 
 public class RateLimitExceededExceptionTests
