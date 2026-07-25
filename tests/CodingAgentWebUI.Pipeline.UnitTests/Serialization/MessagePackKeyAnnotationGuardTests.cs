@@ -92,7 +92,7 @@ public class MessagePackKeyAnnotationGuardTests
 
     /// <summary>
     /// PipelineConfiguration-specific Key validation: unique indices and no large gaps.
-    /// PipelineConfiguration is the highest-churn model with 63 Key-annotated properties
+    /// PipelineConfiguration is the highest-churn model with 64 Key-annotated properties
     /// spanning indices 0-69. Large gaps between consecutive used keys indicate accidental
     /// key reuse from copy-paste errors.
     /// </summary>

@@ -16,7 +16,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsMaxSubIssuesCap()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(7);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(7, 12);
 
         prompt.Should().Contain("7");
     }
@@ -24,15 +24,15 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsFileLimit()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
 
-        prompt.Should().Contain("5 files");
+        prompt.Should().Contain("**12 files**");
     }
 
     [Fact]
     public void BuildAnalysisPrompt_ContainsOneVerificationCriterion()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
 
         prompt.Should().Contain("verification criterion");
     }
@@ -40,7 +40,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsOneAgentRunConstraint()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
 
         prompt.Should().Contain("single agent run");
     }
@@ -48,7 +48,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsOpenIssuesDeduplicationInstruction()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
 
         prompt.Should().Contain(".agent/open-issues/");
         prompt.Should().Contain("overlap");
@@ -57,7 +57,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsReRunFeedbackInstruction()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
 
         prompt.Should().Contain("re-run");
         prompt.Should().Contain("feedback");
@@ -66,7 +66,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsDependencyOrderingInstruction()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
 
         prompt.Should().Contain("dependencies");
         prompt.Should().Contain("backward");
@@ -75,7 +75,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsOutputPathInstruction()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
 
         prompt.Should().Contain(".agent/decomposition-plan.md");
     }
@@ -83,7 +83,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsGateRejectionConcernsInstruction()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
 
         prompt.Should().Contain("agent:gate-rejection");
         prompt.Should().Contain("hard constraint");
@@ -93,7 +93,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildDecompositionPrompt_ContainsJsonSchemaInstruction()
     {
-        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5, 12);
 
         prompt.Should().Contain("title");
         prompt.Should().Contain("body");
@@ -104,7 +104,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildDecompositionPrompt_ContainsSubIssuesOutputPath()
     {
-        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5, 12);
 
         prompt.Should().Contain(".agent/sub-issues/");
     }
@@ -112,7 +112,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildDecompositionPrompt_ContainsIssueTemplateSections()
     {
-        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5, 12);
 
         prompt.Should().Contain("Summary");
         prompt.Should().Contain("Acceptance Criteria");
@@ -121,7 +121,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildDecompositionPrompt_ContainsMaxSubIssuesCap()
     {
-        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(10);
+        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(10, 12);
 
         prompt.Should().Contain("10");
     }
@@ -129,7 +129,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildReviewPrompt_ContainsOverlapCheck()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt();
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
 
         prompt.Should().Contain("overlap");
         prompt.Should().Contain("open issues");
@@ -138,16 +138,16 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildReviewPrompt_ContainsSizingValidation()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt();
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
 
-        prompt.Should().Contain("5 files");
+        prompt.Should().Contain("≤12 files");
         prompt.Should().Contain("verification criterion");
     }
 
     [Fact]
     public void BuildReviewPrompt_ContainsAcyclicDependencyCheck()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt();
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
 
         prompt.Should().Contain("acyclic");
     }
@@ -155,7 +155,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildReviewPrompt_ContainsCriticalFlagging()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt();
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
 
         prompt.Should().Contain("[CRITICAL]");
     }
@@ -163,7 +163,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildReviewPrompt_ContainsDuplicateTitleCheck()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt();
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
 
         prompt.Should().Contain("duplicate");
     }
@@ -171,7 +171,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildRefinementPrompt_ContainsReviewFindingsPath()
     {
-        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt();
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(12);
 
         prompt.Should().Contain(".agent/decomposition-review.md");
     }
@@ -179,7 +179,7 @@ public class DecompositionAnalysisStepTests
     [Fact]
     public void BuildRefinementPrompt_ContainsCriticalAndWarningInstruction()
     {
-        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt();
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(12);
 
         prompt.Should().Contain("[CRITICAL]");
         prompt.Should().Contain("[WARNING]");

@@ -510,4 +510,22 @@ public sealed record PipelineConfiguration
     [Key(69)]
     public int ImageDownloadTimeoutSeconds { get; init; } = 30;
 
+    // ── Decomposition file limit settings ───────────────────────────────
+
+    /// <summary>
+    /// Maximum files a single decomposition sub-issue may create or modify (range: 1–30). Default: 12.
+    /// </summary>
+    [Key(70)]
+    [ProjectOverridable(Order = 29)]
+    public int MaxDecompositionSubIssueFiles
+    {
+        get => field;
+        init
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 1, nameof(MaxDecompositionSubIssueFiles));
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 30, nameof(MaxDecompositionSubIssueFiles));
+            field = value;
+        }
+    } = 12;
+
 }
