@@ -66,14 +66,13 @@ public partial class GitHubRepositoryProvider
     }
 
     /// <inheritdoc />
-    // TODO: GetCommitCountSinceAsync is bounded to 100 results (PageSize=100, PageCount=1).
-    // If AnalysisCommitThreshold is configured above 100, signal 3 can never fire — the method
-    // returns at most 100 even if more commits exist. Consider validating AnalysisCommitThreshold <= 100
-    // at config load time, or documenting the 100-commit ceiling in the configuration model.
     public async Task<int> GetCommitCountSinceAsync(DateTimeOffset since, CancellationToken ct)
     {
         var request = new Octokit.CommitRequest { Since = since };
-        var options = new Octokit.ApiOptions { PageSize = 100, PageCount = 1 };
+        // TODO: Unbounded pagination may consume significant rate limit budget and memory on high-velocity repos.
+        // Consider setting PageCount = 10 (matching the 1000-commit config cap) or implementing manual pagination
+        // with early exit once the count exceeds the configured AnalysisCommitThreshold.
+        var options = new Octokit.ApiOptions { PageSize = 100 };
         var commits = await ExecuteWithResilienceAsync(
             client => client.Repository.Commit.GetAll(Owner, Repo, request, options),
             "GetCommitCountSince", ct);

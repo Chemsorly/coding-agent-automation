@@ -375,11 +375,21 @@ public sealed record PipelineConfiguration
     /// <summary>
     /// Number of commits on the default branch since the last analysis that triggers
     /// an automatic analysis refresh. Set to 0 to disable commit-count staleness detection.
+    /// Valid range: 0–1000 (at PageSize=100, 1000 commits = max 10 API calls).
     /// Configurable at global level and overridable per project via <see cref="PipelineConfigurationResolver.ApplyProjectOverrides"/>.
     /// </summary>
     [Key(56)]
     [ProjectOverridable(Order = 28)]
-    public int AnalysisCommitThreshold { get; init; } = PipelineConstants.DefaultAnalysisCommitThreshold;
+    public int AnalysisCommitThreshold
+    {
+        get => field;
+        init
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 0, nameof(AnalysisCommitThreshold));
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 1000, nameof(AnalysisCommitThreshold));
+            field = value;
+        }
+    } = PipelineConstants.DefaultAnalysisCommitThreshold;
 
     /// <summary>
     /// Records the last-used provider ID for each provider selection per pipeline.
