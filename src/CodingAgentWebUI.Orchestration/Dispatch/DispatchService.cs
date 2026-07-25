@@ -6,9 +6,9 @@ using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Serilog;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
@@ -20,7 +20,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Rate-limited: default 10 Jobs/s. Skips items whose selector group is at concurrency limit.
 /// Consolidation items are handled by <see cref="ConsolidationDispatchHandler"/>.
 /// </summary>
-public sealed class DispatchService : LeaderElectedPollingService
+public sealed class DispatchService : BackgroundService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<DispatchService>();
 
@@ -28,17 +28,15 @@ public sealed class DispatchService : LeaderElectedPollingService
     internal const string DefaultJobTemplatesPath = "/app/config/job-templates.yaml";
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
+    private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateStore _templateProvider;
-    private readonly DispatchTemplateResolver _templateResolver;
     private readonly ILabelService? _labelService;
+    private readonly IAgentProfileStore? _agentProfileStore;
     private readonly IOrchestratorRunService? _runService;
+    private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly TokenBucketRateLimiter _rateLimiter;
-    private readonly DispatchStateBuilder _stateBuilder;
-
-    protected override string ServiceName => "DispatchService";
-    protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
 
     internal DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -65,43 +63,50 @@ public sealed class DispatchService : LeaderElectedPollingService
         ILabelService? labelService = null,
         IAgentProfileStore? agentProfileStore = null,
         IOrchestratorRunService? runService = null)
-        : base(leaderElection)
     {
         _dbFactory = dbFactory;
+        _leaderElection = leaderElection;
         _lifecycle = lifecycle;
         _labelService = labelService;
+        _agentProfileStore = agentProfileStore;
         _runService = runService;
         _templateProvider = templateProvider;
-        _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
-        _options = DispatchServiceOptionsFactory.Create(configuration);
-        _rateLimiter = _options.CreateRateLimiter();
-        _stateBuilder = new DispatchStateBuilder(dbFactory, lifecycle, templateProvider, _templateResolver, _options);
+        _options = new DispatchServiceOptions();
+        InitializeOptions(configuration);
+        _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
+        _rateLimiter = CreateRateLimiter();
     }
 
     /// <summary>
-    /// Test constructor accepting pre-built options (skips IConfiguration binding).
+    /// Reads configuration values and binds them to <see cref="_options"/>.
+    /// Called from the primary constructor; the public constructor delegates here via chaining.
     /// </summary>
-    internal DispatchService(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        ILeaderElectionService leaderElection,
-        DispatchLifecycleService lifecycle,
-        JobTemplateStore templateProvider,
-        DispatchServiceOptions options,
-        ILabelService? labelService = null,
-        IAgentProfileStore? agentProfileStore = null,
-        IOrchestratorRunService? runService = null)
-        : base(leaderElection)
+    private void InitializeOptions(IConfiguration configuration)
     {
-        _dbFactory = dbFactory;
-        _lifecycle = lifecycle;
-        _labelService = labelService;
-        _runService = runService;
-        _templateProvider = templateProvider;
-        _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
-        _options = options;
-        _rateLimiter = _options.CreateRateLimiter();
-        _stateBuilder = new DispatchStateBuilder(dbFactory, lifecycle, templateProvider, _templateResolver, _options);
+        configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
+
+        var pvcList = configuration.GetSection("WorkDistribution:CredentialPools:Kiro").Get<List<string>>();
+        if (pvcList is not null)
+            _options.KiroPvcPool = pvcList;
+
+        _options.OrchestratorUrl = configuration.GetValue<string>("WorkDistribution:OrchestratorUrl") ?? "";
+        _options.AgentApiKeySecretName = configuration.GetValue<string>("WorkDistribution:AgentApiKeySecretName") ?? "";
+        _options.AgentServiceAccountName = configuration.GetValue<string>("WorkDistribution:AgentServiceAccountName") ?? "";
+        _options.Namespace = configuration.GetValue<string>("WorkDistribution:Namespace")
+            ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
+            ?? "default";
+        _options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
     }
+
+    private TokenBucketRateLimiter CreateRateLimiter() => new(new TokenBucketRateLimiterOptions
+    {
+        TokenLimit = _options.RateLimitPerSecond,
+        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+        QueueLimit = 0,
+        ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+        TokensPerPeriod = _options.RateLimitPerSecond,
+        AutoReplenishment = true
+    });
 
     private static JobTemplateStore LoadTemplateProvider(IConfiguration configuration)
     {
@@ -119,7 +124,60 @@ public sealed class DispatchService : LeaderElectedPollingService
         return provider;
     }
 
-    protected override Task OnPollCycleAsync(CancellationToken ct) => PollAndDispatchAsync(ct);
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        Log.Information("DispatchService started — waiting for leader election");
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            // Wait for leadership
+            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            }
+
+            if (stoppingToken.IsCancellationRequested) break;
+
+            Log.Information("DispatchService: leader acquired, entering poll loop");
+
+            // Create linked token: cancels on EITHER host stop OR leadership loss
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken, _leaderElection.LeaderToken);
+            var ct = linked.Token;
+
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await PollAndDispatchAsync(ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "DispatchService: unhandled error in poll cycle");
+                }
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+
+            if (!stoppingToken.IsCancellationRequested)
+            {
+                Log.Information("DispatchService: leadership lost, re-entering wait loop");
+            }
+        }
+
+        Log.Information("DispatchService: exiting (stopping)");
+    }
 
     /// <inheritdoc/>
     public override void Dispose()
@@ -130,30 +188,84 @@ public sealed class DispatchService : LeaderElectedPollingService
 
     private async Task PollAndDispatchAsync(CancellationToken ct)
     {
-        var state = await _stateBuilder.BuildStateAsync(
-            w => w.TaskType != WorkItemTaskType.Consolidation,
-            recordTelemetry: true,
-            ct);
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-        if (state is null)
-            return;
-
-        await using (state.Db)
-        {
-            await foreach (var candidate in _stateBuilder.GetEligibleCandidatesAsync(
-                state, LeaderElection, _rateLimiter, nameof(DispatchService),
-                async (item, errorMessage, innerCt) =>
-                {
-                    await _lifecycle.FailWorkItemAsync(item.Id, errorMessage, innerCt);
-                },
-                ct))
+        var pendingItems = await db.WorkItems
+            .Where(w => w.Status == WorkItemStatus.Pending && w.TaskType != WorkItemTaskType.Consolidation)
+            .OrderBy(w => w.CreatedAt)
+            .Select(w => new PendingWorkItemProjection
             {
-                await DispatchSingleItemAsync(state.Db, candidate.Item, candidate.Template,
-                    candidate.IsKiroAgent, state.AvailablePvcs, state.ConcurrencyBySelector, ct);
+                Id = w.Id,
+                AgentSelector = w.AgentSelector,
+                CreatedAt = w.CreatedAt,
+                TimeoutSeconds = w.TimeoutSeconds,
+                ProjectId = w.ProjectId,
+                IssueIdentifier = w.IssueIdentifier,
+                IssueProviderConfigId = w.IssueProviderConfigId,
+                TaskType = w.TaskType
+            })
+            .ToListAsync(ct);
+
+        WorkDistributionTelemetry.RecordLastPollEpoch();
+
+        if (pendingItems.Count == 0)
+        {
+            WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+            return;
+        }
+
+        // Build concurrency state: count running/dispatched per selector group
+        var activeCounts = await db.WorkItems
+            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+            .GroupBy(w => w.AgentSelector)
+            .Select(g => new { Selector = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+        var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
+
+        // PVC pool: determine available PVCs for kiro agents
+        var claimedPvcs = await db.WorkItems
+            .Where(w => w.ClaimedPvcName != null &&
+                        (w.Status == WorkItemStatus.Pending ||
+                         w.Status == WorkItemStatus.Dispatched ||
+                         w.Status == WorkItemStatus.Running))
+            .Select(w => w.ClaimedPvcName!)
+            .ToListAsync(ct);
+        var inflightClaims = _lifecycle.GetInflightPvcClaims();
+        var availablePvcs = _options.KiroPvcPool
+            .Except(claimedPvcs, StringComparer.Ordinal)
+            .Where(pvc => !inflightClaims.Contains(pvc))
+            .ToList();
+        WorkDistributionTelemetry.UpdateCredentialPoolMetrics(availablePvcs.Count, claimedPvcs.Count);
+
+        foreach (var item in pendingItems)
+        {
+            if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
+                break;
+
+            using var lease = await _rateLimiter.AcquireAsync(1, ct);
+            if (!lease.IsAcquired)
+            {
+                Log.Warning("DispatchService: rate limit hit, stopping dispatch cycle");
+                break;
             }
 
-            WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+            var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
+
+            // TODO: Add default case to fail fast on unexpected EligibilityOutcome values — currently falls through to DispatchSingleItemAsync with potentially null Template
+            switch (result.Outcome)
+            {
+                case EligibilityOutcome.AtConcurrencyLimit:
+                case EligibilityOutcome.NoPvcAvailable:
+                    continue;
+                case EligibilityOutcome.NoTemplate:
+                    await _lifecycle.FailWorkItemAsync(item.Id, result.ErrorMessage!, ct);
+                    continue;
+            }
+
+            await DispatchSingleItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
         }
+
+        WorkDistributionTelemetry.DispatcherPollCount.Add(1);
     }
 
     private async Task DispatchSingleItemAsync(
@@ -230,5 +342,20 @@ public sealed class DispatchService : LeaderElectedPollingService
         return configuredPvcs
             .Except(claimedPvcs, StringComparer.Ordinal)
             .ToList();
+    }
+
+    /// <summary>
+    /// Lightweight projection of pending work items (no Payload loaded).
+    /// </summary>
+    internal sealed record PendingWorkItemProjection
+    {
+        public required Guid Id { get; init; }
+        public required string AgentSelector { get; init; }
+        public required DateTimeOffset CreatedAt { get; init; }
+        public required int TimeoutSeconds { get; init; }
+        public WorkItemTaskType TaskType { get; init; }
+        public string? ProjectId { get; init; }
+        public string? IssueIdentifier { get; init; }
+        public string? IssueProviderConfigId { get; init; }
     }
 }

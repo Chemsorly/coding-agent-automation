@@ -8,10 +8,11 @@ using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Pipeline.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Serilog;
+using static CodingAgentWebUI.Orchestration.Dispatch.DispatchService;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
@@ -21,14 +22,14 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Extracted from DispatchService to separate consolidation-specific concerns (run status transitions,
 /// provider config resolution, cascade failure) from regular issue dispatch.
 /// </summary>
-internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
+internal sealed class ConsolidationDispatchHandler : BackgroundService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<ConsolidationDispatchHandler>();
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
+    private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly JobTemplateStore _templateProvider;
-    private readonly DispatchTemplateResolver _templateResolver;
     private readonly DispatchServiceOptions _options;
     private readonly WorkItemTransitionService _transitionService;
     private readonly IConsolidationRunStore? _consolidationRunStore;
@@ -36,11 +37,9 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
     private readonly IConsolidationJobPreparationService? _consolidationJobPreparer;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
     private readonly IProjectStore? _projectStore;
+    private readonly IAgentProfileStore? _agentProfileStore;
+    private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly TokenBucketRateLimiter _rateLimiter;
-    private readonly DispatchStateBuilder _stateBuilder;
-
-    protected override string ServiceName => "ConsolidationDispatchHandler";
-    protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
 
     public ConsolidationDispatchHandler(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -55,9 +54,9 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         IPipelineConfigStore? pipelineConfigStore = null,
         IProjectStore? projectStore = null,
         IAgentProfileStore? agentProfileStore = null)
-        : base(leaderElection)
     {
         _dbFactory = dbFactory;
+        _leaderElection = leaderElection;
         _lifecycle = lifecycle;
         _templateProvider = templateProvider;
         _transitionService = transitionService;
@@ -66,14 +65,15 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         _consolidationJobPreparer = consolidationJobPreparer;
         _pipelineConfigStore = pipelineConfigStore;
         _projectStore = projectStore;
-        _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
-        _options = DispatchServiceOptionsFactory.Create(configuration);
-        _rateLimiter = _options.CreateRateLimiter();
-        _stateBuilder = new DispatchStateBuilder(dbFactory, lifecycle, templateProvider, _templateResolver, _options);
+        _agentProfileStore = agentProfileStore;
+        _options = new DispatchServiceOptions();
+        InitializeOptions(configuration);
+        _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
+        _rateLimiter = CreateRateLimiter();
     }
 
     /// <summary>
-    /// Test constructor accepting pre-built options (skips IConfiguration binding).
+    /// Test constructor accepting a pre-built JobTemplateStore.
     /// </summary>
     internal ConsolidationDispatchHandler(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -88,9 +88,9 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         IPipelineConfigStore? pipelineConfigStore = null,
         IProjectStore? projectStore = null,
         IAgentProfileStore? agentProfileStore = null)
-        : base(leaderElection)
     {
         _dbFactory = dbFactory;
+        _leaderElection = leaderElection;
         _lifecycle = lifecycle;
         _templateProvider = templateProvider;
         _transitionService = transitionService;
@@ -99,13 +99,93 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         _consolidationJobPreparer = consolidationJobPreparer;
         _pipelineConfigStore = pipelineConfigStore;
         _projectStore = projectStore;
-        _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
+        _agentProfileStore = agentProfileStore;
         _options = options;
-        _rateLimiter = _options.CreateRateLimiter();
-        _stateBuilder = new DispatchStateBuilder(dbFactory, lifecycle, templateProvider, _templateResolver, _options);
+        _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
+        _rateLimiter = CreateRateLimiter();
     }
 
-    protected override Task OnPollCycleAsync(CancellationToken ct) => PollAndDispatchConsolidationAsync(ct);
+    private void InitializeOptions(IConfiguration configuration)
+    {
+        configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
+
+        var pvcList = configuration.GetSection("WorkDistribution:CredentialPools:Kiro").Get<List<string>>();
+        if (pvcList is not null)
+            _options.KiroPvcPool = pvcList;
+
+        _options.OrchestratorUrl = configuration.GetValue<string>("WorkDistribution:OrchestratorUrl") ?? "";
+        _options.AgentApiKeySecretName = configuration.GetValue<string>("WorkDistribution:AgentApiKeySecretName") ?? "";
+        _options.AgentServiceAccountName = configuration.GetValue<string>("WorkDistribution:AgentServiceAccountName") ?? "";
+        _options.Namespace = configuration.GetValue<string>("WorkDistribution:Namespace")
+            ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
+            ?? "default";
+        _options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
+    }
+
+    private TokenBucketRateLimiter CreateRateLimiter() => new(new TokenBucketRateLimiterOptions
+    {
+        TokenLimit = _options.RateLimitPerSecond,
+        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+        QueueLimit = 0,
+        ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+        TokensPerPeriod = _options.RateLimitPerSecond,
+        AutoReplenishment = true
+    });
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        Log.Information("ConsolidationDispatchHandler started — waiting for leader election");
+
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            // Wait for leadership
+            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            }
+
+            if (stoppingToken.IsCancellationRequested) break;
+
+            Log.Information("ConsolidationDispatchHandler: leader acquired, entering poll loop");
+
+            // Create linked token: cancels on EITHER host stop OR leadership loss
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken, _leaderElection.LeaderToken);
+            var ct = linked.Token;
+
+            while (!ct.IsCancellationRequested)
+            {
+                try
+                {
+                    await PollAndDispatchConsolidationAsync(ct);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "ConsolidationDispatchHandler: unhandled error in poll cycle");
+                }
+
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+
+            if (!stoppingToken.IsCancellationRequested)
+            {
+                Log.Information("ConsolidationDispatchHandler: leadership lost, re-entering wait loop");
+            }
+        }
+
+        Log.Information("ConsolidationDispatchHandler: exiting (stopping)");
+    }
 
     /// <inheritdoc/>
     public override void Dispose()
@@ -116,27 +196,81 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
 
     internal async Task PollAndDispatchConsolidationAsync(CancellationToken ct)
     {
-        var state = await _stateBuilder.BuildStateAsync(
-            w => w.TaskType == WorkItemTaskType.Consolidation,
-            recordTelemetry: false,
-            ct);
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
-        if (state is null)
+        // Query only consolidation items
+        var pendingItems = await db.WorkItems
+            .Where(w => w.Status == WorkItemStatus.Pending && w.TaskType == WorkItemTaskType.Consolidation)
+            .OrderBy(w => w.CreatedAt)
+            .Select(w => new PendingWorkItemProjection
+            {
+                Id = w.Id,
+                AgentSelector = w.AgentSelector,
+                CreatedAt = w.CreatedAt,
+                TimeoutSeconds = w.TimeoutSeconds,
+                ProjectId = w.ProjectId,
+                IssueIdentifier = w.IssueIdentifier,
+                IssueProviderConfigId = w.IssueProviderConfigId,
+                TaskType = w.TaskType
+            })
+            .ToListAsync(ct);
+
+        if (pendingItems.Count == 0)
             return;
 
-        await using (state.Db)
+        // Build concurrency state: count running/dispatched per selector group
+        var activeCounts = await db.WorkItems
+            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+            .GroupBy(w => w.AgentSelector)
+            .Select(g => new { Selector = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+
+        var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
+
+        // PVC pool: determine available PVCs for kiro agents
+        var claimedPvcs = await db.WorkItems
+            .Where(w => w.ClaimedPvcName != null &&
+                        (w.Status == WorkItemStatus.Pending ||
+                         w.Status == WorkItemStatus.Dispatched ||
+                         w.Status == WorkItemStatus.Running))
+            .Select(w => w.ClaimedPvcName!)
+            .ToListAsync(ct);
+
+        // Exclude PVCs claimed in-memory by DispatchService (not yet persisted to DB)
+        var inflightClaims = _lifecycle.GetInflightPvcClaims();
+
+        var availablePvcs = _options.KiroPvcPool
+            .Except(claimedPvcs, StringComparer.Ordinal)
+            .Where(pvc => !inflightClaims.Contains(pvc))
+            .ToList();
+
+        foreach (var item in pendingItems)
         {
-            await foreach (var candidate in _stateBuilder.GetEligibleCandidatesAsync(
-                state, LeaderElection, _rateLimiter, nameof(ConsolidationDispatchHandler),
-                async (item, errorMessage, innerCt) =>
-                {
-                    await FailConsolidationWorkItemAsync(item.Id, errorMessage, item.IssueIdentifier, innerCt);
-                },
-                ct))
+            if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
+                break;
+
+            // Rate limit
+            using var lease = await _rateLimiter.AcquireAsync(1, ct);
+            if (!lease.IsAcquired)
             {
-                await DispatchConsolidationItemAsync(state.Db, candidate.Item, candidate.Template,
-                    candidate.IsKiroAgent, state.AvailablePvcs, state.ConcurrencyBySelector, ct);
+                Log.Warning("ConsolidationDispatchHandler: rate limit hit, stopping dispatch cycle");
+                break;
             }
+
+            var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
+
+            // TODO: Add default case to fail fast on unexpected EligibilityOutcome values — currently falls through to DispatchConsolidationItemAsync with potentially null Template
+            switch (result.Outcome)
+            {
+                case EligibilityOutcome.AtConcurrencyLimit:
+                case EligibilityOutcome.NoPvcAvailable:
+                    continue;
+                case EligibilityOutcome.NoTemplate:
+                    await FailConsolidationWorkItemAsync(item.Id, result.ErrorMessage!, item.IssueIdentifier, ct);
+                    continue;
+            }
+
+            await DispatchConsolidationItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
         }
     }
 
