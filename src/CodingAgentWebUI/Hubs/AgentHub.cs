@@ -45,7 +45,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         IAgentTokenRefreshService tokenRefreshService,
         IGateCommentFormatter gateCommentFormatter,
         ILogger logger,
-        IAgentOrphanRecoveryService? orphanRecoveryService = null)
+        IAgentOrphanRecoveryService orphanRecoveryService)
     {
         _facade = facade;
         _chatNotifier = chatNotifier;
@@ -57,10 +57,7 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         _lifecycleService = lifecycleService;
         _tokenRefreshService = tokenRefreshService;
         _gateCommentFormatter = gateCommentFormatter;
-        // TODO: Make IAgentOrphanRecoveryService a required (non-nullable) constructor parameter.
-        // The service is registered in DI as a singleton — the nullable fallback couples the Hub
-        // to the concrete type and creates an unmanaged instance if DI misconfiguration occurs.
-        _orphanRecoveryService = orphanRecoveryService ?? new AgentOrphanRecoveryService(facade, _changeNotifier, logger);
+        _orphanRecoveryService = orphanRecoveryService;
         _logger = logger;
     }
 
