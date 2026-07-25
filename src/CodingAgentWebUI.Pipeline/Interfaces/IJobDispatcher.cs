@@ -2,14 +2,24 @@ using CodingAgentWebUI.Pipeline.Models;
 
 namespace CodingAgentWebUI.Pipeline.Interfaces;
 
-// TODO: XML doc still says "Internal abstraction" and "External code should use IWorkDistributor instead"
-// but this interface is now public. Update documentation to reflect public status and clarify
-// when direct use of IJobDispatcher vs IWorkDistributor is appropriate.
 /// <summary>
-/// Internal abstraction for dispatching pipeline jobs to remote agents.
-/// Consumed only by <c>LegacyWorkDistributor</c> and <c>JobQueueDrainService</c> (same assembly).
-/// External code should use <see cref="IWorkDistributor"/> instead.
+/// Low-level abstraction for dispatching pipeline jobs directly to connected agents.
+/// Consumed by <c>LegacyWorkDistributor</c> and <c>JobQueueDrainService</c> in the
+/// <c>CodingAgentWebUI.Orchestration</c> assembly.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Most callers should use <see cref="IWorkDistributor"/> — the higher-level dispatch
+/// abstraction consumed by <c>PipelineLoopService</c>. <see cref="IJobDispatcher"/> is
+/// used by the no-DB (Legacy) dispatch path where <c>LegacyWorkDistributor</c> delegates
+/// to it, and by <c>JobQueueDrainService</c> which drains the in-memory queue by matching
+/// pending jobs to idle agents.
+/// </para>
+/// <para>
+/// In DB modes (SignalR, Kubernetes), <see cref="IWorkDistributor"/> implementations handle
+/// dispatch independently and do not use <see cref="IJobDispatcher"/>.
+/// </para>
+/// </remarks>
 public interface IJobDispatcher
 {
     /// <summary>

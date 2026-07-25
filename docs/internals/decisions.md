@@ -5,8 +5,8 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Usage:** Agents MUST read this file before proposing changes to understand constraints and deliberate choices. If a decision here contradicts what seems "obvious," the decision wins — the human made it for a reason.
 
 <!-- Intent Extraction Sessions -->
-<!-- Session: 6 | Last run: 2026-07-04 | Decisions captured: 37 -->
-<!-- Queued for next session: none — run again after significant code changes -->
+<!-- Session: 9 | Last run: 2026-07-25 | Decisions captured: 51 -->
+<!-- Queued for next session: automated calibration design (when clear idea emerges), decomposition file limit increase to 12 (pending confirmation) -->
 
 ---
 
@@ -394,18 +394,18 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 <!-- Decisions about defaults, limits, thresholds, and tunables -->
 
-### Project overrides: intended semantics is deep-merge (currently broken — #1044)
+### Project overrides: deep-merge semantics implemented (#1044 resolved)
 
-**Date:** 2026-07-04
+**Date:** 2026-07-04 (updated 2026-07-25)
 **Category:** configuration
 
-**Decision:** Project-level overrides for nested config objects (e.g., `CodeReview`) should use deep-merge semantics: only explicitly-set sub-properties override the global config, unspecified sub-properties retain their global values. The current implementation uses REPLACE semantics (entire object swapped), which is a bug. Issue #1044 tracks the fix. Scalar properties already use correct merge semantics via the nullable pattern.
+**Decision:** Project-level overrides for nested config objects use deep-merge semantics via `[ProjectOverridable(DeepMerge = true)]`. Only explicitly-set sub-properties override the global config; unspecified sub-properties retain their global values. `PipelineConfigurationResolver` implements the merge logic at runtime. Scalar properties continue using the existing nullable pattern. **Status: Implemented and verified.** Issue #1044 closed July 9, 2026.
 
-**Context:** Kubernetes uses strategic merge patch. Helm uses deep merge. The current REPLACE behavior means changing one CodeReview property silently resets all others — unintuitive and error-prone.
+**Context:** Kubernetes uses strategic merge patch. Helm uses deep merge. The implementation follows the nullable property pattern on override records — matching the suggested approach from the original issue.
 
 **Alternatives considered:** Keep REPLACE (simpler implementation but bad UX), configurable per-object (overcomplicated).
 
-**Reassess when:** After #1044 is implemented and template-level overrides are added (should follow the same deep-merge pattern).
+**Reassess when:** Template-level overrides are added (should follow the same deep-merge pattern). A drift-detection test guards against new DeepMerge properties being added without verification.
 
 ---
 
@@ -514,7 +514,65 @@ Human-authored intent behind non-obvious design choices. This file is the author
 
 ---
 
-### Refactoring proposal quality bar: hotspot + scope + evidence
+### Refactoring consolidation loop: autonomous up to PR creation, merge is human-gated
+
+**Date:** 2026-07-25
+**Category:** architecture
+
+**Decision:** The refactoring consolidation loop (proposal generation → adversarial review → issue creation → agent implementation → code review → PR creation) is fully autonomous. No human approval is needed for any step up to PR creation. Merging PRs remains a manual human action. The loop can generate 30+ issues in a batch and agents immediately pick them up — this is intended behavior. The adversarial review + wont-do tracking + `agent:needs-refinement` label constitute sufficient quality gating before human merge review.
+
+**Context:** The July 23-25 consolidation batch created 30+ issues automatically, all implemented and PR'd without human intervention. Comparable systems (Dependabot, SonarQube) create proposals for human triage before implementation. This system's higher autonomy reflects trust in the multi-agent review pipeline (generator + discriminator pattern) and the fact that merge remains the human checkpoint.
+
+**Alternatives considered:** Human approval at issue creation (delays throughput without proportional safety gain given adversarial review), auto-merge for effort:small issues (removes the human checkpoint entirely — not desired).
+
+**Reassess when:** If merged PRs from the consolidation loop consistently introduce regressions, or if the `agent:needs-refinement` / `agent:wont-do` rate exceeds 30% on refactoring proposals.
+
+---
+
+### Refactoring auto-dispatch with dependency chains: acceptable for simple tasks only
+
+**Date:** 2026-07-25
+**Category:** architecture
+
+**Decision:** Agents creating issues with `Depends on #N` / `Blocked by #N` declarations (via DependencyResolver) is acceptable for simple refactoring tasks. The adversarial reviewer validates dependency correctness. For complex multi-step stories (epic-decomposition), a separate human-reviewed workflow handles dependency and ordering — agents do NOT autonomously create complex dependency chains for architectural work.
+
+**Context:** The refactoring loop creates dependency chains for mechanical ordering (extract class X before migrating its consumers). These are safe because each individual issue is small/low-risk. Epic decomposition uses a dedicated workflow with human approval at the decomposition stage.
+
+**Alternatives considered:** All dependency declarations require human approval (would block simple mechanical orderings), TTL-based auto-release (masks real dependency issues rather than surfacing them).
+
+**Reassess when:** A bad dependency declaration blocks legitimate work for >24 hours without human detection, or when the refactoring loop starts creating chains longer than 3 issues deep.
+
+---
+
+### Value types, dispatch decomposition, temporal coupling: implementation details — follow DDD best practices
+
+**Date:** 2026-07-25
+**Category:** architecture
+
+**Decision:** No strong preference on implementation-level patterns (value type consistency, dispatch class decomposition boundaries, DI temporal coupling). Agents should follow general DDD best practices and .NET conventions. Specific patterns: value types should validate on construction per DDD; class extraction follows single-responsibility principle; temporal coupling should be minimized via Lazy<T> or constructor injection when practical. These are not decisions that need human arbitration — agents may choose the idiomatic approach.
+
+**Context:** Five value types exist with varying patterns (bidirectional vs unidirectional implicit conversion, presence/absence of null validation). DispatchService was decomposed into 5+ services. DispatchInfrastructure has a mutable setter. All of these are normal .NET/DDD engineering choices that don't require human specification.
+
+**Alternatives considered:** N/A — this is explicitly "no strong opinion, follow best practices."
+
+**Reassess when:** Never — implementation details don't need human arbitration.
+
+---
+
+### Project overrides: deep-merge is implemented (resolves #1044)
+
+**Date:** 2026-07-25
+**Category:** configuration
+
+**Decision:** Deep-merge for project-level nested config overrides is implemented and working. `PipelineConfigurationResolver` uses the `[ProjectOverridable(DeepMerge = true)]` attribute flag to invoke `ApplyOverrides` on nested config objects. Currently only `CodeReview` uses DeepMerge; a drift-detection test guards against adding new DeepMerge properties without verification. Issue #1044 was closed July 9, 2026.
+
+**Context:** The previous decision entry ("Project overrides: intended semantics is deep-merge — currently broken — #1044") is now resolved. The implementation uses a nullable property pattern on override records + ApplyOverrides methods, exactly as suggested in the original issue.
+
+**Alternatives considered:** N/A — the bug was fixed as specified.
+
+**Reassess when:** A second `DeepMerge = true` property is added (the drift-detection test will fire, ensuring verification).
+
+---
 
 **Date:** 2026-07-04
 **Category:** configuration
@@ -526,6 +584,83 @@ Human-authored intent behind non-obvious design choices. This file is the author
 **Alternatives considered:** Hard metric thresholds (SonarQube-style complexity/duplication), pure scope-based filtering (any real issue regardless of hotspot), defer entirely to human calibration via feedback loop.
 
 **Reassess when:** The `agent:wont-do` rate on refactoring proposals exceeds 50% over a 90-day window, indicating the system is too aggressive.
+
+---
+
+### Code review iteration: CRITICAL-only triggers re-review, warnings get one fix pass
+
+**Date:** 2026-07-25
+**Category:** architecture
+
+**Decision:** The `FixPromptDecision` escalation strategy is intentional: CRITICAL findings → fix + continue iterating (defects require resolution). Warnings/suggestions only → fix once (add TODO comments) then EXIT the review loop (no re-review). Zero findings → exit immediately. Warnings are low-complexity and typically resolved in a single fix iteration. Adding a TODO for a warning is acceptable because the refactoring consolidation loop will eventually find and fix TODOs. Only CRITICALs — actual defects — justify burning another full review iteration (4 agents × token cost).
+
+**Context:** CodeRabbit and GitHub Copilot CCA don't have fix loops. Devin has implicit retry without severity-based escalation. The CRITICAL-only-retry pattern optimizes for throughput: a warning that introduces a new issue during fix won't be caught until human review, but the probability is low for TODO-level changes. `MaxIterations` config bounds total cost regardless.
+
+**Alternatives considered:** Re-review after warning fixes (doubles cost for marginal gain), binary pass/fail with no severity distinction (loses the "defect vs polish" nuance).
+
+**Reassess when:** If warning fixes frequently introduce new bugs (would indicate the fix agent is unsafe for unsupervised changes). Track via: human review comments on WARNING-level fix commits.
+
+---
+
+### Epic decomposition: two-phase with human gate, sub-issue sizing constraint (currently ≤5, increasing to ~12)
+
+**Date:** 2026-07-25
+**Category:** architecture
+
+**Decision:** Epic decomposition uses a two-phase workflow with a mandatory human gate between phases. Phase 1: agent explores codebase → produces plan → adversarial review → posts plan as issue comment → swaps to `agent:epic-review`. Phase 2 (after human approves via `agent:epic-approved`): agent generates full sub-issue JSON files. The human gate prevents bad decompositions from creating N issues that all fail. Each sub-issue is sized to: one verification criterion, one agent run, and a configurable file limit. The ≤5 file limit was the initial conservative default but is too restrictive — increasing to ~12 is planned. Auto-approval when adversarial review passes with 0 findings is a future possibility but not currently implemented.
+
+**Context:** No comparable system has a two-phase human-gated decomposition workflow. Devin decomposes internally without checkpoints. The structured sizing constraints ensure each sub-issue is achievable by a single agent run. The consolidation loop proves agents handle 10-15 file mechanical changes routinely.
+
+**Alternatives considered:** Auto-approve on clean review (faster but removes the human quality check for architectural decisions), fully autonomous decomposition (high risk for complex work).
+
+**Reassess when:** Auto-approval is implemented (removes latency when review passes cleanly), or when the file limit needs further tuning based on agent success rates on decomposed sub-issues.
+
+---
+
+### PR creation: draft-first then finalize, hybrid template + agent narrative
+
+**Date:** 2026-07-25
+**Category:** architecture
+
+**Decision:** PRs follow a draft-first-then-finalize pattern: `CreateDraftPrIfNotExistsAsync` creates a minimal draft during implementation (for pipeline visibility and structural purposes), then `FinalizePullRequestAsync` adds the full body (test results, coverage, file changes, code review findings, AC compliance table) and marks ready for review. The body is hybrid: deterministic template (`PipelineFormatting.GeneratePrBody`) provides structure/metrics, agent narrative (`BuildPrDescriptionPrompt`) provides "Summary" and "Approach" sections explaining what and why. Template is authoritative (always present, correctly formatted); agent narrative is enrichment (non-fatal if generation fails).
+
+**Context:** Dependabot uses purely template bodies. Devin uses purely LLM-generated descriptions. This hybrid ensures reviewers always get consistent metrics while also getting human-readable explanations. The draft state exists for pipeline visibility — the issue has an associated PR from early in the run, enabling operators to follow progress.
+
+**Alternatives considered:** Fully agent-generated (risks inconsistent structure, no guaranteed test stats), template-only (loses the "why" context that helps reviewers).
+
+**Reassess when:** If reviewers report the agent narrative is unhelpful or misleading — consider dropping it to save tokens. Currently it adds value for understanding implementation strategy.
+
+---
+
+### Brain knowledge: experimental, append-only with git versioning, consolidation handles maintenance
+
+**Date:** 2026-07-25
+**Category:** scope
+
+**Decision:** The brain feature is experimental. The lifecycle is: pre-run clone/pull → agent reads knowledge → agent appends lessons learned (structured: general/technology/projects/sessions, source attribution, citation tracking) → post-run detect changes + validate + commit+push. Append-only is intentional for safety — consolidation cycles handle pruning/merging separately. Git provides versioning and rollback. The citation tracking ("used, helpful" / "read, not applicable" / "used, outdated") enables data-driven pruning during consolidation. The feature's simplicity (just files in a git repo) is by design.
+
+**Context:** Devin uses opaque session snapshots. Claude Code has flat CLAUDE.md. The append-only + consolidation pattern is unique and addresses the ETH Zurich finding (arXiv:2602.11988) that naive context accumulation hurts performance — consolidation prevents unbounded growth.
+
+**Alternatives considered:** Database-backed knowledge store (loses git versioning and human inspectability), TTL-based auto-expiry (loses valuable rare-but-useful entries).
+
+**Reassess when:** The feature moves from experimental to production-stable, or if brain size becomes a measurable performance degradation factor (would indicate consolidation frequency needs increasing).
+
+---
+
+### Image extraction: security hardening kept but feature is experimental, may be reworked
+
+**Date:** 2026-07-25
+**Category:** scope
+
+**Decision:** The image extraction feature (IssueImageExtractor + ImageDownloadService) includes substantial security hardening (SSRF protection, magic bytes validation, dimension bounds, atomic byte budget, throughput floor detection). The hardening was agent-recommended during implementation — not from a deliberate security design session. It's kept because it costs nothing in normal operation and protects against real attack vectors (SSRF via issue markdown). However, the feature is experimental and not fully tested — parts may be reworked. Security parameters are reasonable defaults, not hardened invariants with a formal threat model.
+
+**Context:** No comparable agent system downloads issue images for agent consumption. The feature enables handling visual bugs (screenshots, UI mockups). The security depth is disproportionate to the feature's maturity — but removing it would be regression.
+
+**Alternatives considered:** No image support (simpler but loses visual context), unsecured download (unacceptable for user-controlled URLs).
+
+**Reassess when:** Feature is fully tested and promoted to production-stable — formalize security parameters as proper invariants. Or when rework reveals the hardening causes issues.
+
+---
 
 ## Future Direction
 
@@ -562,6 +697,79 @@ Human-authored intent behind non-obvious design choices. This file is the author
 ## Integration
 
 <!-- Decisions about external systems, APIs, provider boundaries -->
+
+### Prompt architecture: layered composition with non-overridable structural guardrails
+
+**Date:** 2026-07-25
+**Category:** architecture
+
+**Decision:** Prompts follow a strict 3-layer architecture: `DefaultPrompts.cs` (raw content) → `PipelineConfiguration` (overridable per-project) → `PromptBuilder` (composes final prompt with non-overridable structural elements). The structural elements — scope fences, thoroughness footer, calibration footer, verification clause — are hardcoded in PromptBuilder because they're research-backed behavioral guardrails, not domain content. Users customize WHAT the agent does (analysis focus areas, review checklist items). The pipeline controls HOW it behaves (primacy-positioned scope fences, debiasing calibration, anti-fabrication verification). Making structural elements configurable is explicitly out of scope — the pipeline flow is strict by design.
+
+**Context:** Most agent frameworks (LangChain, CrewAI) use template engines for composition. The hardcoded structural approach matches Anthropic's recommended architecture for production agents (separate system-level behavioral constraints from user-level content). C# string constants mean prompt changes require recompile — acceptable because prompts change at deploy cadence. Research references: arXiv:2508.12358 (over-rejection bias → calibration), arXiv:2605.01771 (compliance gap → verification clause brevity), arXiv:2603.18740 (developer framing bias → debiasing).
+
+**Alternatives considered:** Template engine for all elements (loses guaranteed behavioral compliance), external prompt files with hot-reload (premature for single-operator system), DSPy-style auto-optimization (research-grade, not production-ready).
+
+**Reassess when:** Never for the structural/domain separation principle. If the system serves multiple teams who need different calibration thresholds, consider making calibration tunable while keeping scope fences immutable.
+
+---
+
+### Acceptance criteria parsing: regex-based, intentionally simple and deterministic
+
+**Date:** 2026-07-25
+**Category:** architecture
+
+**Decision:** `IssueDescriptionParser` uses regex to extract `## Acceptance Criteria` sections (checkbox `- [ ]` or numbered `1.` items) from markdown issue bodies. No NLP, no LLM-based parsing. This is intentionally simple because: (1) the format is standard across all `IIssueProvider` implementations (GitHub, GitLab), (2) deterministic parsing never hallucinates criteria that don't exist, (3) it works reliably for the expected input format. The dedicated AC evaluation agent then assesses compliance, producing structured JSON. NonCompliant results are injected as CRITICAL findings, forcing the implementation agent to address them or exhaust the retry budget.
+
+**Context:** Devin and OpenHands don't parse acceptance criteria structurally. The approach is novel — closest research is requirement-to-test traceability (arXiv:2507.02564, ~73.7% recall). The regex approach trades recall for precision. Issues without an AC section degrade gracefully to "check issue goals."
+
+**Alternatives considered:** LLM-based extraction for non-standard formatting (adds latency and hallucination risk), more permissive patterns (risk extracting non-criteria content as criteria).
+
+**Reassess when:** If a new IIssueProvider uses a fundamentally different format where regex can't extract criteria, or if false-negative rate on criteria extraction becomes measurable.
+
+---
+
+### NonCompliant acceptance criteria as CRITICAL: hard contract, retry budget bounds cost
+
+**Date:** 2026-07-25
+**Category:** architecture
+
+**Decision:** Acceptance criteria are part of both DoR (Definition of Ready) and DoD (Definition of Done). When the AC agent reports `NonCompliant`, it's injected as a `[CRITICAL]` finding that forces the implementation agent to retry. If after all retry attempts the AC remains non-compliant, the PR ships with non-compliant status visible — this is an acceptable outcome. The implementing agent being "sure" after multiple rounds that the AC can't be met is valid signal (the criterion may be unfeasible or the AC agent may be wrong). The retry budget bounds the cost of false negatives.
+
+**Context:** No comparable system treats AC as a forcing function. Most systems treat AC as documentation. This approach is closer to contract testing (Pact) where contract violations are hard failures. The bounded retry budget prevents infinite loops from AC agent false negatives.
+
+**Alternatives considered:** Soften to WARNING (loses the forcing function — AC becomes advisory), confidence threshold (adds complexity without clear benefit given bounded retries).
+
+**Reassess when:** If the AC agent's false-negative rate becomes high enough that retry budgets are regularly exhausted on correct implementations. Track via: ratio of "all AC compliant" PRs vs "non-compliant after retries" PRs.
+
+---
+
+### Feedback loop: data collection only, automated calibration explicitly deferred
+
+**Date:** 2026-07-25
+**Category:** scope
+
+**Decision:** The system collects structured feedback from every run (success AND failure) via `FeedbackPromptBuilder`. `HarnessSuggestionExecutor` periodically analyzes accumulated feedback and produces actionable suggestions. `RefactoringOutcomeLookback` tracks wont-do vs done rates. NO automated adjustment exists — feedback is collected, analyzed, surfaced to the human operator, and the human decides what to change. This is intentional: no clear design exists for safe automated calibration, and premature automation risks compounding errors. The arXiv:2607.13091 "accumulated behavioral rules" approach is interesting but too new for production adoption.
+
+**Context:** Most production systems (GitHub Copilot, Cursor) don't have automated self-calibration. Research (arXiv:2607.13091, July 2026) proposes closed-loop self-improvement but is unproven in production. The data collection infrastructure is complete and ready for a future automation layer when a safe design emerges.
+
+**Alternatives considered:** Auto-disable proposals if rejection rate > 50% (simple but loses nuance), auto-create issues from suggestions (adds noise without human validation), full closed-loop per arXiv:2607.13091 (too experimental).
+
+**Reassess when:** A clear, safe design for automated calibration emerges — likely triggered by accumulated data showing stable, predictable feedback patterns that could be auto-acted upon without human oversight.
+
+---
+
+### Prompt versioning: out of scope, scale doesn't justify the infrastructure
+
+**Date:** 2026-07-25
+**Category:** scope
+
+**Decision:** Prompts are tracked via git history only. No version numbers, changelogs, A/B testing, or evaluation pipelines exist. Changes are immediate on deploy (all runs use new prompts). This is acceptable because: (1) prompts change infrequently, (2) adversarial review catches prompt-induced regressions, (3) single operator can revert quickly, (4) the system doesn't serve multiple teams with different prompt needs.
+
+**Context:** Production LLM systems at scale (Anthropic enterprise, Scale AI) use explicit prompt versioning with evaluation pipelines. Research (Thomas Wiegold 2026) shows versioning becomes critical when multiple teams share prompt infrastructure. The "prompts are just code" approach works for single-team systems.
+
+**Alternatives considered:** Content hash in telemetry (enables Grafana correlation but adds complexity for a problem that doesn't exist), semantic versions on constants (documentation overhead without consumer).
+
+**Reassess when:** The system serves multiple teams, OR a regression is traced to a prompt change that took days to identify because there was no correlation in telemetry.
 
 ## Scope
 
@@ -867,7 +1075,7 @@ Human-authored intent behind non-obvious design choices. This file is the author
 - "Dispatch fairness: equal round-robin" scoped by "Dispatch priority is FIFO" (both reflect "sufficient at current scale" philosophy)
 - "Label swap: add-first ordering" scoped by "Token vending: private keys never leave orchestrator" (both assume imperfect external APIs)
 - "External CI re-push" scoped by "Partial failure contract" (CI is on the critical path — failure is retried, not ignored)
-- "Project overrides: deep-merge (#1044)" constrains "No schema versioning" (merge requires distinguishing "not set" from "set to default")
+- "Project overrides: deep-merge (#1044 resolved)" constrains "No schema versioning" (merge requires distinguishing "not set" from "set to default")
 - "LocalPipelineExecutor: accidental monolith" correlates with "Agent lifetime dual model" (executor grew as both modes added features)
 - "AgentCoding component ↔ PageService boundary" scoped by "PipelineService event handling" (event state transitions should migrate to PageService per the boundary principle)
 - "Undo snackbar: always show" correlates with "Error messages: sticky with dismiss" (both are feedback pattern decisions — success/undo are transient, errors are persistent)
@@ -877,13 +1085,29 @@ Human-authored intent behind non-obvious design choices. This file is the author
 - "Visual design: dark-first" scopes "Information density: high for monitoring" (dark theme with purple accent designed for dense data display)
 - "Interaction model: mouse-first" constrains "Keyboard shortcuts" (shortcuts are bonus, not primary interaction path)
 - "Pipeline progress: dual-panel" scoped by "Target user: single operator" (desktop-assumed, screen-width-leveraging layout)
+- "Refactoring consolidation loop: autonomous up to PR" scoped by "Adversarial review is default pattern" (review is the quality gate that enables autonomy)
+- "Refactoring auto-dispatch with dependencies" scoped by "Refactoring proposal quality bar" (only proposals passing the quality bar get dependency chains)
+- "Value types / dispatch decomposition: follow DDD" scoped by "No schema versioning" (value types need wire-compat awareness)
+
+- "Prompt architecture: layered composition" scoped by "Adversarial review is default pattern" (structural guardrails enable reliable adversarial review behavior)
+- "AC parsing: regex-based" enables "NonCompliant AC as CRITICAL" (parsing feeds the AC evaluation agent which produces the CRITICAL findings)
+- "NonCompliant AC as CRITICAL" scoped by "MaxRetries=3 arbitrary default" (retry budget bounds the cost of AC false negatives)
+- "Feedback loop: data collection only" correlates with "Refactoring proposal quality bar" (outcome tracking informs quality bar but doesn't auto-adjust it)
+- "Prompt versioning: out of scope" scoped by "Target user: single operator" (multi-team would require versioning)
+
+- "Code review iteration: CRITICAL-only re-review" scoped by "Adversarial review is default pattern" (review agents produce severity-graded findings that drive the decision tree)
+- "Code review iteration: CRITICAL-only re-review" correlates with "Cleanup step before PR" (cleanup handles cosmetic issues that warnings might leave)
+- "Epic decomposition: two-phase with human gate" scoped by "Refactoring auto-dispatch with dependencies" (simple refactoring is autonomous; complex epics require human gate)
+- "PR creation: draft-first then finalize" enables "Pipeline progress: dual-panel" (draft PR provides visibility during execution)
+- "Brain knowledge: experimental, append-only" scoped by "Filesystem-as-context" (brain is delivered to agents via filesystem like all other context)
+- "Image extraction: experimental with security hardening" scoped by "Token vending: private keys never leave orchestrator" (both reflect defense-in-depth philosophy)
 
 ### Coverage Gaps (auto-detected)
-- Coverage is now comprehensive for core architecture, configuration, UX interaction patterns, and visual design
-- Remaining undocumented areas: prompt engineering philosophy, acceptance criteria parsing strategy, feedback loop calibration, Agent Coding page layout redesign (flagged as open to suggestions)
+- Automated calibration design remains explicitly deferred
+- Decomposition file limit increase (≤5 → ~12) — pending implementation
+- Agent Coding page layout redesign (open since session 6)
 
 ### Queued Questions (for next session)
-- Agent Coding page layout redesign proposals (user expressed openness to restructuring non-monitoring pages)
-- Prompt engineering philosophy (how prompts are structured/maintained)
-- Acceptance criteria parsing strategy
-- Feedback loop calibration mechanism design
+- Automated calibration design — when a clear mechanism emerges, revisit
+- Decomposition sub-issue file limit increase (5 → ~12) — pending confirmation and implementation
+- Agent Coding page layout redesign proposals (from session 6, still open)
