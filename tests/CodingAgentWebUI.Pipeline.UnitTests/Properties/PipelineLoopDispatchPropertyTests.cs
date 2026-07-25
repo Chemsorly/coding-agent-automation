@@ -74,7 +74,11 @@ public class PipelineLoopDispatchPropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        await Task.Delay(500);
+        // Wait for the cycle to complete (status changes to "Cycle complete")
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!svc.StatusMessage.Contains("Cycle complete") && DateTime.UtcNow < deadline)
+            await Task.Delay(50);
+
         svc.StopLoop();
         await Task.Delay(200);
         cts.Cancel();
