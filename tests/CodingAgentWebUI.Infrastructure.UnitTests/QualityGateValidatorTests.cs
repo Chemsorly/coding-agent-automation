@@ -869,25 +869,26 @@ public class QualityGateValidatorTests
     [Fact]
     public async Task RunProcessAsync_NormalPath_PipeDrainTimeout_PreservesCompletedPipe()
     {
-        // Arrange: Use a short pipe drain timeout (5s) to make the test fast and meaningful.
-        // Spawn a process where stderr closes after ~2s (via a grandchild that holds it briefly)
-        // but stdout is held open indefinitely by another grandchild.
+        // Arrange: Use a pipe drain timeout (10s) that gives generous headroom for the stderr
+        // grandchild (~2s) to complete in slow CI environments. The key invariant is that stderr
+        // closes well before the timeout (so stderrTask.IsCompletedSuccessfully=true in the
+        // fallback) while stdout is held open indefinitely by another grandchild.
         //
         // With concurrent drain (Task.WhenAll + fallback):
         //   - Both WaitAsync calls start at t=0
         //   - stderrTask completes at ~t=2s (pipe closes when short-lived grandchild exits)
         //   - stdoutTask never completes (grandchild sleeps forever)
-        //   - CTS fires at t=5s → Task.WhenAll throws OperationCanceledException
+        //   - CTS fires at t=10s → Task.WhenAll throws OperationCanceledException
         //   - Fallback: stderrTask.IsCompletedSuccessfully=true → stderr preserved ✓
         //
         // With hypothetical sequential per-pipe try/catch (the old bug pattern):
-        //   - await stdoutTask.WaitAsync(cts) → CTS fires at t=5s → stdout = string.Empty
+        //   - await stdoutTask.WaitAsync(cts) → CTS fires at t=10s → stdout = string.Empty
         //   - await stderrTask.WaitAsync(cts) → CTS already cancelled → immediate throw → stderr = string.Empty
         //   - Both lost!
         //
-        // Key: the test uses a 5s timeout, and the method must complete in ~5s (not ~10s which
+        // Key: the test uses a 10s timeout, and the method must complete in ~10s (not ~20s which
         // would indicate sequential per-pipe timeouts).
-        var pipeDrainTimeout = TimeSpan.FromSeconds(5);
+        var pipeDrainTimeout = TimeSpan.FromSeconds(10);
         var validator = new ProcessExposingValidator(pipeDrainTimeout);
 
         // Script: 

@@ -22,7 +22,7 @@ public class JobQueueDrainServiceTests
     private readonly JobDeduplicationGuardService _dispatcher;
     private readonly Mock<IJobDispatcher> _mockJobDispatcher;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
-    private readonly Mock<IConsolidationDispatcher> _mockConsolidationDispatcher;
+    private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService;
     private readonly JobQueueDrainService _service;
 
     public JobQueueDrainServiceTests()
@@ -38,9 +38,9 @@ public class JobQueueDrainServiceTests
         _mockConfigStore
             .Setup(c => c.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
-        _mockConsolidationDispatcher = new Mock<IConsolidationDispatcher>();
+        _mockConsolidationDispatchService = new Mock<IConsolidationDispatchService>();
         _service = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object,
-            _mockConfigStore.Object, _mockConsolidationDispatcher.Object, new ShutdownSignal(), logger);
+            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger);
     }
 
     private AgentEntry RegisterIdleAgent(string agentId = "agent-1", IReadOnlyList<string>? labels = null)
@@ -420,13 +420,13 @@ public class JobQueueDrainServiceTests
             ConsolidationWorkspacePath = "/tmp/ws"
         });
 
-        _mockConsolidationDispatcher
+        _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync("crun-1", ConsolidationRunType.BrainConsolidation, null, "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         await _service.DrainAsync(CancellationToken.None);
 
-        _mockConsolidationDispatcher.Verify(
+        _mockConsolidationDispatchService.Verify(
             d => d.TryDispatchToAgentAsync("crun-1", ConsolidationRunType.BrainConsolidation, null, "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()),
             Times.Once);
     }
@@ -448,7 +448,7 @@ public class JobQueueDrainServiceTests
             ConsolidationWorkspacePath = "/tmp/ws"
         });
 
-        _mockConsolidationDispatcher
+        _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
@@ -467,7 +467,7 @@ public class JobQueueDrainServiceTests
 
         var logger = new Mock<ILogger>().Object;
         var serviceWithStore = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object,
-            _mockConfigStore.Object, _mockConsolidationDispatcher.Object, new ShutdownSignal(), logger, runStore.Object);
+            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger, runStore.Object);
 
         RegisterIdleAgent();
         _dispatcher.EnqueueJob(new PendingJob
@@ -485,7 +485,7 @@ public class JobQueueDrainServiceTests
         await serviceWithStore.DrainAsync(CancellationToken.None);
 
         // Dispatch should never be called for cancelled runs
-        _mockConsolidationDispatcher.Verify(
+        _mockConsolidationDispatchService.Verify(
             d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
@@ -509,7 +509,7 @@ public class JobQueueDrainServiceTests
             ConsolidationWorkspacePath = "/tmp/ws"
         });
 
-        _mockConsolidationDispatcher
+        _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Agent error"));
 

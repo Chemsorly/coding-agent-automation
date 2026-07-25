@@ -3,9 +3,6 @@ using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
-// TODO: Add a test for the 120-second timeout path that kills the process tree and returns "timed out" in
-// the failure message. This is a critical behavioral contract that the Pipeline step relies on via string matching.
-
 [Trait("Category", "Integration")]
 [Trait("Platform", "Linux")]
 public class SetupCommandRunnerTests : IDisposable
@@ -226,5 +223,69 @@ public class SetupCommandRunnerTests : IDisposable
 
         // Assert
         await act.Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task RunAsync_Timeout_ReturnsFailureWithTimeoutMessage()
+    {
+        // Arrange
+        var secrets = new Dictionary<string, string>();
+
+        // Act — use the internal overload with a short timeout for testability
+        var result = await SetupCommandRunner.RunAsync(
+            "sleep 999", "Slow Step", _tempDir, secrets,
+            _ => { }, CancellationToken.None, timeout: TimeSpan.FromSeconds(2));
+
+        // Assert
+        result.Success.Should().BeFalse();
+        result.FailureMessage.Should().Contain("timed out");
+        result.FailureMessage.Should().Contain("Slow Step");
+        result.Exception.Should().BeNull();
+    }
+
+    // TODO: This test may not reliably exercise the IOException fault path on Linux.
+    // After Kill(), the pipe read-end receives EOF (completing ReadToEndAsync successfully)
+    // rather than throwing IOException. To truly verify exception observation, use a mock/wrapper
+    // around Process that forces IOException on the pipe-read tasks.
+    [Fact]
+    public async Task RunAsync_Timeout_DoesNotProduceUnobservedTaskException()
+    {
+        // Arrange — track any unobserved task exceptions that surface during GC
+        var unobservedExceptions = new List<Exception>();
+        EventHandler<UnobservedTaskExceptionEventArgs> handler = (_, e) =>
+        {
+            unobservedExceptions.Add(e.Exception);
+            e.SetObserved();
+        };
+
+        TaskScheduler.UnobservedTaskException += handler;
+        try
+        {
+            // Act — write to both stdout and stderr to ensure both ReadToEndAsync tasks are active when killed
+            var result = await SetupCommandRunner.RunAsync(
+                "echo 'stdout data'; echo 'stderr data' >&2; sleep 999", "Hang Step", _tempDir,
+                new Dictionary<string, string>(),
+                _ => { }, CancellationToken.None, timeout: TimeSpan.FromSeconds(2));
+
+            result.Success.Should().BeFalse();
+
+            // Wait for pipe-read tasks to fault after process kill
+            await Task.Delay(TimeSpan.FromSeconds(2));
+
+            // Force GC to finalize abandoned tasks and trigger UnobservedTaskException if any
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+
+            await Task.Delay(100);
+
+            // Assert
+            unobservedExceptions.Should().BeEmpty(
+                "Abandoned stdout/stderr tasks should have their exceptions observed by ContinueWith");
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= handler;
+        }
     }
 }

@@ -600,7 +600,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         // Validates: Requirement 8.1 — When dispatch fails after persist failure,
         // the concurrency guard is released so the same type+template can be re-triggered.
 
-        var mockDispatcher = new Mock<IConsolidationDispatcher>();
+        var mockDispatcher = new Mock<IConsolidationDispatchService>();
         mockDispatcher
             .Setup(d => d.TryDispatchAsync(
                 It.IsAny<ConsolidationRun>(),
@@ -647,7 +647,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         // Validates: Requirement 8.1 — When dispatcher throws, TriggerAsync removes
         // the entry from _runningRuns and re-throws so the caller can display the real error.
 
-        var mockDispatcher = new Mock<IConsolidationDispatcher>();
+        var mockDispatcher = new Mock<IConsolidationDispatchService>();
         mockDispatcher
             .Setup(d => d.TryDispatchAsync(
                 It.IsAny<ConsolidationRun>(),
@@ -704,7 +704,7 @@ public sealed class ConsolidationServiceTests : IDisposable
     public async Task IConsolidationRunTracker_TransitionToRunningAsync_UpdatesInMemoryTracker()
     {
         // Arrange: create a queued run and add it to the in-memory tracker via TriggerAsync
-        var mockDispatcher = new Mock<IConsolidationDispatcher>();
+        var mockDispatcher = new Mock<IConsolidationDispatchService>();
         mockDispatcher
             .Setup(d => d.TryDispatchAsync(It.IsAny<ConsolidationRun>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ConsolidationDispatchResult.Queued);

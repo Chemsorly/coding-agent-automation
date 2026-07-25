@@ -33,13 +33,13 @@ public class AnalysisStalenessDetectorTests
             .ReturnsAsync(false);
     }
 
-    private static IssueComment CreateAnalysisComment(string? bodyHash = null, DateTime? createdAt = null)
+    private static IssueComment CreateAnalysisComment(string? bodyHash = null, DateTime? createdAt = null, string? id = null)
     {
         var hash = bodyHash ?? AnalysisBodyHash.Compute("original body");
         var time = createdAt ?? AnalysisTime;
         return new IssueComment
         {
-            Id = "ac-1",
+            Id = id ?? "ac-1",
             Author = "bot",
             Body = $"## 🤖 Agent Analysis\n\nContent\n<!-- agent:analysis-body-hash:{hash} -->",
             CreatedAt = time
@@ -289,17 +289,18 @@ public class AnalysisStalenessDetectorTests
     [Fact]
     public async Task MaxRefreshCap_ThreeRefreshesWithoutSuccess_StalenessSuppressed()
     {
-        // 3 analysis comments with hash markers (simulates 3 refreshes)
+        // 4 analysis comments with hash markers: 3 prior refreshes + 1 current being evaluated
         var comments = new[]
         {
-            CreateAnalysisComment(AnalysisBodyHash.Compute("v1"), new DateTime(2026, 7, 1, 10, 0, 0, DateTimeKind.Utc)),
-            CreateAnalysisComment(AnalysisBodyHash.Compute("v2"), new DateTime(2026, 7, 1, 11, 0, 0, DateTimeKind.Utc)),
-            CreateAnalysisComment(AnalysisBodyHash.Compute("v3"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc)),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v1"), new DateTime(2026, 7, 1, 9, 0, 0, DateTimeKind.Utc), id: "ac-1"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v2"), new DateTime(2026, 7, 1, 10, 0, 0, DateTimeKind.Utc), id: "ac-2"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v3"), new DateTime(2026, 7, 1, 11, 0, 0, DateTimeKind.Utc), id: "ac-3"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v4"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc), id: "ac-4"),
         };
 
-        // No successes → all 3 count
+        // No successes → 3 prior refreshes counted (current comment excluded)
         var result = await _detector.EvaluateAsync(
-            comments[2], comments, "different body",
+            comments[3], comments, "different body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
         result.ForceRefresh.Should().BeFalse();
@@ -309,20 +310,22 @@ public class AnalysisStalenessDetectorTests
     [Fact]
     public async Task MaxRefreshCap_SuccessBetweenRefreshes_ResetsCounter()
     {
-        // 3 analysis comments with hash markers
+        // 4 analysis comments with hash markers and unique IDs
         var comments = new[]
         {
-            CreateAnalysisComment(AnalysisBodyHash.Compute("v1"), new DateTime(2026, 7, 1, 10, 0, 0, DateTimeKind.Utc)),
-            CreateAnalysisComment(AnalysisBodyHash.Compute("v2"), new DateTime(2026, 7, 1, 11, 0, 0, DateTimeKind.Utc)),
-            CreateAnalysisComment(AnalysisBodyHash.Compute("v3"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc)),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v1"), new DateTime(2026, 7, 1, 10, 0, 0, DateTimeKind.Utc), id: "ac-1"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v2"), new DateTime(2026, 7, 1, 11, 0, 0, DateTimeKind.Utc), id: "ac-2"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v3"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc), id: "ac-3"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v4"), new DateTime(2026, 7, 1, 13, 0, 0, DateTimeKind.Utc), id: "ac-4"),
         };
 
-        // Success at 11:30 — only comment at 12:00 counts (after success)
+        // Success at 11:30 — only comments at 12:00 and 13:00 are after success.
+        // Current comment (ac-4 at 13:00) is excluded → only ac-3 at 12:00 counts.
         _mockQuery.Setup(q => q.GetLastSuccessfulCompletionAsync(IssueId, ProviderId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DateTimeOffset(2026, 7, 1, 11, 30, 0, TimeSpan.Zero));
 
         var result = await _detector.EvaluateAsync(
-            comments[2], comments, "different body",
+            comments[3], comments, "different body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
         // Only 1 refresh since success → cap not hit → signals evaluated
@@ -333,27 +336,72 @@ public class AnalysisStalenessDetectorTests
     [Fact]
     public async Task MaxRefreshCap_SuccessWithNonZeroOffset_ComparesCorrectly()
     {
-        // 3 analysis comments at UTC times 10:00, 11:00, 12:00
+        // 4 analysis comments at UTC times 9:00, 10:00, 11:00, 12:00
         var comments = new[]
         {
-            CreateAnalysisComment(AnalysisBodyHash.Compute("v1"), new DateTime(2026, 7, 1, 10, 0, 0, DateTimeKind.Utc)),
-            CreateAnalysisComment(AnalysisBodyHash.Compute("v2"), new DateTime(2026, 7, 1, 11, 0, 0, DateTimeKind.Utc)),
-            CreateAnalysisComment(AnalysisBodyHash.Compute("v3"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc)),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v1"), new DateTime(2026, 7, 1, 9, 0, 0, DateTimeKind.Utc), id: "ac-1"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v2"), new DateTime(2026, 7, 1, 10, 0, 0, DateTimeKind.Utc), id: "ac-2"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v3"), new DateTime(2026, 7, 1, 11, 0, 0, DateTimeKind.Utc), id: "ac-3"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v4"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc), id: "ac-4"),
         };
 
-        // Success at 17:00 +05:30 = 11:30 UTC — only the 12:00 comment is after the success
-        // With the old .DateTime code, this would return 17:00 (Kind=Unspecified), causing
-        // all comments to appear "before" success (0 counted). With .UtcDateTime it correctly
-        // returns 11:30 UTC, so only the 12:00 comment counts (RefreshCount == 1).
+        // Success at 16:00 +05:30 = 10:30 UTC.
+        // Comments with CreatedAt > 10:30 UTC (excluding current ac-4):
+        //   ac-3 at 11:00 > 10:30 ✓
+        // So RefreshCount == 1.
         _mockQuery.Setup(q => q.GetLastSuccessfulCompletionAsync(IssueId, ProviderId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DateTimeOffset(2026, 7, 1, 17, 0, 0, TimeSpan.FromHours(5.5)));
+            .ReturnsAsync(new DateTimeOffset(2026, 7, 1, 16, 0, 0, TimeSpan.FromHours(5.5)));
 
         var result = await _detector.EvaluateAsync(
-            comments[2], comments, "different body",
+            comments[3], comments, "different body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
         result.RefreshCount.Should().Be(1);
         result.ForceRefresh.Should().BeTrue(); // body_changed fires since cap not hit
+    }
+
+    [Fact]
+    public async Task MaxRefreshCap_ExactlyThreeForcedRefreshes_StalenessSuppressed()
+    {
+        // Acceptance criterion: suppression triggers after exactly 3 forced refreshes, not 2.
+        // 4 comments total: 1 current being evaluated + 3 prior forced refreshes.
+        var comments = new[]
+        {
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v1"), new DateTime(2026, 7, 1, 9, 0, 0, DateTimeKind.Utc), id: "ac-1"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v2"), new DateTime(2026, 7, 1, 10, 0, 0, DateTimeKind.Utc), id: "ac-2"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v3"), new DateTime(2026, 7, 1, 11, 0, 0, DateTimeKind.Utc), id: "ac-3"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v4"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc), id: "ac-current"),
+        };
+
+        // No successes → all 3 prior comments count as forced refreshes
+        var result = await _detector.EvaluateAsync(
+            comments[3], comments, "different body",
+            IssueId, ProviderId, 0, null, CancellationToken.None);
+
+        result.ForceRefresh.Should().BeFalse("staleness should be suppressed after 3 forced refreshes");
+        result.RefreshCount.Should().Be(3);
+    }
+
+    [Fact]
+    public async Task MaxRefreshCap_TwoForcedRefreshes_StalenessNotSuppressed()
+    {
+        // Acceptance criterion: 2 forced refreshes should NOT trigger suppression.
+        // 3 comments total: 1 current being evaluated + 2 prior forced refreshes.
+        var comments = new[]
+        {
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v1"), new DateTime(2026, 7, 1, 10, 0, 0, DateTimeKind.Utc), id: "ac-1"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v2"), new DateTime(2026, 7, 1, 11, 0, 0, DateTimeKind.Utc), id: "ac-2"),
+            CreateAnalysisComment(AnalysisBodyHash.Compute("v3"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc), id: "ac-current"),
+        };
+
+        // No successes → 2 prior comments counted, cap not hit → signals evaluated
+        var result = await _detector.EvaluateAsync(
+            comments[2], comments, "different body",
+            IssueId, ProviderId, 0, null, CancellationToken.None);
+
+        result.ForceRefresh.Should().BeTrue("staleness signals should still fire with only 2 prior refreshes");
+        result.Signal.Should().Be("body_changed");
+        result.RefreshCount.Should().Be(2);
     }
 
     // ── Newest comment selection ──────────────────────────────────────────
@@ -361,8 +409,8 @@ public class AnalysisStalenessDetectorTests
     [Fact]
     public async Task NewestAnalysisComment_IsUsedForStalenessEvaluation()
     {
-        var oldComment = CreateAnalysisComment(AnalysisBodyHash.Compute("old body"), new DateTime(2026, 7, 1, 10, 0, 0, DateTimeKind.Utc));
-        var newComment = CreateAnalysisComment(AnalysisBodyHash.Compute("current body"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc));
+        var oldComment = CreateAnalysisComment(AnalysisBodyHash.Compute("old body"), new DateTime(2026, 7, 1, 10, 0, 0, DateTimeKind.Utc), id: "ac-1");
+        var newComment = CreateAnalysisComment(AnalysisBodyHash.Compute("current body"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc), id: "ac-2");
 
         // If we pass the NEWEST comment, body matches → no refresh
         var result = await _detector.EvaluateAsync(

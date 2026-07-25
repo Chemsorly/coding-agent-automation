@@ -239,8 +239,8 @@ public interface IRepositoryProvider : IAsyncDisposable
     /// <summary>
     /// Returns the count of commits on the default branch since the given timestamp.
     /// Used by analysis staleness detection to determine if the codebase has evolved
-    /// significantly since the last analysis. Implementation MUST NOT auto-paginate
-    /// (bounded to a single API call with at most 100 results).
+    /// significantly since the last analysis. Paginates all results since the given
+    /// timestamp. Callers bound usage via AnalysisCommitThreshold configuration (max 1000).
     /// Default implementation returns 0 (effectively disabling commit-count staleness).
     /// </summary>
     /// <param name="since">Only count commits after this timestamp.</param>
