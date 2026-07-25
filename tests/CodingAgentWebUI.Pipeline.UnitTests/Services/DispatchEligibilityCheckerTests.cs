@@ -64,6 +64,7 @@ public class DispatchEligibilityCheckerTests
         var result = await checker.CheckEligibilityAsync(item, concurrency, availablePvcCount: 1, CancellationToken.None);
 
         result.Outcome.Should().Be(EligibilityOutcome.Eligible);
+        // TODO: Assert result.EffectiveSelector and result.IsKiroAgent to strengthen this test — currently only verifies concurrency bypass
     }
 
     // ── Template Resolution ──────────────────────────────────────────────

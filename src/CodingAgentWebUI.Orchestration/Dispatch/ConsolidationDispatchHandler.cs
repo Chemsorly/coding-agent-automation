@@ -105,6 +105,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _rateLimiter = CreateRateLimiter();
     }
 
+    // TODO: Replace with DispatchServiceOptionsFactory.Create() to eliminate duplication with DispatchService
     private void InitializeOptions(IConfiguration configuration)
     {
         configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
@@ -122,6 +123,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
     }
 
+    // TODO: Replace with DispatchServiceOptions.CreateRateLimiter() to eliminate duplication with DispatchService
     private TokenBucketRateLimiter CreateRateLimiter() => new(new TokenBucketRateLimiterOptions
     {
         TokenLimit = _options.RateLimitPerSecond,
@@ -218,38 +220,13 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         if (pendingItems.Count == 0)
             return;
 
-        // Build concurrency state: count running/dispatched per selector group
-        var activeCounts = await db.WorkItems
-            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
-            .GroupBy(w => w.AgentSelector)
-            .Select(g => new { Selector = g.Key, Count = g.Count() })
-            .ToListAsync(ct);
-
-        var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
-
-        // PVC pool: determine available PVCs for kiro agents
-        var claimedPvcs = await db.WorkItems
-            .Where(w => w.ClaimedPvcName != null &&
-                        (w.Status == WorkItemStatus.Pending ||
-                         w.Status == WorkItemStatus.Dispatched ||
-                         w.Status == WorkItemStatus.Running))
-            .Select(w => w.ClaimedPvcName!)
-            .ToListAsync(ct);
-
-        // Exclude PVCs claimed in-memory by DispatchService (not yet persisted to DB)
-        var inflightClaims = _lifecycle.GetInflightPvcClaims();
-
-        var availablePvcs = _options.KiroPvcPool
-            .Except(claimedPvcs, StringComparer.Ordinal)
-            .Where(pvc => !inflightClaims.Contains(pvc))
-            .ToList();
+        var (concurrencyBySelector, availablePvcs) = await BuildDispatchStateAsync(db, ct);
 
         foreach (var item in pendingItems)
         {
             if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
                 break;
 
-            // Rate limit
             using var lease = await _rateLimiter.AcquireAsync(1, ct);
             if (!lease.IsAcquired)
             {
@@ -259,7 +236,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
             var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
 
-            // TODO: Add default case to fail fast on unexpected EligibilityOutcome values — currently falls through to DispatchConsolidationItemAsync with potentially null Template
+            // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
             switch (result.Outcome)
             {
                 case EligibilityOutcome.AtConcurrencyLimit:
@@ -272,6 +249,38 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
             await DispatchConsolidationItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
         }
+    }
+
+    /// <summary>
+    /// Queries the database to build concurrency state (active counts per selector group)
+    /// and determines available PVCs for kiro agents.
+    /// </summary>
+    // TODO: Consider calling WorkDistributionTelemetry.UpdateCredentialPoolMetrics here for parity with DispatchService.BuildDispatchStateAsync
+    // TODO: Consider reusing DispatchLifecycleService.QueryAvailablePvcsAsync instead of inlining PVC logic (duplicated with DispatchService)
+    private async Task<(Dictionary<string, int> ConcurrencyBySelector, List<string> AvailablePvcs)> BuildDispatchStateAsync(
+        PipelineDbContext db, CancellationToken ct)
+    {
+        var activeCounts = await db.WorkItems
+            .Where(w => w.Status == WorkItemStatus.Dispatched || w.Status == WorkItemStatus.Running)
+            .GroupBy(w => w.AgentSelector)
+            .Select(g => new { Selector = g.Key, Count = g.Count() })
+            .ToListAsync(ct);
+        var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
+
+        var claimedPvcs = await db.WorkItems
+            .Where(w => w.ClaimedPvcName != null &&
+                        (w.Status == WorkItemStatus.Pending ||
+                         w.Status == WorkItemStatus.Dispatched ||
+                         w.Status == WorkItemStatus.Running))
+            .Select(w => w.ClaimedPvcName!)
+            .ToListAsync(ct);
+        var inflightClaims = _lifecycle.GetInflightPvcClaims();
+        var availablePvcs = _options.KiroPvcPool
+            .Except(claimedPvcs, StringComparer.Ordinal)
+            .Where(pvc => !inflightClaims.Contains(pvc))
+            .ToList();
+
+        return (concurrencyBySelector, availablePvcs);
     }
 
     // ── Consolidation-specific dispatch ─────────────────────────────────
