@@ -18,16 +18,21 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     private readonly ConcurrentDictionary<string, PipelineRun> _activeRuns = new();
 
     private readonly ConcurrentDictionary<string, OutputRingBuffer> _outputBuffers = new();
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _recentlyCompleted = new();
     private readonly int _defaultBufferCapacity;
     private readonly ILogger _logger;
+    private readonly TimeProvider _timeProvider;
 
-    public OrchestratorRunService(ILogger logger, int defaultBufferCapacity = PipelineConstants.DefaultOutputBufferCapacity)
+    private static readonly TimeSpan RecentCompletionTtl = TimeSpan.FromSeconds(120);
+
+    public OrchestratorRunService(ILogger logger, int defaultBufferCapacity = PipelineConstants.DefaultOutputBufferCapacity, TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(defaultBufferCapacity, 0);
 
         _logger = logger;
         _defaultBufferCapacity = defaultBufferCapacity;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
@@ -128,6 +133,32 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     /// </summary>
     public int ActiveRunCount => _activeRuns.Count;
 
+    /// <inheritdoc />
+    public void MarkRecentlyCompleted(string issueIdentifier, string issueProviderConfigId)
+    {
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        var key = $"{issueProviderConfigId}:{issueIdentifier}";
+        _recentlyCompleted[key] = _timeProvider.GetUtcNow();
+    }
+
+    /// <inheritdoc />
+    public bool WasRecentlyCompleted(string issueIdentifier, string issueProviderConfigId)
+    {
+        ArgumentNullException.ThrowIfNull(issueIdentifier);
+        ArgumentNullException.ThrowIfNull(issueProviderConfigId);
+        var key = $"{issueProviderConfigId}:{issueIdentifier}";
+        if (_recentlyCompleted.TryGetValue(key, out var completedAt))
+        {
+            if (_timeProvider.GetUtcNow() - completedAt <= RecentCompletionTtl)
+                return true;
+
+            // Expired — remove lazily
+            _recentlyCompleted.TryRemove(key, out _);
+        }
+        return false;
+    }
+
     /// <summary>
     /// Clears all active runs and output buffers. Used by E2E tests for state isolation.
     /// </summary>
@@ -135,5 +166,6 @@ public sealed class OrchestratorRunService : IOrchestratorRunService
     {
         _activeRuns.Clear();
         _outputBuffers.Clear();
+        _recentlyCompleted.Clear();
     }
 }
