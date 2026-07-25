@@ -534,6 +534,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
                 HasMore = false
             });
         // GetIssueAsync returns the ACTUAL current state — already has agent:done
+        var getIssueCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         mockIssueProvider
             .Setup(p => p.GetIssueAsync("1635", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new IssueDetail
@@ -542,7 +543,8 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
                 Title = "Completed issue",
                 Description = "",
                 Labels = new[] { AgentLabels.Done }
-            });
+            })
+            .Callback(() => getIssueCalled.TrySetResult());
         mockIssueProvider
             .Setup(p => p.DisposeAsync())
             .Returns(ValueTask.CompletedTask);
@@ -561,11 +563,12 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
             .Setup(r => r.WasRecentlyCompleted("1635", "provider-1"))
             .Returns(false);
 
-        // Act: start the service and wait for sweep to complete
+        // Act: start the service and wait for GetIssueAsync to be called (deterministic sync)
         using var service = CreateService();
         await service.StartAsync(_cts.Token);
 
-        await Task.Delay(TimeSpan.FromSeconds(2));
+        var completed = await Task.WhenAny(getIssueCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().BeSameAs(getIssueCalled.Task, "GetIssueAsync should have been called after grace period");
 
         // Assert: SwapLabelAsync was NOT called — terminal label detected via GetIssueAsync
         _mockLabelService.Verify(
