@@ -154,7 +154,7 @@
     @* ── Run Detail Modal ── *@
     @if (_showRunDetailModal)
     {
-        var modalRun = PipelineService.GetAllActiveRuns().FirstOrDefault(r => r.RunId == _selectedRunId);
+        var modalRun = Lifecycle.GetAllActiveRuns().FirstOrDefault(r => r.RunId == _selectedRunId);
         if (modalRun != null)
         {
             var modalAgent = modalRun.AgentId != null ? Registry.GetByAgentId(modalRun.AgentId) : null;

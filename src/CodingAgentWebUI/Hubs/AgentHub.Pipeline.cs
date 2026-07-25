@@ -79,7 +79,7 @@ public sealed partial class AgentHub
             run.BrainKnowledgeFileCount = knowledgeFileCount;
             _logger.Debug("Job {JobId} brain sync result: loaded={Loaded}, files={FileCount}",
                 jobId.Value, contextLoaded, knowledgeFileCount);
-            _orchestration.NotifyChange();
+            _changeNotifier.NotifyChange();
         }
 
         return Task.CompletedTask;
@@ -103,7 +103,7 @@ public sealed partial class AgentHub
             foreach (var line in lines)
                 run.OutputLines.Enqueue(line);
 
-            _orchestration.NotifyChange();
+            _changeNotifier.NotifyChange();
         }
 
         return Task.CompletedTask;

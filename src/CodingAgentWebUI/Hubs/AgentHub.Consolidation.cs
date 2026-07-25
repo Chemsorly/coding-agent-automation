@@ -58,7 +58,7 @@ public sealed partial class AgentHub
             _facade.Signal();
         }
 
-        _orchestration.NotifyChange();
+        _changeNotifier.NotifyChange();
 
         // Non-fatal post-completion bookkeeping: run status update, suggestion persistence, badges.
         // These involve file I/O and can be slow under CI Docker overlay — executed after agent

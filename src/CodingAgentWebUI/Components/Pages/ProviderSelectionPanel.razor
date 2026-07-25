@@ -1,8 +1,7 @@
 @using CodingAgentWebUI.Pipeline
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
-@using CodingAgentWebUI.Pipeline.Services
-@inject PipelineOrchestrationService PipelineService
+@inject IPipelineRunHistoryService HistoryService
 @inject IConfigurationStore ConfigStore
 
 <div class="pipeline-setup-panel">
@@ -218,7 +217,7 @@
 
         try
         {
-            _runHistory = await PipelineService.GetRunHistoryAsync();
+            _runHistory = await HistoryService.GetRunHistoryAsync();
         }
         catch
         {

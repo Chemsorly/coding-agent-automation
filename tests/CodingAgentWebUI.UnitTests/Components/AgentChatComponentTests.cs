@@ -24,7 +24,7 @@ namespace CodingAgentWebUI.UnitTests.Components;
 public class AgentChatComponentTests : BunitContext
 {
     private readonly Mock<IConfigurationStore> _mockStore;
-    private readonly PipelineOrchestrationService _pipelineService;
+    private readonly PipelineRunLifecycleService _lifecycle;
     private readonly AgentRegistryService _registry;
 
     public AgentChatComponentTests()
@@ -43,14 +43,11 @@ public class AgentChatComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
 
-        _pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: _mockStore.Object,
-            providerFactory: mockFactory.Object,
-            historyService: mockHistory.Object);
+        _lifecycle = new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object);
 
         _registry = new AgentRegistryService(mockLogger.Object);
 
-        Services.AddSingleton(_pipelineService);
+        Services.AddSingleton(_lifecycle);
         Services.AddSingleton(_registry);
         Services.AddSingleton<IAgentRegistryService>(_registry);
         Services.AddSingleton(_mockStore.Object);

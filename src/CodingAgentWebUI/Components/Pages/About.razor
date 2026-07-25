@@ -1,10 +1,10 @@
 @page "/about"
 @using CodingAgentWebUI.Models
 @using CodingAgentWebUI.Pipeline.Models
-@using CodingAgentWebUI.Pipeline.Services
+@using CodingAgentWebUI.Pipeline.Interfaces
 @using System.Reflection
 @using System.Runtime.InteropServices
-@inject PipelineOrchestrationService PipelineService
+@inject IPipelineRunHistoryService HistoryService
 @inject BuildInfo BuildInfo
 
 @* TODO: Add E2E tests verifying <PageTitle> on all pages (About, AgentChat, AgentCoding, AgentMonitoring, AgentRefinement, Settings) — only Consolidation has title coverage (ConsolidationPageTests.cs:35) *@
@@ -133,7 +133,7 @@
             ?? "unknown";
         _runtimeVersion = RuntimeInformation.FrameworkDescription;
 
-        var history = await PipelineService.GetRunHistoryAsync();
+        var history = await HistoryService.GetRunHistoryAsync();
         _totalRuns = history.Count;
         _successCount = history.Count(r => r.FinalStep == PipelineStep.Completed);
         _failedCount = history.Count(r => r.FinalStep == PipelineStep.Failed);

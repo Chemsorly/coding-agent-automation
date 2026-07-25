@@ -20,7 +20,7 @@ namespace CodingAgentWebUI.UnitTests.Components;
 
 public class AgentMonitoringComponentTests : BunitContext
 {
-    private readonly PipelineOrchestrationService _pipelineService;
+    private readonly PipelineRunLifecycleService _lifecycle;
     private readonly Mock<IActiveRunQueryService> _mockActiveRunQuery = new();
 
     public AgentMonitoringComponentTests()
@@ -40,10 +40,8 @@ public class AgentMonitoringComponentTests : BunitContext
         mockHistory.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(Array.Empty<PipelineRunSummary>());
 
-        _pipelineService = TestOrchestrationFactory.CreateMinimal(
-            configStore: mockStore.Object,
-            providerFactory: mockFactory.Object,
-            historyService: mockHistory.Object);
+        var runService = new OrchestratorRunService(mockLogger.Object);
+        _lifecycle = new PipelineRunLifecycleService(mockHistory.Object, runService, mockLogger.Object);
 
         var registry = new AgentRegistryService(mockLogger.Object);
 
@@ -52,9 +50,9 @@ public class AgentMonitoringComponentTests : BunitContext
 
         Services.AddSingleton(registry);
         Services.AddSingleton<IAgentRegistryService>(registry);
-        Services.AddSingleton(_pipelineService);
+        Services.AddSingleton(_lifecycle);
+        Services.AddSingleton<IChangeNotifier>(_lifecycle);
         Services.AddSingleton(new JobDeduplicationGuardService(registry, mockLogger.Object));
-        var runService = new OrchestratorRunService(mockLogger.Object);
         Services.AddSingleton(runService);
         Services.AddSingleton<IOrchestratorRunService>(runService);
         Services.AddSingleton(mockStore.Object);
@@ -408,8 +406,7 @@ public class AgentMonitoringComponentTests : BunitContext
 
     private void SetActiveRun(PipelineRun run)
     {
-        var prop = typeof(PipelineOrchestrationService).GetProperty("ActiveRun")!;
-        prop.SetValue(_pipelineService, run);
+        _lifecycle.ActiveRun = run;
     }
 
     private static ActiveRunSummary CreateRunSummary(string issueTitle) => new()

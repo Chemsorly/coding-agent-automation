@@ -272,82 +272,109 @@ public sealed partial class AgentJobDispatcher
             revertLabel: AgentLabels.Next,
             failureMessageTemplate: "Failed to dispatch job to agent {AgentId} for issue {IssueIdentifier}",
             project,
-            async (proj, profile, agentProviderId, token) =>
-            {
-                // Shared dispatch preparation: QG/reviewer resolution, issue context, config, staleness
-                var preparation = await _infra.PrepareDispatchCoreAsync(
-                    requiredLabels, issueIdentifier, issueProviderId,
-                    repoProviderId, agentProviderId, brainProviderId, pipelineProviderId,
-                    proj, _logger, token);
-                if (preparation is null) return null;
-
-                var (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
-                    forceRefresh, stalenessSignal, refreshCount) = preparation.Value;
-
-                // Create the dispatched run via PipelineOrchestrationService
-                var run = await _orchestration.CreateDispatchedRunAsync(
-                    issueProviderId, repoProviderId, issueIdentifier,
-                    agentProviderId, agent.AgentId, token,
-                    brainProviderId, pipelineProviderId, initiatedBy);
-
-                if (run == null)
-                {
-                    _logger.Warning("Failed to create dispatched run for issue {IssueIdentifier}", issueIdentifier);
-                    return null;
-                }
-
-                // Set resolved metadata on the run (ApplyRunMetadata is called by the template)
-                run.ResolvedQualityGateConfigIds = resolvedQgcs.Select(q => q.Id).ToList().AsReadOnly();
-                run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
-                run.IssueTitle = issueContext.IssueDetail.Title;
-
-                var pipelineCtx = new DispatchPipelineContext
-                {
-                    Agent = agent,
-                    Run = run,
-                    Profile = profile,
-                    IssueIdentifier = issueIdentifier,
-                    IssueDetail = issueContext.IssueDetail,
-                    ParsedIssue = issueContext.ParsedIssue,
-                    IssueComments = issueContext.IssueComments,
-                    RepoProviderId = repoProviderId,
-                    AgentProviderId = agentProviderId,
-                    BrainProviderId = brainProviderId,
-                    PipelineProviderId = pipelineProviderId,
-                    IssueProviderId = issueProviderId,
-                    ProviderConfigs = providerConfigs,
-                    Config = config,
-                    InitiatedBy = initiatedBy,
-                    Project = proj
-                };
-
-                Func<JobAssignmentMessage, JobAssignmentMessage> customize = msg => msg with
-                {
-                    ExistingAnalysis = issueContext.ExistingAnalysis,
-                    ForceRefreshAnalysis = forceRefresh,
-                    StalenessSignal = stalenessSignal,
-                    AnalysisRefreshCount = refreshCount,
-                    QualityGateConfigs = resolvedQgcs,
-                    ReviewerConfigs = resolvedReviewerConfigs
-                };
-
-                Action onSuccess = () =>
-                {
-                    _logger.Information(
-                        "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount}, reviewerConfigs={ReviewerConfigCount}, project={ProjectName})",
-                        run.RunId, agent.AgentId, issueIdentifier, profile.Id, resolvedQgcs.Count, resolvedReviewerConfigs.Count, proj.Name);
-
-                    if (resolvedReviewerConfigs.Count > 0)
-                    {
-                        var reviewerSummary = string.Join(", ", resolvedReviewerConfigs.Select(r =>
-                            $"{r.DisplayName} (labels: [{string.Join(", ", r.MatchLabels)}])"));
-                        _logger.Debug("Job {JobId} resolved reviewer configs: {ReviewerSummary}", run.RunId, reviewerSummary);
-                    }
-                };
-
-                return (pipelineCtx, customize, onSuccess);
-            },
+            (proj, profile, agentProviderId, token) =>
+                PrepareImplementationContextAsync(agent, issueIdentifier, issueProviderId,
+                    repoProviderId, brainProviderId, pipelineProviderId, initiatedBy,
+                    requiredLabels, proj, profile, agentProviderId, token),
             ct);
+    }
+
+    // TODO: Consider adding targeted unit tests for PrepareImplementationContextAsync, PrepareReviewContextAsync,
+    // and PrepareDecompositionContextAsync in isolation. Currently only exercised via end-to-end characterization
+    // tests which cannot distinguish bugs in extracted methods vs. calling orchestration. If these methods are
+    // later made internal or moved to strategy classes, isolated tests become essential.
+
+    /// <summary>
+    /// Prepares the <see cref="DispatchPipelineContext"/> for an implementation dispatch.
+    /// Performs QG/reviewer resolution, issue context fetching, run creation, and staleness detection.
+    /// </summary>
+    private async Task<(DispatchPipelineContext Context, Func<JobAssignmentMessage, JobAssignmentMessage> Customize, Action? OnSuccess)?>
+        PrepareImplementationContextAsync(
+            AgentEntry agent,
+            string issueIdentifier,
+            string issueProviderId,
+            string repoProviderId,
+            string? brainProviderId,
+            string? pipelineProviderId,
+            string initiatedBy,
+            IReadOnlyList<string> requiredLabels,
+            PipelineProject project,
+            AgentProfile profile,
+            string agentProviderId,
+            CancellationToken ct)
+    {
+        // Shared dispatch preparation: QG/reviewer resolution, issue context, config, staleness
+        var preparation = await _infra.PrepareDispatchCoreAsync(
+            requiredLabels, issueIdentifier, issueProviderId,
+            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId,
+            project, _logger, ct);
+        if (preparation is null) return null;
+
+        var (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
+            forceRefresh, stalenessSignal, refreshCount) = preparation.Value;
+
+        // Create the dispatched run via PipelineOrchestrationService
+        var run = await _orchestration.CreateDispatchedRunAsync(
+            issueProviderId, repoProviderId, issueIdentifier,
+            agentProviderId, agent.AgentId, ct,
+            brainProviderId, pipelineProviderId, initiatedBy);
+
+        if (run == null)
+        {
+            _logger.Warning("Failed to create dispatched run for issue {IssueIdentifier}", issueIdentifier);
+            return null;
+        }
+
+        // Set resolved metadata on the run (ApplyRunMetadata is called by the template)
+        run.ResolvedQualityGateConfigIds = resolvedQgcs.Select(q => q.Id).ToList().AsReadOnly();
+        run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
+        run.IssueTitle = issueContext.IssueDetail.Title;
+
+        var pipelineCtx = new DispatchPipelineContext
+        {
+            Agent = agent,
+            Run = run,
+            Profile = profile,
+            IssueIdentifier = issueIdentifier,
+            IssueDetail = issueContext.IssueDetail,
+            ParsedIssue = issueContext.ParsedIssue,
+            IssueComments = issueContext.IssueComments,
+            RepoProviderId = repoProviderId,
+            AgentProviderId = agentProviderId,
+            BrainProviderId = brainProviderId,
+            PipelineProviderId = pipelineProviderId,
+            IssueProviderId = issueProviderId,
+            ProviderConfigs = providerConfigs,
+            Config = config,
+            InitiatedBy = initiatedBy,
+            Project = project
+        };
+
+        Func<JobAssignmentMessage, JobAssignmentMessage> customize = msg => msg with
+        {
+            ExistingAnalysis = issueContext.ExistingAnalysis,
+            ForceRefreshAnalysis = forceRefresh,
+            StalenessSignal = stalenessSignal,
+            AnalysisRefreshCount = refreshCount,
+            QualityGateConfigs = resolvedQgcs,
+            ReviewerConfigs = resolvedReviewerConfigs
+        };
+
+        Action onSuccess = () =>
+        {
+            _logger.Information(
+                "Job {JobId} dispatched to agent {AgentId} for issue {IssueIdentifier} (profile={ProfileId}, qgcs={QgcCount}, reviewerConfigs={ReviewerConfigCount}, project={ProjectName})",
+                run.RunId, agent.AgentId, issueIdentifier, profile.Id, resolvedQgcs.Count, resolvedReviewerConfigs.Count, project.Name);
+
+            if (resolvedReviewerConfigs.Count > 0)
+            {
+                var reviewerSummary = string.Join(", ", resolvedReviewerConfigs.Select(r =>
+                    $"{r.DisplayName} (labels: [{string.Join(", ", r.MatchLabels)}])"));
+                _logger.Debug("Job {JobId} resolved reviewer configs: {ReviewerSummary}", run.RunId, reviewerSummary);
+            }
+        };
+
+        return (pipelineCtx, customize, onSuccess);
     }
 
     /// <summary>
@@ -367,112 +394,127 @@ public sealed partial class AgentJobDispatcher
             revertLabel: AgentLabels.Next,
             failureMessageTemplate: "Failed to dispatch review job to agent {AgentId} for PR {PrIdentifier}",
             project,
-            async (proj, profile, agentProviderId, token) =>
-            {
-                // Resolve reviewer configurations for this job (quality gates not needed for reviews)
-                var resolvedReviewerConfigs = await _infra.Resolution.ResolveReviewersAsync(requiredLabels, token);
-
-                // Reserve a run ID and dedup guard via PipelineOrchestrationService
-                var reservation = await _orchestration.ReserveRunIdAsync(
-                    request.IssueProviderId, request.RepoProviderId, request.PrIdentifier,
-                    agentProviderId, agent.AgentId, token,
-                    request.BrainProviderId, pipelineProviderId: null, request.InitiatedBy);
-
-                if (reservation == null)
-                {
-                    _logger.Warning("Failed to reserve run for PR review {PrIdentifier}", request.PrIdentifier);
-                    return null;
-                }
-
-                // Pre-fetch linked issues before constructing the final run (non-fatal on failure)
-                var linkedIssueContexts = await PreFetchLinkedIssuesAsync(
-                    request.PrIdentifier, request.IssueProviderId, request.RepoProviderId, token);
-
-                // Construct the fully-populated review run using reserved metadata
-                var run = PipelineRun.CreateReview(
-                    runId: reservation.RunId,
-                    issueIdentifier: request.PrIdentifier,
-                    issueTitle: request.PrTitle,
-                    issueProviderConfigId: request.IssueProviderId,
-                    repoProviderConfigId: request.RepoProviderId,
-                    reviewPrBranchName: request.PrBranchName,
-                    reviewPrTargetBranch: request.PrTargetBranch,
-                    startedAt: reservation.StartedAt,
-                    initiatedBy: request.InitiatedBy,
-                    agentId: agent.AgentId,
-                    agentProviderConfigId: agentProviderId,
-                    brainProviderConfigId: request.BrainProviderId,
-                    reviewPrUrl: request.PrUrl,
-                    reviewPrDescription: request.PrDescription,
-                    reviewPrAuthor: request.PrAuthor,
-                    linkedIssueContexts: linkedIssueContexts.Count > 0 ? linkedIssueContexts : null);
-                run.RepositoryName = reservation.RepositoryName;
-                run.ModelName = reservation.ModelName;
-                run.LinkedPullRequest = new LinkedPullRequest
-                {
-                    Number = int.TryParse(request.PrIdentifier, out var prNum) ? prNum : 0,
-                    BranchName = request.PrBranchName,
-                    Url = request.PrUrl,
-                    IsDraft = false
-                };
-
-                // Atomically replace the sentinel with the fully-populated run
-                // Note: ApplyRunMetadata is called by the template after this delegate returns
-                _orchestration.RegisterDispatchedRun(run);
-
-                // Populate resolved reviewer config IDs on the run
-                run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
-
-                // Build and prepare provider configs for the agent
-                // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
-                var (providerConfigs, config) = await PrepareAndResolveConfigAsync(
-                    request.RepoProviderId, agentProviderId, request.BrainProviderId, null, proj, token);
-
-                // Build a synthetic IssueDetail and ParsedIssue from PR metadata for the job assignment
-                var (syntheticIssueDetail, syntheticParsedIssue) = BuildSyntheticIssueContext(
-                    request.PrIdentifier, request.PrTitle, request.PrDescription);
-
-                var pipelineCtx = new DispatchPipelineContext
-                {
-                    Agent = agent,
-                    Run = run,
-                    Profile = profile,
-                    IssueIdentifier = request.PrIdentifier,
-                    IssueDetail = syntheticIssueDetail,
-                    ParsedIssue = syntheticParsedIssue,
-                    IssueComments = Array.Empty<IssueComment>(),
-                    RepoProviderId = request.RepoProviderId,
-                    AgentProviderId = agentProviderId,
-                    BrainProviderId = request.BrainProviderId,
-                    PipelineProviderId = null,
-                    IssueProviderId = request.IssueProviderId,
-                    ProviderConfigs = providerConfigs,
-                    Config = config,
-                    InitiatedBy = request.InitiatedBy,
-                    Project = proj
-                };
-
-                Func<JobAssignmentMessage, JobAssignmentMessage> customize = msg => msg with
-                {
-                    LinkedPullRequest = run.LinkedPullRequest,
-                    LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null,
-                    RunType = PipelineRunType.Review,
-                    ReviewPrTargetBranch = request.PrTargetBranch,
-                    ReviewPrDescription = request.PrDescription,
-                    ReviewPrAuthor = request.PrAuthor,
-                    ReviewerConfigs = resolvedReviewerConfigs
-                };
-
-                Action onSuccess = () =>
-                {
-                    _logger.Information(
-                        "Review job {JobId} dispatched to agent {AgentId} for PR {PrIdentifier} (profile={ProfileId}, reviewerConfigs={ReviewerConfigCount}, linkedIssues={LinkedIssueCount})",
-                        run.RunId, agent.AgentId, request.PrIdentifier, profile.Id, resolvedReviewerConfigs.Count, linkedIssueContexts.Count);
-                };
-
-                return (pipelineCtx, customize, onSuccess);
-            },
+            (proj, profile, agentProviderId, token) =>
+                PrepareReviewContextAsync(agent, request, requiredLabels, proj, profile, agentProviderId, token),
             ct, LabelTargetKind.PullRequest);
+    }
+
+    /// <summary>
+    /// Prepares the <see cref="DispatchPipelineContext"/> for a PR review dispatch.
+    /// Resolves reviewer configs, reserves a run, pre-fetches linked issues, and builds synthetic issue context.
+    /// </summary>
+    private async Task<(DispatchPipelineContext Context, Func<JobAssignmentMessage, JobAssignmentMessage> Customize, Action? OnSuccess)?>
+        PrepareReviewContextAsync(
+            AgentEntry agent,
+            ReviewDispatchRequest request,
+            IReadOnlyList<string> requiredLabels,
+            PipelineProject project,
+            AgentProfile profile,
+            string agentProviderId,
+            CancellationToken ct)
+    {
+        // Resolve reviewer configurations for this job (quality gates not needed for reviews)
+        var resolvedReviewerConfigs = await _infra.Resolution.ResolveReviewersAsync(requiredLabels, ct);
+
+        // Reserve a run ID and dedup guard via PipelineOrchestrationService
+        var reservation = await _orchestration.ReserveRunIdAsync(
+            request.IssueProviderId, request.RepoProviderId, request.PrIdentifier,
+            agentProviderId, agent.AgentId, ct,
+            request.BrainProviderId, pipelineProviderId: null, request.InitiatedBy);
+
+        if (reservation == null)
+        {
+            _logger.Warning("Failed to reserve run for PR review {PrIdentifier}", request.PrIdentifier);
+            return null;
+        }
+
+        // Pre-fetch linked issues before constructing the final run (non-fatal on failure)
+        var linkedIssueContexts = await PreFetchLinkedIssuesAsync(
+            request.PrIdentifier, request.IssueProviderId, request.RepoProviderId, ct);
+
+        // Construct the fully-populated review run using reserved metadata
+        var run = PipelineRun.CreateReview(
+            runId: reservation.RunId,
+            issueIdentifier: request.PrIdentifier,
+            issueTitle: request.PrTitle,
+            issueProviderConfigId: request.IssueProviderId,
+            repoProviderConfigId: request.RepoProviderId,
+            reviewPrBranchName: request.PrBranchName,
+            reviewPrTargetBranch: request.PrTargetBranch,
+            startedAt: reservation.StartedAt,
+            initiatedBy: request.InitiatedBy,
+            agentId: agent.AgentId,
+            agentProviderConfigId: agentProviderId,
+            brainProviderConfigId: request.BrainProviderId,
+            reviewPrUrl: request.PrUrl,
+            reviewPrDescription: request.PrDescription,
+            reviewPrAuthor: request.PrAuthor,
+            linkedIssueContexts: linkedIssueContexts.Count > 0 ? linkedIssueContexts : null);
+        run.RepositoryName = reservation.RepositoryName;
+        run.ModelName = reservation.ModelName;
+        run.LinkedPullRequest = new LinkedPullRequest
+        {
+            Number = int.TryParse(request.PrIdentifier, out var prNum) ? prNum : 0,
+            BranchName = request.PrBranchName,
+            Url = request.PrUrl,
+            IsDraft = false
+        };
+
+        // Atomically replace the sentinel with the fully-populated run
+        // Note: ApplyRunMetadata is called by the template after this delegate returns
+        _orchestration.RegisterDispatchedRun(run);
+
+        // Populate resolved reviewer config IDs on the run
+        run.ResolvedReviewerConfigIds = resolvedReviewerConfigs.Select(r => r.Id).ToList().AsReadOnly();
+
+        // Build and prepare provider configs for the agent
+        // Settings resolution: Global → Project overrides → Template overrides (blacklist from ProviderConfig)
+        var (providerConfigs, config) = await PrepareAndResolveConfigAsync(
+            request.RepoProviderId, agentProviderId, request.BrainProviderId, null, project, ct);
+
+        // Build a synthetic IssueDetail and ParsedIssue from PR metadata for the job assignment
+        var (syntheticIssueDetail, syntheticParsedIssue) = BuildSyntheticIssueContext(
+            request.PrIdentifier, request.PrTitle, request.PrDescription);
+
+        var pipelineCtx = new DispatchPipelineContext
+        {
+            Agent = agent,
+            Run = run,
+            Profile = profile,
+            IssueIdentifier = request.PrIdentifier,
+            IssueDetail = syntheticIssueDetail,
+            ParsedIssue = syntheticParsedIssue,
+            IssueComments = Array.Empty<IssueComment>(),
+            RepoProviderId = request.RepoProviderId,
+            AgentProviderId = agentProviderId,
+            BrainProviderId = request.BrainProviderId,
+            PipelineProviderId = null,
+            IssueProviderId = request.IssueProviderId,
+            ProviderConfigs = providerConfigs,
+            Config = config,
+            InitiatedBy = request.InitiatedBy,
+            Project = project
+        };
+
+        Func<JobAssignmentMessage, JobAssignmentMessage> customize = msg => msg with
+        {
+            LinkedPullRequest = run.LinkedPullRequest,
+            LinkedIssueContexts = linkedIssueContexts.Count > 0 ? linkedIssueContexts : null,
+            RunType = PipelineRunType.Review,
+            ReviewPrTargetBranch = request.PrTargetBranch,
+            ReviewPrDescription = request.PrDescription,
+            ReviewPrAuthor = request.PrAuthor,
+            ReviewerConfigs = resolvedReviewerConfigs
+        };
+
+        Action onSuccess = () =>
+        {
+            _logger.Information(
+                "Review job {JobId} dispatched to agent {AgentId} for PR {PrIdentifier} (profile={ProfileId}, reviewerConfigs={ReviewerConfigCount}, linkedIssues={LinkedIssueCount})",
+                run.RunId, agent.AgentId, request.PrIdentifier, profile.Id, resolvedReviewerConfigs.Count, linkedIssueContexts.Count);
+        };
+
+        return (pipelineCtx, customize, onSuccess);
     }
 
     /// <summary>
@@ -505,143 +547,167 @@ public sealed partial class AgentJobDispatcher
             revertLabel: revertLabel,
             failureMessageTemplate: "Failed to dispatch decomposition job to agent {AgentId} for epic {EpicIdentifier}",
             project,
-            async (proj, profile, agentProviderId, token) =>
-            {
-                // Reserve a run ID and dedup guard via PipelineOrchestrationService
-                var reservation = await _orchestration.ReserveRunIdAsync(
-                    issueProviderId, repoProviderId, epicIdentifier,
-                    agentProviderId, agent.AgentId, token,
-                    brainProviderId, pipelineProviderId: null, initiatedBy);
-
-                if (reservation == null)
-                {
-                    _logger.Warning("Failed to reserve run for decomposition of epic {EpicIdentifier}", epicIdentifier);
-                    return null;
-                }
-
-                // Load config early — needed for WorkspaceBaseDirectory before settings override
-                var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(token);
-                var runId = reservation.RunId;
-                var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, "decomposition", runId);
-
-                // Construct the fully-populated decomposition run using reserved metadata
-                var run = PipelineRun.CreateDecomposition(
-                    runId: runId,
-                    issueIdentifier: epicIdentifier,
-                    issueTitle: epicTitle,
-                    issueProviderConfigId: issueProviderId,
-                    repoProviderConfigId: repoProviderId,
-                    phaseType: phaseType,
-                    startedAt: reservation.StartedAt,
-                    initiatedBy: initiatedBy,
-                    agentId: agent.AgentId,
-                    agentProviderConfigId: agentProviderId,
-                    brainProviderConfigId: brainProviderId,
-                    decompositionSource: decompositionSource);
-                run.RepositoryName = reservation.RepositoryName;
-                run.ModelName = reservation.ModelName;
-                run.WorkspacePath = workspacePath;
-
-                // Atomically replace the sentinel with the fully-populated run
-                // Note: ApplyRunMetadata is called by the template after this delegate returns
-                _orchestration.RegisterDispatchedRun(run);
-
-                // Build a synthetic IssueDetail from epic metadata for the job assignment
-                var (syntheticIssueDetail, syntheticParsedIssue) = BuildSyntheticIssueContext(
-                    epicIdentifier, epicTitle, null);
-
-                // Build DecompositionProjectContext for cross-repo decomposition (project-level epics only).
-                // Per-template decomposition (EpicIssueProviderId is null) should NOT get project context.
-                DecompositionProjectContext? projectContext = null;
-                if (!string.IsNullOrEmpty(proj.EpicIssueProviderId))
-                {
-                    var repoProviderConfigs = await _infra.Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, token);
-                    var repoConfigLookup = repoProviderConfigs.ToDictionary(c => c.Id);
-                    var templateLookup = (await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(token)).ToDictionary(t => t.Id);
-
-                    var repositories = new List<RepositoryTarget>();
-                    foreach (var templateId in proj.TemplateIds)
-                    {
-                        if (!templateLookup.TryGetValue(templateId, out var tmpl))
-                            continue;
-
-                        var description = repoConfigLookup.TryGetValue(tmpl.RepoProviderId, out var repoCfg)
-                            ? repoCfg.DisplayName
-                            : tmpl.Name;
-
-                        repositories.Add(new RepositoryTarget
-                        {
-                            TemplateName = tmpl.Name,
-                            Description = description,
-                            DecompositionEnabled = tmpl.DecompositionEnabled,
-                            Available = tmpl.Enabled,
-                            IssueProviderId = tmpl.IssueProviderId,
-                            RepoProviderId = tmpl.RepoProviderId,
-                            Labels = repoConfigLookup.TryGetValue(tmpl.RepoProviderId, out var rc)
-                                ? (rc.RequiredLabels ?? [])
-                                : []
-                        });
-                    }
-
-                    projectContext = new DecompositionProjectContext
-                    {
-                        ProjectName = proj.Name,
-                        Repositories = repositories.AsReadOnly()
-                    };
-                }
-
-                // Build and prepare provider configs for the agent.
-                // For project-level decomposition, include all project repos' provider configs
-                // so the agent can clone secondary repos for cross-repo code exploration.
-                var additionalRepoProviderIds = projectContext?.Repositories
-                    .Select(r => r.RepoProviderId)
-                    .Where(id => !string.IsNullOrEmpty(id))
-                    .Cast<string>();
-                var providerConfigs = await _infra.PrepareProviderConfigsAsync(
-                    repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, _logger, token, additionalRepoProviderIds);
-
-                // Settings resolution: apply Project → Template overrides to the pre-loaded config
-                config = await PipelineConfigurationResolver.ResolveAsync(
-                    config,
-                    _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
-                    proj, repoProviderId, brainProviderId, providerConfigs, token);
-
-                var pipelineCtx = new DispatchPipelineContext
-                {
-                    Agent = agent,
-                    Run = run,
-                    Profile = profile,
-                    IssueIdentifier = epicIdentifier,
-                    IssueDetail = syntheticIssueDetail,
-                    ParsedIssue = syntheticParsedIssue,
-                    IssueComments = Array.Empty<IssueComment>(),
-                    RepoProviderId = repoProviderId,
-                    AgentProviderId = agentProviderId,
-                    BrainProviderId = brainProviderId,
-                    PipelineProviderId = null,
-                    IssueProviderId = issueProviderId,
-                    ProviderConfigs = providerConfigs,
-                    Config = config,
-                    InitiatedBy = initiatedBy,
-                    Project = proj
-                };
-
-                Func<JobAssignmentMessage, JobAssignmentMessage> customize = msg => msg with
-                {
-                    RunType = phaseType,
-                    ProjectContext = projectContext
-                };
-
-                Action onSuccess = () =>
-                {
-                    _logger.Information(
-                        "Decomposition {Phase} job {JobId} dispatched to agent {AgentId} for epic {EpicIdentifier} (profile={ProfileId}, project={ProjectName})",
-                        phaseType, run.RunId, agent.AgentId, epicIdentifier, profile.Id, proj.Name);
-                };
-
-                return (pipelineCtx, customize, onSuccess);
-            },
+            (proj, profile, agentProviderId, token) =>
+                PrepareDecompositionContextAsync(agent, epicIdentifier, epicTitle, phaseType,
+                    issueProviderId, repoProviderId, brainProviderId, initiatedBy,
+                    decompositionSource, proj, profile, agentProviderId, token),
             ct);
+    }
+
+    /// <summary>
+    /// Prepares the <see cref="DispatchPipelineContext"/> for a decomposition dispatch.
+    /// Reserves a run, loads config early for workspace path, builds cross-repo project context,
+    /// and prepares provider configs with additional repo providers for project-level decomposition.
+    /// </summary>
+    private async Task<(DispatchPipelineContext Context, Func<JobAssignmentMessage, JobAssignmentMessage> Customize, Action? OnSuccess)?>
+        PrepareDecompositionContextAsync(
+            AgentEntry agent,
+            string epicIdentifier,
+            string epicTitle,
+            PipelineRunType phaseType,
+            string issueProviderId,
+            string repoProviderId,
+            string? brainProviderId,
+            string initiatedBy,
+            string? decompositionSource,
+            PipelineProject project,
+            AgentProfile profile,
+            string agentProviderId,
+            CancellationToken ct)
+    {
+        // Reserve a run ID and dedup guard via PipelineOrchestrationService
+        var reservation = await _orchestration.ReserveRunIdAsync(
+            issueProviderId, repoProviderId, epicIdentifier,
+            agentProviderId, agent.AgentId, ct,
+            brainProviderId, pipelineProviderId: null, initiatedBy);
+
+        if (reservation == null)
+        {
+            _logger.Warning("Failed to reserve run for decomposition of epic {EpicIdentifier}", epicIdentifier);
+            return null;
+        }
+
+        // Load config early — needed for WorkspaceBaseDirectory before settings override
+        var config = await _infra.Resolution.ConfigStore.LoadPipelineConfigAsync(ct);
+        var runId = reservation.RunId;
+        var workspacePath = Path.Combine(config.WorkspaceBaseDirectory, "decomposition", runId);
+
+        // Construct the fully-populated decomposition run using reserved metadata
+        var run = PipelineRun.CreateDecomposition(
+            runId: runId,
+            issueIdentifier: epicIdentifier,
+            issueTitle: epicTitle,
+            issueProviderConfigId: issueProviderId,
+            repoProviderConfigId: repoProviderId,
+            phaseType: phaseType,
+            startedAt: reservation.StartedAt,
+            initiatedBy: initiatedBy,
+            agentId: agent.AgentId,
+            agentProviderConfigId: agentProviderId,
+            brainProviderConfigId: brainProviderId,
+            decompositionSource: decompositionSource);
+        run.RepositoryName = reservation.RepositoryName;
+        run.ModelName = reservation.ModelName;
+        run.WorkspacePath = workspacePath;
+
+        // Atomically replace the sentinel with the fully-populated run
+        // Note: ApplyRunMetadata is called by the template after this delegate returns
+        _orchestration.RegisterDispatchedRun(run);
+
+        // Build a synthetic IssueDetail from epic metadata for the job assignment
+        var (syntheticIssueDetail, syntheticParsedIssue) = BuildSyntheticIssueContext(
+            epicIdentifier, epicTitle, null);
+
+        // Build DecompositionProjectContext for cross-repo decomposition (project-level epics only).
+        // Per-template decomposition (EpicIssueProviderId is null) should NOT get project context.
+        DecompositionProjectContext? projectContext = null;
+        if (!string.IsNullOrEmpty(project.EpicIssueProviderId))
+        {
+            var repoProviderConfigs = await _infra.Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+            var repoConfigLookup = repoProviderConfigs.ToDictionary(c => c.Id);
+            var templateLookup = (await _infra.Resolution.ConfigStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
+
+            var repositories = new List<RepositoryTarget>();
+            foreach (var templateId in project.TemplateIds)
+            {
+                if (!templateLookup.TryGetValue(templateId, out var tmpl))
+                    continue;
+
+                var description = repoConfigLookup.TryGetValue(tmpl.RepoProviderId, out var repoCfg)
+                    ? repoCfg.DisplayName
+                    : tmpl.Name;
+
+                repositories.Add(new RepositoryTarget
+                {
+                    TemplateName = tmpl.Name,
+                    Description = description,
+                    DecompositionEnabled = tmpl.DecompositionEnabled,
+                    Available = tmpl.Enabled,
+                    IssueProviderId = tmpl.IssueProviderId,
+                    RepoProviderId = tmpl.RepoProviderId,
+                    Labels = repoConfigLookup.TryGetValue(tmpl.RepoProviderId, out var rc)
+                        ? (rc.RequiredLabels ?? [])
+                        : []
+                });
+            }
+
+            projectContext = new DecompositionProjectContext
+            {
+                ProjectName = project.Name,
+                Repositories = repositories.AsReadOnly()
+            };
+        }
+
+        // Build and prepare provider configs for the agent.
+        // For project-level decomposition, include all project repos' provider configs
+        // so the agent can clone secondary repos for cross-repo code exploration.
+        var additionalRepoProviderIds = projectContext?.Repositories
+            .Select(r => r.RepoProviderId)
+            .Where(id => !string.IsNullOrEmpty(id))
+            .Cast<string>();
+        var providerConfigs = await _infra.PrepareProviderConfigsAsync(
+            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId: null, _logger, ct, additionalRepoProviderIds);
+
+        // Settings resolution: apply Project → Template overrides to the pre-loaded config
+        config = await PipelineConfigurationResolver.ResolveAsync(
+            config,
+            _infra.Resolution.ConfigStore.LoadAllTemplatesAsync,
+            project, repoProviderId, brainProviderId, providerConfigs, ct);
+
+        var pipelineCtx = new DispatchPipelineContext
+        {
+            Agent = agent,
+            Run = run,
+            Profile = profile,
+            IssueIdentifier = epicIdentifier,
+            IssueDetail = syntheticIssueDetail,
+            ParsedIssue = syntheticParsedIssue,
+            IssueComments = Array.Empty<IssueComment>(),
+            RepoProviderId = repoProviderId,
+            AgentProviderId = agentProviderId,
+            BrainProviderId = brainProviderId,
+            PipelineProviderId = null,
+            IssueProviderId = issueProviderId,
+            ProviderConfigs = providerConfigs,
+            Config = config,
+            InitiatedBy = initiatedBy,
+            Project = project
+        };
+
+        Func<JobAssignmentMessage, JobAssignmentMessage> customize = msg => msg with
+        {
+            RunType = phaseType,
+            ProjectContext = projectContext
+        };
+
+        Action onSuccess = () =>
+        {
+            _logger.Information(
+                "Decomposition {Phase} job {JobId} dispatched to agent {AgentId} for epic {EpicIdentifier} (profile={ProfileId}, project={ProjectName})",
+                phaseType, run.RunId, agent.AgentId, epicIdentifier, profile.Id, project.Name);
+        };
+
+        return (pipelineCtx, customize, onSuccess);
     }
 
     /// <summary>

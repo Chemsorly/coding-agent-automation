@@ -20,10 +20,11 @@ public partial class AgentMonitoring : IDisposable
     [Inject] private AgentMonitoringPageService PageService { get; set; } = default!;
     [Inject] private IJSRuntime JS { get; set; } = default!;
     [Inject] private TimeProvider Clock { get; set; } = default!;
-    [Inject] private PipelineOrchestrationService PipelineService { get; set; } = default!;
+    [Inject] private IChangeNotifier ChangeNotifier { get; set; } = default!;
     [Inject] private IConsolidationService ConsolidationService { get; set; } = default!;
     [Inject] private IAgentRegistryService Registry { get; set; } = default!;
     [Inject] private IOrchestratorRunService RunService { get; set; } = default!;
+    [Inject] private PipelineRunLifecycleService Lifecycle { get; set; } = default!;
 
     // ── State forwarding from PageService ──
 
@@ -57,7 +58,7 @@ public partial class AgentMonitoring : IDisposable
     protected override async Task OnInitializedAsync()
     {
         _lastSuccessfulRefresh = Clock.GetUtcNow();
-        PipelineService.OnChange += HandleStateChanged;
+        ChangeNotifier.OnChange += HandleStateChanged;
         ConsolidationService.OnChange += HandleStateChanged;
 
         // Refresh every 5 seconds for heartbeat/elapsed updates
@@ -303,7 +304,7 @@ public partial class AgentMonitoring : IDisposable
     {
         _disposed = true;
         _refreshTimer?.Dispose();
-        PipelineService.OnChange -= HandleStateChanged;
+        ChangeNotifier.OnChange -= HandleStateChanged;
         ConsolidationService.OnChange -= HandleStateChanged;
     }
 }

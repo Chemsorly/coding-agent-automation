@@ -40,9 +40,5 @@ public sealed class ResettablePipelineOrchestrationService : PipelineOrchestrati
 
         // Provider field resets remain on orchestration
         _providerManager.Reset();
-        _activeConfig = null;
-        _activeIssue = null;
-        _activeParsedIssue = null;
-        _activeIssueComments = null;
     }
 }
