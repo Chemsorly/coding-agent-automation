@@ -1,10 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Orchestration;
-using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
-using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Models;
-using CodingAgentWebUI.Services;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -312,6 +309,82 @@ public class OrchestratorRunServiceTests
             snapshot.Should().OnlyContain(r => r != null);
             snapshot.Select(r => r.RunId).Should().OnlyHaveUniqueItems();
         }
+    }
+
+    #endregion
+
+    #region WasRecentlyCompleted / MarkRecentlyCompleted
+
+    [Fact]
+    public void WasRecentlyCompleted_ReturnsFalseForUnknownIssue()
+    {
+        var service = CreateService();
+
+        service.WasRecentlyCompleted("unknown-issue", "provider-1").Should().BeFalse();
+    }
+
+    [Fact]
+    public void WasRecentlyCompleted_ReturnsTrueWithinGracePeriod()
+    {
+        var fakeTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var service = new OrchestratorRunService(new Mock<ILogger>().Object, 100, fakeTime);
+
+        service.MarkRecentlyCompleted("issue-42", "provider-1");
+
+        // Immediately after marking, should return true
+        service.WasRecentlyCompleted("issue-42", "provider-1").Should().BeTrue();
+
+        // Advance 60s — still within the 120s TTL
+        fakeTime.Advance(TimeSpan.FromSeconds(60));
+        service.WasRecentlyCompleted("issue-42", "provider-1").Should().BeTrue();
+    }
+
+    [Fact]
+    public void WasRecentlyCompleted_ReturnsFalseAfterGracePeriodExpires()
+    {
+        var fakeTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var service = new OrchestratorRunService(new Mock<ILogger>().Object, 100, fakeTime);
+
+        service.MarkRecentlyCompleted("issue-42", "provider-1");
+
+        // Advance past the 120s TTL
+        fakeTime.Advance(TimeSpan.FromSeconds(121));
+        service.WasRecentlyCompleted("issue-42", "provider-1").Should().BeFalse();
+    }
+
+    [Fact]
+    public void WasRecentlyCompleted_DifferentProviderIds_AreIndependent()
+    {
+        var service = CreateService();
+
+        service.MarkRecentlyCompleted("issue-1", "provider-A");
+
+        service.WasRecentlyCompleted("issue-1", "provider-A").Should().BeTrue();
+        service.WasRecentlyCompleted("issue-1", "provider-B").Should().BeFalse();
+    }
+
+    [Fact]
+    public void MarkRecentlyCompleted_UpdatesTimestamp_OnSubsequentCalls()
+    {
+        var fakeTime = new FakeTimeProvider(DateTimeOffset.UtcNow);
+        var service = new OrchestratorRunService(new Mock<ILogger>().Object, 100, fakeTime);
+
+        service.MarkRecentlyCompleted("issue-1", "provider-1");
+
+        // Advance 100s (still within TTL)
+        fakeTime.Advance(TimeSpan.FromSeconds(100));
+        service.WasRecentlyCompleted("issue-1", "provider-1").Should().BeTrue();
+
+        // Mark again — this resets the timestamp
+        service.MarkRecentlyCompleted("issue-1", "provider-1");
+
+        // Advance another 100s (would be 200s from first mark, but only 100s from second)
+        fakeTime.Advance(TimeSpan.FromSeconds(100));
+        service.WasRecentlyCompleted("issue-1", "provider-1").Should().BeTrue();
+
+        // Advance past TTL from second mark
+        fakeTime.Advance(TimeSpan.FromSeconds(25));
+        service.WasRecentlyCompleted("issue-1", "provider-1").Should().BeFalse();
     }
 
     #endregion
