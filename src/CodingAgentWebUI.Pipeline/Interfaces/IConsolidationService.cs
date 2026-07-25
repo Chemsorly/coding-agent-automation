@@ -108,4 +108,12 @@ public interface IConsolidationService
     /// Used by HeartbeatMonitor to detect stuck consolidation runs that exceed the progress timeout.
     /// </summary>
     DateTimeOffset? GetActiveRunStartedAt(string runId);
+
+    /// <summary>
+    /// Deletes a consolidation run by ID. Invalidates the run history cache.
+    /// Used by retention cleanup services.
+    /// </summary>
+    /// <param name="runId">The run ID to delete.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task DeleteRunAsync(string runId, CancellationToken ct);
 }

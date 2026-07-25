@@ -167,6 +167,9 @@ public static partial class WorkDistributionRegistration
         // ── WorkItem metrics background service (DB-mode only) ──────────────
         services.AddHostedService<WorkItemMetricsBackgroundService>();
 
+        // ── Database maintenance (retention cleanup — both DB modes) ────────
+        services.AddHostedService<DatabaseMaintenanceService>();
+
         // ── Mode-specific registrations ─────────────────────────────────────
         if (isKubernetesMode)
         {
