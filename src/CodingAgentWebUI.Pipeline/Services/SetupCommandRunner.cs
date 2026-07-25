@@ -20,13 +20,27 @@ public static class SetupCommandRunner
     /// <param name="emitOutput">Callback to emit masked output lines.</param>
     /// <param name="ct">Cancellation token for pipeline-level cancellation.</param>
     /// <returns>A result indicating success or failure with a masked error message.</returns>
-    public static async Task<SetupCommandResult> RunAsync(
+    public static Task<SetupCommandResult> RunAsync(
         string command,
         string stepName,
         string workingDirectory,
         IReadOnlyDictionary<string, string> environmentSecrets,
         Action<string> emitOutput,
         CancellationToken ct)
+        => RunAsync(command, stepName, workingDirectory, environmentSecrets, emitOutput, ct,
+            timeout: TimeSpan.FromSeconds(120));
+
+    /// <summary>
+    /// Internal overload with configurable timeout for testing.
+    /// </summary>
+    internal static async Task<SetupCommandResult> RunAsync(
+        string command,
+        string stepName,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string> environmentSecrets,
+        Action<string> emitOutput,
+        CancellationToken ct,
+        TimeSpan timeout)
     {
         ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(stepName);
@@ -59,9 +73,9 @@ public static class SetupCommandRunner
             var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
             var stderrTask = process.StandardError.ReadToEndAsync(ct);
 
-            // Wait with 120-second timeout per step
+            // Wait with configurable timeout per step
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(120));
+            timeoutCts.CancelAfter(timeout);
 
             try
             {
@@ -71,10 +85,14 @@ public static class SetupCommandRunner
             {
                 // Timeout — kill the process tree and return immediately
                 // (do NOT await stdout/stderr tasks — matches existing behavior)
-                // TODO: Abandoned stdoutTask/stderrTask may fault after process.Kill (IOException from closed pipe),
-                // resulting in unobserved task exceptions. Consider observing them with a fire-and-forget handler.
                 try { process.Kill(entireProcessTree: true); } catch { /* best effort */ }
-                var timeoutMessage = $"Setup step '{stepName}' timed out after 120 seconds";
+
+                // Observe potential faults from abandoned pipe-read tasks (IOException after Kill)
+                // to prevent UnobservedTaskException during GC finalization.
+                _ = stdoutTask.ContinueWith(static t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+                _ = stderrTask.ContinueWith(static t => { _ = t.Exception; }, TaskContinuationOptions.OnlyOnFaulted);
+
+                var timeoutMessage = $"Setup step '{stepName}' timed out after {(int)timeout.TotalSeconds} seconds";
                 return new SetupCommandResult(false, SecretMasker.Mask(timeoutMessage, environmentSecrets), null);
             }
 

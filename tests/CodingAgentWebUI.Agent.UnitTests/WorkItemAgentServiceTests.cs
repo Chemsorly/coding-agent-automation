@@ -101,6 +101,9 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
 
+        var stopCalled = new TaskCompletionSource<bool>();
+        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
+
         var service = new WorkItemAgentService(
             "wi-rejected", client, Mock.Of<IAgentConnectionManager>(),
             CreateMinimalWorkItemExecutor(),
@@ -108,9 +111,13 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
 
         // Act
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await service.StartAsync(cts.Token);
-        await Task.Delay(500);
+
+        // Wait for the service to call StopApplication (signals lifecycle complete)
+        var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().Be(stopCalled.Task, "Service should call StopApplication within timeout");
+
         await service.StopAsync(CancellationToken.None);
 
         // Assert
@@ -128,16 +135,22 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
 
+        var stopCalled = new TaskCompletionSource<bool>();
+        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
+
         var service = new WorkItemAgentService(
             "wi-terminal", client, Mock.Of<IAgentConnectionManager>(),
             CreateMinimalWorkItemExecutor(),
             Mock.Of<IJobCompletionReporter>(),
             new AgentIdentity("agent-1"), _mockLifetime.Object, _mockLogger.Object);
 
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await service.StartAsync(cts.Token);
-        // Give it time to complete
-        await Task.Delay(500);
+
+        // Wait for the service to call StopApplication (signals lifecycle complete)
+        var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        completed.Should().Be(stopCalled.Task, "Service should call StopApplication within timeout");
+
         await service.StopAsync(CancellationToken.None);
 
         _mockLifetime.Verify(l => l.StopApplication(), Times.AtLeastOnce);

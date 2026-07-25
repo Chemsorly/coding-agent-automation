@@ -303,15 +303,25 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         await db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// Invokes DrainPendingItemsAsync directly via reflection to avoid BackgroundService
+    /// scheduling races. This is deterministic — no Task.Delay needed.
+    /// Catches OperationCanceledException to mirror ExecuteAsync's loop behavior.
+    /// </summary>
     private static async Task InvokeDrainAsync(PendingWorkItemDrainService service)
     {
-        using var cts = new CancellationTokenSource();
-        service.Signal();
-        var task = service.StartAsync(cts.Token);
-        await Task.Delay(3000);
-        cts.Cancel();
-        try { await task; } catch (OperationCanceledException) { }
-        await service.StopAsync(CancellationToken.None);
+        var method = typeof(PendingWorkItemDrainService).GetMethod("DrainPendingItemsAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("DrainPendingItemsAsync not found");
+        var task = (Task)method.Invoke(service, [CancellationToken.None])!;
+        try
+        {
+            await task;
+        }
+        catch (OperationCanceledException)
+        {
+            // Mirrors ExecuteAsync behavior: OCE during drain is swallowed by the loop
+        }
     }
 
     public void Dispose()
@@ -443,10 +453,15 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
 
         // Act: start with the CTS that will be cancelled inside the mock
         service.Signal();
-        var task = service.StartAsync(cts.Token);
-        // TODO: Task.Delay is timing-dependent and may flake on slow CI runners.
-        // Consider a synchronization signal (e.g., SemaphoreSlim) to confirm processing completed.
-        await Task.Delay(3000);
+        await service.StartAsync(cts.Token);
+        // Wait for ExecuteAsync to complete (cts is cancelled inside dispatch mock,
+        // which causes the drain to revert and the loop to exit)
+        var executeTask = service.ExecuteTask;
+        if (executeTask is not null)
+        {
+            var completed = await Task.WhenAny(executeTask, Task.Delay(TimeSpan.FromSeconds(10)));
+            completed.Should().Be(executeTask, "ExecuteAsync should complete after CTS cancellation");
+        }
         await service.StopAsync(CancellationToken.None);
 
         // Assert: WorkItem must be reverted to Pending despite the cancelled stoppingToken
@@ -510,15 +525,25 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
         await db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// Invokes DrainPendingItemsAsync directly via reflection to avoid BackgroundService
+    /// scheduling races. This is deterministic — no Task.Delay needed.
+    /// Catches OperationCanceledException to mirror ExecuteAsync's loop behavior.
+    /// </summary>
     private static async Task InvokeDrainAsync(PendingWorkItemDrainService service)
     {
-        using var cts = new CancellationTokenSource();
-        service.Signal();
-        var task = service.StartAsync(cts.Token);
-        await Task.Delay(3000);
-        cts.Cancel();
-        try { await task; } catch (OperationCanceledException) { }
-        await service.StopAsync(CancellationToken.None);
+        var method = typeof(PendingWorkItemDrainService).GetMethod("DrainPendingItemsAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("DrainPendingItemsAsync not found");
+        var task = (Task)method.Invoke(service, [CancellationToken.None])!;
+        try
+        {
+            await task;
+        }
+        catch (OperationCanceledException)
+        {
+            // Mirrors ExecuteAsync behavior: OCE during drain is swallowed by the loop
+        }
     }
 
     public void Dispose()

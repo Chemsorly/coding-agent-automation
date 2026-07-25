@@ -70,6 +70,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             return null;
         }
 
+        // Record recently-completed so OrphanedLabelRecoveryService won't race with us
+        _runService.MarkRecentlyCompleted(run.IssueIdentifier, run.IssueProviderConfigId);
+
         // 1. Mark the run as failed
         run.FailureReason = failureReason;
         run.MarkCompleted();
@@ -116,6 +119,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Debug("CompleteRunAsync: run {RunId} not found (already processed)", runId);
             return null;
         }
+
+        // Record recently-completed so OrphanedLabelRecoveryService won't race with us
+        _runService.MarkRecentlyCompleted(run.IssueIdentifier, run.IssueProviderConfigId);
 
         // Ensure CurrentStep is terminal before persist (defense-in-depth).
         // Normal flow: JobCompletionMapper.Apply already sets terminal step via payload.FinalStep.
@@ -165,6 +171,9 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             _logger.Debug("CancelRunAsync: run {RunId} not found (already processed)", runId);
             return null;
         }
+
+        // Record recently-completed so OrphanedLabelRecoveryService won't race with us
+        _runService.MarkRecentlyCompleted(run.IssueIdentifier, run.IssueProviderConfigId);
 
         // 1. Mark the run as cancelled
         if (failureReason is not null)

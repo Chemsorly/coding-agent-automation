@@ -40,4 +40,10 @@ public static class AgentLabels
 
     /// <summary>All agent label names.</summary>
     public static readonly IReadOnlyList<string> All = Definitions.Select(d => d.Name).ToList().AsReadOnly();
+
+    /// <summary>Labels representing terminal pipeline states — should not be overwritten by recovery services.</summary>
+    public static readonly IReadOnlySet<string> TerminalLabels = new HashSet<string>
+    {
+        Done, Error, NeedsRefinement, WontDo, Cancelled
+    };
 }

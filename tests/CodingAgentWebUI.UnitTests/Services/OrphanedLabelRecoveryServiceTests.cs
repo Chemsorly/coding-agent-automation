@@ -467,6 +467,167 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
     // tests could advance time and verify that multiple sweeps occur at the configured interval.
     // Currently, the 5-minute minimum interval makes it impractical to test multiple ticks in a unit test.
 
+    [Fact]
+    public async Task Sweep_SkipsRecentlyCompletedIssue_RaceConditionReproduction()
+    {
+        // Reproduces the race: run completes → removal from active tracking → sweep fires
+        // → should NOT swap to agent:error (acceptance criteria #3)
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+        SetupIssueProvider("provider-1", new IssueSummary
+        {
+            Identifier = "1635",
+            Title = "Issue with race",
+            Labels = new[] { "agent:in-progress" }
+        });
+
+        // Run was already removed from active tracking (simulates the race window)
+        _mockRunService
+            .Setup(r => r.IsIssueBeingProcessed("1635", "provider-1"))
+            .Returns(false);
+
+        // But it completed recently (within 120s grace period)
+        _mockRunService
+            .Setup(r => r.WasRecentlyCompleted("1635", "provider-1"))
+            .Returns(true);
+
+        // Act: start the service and wait for sweep to complete
+        using var service = CreateService();
+        await service.StartAsync(_cts.Token);
+
+        // Wait long enough for the grace period + sweep to run
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Assert: SwapLabelAsync was NOT called — grace period protected the issue
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Sweep_SkipsIssueWithTerminalLabel_DespiteStaleListResult()
+    {
+        // Acceptance criteria #1: verifies current labels before swapping — skips if already terminal.
+        // Simulates GitHub API eventual consistency: ListOpenIssuesAsync returns stale agent:in-progress,
+        // but GetIssueAsync confirms the issue already has agent:done.
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+
+        var mockIssueProvider = new Mock<IIssueProvider>();
+        mockIssueProvider
+            .Setup(p => p.ListOpenIssuesAsync(It.IsAny<int>(), It.IsAny<int>(),
+                It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<IssueSummary>
+            {
+                Items = new[] { new IssueSummary
+                {
+                    Identifier = "1635",
+                    Title = "Completed issue (stale list)",
+                    Labels = new[] { "agent:in-progress" } // stale — GitHub hasn't reflected label swap yet
+                }},
+                Page = 1,
+                PageSize = 100,
+                HasMore = false
+            });
+        // GetIssueAsync returns the ACTUAL current state — already has agent:done
+        mockIssueProvider
+            .Setup(p => p.GetIssueAsync("1635", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new IssueDetail
+            {
+                Identifier = "1635",
+                Title = "Completed issue",
+                Description = "",
+                Labels = new[] { AgentLabels.Done }
+            });
+        mockIssueProvider
+            .Setup(p => p.DisposeAsync())
+            .Returns(ValueTask.CompletedTask);
+
+        _mockProviderFactory
+            .Setup(f => f.CreateIssueProvider(It.Is<ProviderConfig>(c => c.Id == "provider-1")))
+            .Returns(mockIssueProvider.Object);
+
+        // Run was already removed from active tracking
+        _mockRunService
+            .Setup(r => r.IsIssueBeingProcessed("1635", "provider-1"))
+            .Returns(false);
+
+        // Not recently completed (tests the label check path specifically)
+        _mockRunService
+            .Setup(r => r.WasRecentlyCompleted("1635", "provider-1"))
+            .Returns(false);
+
+        // Act: start the service and wait for sweep to complete
+        using var service = CreateService();
+        await service.StartAsync(_cts.Token);
+
+        await Task.Delay(TimeSpan.FromSeconds(2));
+
+        // Assert: SwapLabelAsync was NOT called — terminal label detected via GetIssueAsync
+        _mockLabelService.Verify(
+            l => l.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(),
+                It.IsAny<LabelTargetKind>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        // Verify GetIssueAsync WAS called (the label check path was exercised)
+        mockIssueProvider.Verify(
+            p => p.GetIssueAsync("1635", It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Sweep_RecoversGenuinelyOrphanedIssue()
+    {
+        // Acceptance criteria #4: genuinely orphaned issues (no recent completion, still agent:in-progress)
+        // ARE still recovered.
+        SetupTemplateWithProvider("provider-1");
+        SetupProviderConfig("provider-1");
+        SetupIssueProvider("provider-1", new IssueSummary
+        {
+            Identifier = "500",
+            Title = "Genuinely orphaned issue",
+            Labels = new[] { "agent:in-progress" }
+        });
+
+        // No active run
+        _mockRunService
+            .Setup(r => r.IsIssueBeingProcessed("500", "provider-1"))
+            .Returns(false);
+
+        // Not recently completed
+        _mockRunService
+            .Setup(r => r.WasRecentlyCompleted("500", "provider-1"))
+            .Returns(false);
+
+        // GetIssueAsync confirms still in-progress (genuinely stuck)
+        // This is already set up by SetupIssueProvider's default GetIssueAsync mock
+
+        var swapCalled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockLabelService
+            .Setup(l => l.SwapLabelAsync("provider-1", "500", AgentLabels.Error, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask)
+            .Callback(() => swapCalled.TrySetResult());
+
+        // Act
+        using var service = CreateService();
+        await service.StartAsync(_cts.Token);
+
+        var completed = await Task.WhenAny(swapCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+
+        // Assert: genuinely orphaned issue IS recovered
+        completed.Should().BeSameAs(swapCalled.Task, "Genuinely orphaned issue should be swapped to agent:error");
+
+        _cts.Cancel();
+        await service.StopAsync(CancellationToken.None);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private OrphanedLabelRecoveryService CreateService() => new(
@@ -519,6 +680,21 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         mockIssueProvider
             .Setup(p => p.DisposeAsync())
             .Returns(ValueTask.CompletedTask);
+
+        // Default GetIssueAsync: return issue still with agent:in-progress (genuinely orphaned).
+        // Individual tests can override this via SetupIssueProviderWithGetIssue for specific scenarios.
+        foreach (var issue in issues)
+        {
+            mockIssueProvider
+                .Setup(p => p.GetIssueAsync(issue.Identifier, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new IssueDetail
+                {
+                    Identifier = issue.Identifier,
+                    Title = issue.Title,
+                    Description = "",
+                    Labels = issue.Labels
+                });
+        }
 
         _mockProviderFactory
             .Setup(f => f.CreateIssueProvider(It.Is<ProviderConfig>(c => c.Id == providerId)))
