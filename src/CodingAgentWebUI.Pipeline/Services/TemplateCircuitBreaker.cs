@@ -54,21 +54,6 @@ internal sealed class TemplateCircuitBreaker
     }
 
     /// <summary>
-    /// Returns true if the cooldown duration has elapsed since the circuit was tripped.
-    /// Provided for API completeness — the current integration uses Task.Delay-based waiting
-    /// rather than polling ShouldAutoResume(), but this enables alternative consumption patterns.
-    /// </summary>
-    /// <param name="cooldown">The cooldown duration after which auto-resume is allowed.</param>
-    /// <returns>True if tripped and cooldown has elapsed; false otherwise.</returns>
-    public bool ShouldAutoResume(TimeSpan cooldown)
-    {
-        if (!IsTripped) return false;
-        if (!TrippedAt.HasValue) return false;
-
-        return DateTimeOffset.UtcNow - TrippedAt.Value >= cooldown;
-    }
-
-    /// <summary>
     /// Resets all state: IsTripped=false, LastError=null, TrippedAt=null.
     /// Called on manual ResumeLoop(), auto-resume, CleanupAsync(), and StartLoopAsync().
     /// </summary>

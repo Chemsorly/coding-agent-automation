@@ -22,7 +22,7 @@ internal sealed class PipelineExecutionContextBuilder
     private readonly IBrainUpdateService? _brainUpdateService;
     private readonly IPipelineRunHistoryService? _historyService;
     private readonly FeedbackService _feedbackService;
-    private readonly PullRequestFinalizationService? _finalization;
+    private readonly PullRequestFinalizationService _finalization;
     private readonly AgentIdentity _agentIdentity;
     private readonly Serilog.ILogger _logger;
 
@@ -40,18 +40,19 @@ internal sealed class PipelineExecutionContextBuilder
         FeedbackService feedbackService,
         AgentIdentity agentIdentity,
         Serilog.ILogger logger,
+        PullRequestFinalizationService finalization,
         IBrainUpdateService? brainUpdateService = null,
-        IPipelineRunHistoryService? historyService = null,
-        PullRequestFinalizationService? finalization = null)
+        IPipelineRunHistoryService? historyService = null)
     {
         _qualityGateValidator = qualityGateValidator;
         _reporterFactory = reporterFactory;
         _feedbackService = feedbackService;
         _agentIdentity = agentIdentity;
         _logger = logger;
+        // TODO: Add ArgumentNullException.ThrowIfNull(finalization) guard here for defensive fail-fast behavior
+        _finalization = finalization;
         _brainUpdateService = brainUpdateService;
         _historyService = historyService;
-        _finalization = finalization;
     }
 
     /// <summary>
@@ -242,14 +243,11 @@ internal sealed class PipelineExecutionContextBuilder
         return ctx;
     }
 
-    // TODO: _finalization! uses null-forgiving operator on a nullable field. Either make the constructor
-    // parameter required or add a null guard (e.g., ArgumentNullException.ThrowIfNull) to prevent
-    // NullReferenceException if this method is called when finalization was not provided.
     private async Task CreatePullRequestAsync(
         PipelineRun run, QualityGateReport report, bool isDraft,
         PullRequestCreationContext context, CancellationToken ct)
     {
-        await _finalization!.RunFullPrCreationAsync(
+        await _finalization.RunFullPrCreationAsync(
             run, report, isDraft,
             context.PrOrchestrator, context.RepoProvider, context.AgentProvider,
             context.BrainProvider, context.BrainSync, context.Config,

@@ -58,6 +58,37 @@ internal sealed class DispatchLifecycleService
     }
 
     /// <summary>
+    /// Queries the database for claimed PVCs, excludes inflight claims, and returns available PVCs
+    /// from the given pool. Used by both DispatchService and ConsolidationDispatchHandler.
+    /// </summary>
+    /// <param name="db">Database context for querying claimed PVCs.</param>
+    /// <param name="pvcPool">Configured PVC pool to check availability against.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>
+    /// A result containing the list of available PVCs and the count of claimed PVCs (for telemetry).
+    /// </returns>
+    public async Task<PvcAvailabilityResult> QueryAvailablePvcsAsync(
+        PipelineDbContext db, IReadOnlyList<string> pvcPool, CancellationToken ct)
+    {
+        var claimedPvcs = await db.WorkItems
+            .Where(w => w.ClaimedPvcName != null &&
+                        (w.Status == WorkItemStatus.Pending ||
+                         w.Status == WorkItemStatus.Dispatched ||
+                         w.Status == WorkItemStatus.Running))
+            .Select(w => w.ClaimedPvcName!)
+            .ToListAsync(ct);
+
+        var inflightClaims = GetInflightPvcClaims();
+
+        var availablePvcs = pvcPool
+            .Except(claimedPvcs, StringComparer.Ordinal)
+            .Where(pvc => !inflightClaims.Contains(pvc))
+            .ToList();
+
+        return new PvcAvailabilityResult(availablePvcs, claimedPvcs.Count);
+    }
+
+    /// <summary>
     /// Removes a PVC from the inflight claims set. Called when the claim is either
     /// persisted to the database or when the claim is being released (abort/failure).
     /// </summary>

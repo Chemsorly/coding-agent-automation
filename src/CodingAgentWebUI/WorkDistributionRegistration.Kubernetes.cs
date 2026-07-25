@@ -47,17 +47,7 @@ public static partial class WorkDistributionRegistration
         // Shared dispatch lifecycle service
         services.AddSingleton<DispatchLifecycleService>(sp =>
         {
-            var options = new DispatchServiceOptions();
-            var config = sp.GetRequiredService<IConfiguration>();
-            config.GetSection("WorkDistribution:Dispatch").Bind(options);
-            var pvcList = config.GetSection("WorkDistribution:CredentialPools:Kiro").Get<List<string>>();
-            if (pvcList is not null) options.KiroPvcPool = pvcList;
-            options.OrchestratorUrl = config.GetValue<string>("WorkDistribution:OrchestratorUrl") ?? "";
-            options.AgentApiKeySecretName = config.GetValue<string>("WorkDistribution:AgentApiKeySecretName") ?? "";
-            options.AgentServiceAccountName = config.GetValue<string>("WorkDistribution:AgentServiceAccountName") ?? "";
-            options.Namespace = config.GetValue<string>("WorkDistribution:Namespace")
-                ?? Environment.GetEnvironmentVariable("POD_NAMESPACE") ?? "default";
-            options.OpencodeConfigSecretName = config.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
             return new DispatchLifecycleService(
                 sp.GetRequiredService<IKubernetesJobClient>(),
                 sp.GetRequiredService<WorkItemTransitionService>(),

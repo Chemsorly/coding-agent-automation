@@ -51,7 +51,7 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
         var runService = new OrchestratorRunService(mockSerilogLogger.Object);
         var dispatcher = new JobDeduplicationGuardService(registry, mockSerilogLogger.Object);
         var drainService = new JobQueueDrainService(dispatcher, registry, Mock.Of<IJobDispatcher>(),
-            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatcher>(), new ShutdownSignal(), mockSerilogLogger.Object);
+            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(), new ShutdownSignal(), mockSerilogLogger.Object);
 
         _facade = new AgentHubFacade(
             registry,

@@ -31,6 +31,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly JobTemplateStore _templateProvider;
+    private readonly DispatchTemplateResolver _templateResolver;
     private readonly DispatchServiceOptions _options;
     private readonly WorkItemTransitionService _transitionService;
     private readonly IConsolidationRunStore? _consolidationRunStore;
@@ -38,7 +39,6 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private readonly IConsolidationJobPreparationService? _consolidationJobPreparer;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
     private readonly IProjectStore? _projectStore;
-    private readonly IAgentProfileStore? _agentProfileStore;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
     public ConsolidationDispatchHandler(
@@ -65,14 +65,13 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _consolidationJobPreparer = consolidationJobPreparer;
         _pipelineConfigStore = pipelineConfigStore;
         _projectStore = projectStore;
-        _agentProfileStore = agentProfileStore;
-        _options = new DispatchServiceOptions();
-        InitializeOptions(configuration);
-        _rateLimiter = CreateRateLimiter();
+        _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
+        _options = DispatchServiceOptionsFactory.Create(configuration);
+        _rateLimiter = _options.CreateRateLimiter();
     }
 
     /// <summary>
-    /// Test constructor accepting a pre-built JobTemplateStore.
+    /// Test constructor accepting pre-built options (skips IConfiguration binding).
     /// </summary>
     internal ConsolidationDispatchHandler(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -98,37 +97,10 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _consolidationJobPreparer = consolidationJobPreparer;
         _pipelineConfigStore = pipelineConfigStore;
         _projectStore = projectStore;
-        _agentProfileStore = agentProfileStore;
+        _templateResolver = new DispatchTemplateResolver(agentProfileStore, templateProvider);
         _options = options;
-        _rateLimiter = CreateRateLimiter();
+        _rateLimiter = _options.CreateRateLimiter();
     }
-
-    private void InitializeOptions(IConfiguration configuration)
-    {
-        configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
-
-        var pvcList = configuration.GetSection("WorkDistribution:CredentialPools:Kiro").Get<List<string>>();
-        if (pvcList is not null)
-            _options.KiroPvcPool = pvcList;
-
-        _options.OrchestratorUrl = configuration.GetValue<string>("WorkDistribution:OrchestratorUrl") ?? "";
-        _options.AgentApiKeySecretName = configuration.GetValue<string>("WorkDistribution:AgentApiKeySecretName") ?? "";
-        _options.AgentServiceAccountName = configuration.GetValue<string>("WorkDistribution:AgentServiceAccountName") ?? "";
-        _options.Namespace = configuration.GetValue<string>("WorkDistribution:Namespace")
-            ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
-            ?? "default";
-        _options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
-    }
-
-    private TokenBucketRateLimiter CreateRateLimiter() => new(new TokenBucketRateLimiterOptions
-    {
-        TokenLimit = _options.RateLimitPerSecond,
-        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-        QueueLimit = 0,
-        ReplenishmentPeriod = TimeSpan.FromSeconds(1),
-        TokensPerPeriod = _options.RateLimitPerSecond,
-        AutoReplenishment = true
-    });
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -226,21 +198,8 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
 
         // PVC pool: determine available PVCs for kiro agents
-        var claimedPvcs = await db.WorkItems
-            .Where(w => w.ClaimedPvcName != null &&
-                        (w.Status == WorkItemStatus.Pending ||
-                         w.Status == WorkItemStatus.Dispatched ||
-                         w.Status == WorkItemStatus.Running))
-            .Select(w => w.ClaimedPvcName!)
-            .ToListAsync(ct);
-
-        // Exclude PVCs claimed in-memory by DispatchService (not yet persisted to DB)
-        var inflightClaims = _lifecycle.GetInflightPvcClaims();
-
-        var availablePvcs = _options.KiroPvcPool
-            .Except(claimedPvcs, StringComparer.Ordinal)
-            .Where(pvc => !inflightClaims.Contains(pvc))
-            .ToList();
+        var pvcResult = await _lifecycle.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
+        var availablePvcs = pvcResult.AvailablePvcs;
 
         foreach (var item in pendingItems)
         {
@@ -274,7 +233,8 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
             if (template is null)
             {
                 // Fallback: AgentSelector might be a subset of the template's label set
-                var (fallbackTemplate, resolvedSelector) = await ResolveTemplateViaProfileAsync(item.AgentSelector, ct);
+                var (fallbackTemplate, resolvedSelector) = await _templateResolver.ResolveTemplateViaProfileAsync(
+                    item.AgentSelector, nameof(ConsolidationDispatchHandler), ct);
                 if (fallbackTemplate is null)
                 {
                     await FailConsolidationWorkItemAsync(item.Id, $"No job template for selector: {item.AgentSelector}", item.IssueIdentifier, ct);
@@ -567,45 +527,5 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         {
             Log.Warning(ex, "ConsolidationDispatchHandler: failed to transition consolidation run {RunId} to Running (non-fatal)", runId);
         }
-    }
-
-    // ── Template Resolution ─────────────────────────────────────────────
-
-    private async Task<(JobTemplate? Template, string? ResolvedSelector)> ResolveTemplateViaProfileAsync(string agentSelector, CancellationToken ct)
-    {
-        if (_agentProfileStore is null)
-            return (null, null);
-
-        var selectorLabels = agentSelector
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .ToList();
-
-        if (selectorLabels.Count == 0)
-            return (null, null);
-
-        var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-
-        var resolver = new ProfileResolver();
-        var profile = resolver.ResolveByRequiredLabels(profiles, selectorLabels);
-
-        if (profile is null)
-        {
-            Log.Debug("ConsolidationDispatchHandler: no profile covers selector [{Selector}] for fallback template resolution",
-                agentSelector);
-            return (null, null);
-        }
-
-        var profileSelector = string.Join(",",
-            profile.MatchLabels.OrderBy(l => l, StringComparer.Ordinal));
-
-        var template = _templateProvider.Resolve(profileSelector);
-        if (template is not null)
-        {
-            Log.Warning("ConsolidationDispatchHandler: AgentSelector [{Selector}] required profile expansion to resolve template. " +
-                "Resolved via profile '{ProfileId}' → [{ProfileSelector}]",
-                agentSelector, profile.Id, profileSelector);
-        }
-
-        return (template, profileSelector);
     }
 }

@@ -19,9 +19,9 @@ public enum ConsolidationDispatchResult
 /// Abstracts consolidation job dispatch so that <see cref="Services.ConsolidationService"/>
 /// (in the Pipeline project) can dispatch jobs to agents without depending on the
 /// Orchestration or WebUI projects directly.
-/// Implemented in the WebUI composition root where all dependencies are available.
+/// Implemented in the Orchestration layer where all dependencies are available.
 /// </summary>
-public interface IConsolidationDispatcher
+public interface IConsolidationDispatchService
 {
     /// <summary>
     /// Attempts to dispatch a consolidation run to an idle agent, or enqueues it if none available.
