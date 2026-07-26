@@ -793,6 +793,8 @@ public class K8sEdgeCaseTests : IDisposable
             ct: CancellationToken.None);
 
         // Assert: exception propagates (ObjectDisposedException from disposed context)
+        // TODO: Strengthen to ThrowAsync<ObjectDisposedException>() — the broad Exception assertion
+        // would pass even if test setup breaks and an unrelated exception is thrown.
         await act.Should().ThrowAsync<Exception>();
 
         // Assert: PVC was returned to pool (the critical fix for #1708)
@@ -885,6 +887,78 @@ public class K8sEdgeCaseTests : IDisposable
         lifecycle.GetInflightPvcClaims().Should().BeEmpty(
             "inflight PVC claims must be released on SaveChangesAsync exception to prevent permanent pool shrinkage");
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // PVC claim leak on OperationCanceledException during FindAsync (#1708)
+    // This is the KEY behavioral change: previously OCE was re-thrown without
+    // releasing the PVC (via a dedicated catch(OCE){throw}). Now OCE releases
+    // the PVC before re-throwing. This test will FAIL if the old behavior is
+    // re-introduced (e.g., adding back catch(OperationCanceledException){throw}).
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task ExecuteDispatchLifecycle_FindAsyncThrowsOperationCanceledException_PvcReturnedToPool()
+    {
+        // Arrange: create a lifecycle service with a PVC pool
+        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-oce-leak" });
+
+        // Use a pre-cancelled CancellationToken so that FindAsync throws OperationCanceledException.
+        // This simulates the scenario where a transient shutdown or timeout cancels the token
+        // between PVC claim and FindAsync completion.
+        using var cts = new CancellationTokenSource();
+        cts.Cancel();
+
+        // Need a valid (non-disposed) db context for this test — FindAsync will throw OCE
+        // due to the cancelled token, not due to a disposed context.
+        await using var db = await _dbFactory.CreateDbContextAsync();
+
+        var projection = new PendingWorkItemProjection
+        {
+            Id = Guid.NewGuid(), // non-existent ID is fine — cancellation happens before DB access completes
+            AgentSelector = "kiro,dotnet",
+            CreatedAt = DateTimeOffset.UtcNow,
+            TimeoutSeconds = 3600
+        };
+
+        var template = new JobTemplate
+        {
+            Labels = "dotnet,kiro",
+            Image = "ghcr.io/agent:kiro-latest",
+            ProviderType = "kiro",
+            MaxConcurrent = 10
+        };
+
+        var availablePvcs = new List<string> { "pvc-oce-leak" };
+        var concurrency = new Dictionary<string, int>();
+
+        // Act: FindAsync throws OperationCanceledException — PVC must be returned to pool
+        Func<Task> act = () => lifecycle.ExecuteDispatchLifecycleAsync(
+            db, projection, template,
+            isKiroAgent: true,
+            availablePvcs,
+            concurrency,
+            logPrefix: "",
+            prepareVariant: _ => Task.FromResult<(bool, Dictionary<string, string>?)>((true, null)),
+            onDispatchSuccess: null,
+            ct: cts.Token);
+
+        // Assert: OperationCanceledException propagates
+        await act.Should().ThrowAsync<OperationCanceledException>();
+
+        // Assert: PVC was returned to pool — this is the critical behavioral change in #1708.
+        // Previously, OperationCanceledException was re-thrown WITHOUT releasing the PVC via a
+        // dedicated catch(OperationCanceledException) { throw } block. Now the generic catch
+        // releases the PVC before re-throwing.
+        availablePvcs.Should().ContainSingle()
+            .Which.Should().Be("pvc-oce-leak");
+
+        // Assert: inflight claims set is cleared
+        lifecycle.GetInflightPvcClaims().Should().BeEmpty(
+            "inflight PVC claims must be released on OperationCanceledException to prevent permanent pool shrinkage");
+    }
+
+    // TODO: Add test for OperationCanceledException during first SaveChangesAsync to validate
+    // OCE releases PVC on that path as well (same behavioral change as FindAsync path above).
 
     /// <summary>
     /// EF Core SaveChangesInterceptor that throws DbUpdateException on the first SaveChangesAsync call
