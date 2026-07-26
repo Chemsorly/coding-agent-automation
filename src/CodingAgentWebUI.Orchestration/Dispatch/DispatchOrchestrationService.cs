@@ -353,7 +353,10 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             ReviewerConfigs = result.ReviewerConfigs,
             McpServers = result.McpServers,
             TraceContext = result.TraceContext,
-            RunId = result.CreatedRun.RunId
+            RunId = result.CreatedRun.RunId,
+            ProjectSteeringContent = result.Project.SteeringContent,
+            RepoSteeringContent = result.ProviderConfigs
+                .FirstOrDefault(c => c.Id == result.CreatedRun.RepoProviderConfigId)?.SteeringContent,
         };
     }
 

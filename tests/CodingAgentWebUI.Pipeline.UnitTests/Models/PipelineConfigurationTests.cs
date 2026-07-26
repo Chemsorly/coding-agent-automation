@@ -96,6 +96,7 @@ public class PipelineConfigurationTests
             MaxRefactoringProposals = 5,
             HotspotAnalysisLookback = TimeSpan.FromDays(180),
             MaxDecompositionSubIssues = 15,
+            MaxDecompositionSubIssueFiles = 8,
             MaxConcurrentDecompositions = 4,
             DecompositionTimeout = TimeSpan.FromMinutes(30),
             MaxOpenIssuesForContext = 100,
@@ -126,7 +127,7 @@ public class PipelineConfigurationTests
 
         // Count the properties explicitly set above (all [Key] properties on the record).
         // If this fails, a new [Key] property was added — add it to the config above.
-        keyPropertyCount.Should().Be(63,
+        keyPropertyCount.Should().Be(64,
             "this test must cover all [Key]-annotated properties on PipelineConfiguration. " +
             "If a new property was added, set it to a non-default value in the config above.");
     }
@@ -194,6 +195,7 @@ public class PipelineConfigurationTests
         config.MaxRefactoringProposals.Should().Be(3);
         config.HotspotAnalysisLookback.Should().Be(TimeSpan.FromDays(90));
         config.MaxDecompositionSubIssues.Should().Be(10);
+        config.MaxDecompositionSubIssueFiles.Should().Be(12);
         config.MaxConcurrentDecompositions.Should().Be(2);
         config.DecompositionTimeout.Should().Be(TimeSpan.FromMinutes(15));
         config.MaxOpenIssuesForContext.Should().Be(50);
@@ -450,6 +452,39 @@ public class PipelineConfigurationTests
         var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
 
         result.AnalysisCommitThreshold.Should().Be(50);
+    }
+
+    // ── MaxDecompositionSubIssueFiles validation ───────────────────────────────
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(31)]
+    [InlineData(-1)]
+    public void MaxDecompositionSubIssueFiles_OutOfRange_Throws(int value)
+    {
+        var act = () => new PipelineConfiguration { MaxDecompositionSubIssueFiles = value };
+        act.Should().Throw<ArgumentOutOfRangeException>();
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(12)]
+    [InlineData(30)]
+    public void MaxDecompositionSubIssueFiles_InRange_Accepted(int value)
+    {
+        var config = new PipelineConfiguration { MaxDecompositionSubIssueFiles = value };
+        config.MaxDecompositionSubIssueFiles.Should().Be(value);
+    }
+
+    [Fact]
+    public void ApplyProjectOverrides_MaxDecompositionSubIssueFiles_OverridesCorrectly()
+    {
+        var config = TestPipelineConfig.Default() with { MaxDecompositionSubIssueFiles = 12 };
+        var project = TestPipelineConfig.WithProject() with { MaxDecompositionSubIssueFiles = 20 };
+
+        var result = PipelineConfigurationResolver.ApplyProjectOverrides(config, project);
+
+        result.MaxDecompositionSubIssueFiles.Should().Be(20);
     }
 
 }
