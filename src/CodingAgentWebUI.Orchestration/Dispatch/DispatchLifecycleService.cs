@@ -242,6 +242,9 @@ internal sealed class DispatchLifecycleService
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
 
             // Track concurrency
+            // TODO: Use effectiveSelector (from eligibility checker's profile fallback resolution) instead of item.AgentSelector.
+            // When profile fallback resolves e.g. "dotnet" → "dotnet,kiro", incrementing item.AgentSelector here means the
+            // resolved selector's count is never updated in-memory, allowing potential over-dispatch within a single poll cycle.
             concurrencyBySelector[item.AgentSelector ?? ""] =
                 concurrencyBySelector.GetValueOrDefault(item.AgentSelector ?? "", 0) + 1;
 
