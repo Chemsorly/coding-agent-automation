@@ -14,6 +14,13 @@
         </div>
         <div class="form-group">
             <div class="label-with-hint">
+                <label>Max Files Per Sub-Issue</label>
+                <span class="form-hint-icon" aria-hidden="true" title="Maximum files a single sub-issue may create or modify. Valid range: 1–30. Default: 12">?</span>
+            </div>
+            <input type="number" @bind="_maxDecompositionSubIssueFiles" min="1" max="30" />
+        </div>
+        <div class="form-group">
+            <div class="label-with-hint">
                 <label>Decomposition Timeout (minutes)</label>
                 <span class="form-hint-icon" aria-hidden="true" title="Timeout for each decomposition phase. Accounts for codebase exploration time. Default: 15 minutes">?</span>
             </div>
@@ -52,6 +59,7 @@
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private int _maxDecompositionSubIssues = 10;
+    private int _maxDecompositionSubIssueFiles = 12;
     private int _maxConcurrentDecompositions = 2;
     private int _decompositionTimeoutMinutes = 15;
     private int _maxOpenIssuesForContext = 50;
@@ -61,6 +69,7 @@
     {
         var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
         _maxDecompositionSubIssues = config.MaxDecompositionSubIssues;
+        _maxDecompositionSubIssueFiles = config.MaxDecompositionSubIssueFiles;
         _maxConcurrentDecompositions = config.MaxConcurrentDecompositions;
         _decompositionTimeoutMinutes = (int)config.DecompositionTimeout.TotalMinutes;
         _maxOpenIssuesForContext = config.MaxOpenIssuesForContext;
@@ -74,6 +83,7 @@
                 current => current with
                 {
                     MaxDecompositionSubIssues = _maxDecompositionSubIssues,
+                    MaxDecompositionSubIssueFiles = _maxDecompositionSubIssueFiles,
                     MaxConcurrentDecompositions = _maxConcurrentDecompositions,
                     DecompositionTimeout = TimeSpan.FromMinutes(_decompositionTimeoutMinutes),
                     MaxOpenIssuesForContext = _maxOpenIssuesForContext

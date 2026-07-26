@@ -47,7 +47,7 @@ public class PipelineDecompositionSectionComponentTests : BunitContext
         var cut = Render<PipelineDecompositionSection>(p =>
             p.Add(s => s.ConfigStore, _mockStore.Object));
         var hints = cut.FindAll(".form-hint-icon");
-        Assert.Equal(2, hints.Count); // advanced fields hidden by default
+        Assert.Equal(3, hints.Count); // advanced fields hidden by default
     }
 
     [Fact]
