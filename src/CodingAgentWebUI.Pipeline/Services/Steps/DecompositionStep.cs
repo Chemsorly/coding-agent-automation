@@ -83,7 +83,7 @@ public sealed class DecompositionStep : IPipelineStep
         }
 
         // 4. Build prompt via DecompositionPromptBuilder.BuildDecompositionPrompt(maxSubIssues)
-        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(config.MaxDecompositionSubIssues, context.ProjectContext);
+        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(config.MaxDecompositionSubIssues, config.MaxDecompositionSubIssueFiles, context.ProjectContext);
 
         // 5. Execute agent expecting .agent/sub-issues/*.json output
         context.Callbacks.EmitOutputLine("🤖 Executing decomposition agent...");

@@ -365,4 +365,39 @@ public sealed class AgentMonitoringPageServiceTests
         var result = _sut.ResolveProfileName("some-long-profile-id");
         result.Should().Contain("(deleted)");
     }
+
+    // ── RefreshConsolidationAsync ──
+
+    [Fact]
+    public async Task RefreshConsolidationAsync_WhenServiceReturnsNull_SetsEmptyCollections()
+    {
+        _mockConsolidationService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<ConsolidationRun>)null!);
+
+        await _sut.RefreshConsolidationAsync();
+
+        _sut.ActiveConsolidationRuns.Should().BeEmpty();
+        _sut.QueuedConsolidationRuns.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RefreshConsolidationAsync_WhenServiceReturnsData_FiltersCorrectly()
+    {
+        var runs = new List<ConsolidationRun>
+        {
+            new() { RunId = "r1", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow, Status = ConsolidationRunStatus.Running },
+            new() { RunId = "r2", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow, Status = ConsolidationRunStatus.Queued },
+            new() { RunId = "r3", Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTimeOffset.UtcNow, Status = ConsolidationRunStatus.Succeeded },
+            new() { RunId = "r4", Type = ConsolidationRunType.RefactoringDetection, StartedAtUtc = DateTimeOffset.UtcNow, Status = ConsolidationRunStatus.Running },
+        };
+        _mockConsolidationService.Setup(s => s.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(runs);
+
+        await _sut.RefreshConsolidationAsync();
+
+        _sut.ActiveConsolidationRuns.Should().HaveCount(2);
+        _sut.ActiveConsolidationRuns.Select(r => r.RunId).Should().BeEquivalentTo(["r1", "r4"]);
+        _sut.QueuedConsolidationRuns.Should().HaveCount(1);
+        _sut.QueuedConsolidationRuns[0].RunId.Should().Be("r2");
+    }
 }

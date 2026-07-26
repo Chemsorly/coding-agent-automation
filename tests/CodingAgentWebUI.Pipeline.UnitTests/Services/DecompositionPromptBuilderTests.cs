@@ -15,14 +15,14 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsMaxSubIssuesConstraint()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(7);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(7, 12);
         prompt.Should().Contain("at most **7**");
     }
 
     [Fact]
     public void BuildAnalysisPrompt_ContainsRequiredSections()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
 
         prompt.Should().Contain("# Epic Decomposition Analysis");
         prompt.Should().Contain("## Exploration Strategy");
@@ -34,22 +34,22 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsFileLimit()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
-        prompt.Should().Contain("5 files");
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
+        prompt.Should().Contain("**12 files**");
     }
 
     [Fact]
     public void BuildAnalysisPrompt_ContainsDependencyOrdering()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
         prompt.Should().Contain("dependencies always point backward");
     }
 
     [Fact]
     public void BuildAnalysisPrompt_DifferentMaxSubIssues_ProducesDifferentContent()
     {
-        var prompt3 = DecompositionPromptBuilder.BuildAnalysisPrompt(3);
-        var prompt10 = DecompositionPromptBuilder.BuildAnalysisPrompt(10);
+        var prompt3 = DecompositionPromptBuilder.BuildAnalysisPrompt(3, 12);
+        var prompt10 = DecompositionPromptBuilder.BuildAnalysisPrompt(10, 12);
 
         prompt3.Should().Contain("at most **3**");
         prompt10.Should().Contain("at most **10**");
@@ -59,8 +59,8 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildAnalysisPrompt_WithNullProjectContext_ReturnsSameAsWithout()
     {
-        var without = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
-        var withNull = DecompositionPromptBuilder.BuildAnalysisPrompt(5, null);
+        var without = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
+        var withNull = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12, null);
 
         withNull.Should().Be(without);
     }
@@ -69,8 +69,8 @@ public class DecompositionPromptBuilderTests
     public void BuildAnalysisPrompt_WithProjectContext_AppendsCrossRepoInstructions()
     {
         var context = CreateTestProjectContext();
-        var withContext = DecompositionPromptBuilder.BuildAnalysisPrompt(5, context);
-        var without = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var withContext = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12, context);
+        var without = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
 
         withContext.Length.Should().BeGreaterThan(without.Length);
         withContext.Should().StartWith(without);
@@ -79,7 +79,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildAnalysisPrompt_ContainsGateRejectionSection()
     {
-        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(5, 12);
         prompt.Should().Contain("## Gate Rejection Concerns");
         prompt.Should().Contain("agent:gate-rejection");
     }
@@ -89,14 +89,14 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildDecompositionPrompt_ContainsMaxSubIssuesConstraint()
     {
-        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(8);
+        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(8, 12);
         prompt.Should().Contain("at most **8**");
     }
 
     [Fact]
     public void BuildDecompositionPrompt_ContainsJsonSchema()
     {
-        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5, 12);
 
         prompt.Should().Contain("\"title\":");
         prompt.Should().Contain("\"body\":");
@@ -107,7 +107,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildDecompositionPrompt_ContainsRequiredSections()
     {
-        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5, 12);
 
         prompt.Should().Contain("# Epic Decomposition — Sub-Issue Generation");
         prompt.Should().Contain("## Context");
@@ -120,7 +120,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildDecompositionPrompt_ContainsIssueBodyTemplateSections()
     {
-        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5);
+        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(5, 12);
 
         prompt.Should().Contain("## Summary");
         prompt.Should().Contain("## Affected Components");
@@ -131,8 +131,8 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildDecompositionPrompt_WithNullProjectContext_ReturnsSameAsWithout()
     {
-        var without = DecompositionPromptBuilder.BuildDecompositionPrompt(5);
-        var withNull = DecompositionPromptBuilder.BuildDecompositionPrompt(5, null);
+        var without = DecompositionPromptBuilder.BuildDecompositionPrompt(5, 12);
+        var withNull = DecompositionPromptBuilder.BuildDecompositionPrompt(5, 12, null);
 
         withNull.Should().Be(without);
     }
@@ -141,8 +141,8 @@ public class DecompositionPromptBuilderTests
     public void BuildDecompositionPrompt_WithProjectContext_AppendsRoutingInstructions()
     {
         var context = CreateTestProjectContext();
-        var withContext = DecompositionPromptBuilder.BuildDecompositionPrompt(5, context);
-        var without = DecompositionPromptBuilder.BuildDecompositionPrompt(5);
+        var withContext = DecompositionPromptBuilder.BuildDecompositionPrompt(5, 12, context);
+        var without = DecompositionPromptBuilder.BuildDecompositionPrompt(5, 12);
 
         withContext.Length.Should().BeGreaterThan(without.Length);
     }
@@ -152,7 +152,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_ContainsEvaluationCriteria()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt();
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
 
         prompt.Should().Contain("# Decomposition Plan Review");
         prompt.Should().Contain("### 1. Overlap Check");
@@ -165,7 +165,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_ContainsSeverityMarkers()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt();
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
 
         prompt.Should().Contain("[CRITICAL]");
         prompt.Should().Contain("[WARNING]");
@@ -175,15 +175,15 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_ContainsNoFalsePositiveRule()
     {
-        var prompt = DecompositionPromptBuilder.BuildReviewPrompt();
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(12);
         prompt.Should().Contain("Do NOT invent findings");
     }
 
     [Fact]
     public void BuildReviewPrompt_WithNullProjectContext_ReturnsSameAsWithout()
     {
-        var without = DecompositionPromptBuilder.BuildReviewPrompt();
-        var withNull = DecompositionPromptBuilder.BuildReviewPrompt(null);
+        var without = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var withNull = DecompositionPromptBuilder.BuildReviewPrompt(12, null);
 
         withNull.Should().Be(without);
     }
@@ -192,8 +192,8 @@ public class DecompositionPromptBuilderTests
     public void BuildReviewPrompt_WithProjectContext_AppendsCrossRepoReviewAdditions()
     {
         var context = CreateTestProjectContext();
-        var withContext = DecompositionPromptBuilder.BuildReviewPrompt(context);
-        var without = DecompositionPromptBuilder.BuildReviewPrompt();
+        var withContext = DecompositionPromptBuilder.BuildReviewPrompt(12, context);
+        var without = DecompositionPromptBuilder.BuildReviewPrompt(12);
 
         withContext.Length.Should().BeGreaterThan(without.Length);
     }
@@ -203,7 +203,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildRefinementPrompt_ContainsRequiredSections()
     {
-        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt();
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(12);
 
         prompt.Should().Contain("# Decomposition Plan Refinement");
         prompt.Should().Contain("## Input");
@@ -214,7 +214,7 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildRefinementPrompt_AddressesCriticalAndWarning()
     {
-        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt();
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(12);
 
         prompt.Should().Contain("`[CRITICAL]` findings");
         prompt.Should().Contain("`[WARNING]` findings");
@@ -223,12 +223,42 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildRefinementPrompt_PreservesOriginalConstraints()
     {
-        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt();
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(12);
 
         // Ensures the refinement prompt reminds the agent of sizing constraints
-        prompt.Should().Contain("5 files");
+        prompt.Should().Contain("≤12 files");
         prompt.Should().Contain("one verification criterion");
         prompt.Should().Contain("one agent run");
+    }
+
+    // ── MaxFiles parameterization ────────────────────────────────────────
+
+    [Fact]
+    public void BuildAnalysisPrompt_ContainsMaxFilesConstraint()
+    {
+        var prompt = DecompositionPromptBuilder.BuildAnalysisPrompt(10, 15);
+        prompt.Should().Contain("**15 files**");
+    }
+
+    [Fact]
+    public void BuildDecompositionPrompt_ContainsMaxFilesConstraint()
+    {
+        var prompt = DecompositionPromptBuilder.BuildDecompositionPrompt(10, 8);
+        prompt.Should().Contain("**8 files**");
+    }
+
+    [Fact]
+    public void BuildReviewPrompt_ContainsMaxFilesConstraint()
+    {
+        var prompt = DecompositionPromptBuilder.BuildReviewPrompt(20);
+        prompt.Should().Contain("≤20 files");
+    }
+
+    [Fact]
+    public void BuildRefinementPrompt_ContainsMaxFilesConstraint()
+    {
+        var prompt = DecompositionPromptBuilder.BuildRefinementPrompt(7);
+        prompt.Should().Contain("≤7 files");
     }
 
     // ── Idempotence (Property-like) ──────────────────────────────────────
@@ -239,8 +269,8 @@ public class DecompositionPromptBuilderTests
     [InlineData(15)]
     public void BuildAnalysisPrompt_IsDeterministic(int maxSubIssues)
     {
-        var first = DecompositionPromptBuilder.BuildAnalysisPrompt(maxSubIssues);
-        var second = DecompositionPromptBuilder.BuildAnalysisPrompt(maxSubIssues);
+        var first = DecompositionPromptBuilder.BuildAnalysisPrompt(maxSubIssues, 12);
+        var second = DecompositionPromptBuilder.BuildAnalysisPrompt(maxSubIssues, 12);
 
         first.Should().Be(second);
     }
@@ -251,8 +281,8 @@ public class DecompositionPromptBuilderTests
     [InlineData(15)]
     public void BuildDecompositionPrompt_IsDeterministic(int maxSubIssues)
     {
-        var first = DecompositionPromptBuilder.BuildDecompositionPrompt(maxSubIssues);
-        var second = DecompositionPromptBuilder.BuildDecompositionPrompt(maxSubIssues);
+        var first = DecompositionPromptBuilder.BuildDecompositionPrompt(maxSubIssues, 12);
+        var second = DecompositionPromptBuilder.BuildDecompositionPrompt(maxSubIssues, 12);
 
         first.Should().Be(second);
     }
@@ -260,8 +290,8 @@ public class DecompositionPromptBuilderTests
     [Fact]
     public void BuildReviewPrompt_IsDeterministic()
     {
-        var first = DecompositionPromptBuilder.BuildReviewPrompt();
-        var second = DecompositionPromptBuilder.BuildReviewPrompt();
+        var first = DecompositionPromptBuilder.BuildReviewPrompt(12);
+        var second = DecompositionPromptBuilder.BuildReviewPrompt(12);
 
         first.Should().Be(second);
     }
