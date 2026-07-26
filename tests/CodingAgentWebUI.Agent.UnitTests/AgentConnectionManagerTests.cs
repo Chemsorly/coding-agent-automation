@@ -28,13 +28,17 @@ public class AgentConnectionManagerTests
 
     // ── Construction ─────────────────────────────────────────────────────
 
+    // TODO: Add Constructor_DefaultAgentId_Throws test — default(AgentId) has Value == null and is not
+    // currently rejected by the constructor (guard was removed during AgentIdentity→AgentId migration).
+    // If DI misconfiguration passes default(AgentId), hub invocations will propagate nulls.
+
     [Fact]
     public void Constructor_NullHubManager_Throws()
     {
         var act = () => new AgentConnectionManager(
             null!,
             CreateFactory(),
-            new AgentIdentity("test"),
+            new AgentId("test"),
             Mock.Of<Serilog.ILogger>());
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("hubManager");
@@ -46,22 +50,10 @@ public class AgentConnectionManagerTests
         var act = () => new AgentConnectionManager(
             CreateHubManager(),
             null!,
-            new AgentIdentity("test"),
+            new AgentId("test"),
             Mock.Of<Serilog.ILogger>());
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("hubManagerFactory");
-    }
-
-    [Fact]
-    public void Constructor_NullAgentIdentity_Throws()
-    {
-        var act = () => new AgentConnectionManager(
-            CreateHubManager(),
-            CreateFactory(),
-            null!,
-            Mock.Of<Serilog.ILogger>());
-
-        act.Should().Throw<ArgumentNullException>().WithParameterName("agentIdentity");
     }
 
     [Fact]
@@ -70,7 +62,7 @@ public class AgentConnectionManagerTests
         var act = () => new AgentConnectionManager(
             CreateHubManager(),
             CreateFactory(),
-            new AgentIdentity("test"),
+            new AgentId("test"),
             null!);
 
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
@@ -82,7 +74,7 @@ public class AgentConnectionManagerTests
         var act = () => new AgentConnectionManager(
             CreateHubManager(),
             CreateFactory(),
-            new AgentIdentity("test"),
+            new AgentId("test"),
             Mock.Of<Serilog.ILogger>());
 
         act.Should().NotThrow();
@@ -268,7 +260,7 @@ public class AgentConnectionManagerTests
         return new AgentConnectionManager(
             CreateHubManager(),
             CreateFactory(),
-            new AgentIdentity("test-agent"),
+            new AgentId("test-agent"),
             Mock.Of<Serilog.ILogger>());
     }
 

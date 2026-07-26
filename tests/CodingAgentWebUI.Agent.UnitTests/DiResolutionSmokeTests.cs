@@ -67,7 +67,7 @@ public class DiResolutionSmokeTests
         services.AddHttpClient();
 
         // ── Agent identity ──
-        services.AddSingleton(new AgentIdentity("test-agent-di-smoke"));
+        ((IServiceCollection)services).Add(ServiceDescriptor.Singleton(typeof(AgentId), new AgentId("test-agent-di-smoke")));
 
         // ── Hub connection manager ──
         services.AddSingleton(new HubConnectionManagerFactory(
@@ -84,7 +84,7 @@ public class DiResolutionSmokeTests
             Log.Logger,
             sp.GetRequiredService<IBrainUpdateService>(),
             openIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
-            agentIdentity: sp.GetRequiredService<AgentIdentity>()));
+            agentIdentity: sp.GetRequiredService<AgentId>()));
 
         // ── Consolidation executor ──
         services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
@@ -124,7 +124,7 @@ public class DiResolutionSmokeTests
             return new AgentConnectionManager(
                 hubManager,
                 factory,
-                sp.GetRequiredService<AgentIdentity>(),
+                sp.GetRequiredService<AgentId>(),
                 Log.Logger);
         });
         services.AddSingleton<IJobCompletionReporter>(sp =>
@@ -135,7 +135,7 @@ public class DiResolutionSmokeTests
             sp.GetRequiredService<IAgentConnectionManager>(),
             sp.GetRequiredService<IWorkItemExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
-            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger,
             serviceProvider: sp));
@@ -294,7 +294,7 @@ public class DiResolutionSmokeTests
         services.AddHttpClient();
 
         // ── Agent identity ──
-        services.AddSingleton(new AgentIdentity("test-agent-signalr-smoke"));
+        ((IServiceCollection)services).Add(ServiceDescriptor.Singleton(typeof(AgentId), new AgentId("test-agent-signalr-smoke")));
 
         // ── Hub connection manager ──
         services.AddSingleton(new HubConnectionManagerFactory(
@@ -311,7 +311,7 @@ public class DiResolutionSmokeTests
             Log.Logger,
             sp.GetRequiredService<IBrainUpdateService>(),
             openIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
-            agentIdentity: sp.GetRequiredService<AgentIdentity>()));
+            agentIdentity: sp.GetRequiredService<AgentId>()));
 
         // ── Consolidation executor ──
         services.AddSingleton<IConsolidationExecutor>(sp => new LocalConsolidationExecutor(
@@ -336,13 +336,13 @@ public class DiResolutionSmokeTests
             sp.GetRequiredService<HubConnectionManagerFactory>(),
             sp.GetRequiredService<SignalRCompletionReporter>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
-            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
         services.AddSingleton(sp => new AgentWorkerService(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
-            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IPipelineExecutor>(),
             sp.GetRequiredService<IConsolidationExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
