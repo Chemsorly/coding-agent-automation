@@ -27,9 +27,21 @@ internal static class EndpointRegistration
 
         // Export run history as JSON download
         // TODO: Accept CancellationToken parameter and pass to GetRunHistoryAsync(ct) so the DB query cancels on client disconnect
-        app.MapGet("/api/export/runs.json", async (IPipelineRunHistoryService history, bool? feedbackOnly) =>
+        app.MapGet("/api/export/runs.json", async (IPipelineRunHistoryService history, bool? feedbackOnly, int? page, int? pageSize) =>
         {
-            var runs = (IEnumerable<PipelineRunSummary>)await history.GetRunHistoryAsync();
+            IEnumerable<PipelineRunSummary> runs;
+            if (page.HasValue || pageSize.HasValue)
+            {
+                var p = page ?? 1;
+                var ps = pageSize ?? 50;
+                var pagedResult = await history.GetRunHistoryAsync(p, ps);
+                runs = pagedResult.Items;
+            }
+            else
+            {
+                runs = await history.GetRunHistoryAsync();
+            }
+
             if (feedbackOnly == true)
                 runs = runs.Where(r => r.Feedback is not null);
 

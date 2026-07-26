@@ -83,6 +83,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
+        // TODO: Add upper bound for 'page' parameter to prevent integer overflow in (page - 1) * pageSize.
+        // With page=2_147_485 and pageSize=1000, unchecked multiplication wraps negative. Consider:
+        // ArgumentOutOfRangeException.ThrowIfGreaterThan(page, MaxHistorySize / pageSize + 1);
 
         return await GetRunHistoryPagedInternalAsync(page, pageSize, ct).ConfigureAwait(false);
     }
@@ -185,20 +188,42 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     {
         await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
 
-        // Fetch one extra to determine HasMore without a separate COUNT query
-        var entities = await db.PipelineRuns
-            .AsNoTracking()
-            .OrderByDescending(r => r.StartedAt)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize + 1)
-            .ToListAsync(ct).ConfigureAwait(false);
+        // We need pageSize + 1 valid (non-consolidation) items to determine HasMore.
+        // Because consolidation ghost entries may exist in the table (defense-in-depth filter),
+        // we over-fetch and loop until we have enough valid items or exhaust the table.
+        var skip = checked((page - 1) * pageSize);
+        const int batchMultiplier = 2; // Over-fetch factor to reduce round-trips
+        var items = new List<PipelineRunSummary>();
+        var dbOffset = skip;
+        var hasMore = false;
 
-        var items = entities
-            .Select(DeserializeSummary)
-            .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
-            .ToList()!;
+        while (items.Count < pageSize + 1)
+        {
+            var batchSize = (pageSize + 1 - items.Count) * batchMultiplier;
+            var entities = await db.PipelineRuns
+                .AsNoTracking()
+                .OrderByDescending(r => r.StartedAt)
+                .Skip(dbOffset)
+                .Take(batchSize)
+                .ToListAsync(ct).ConfigureAwait(false);
 
-        var hasMore = items.Count > pageSize;
+            if (entities.Count == 0)
+                break; // No more rows in the table
+
+            var batch = entities
+                .Select(DeserializeSummary)
+                .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+                .ToList();
+
+            items.AddRange(batch!);
+            dbOffset += entities.Count;
+
+            // If we fetched fewer rows than requested, we've exhausted the table
+            if (entities.Count < batchSize)
+                break;
+        }
+
+        hasMore = items.Count > pageSize;
         if (hasMore)
             items = items.Take(pageSize).ToList();
 
