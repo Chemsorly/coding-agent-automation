@@ -275,7 +275,7 @@ public class IPipelineExecutorTests
                 Serilog.Log.Logger));
         services.AddHttpClient();
         services.AddSingleton(new PipelineConfiguration());
-        services.AddSingleton(new AgentIdentity("test-agent"));
+        ((IServiceCollection)services).Add(ServiceDescriptor.Singleton(typeof(AgentId), new AgentId("test-agent")));
         services.AddSingleton<CodingAgentWebUI.Pipeline.Interfaces.IQualityGateValidator>(
             Mock.Of<CodingAgentWebUI.Pipeline.Interfaces.IQualityGateValidator>());
         services.AddSingleton<IPipelineExecutor>(sp => new LocalPipelineExecutor(
@@ -284,7 +284,7 @@ public class IPipelineExecutorTests
             sp.GetRequiredService<PipelineConfiguration>(),
             sp.GetRequiredService<CodingAgentWebUI.Pipeline.Interfaces.IQualityGateValidator>(),
             Serilog.Log.Logger,
-            agentIdentity: sp.GetRequiredService<AgentIdentity>()));
+            agentIdentity: sp.GetRequiredService<AgentId>()));
 
         using var sp = services.BuildServiceProvider();
         var executor = sp.GetRequiredService<IPipelineExecutor>();
@@ -304,7 +304,7 @@ public class IPipelineExecutorTests
             mockOrchestrator.Object, mockHttpFactory.Object,
             new PipelineConfiguration(), mockQgValidator.Object,
             Mock.Of<Serilog.ILogger>(),
-            agentIdentity: new AgentIdentity("test-agent"));
+            agentIdentity: new AgentId("test-agent"));
     }
 
     private static string GetSourceDirectory()

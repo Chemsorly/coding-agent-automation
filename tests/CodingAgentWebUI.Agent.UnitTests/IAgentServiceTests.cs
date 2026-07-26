@@ -189,7 +189,7 @@ public class IAgentServiceTests
             Mock.Of<IAgentConnectionManager>(),
             mockExecutor.Object,
             Mock.Of<IJobCompletionReporter>(),
-            new AgentIdentity("test-agent"),
+            new AgentId("test-agent"),
             Mock.Of<Microsoft.Extensions.Hosting.IHostApplicationLifetime>(),
             mockLogger.Object);
     }
