@@ -648,6 +648,53 @@ public class GitHubIssueProviderTests
         result.HasMore.Should().BeTrue();
     }
 
+    [Fact]
+    public async Task ListOpenIssuesAsync_HasMore_TrueWhenRawCountExceedsPageSizeDespitePrFiltering()
+    {
+        // 11 raw results: 8 real issues + 3 PRs, pageSize=10
+        // Raw count 11 > 10 → HasMore=true even though filtered count (8) < pageSize
+        var pr = new PullRequest(0, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, string.Empty, 0, ItemState.Open, "title", "body", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null, null, null, null, null, null, null, false, null, null, null, null, 0, 0, 0, 0, 0, null, false, null, null, null, null, null);
+        var issues = new List<Issue>();
+        for (var i = 1; i <= 8; i++)
+            issues.Add(CreateOctokitIssue(i, $"Issue {i}", body: "b", labels: []));
+        for (var i = 9; i <= 11; i++)
+            issues.Add(new Issue(
+                url: string.Empty, htmlUrl: string.Empty, commentsUrl: string.Empty, eventsUrl: string.Empty,
+                number: i, state: ItemState.Open, title: $"PR {i}", body: null, closedBy: null, user: null,
+                labels: new List<Label>().AsReadOnly(), assignee: null, assignees: null, milestone: null,
+                comments: 0, pullRequest: pr, closedAt: null, createdAt: DateTimeOffset.UtcNow,
+                updatedAt: null, id: i, nodeId: string.Empty, locked: false, repository: null,
+                reactions: null, activeLockReason: null, stateReason: null));
+
+        _mockIssues
+            .Setup(i => i.GetAllForRepository("owner", "repo", It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))
+            .ReturnsAsync(issues.AsReadOnly());
+
+        var result = await _provider.ListOpenIssuesAsync(1, 10, CancellationToken.None);
+
+        result.HasMore.Should().BeTrue();
+        result.Items.Should().HaveCountLessThanOrEqualTo(10);
+    }
+
+    [Fact]
+    public async Task ListOpenIssuesAsync_HasMore_FalseWhenRawCountDoesNotExceedPageSize()
+    {
+        // 5 raw results, 0 PRs, pageSize=10
+        // Raw count 5 ≤ 10 → HasMore=false
+        var issues = new List<Issue>();
+        for (var i = 1; i <= 5; i++)
+            issues.Add(CreateOctokitIssue(i, $"Issue {i}", body: "b", labels: []));
+
+        _mockIssues
+            .Setup(i => i.GetAllForRepository("owner", "repo", It.IsAny<RepositoryIssueRequest>(), It.IsAny<ApiOptions>()))
+            .ReturnsAsync(issues.AsReadOnly());
+
+        var result = await _provider.ListOpenIssuesAsync(1, 10, CancellationToken.None);
+
+        result.HasMore.Should().BeFalse();
+        result.Items.Should().HaveCount(5);
+    }
+
     private static Issue CreateOctokitIssue(int number, string title, string? body, string[] labels)
     {
         var labelObjects = labels.Select(name =>
