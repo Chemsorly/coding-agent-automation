@@ -110,7 +110,7 @@ public sealed class DispatchService : BackgroundService
         AutoReplenishment = true
     });
 
-    private static JobTemplateStore LoadTemplateProvider(IConfiguration configuration)
+    internal static JobTemplateStore LoadTemplateProvider(IConfiguration configuration)
     {
         var templatesPath = configuration.GetValue<string>("WorkDistribution:JobTemplatesPath") ?? DefaultJobTemplatesPath;
         // Also check .json path for format flexibility
@@ -121,7 +121,7 @@ public sealed class DispatchService : BackgroundService
                 templatesPath = jsonFallback;
         }
         var provider = JobTemplateStore.LoadFromFile(templatesPath);
-        Log.Information("DispatchService: loaded {Count} job template(s) from {Path}",
+        Log.Information("Loaded {Count} job template(s) from {Path}",
             provider.GetAllTemplates().Count, templatesPath);
         return provider;
     }
