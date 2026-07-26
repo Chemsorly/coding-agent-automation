@@ -162,13 +162,18 @@ internal sealed class DispatchLifecycleService
         }
 
         // Load full WorkItem
-        // TODO: Wrap FindAsync (and the first SaveChangesAsync below) in a try/catch that releases the
-        // inflight PVC on non-cancellation exceptions (e.g., transient NpgsqlException). Currently, if
-        // FindAsync throws a transient DB exception after the PVC is claimed in _inflightPvcClaims, the
-        // PVC remains in the inflight set for the lifetime of the process, shrinking the effective pool
-        // on each occurrence. The prepareVariant path already handles this correctly — apply the same
-        // pattern here. See review finding: "Inflight PVC claim leak on non-cancellation exceptions."
-        var workItem = await db.WorkItems.FindAsync([item.Id], ct);
+        WorkItemEntity? workItem;
+        try
+        {
+            workItem = await db.WorkItems.FindAsync([item.Id], ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch
+        {
+            if (claimedPvc is not null) { ReleaseInflightPvc(claimedPvc); availablePvcs.Add(claimedPvc); }
+            throw;
+        }
+
         if (workItem is null || workItem.Status != WorkItemStatus.Pending)
         {
             // Item was modified by another process
@@ -206,11 +211,17 @@ internal sealed class DispatchLifecycleService
             // PVC claim is now persisted in DB — remove from inflight set since DB is source of truth
             if (claimedPvc is not null) ReleaseInflightPvc(claimedPvc);
         }
+        catch (OperationCanceledException) { throw; }
         catch (DbUpdateConcurrencyException)
         {
             Log.Warning("DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
             if (claimedPvc is not null) { ReleaseInflightPvc(claimedPvc); availablePvcs.Add(claimedPvc); }
             return;
+        }
+        catch
+        {
+            if (claimedPvc is not null) { ReleaseInflightPvc(claimedPvc); availablePvcs.Add(claimedPvc); }
+            throw;
         }
 
         // Create K8s Job via JobSpecBuilder
