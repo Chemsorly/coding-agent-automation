@@ -94,6 +94,10 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
         }
         finally
         {
+            // TODO: Add a unit test that verifies reservation release on failure paths (e.g.,
+            // RegisterDispatchedRun returns false or ResolveAndCreateRunAsync throws). If this
+            // TryRemove is accidentally moved or an early return is added before the try block,
+            // the reservation would leak and permanently block dispatch for this issue.
             _dispatchingIssues.TryRemove(compositeKey, out _);
         }
     }
@@ -147,6 +151,10 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
         }
         finally
         {
+            // TODO: Add a unit test that verifies reservation release on failure paths (e.g.,
+            // RegisterDispatchedRun returns false or ResolveAndCreateRunAsync throws). If this
+            // TryRemove is accidentally moved or an early return is added before the try block,
+            // the reservation would leak and permanently block reservation for this issue.
             _dispatchingIssues.TryRemove(compositeKey, out _);
         }
     }
