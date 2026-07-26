@@ -53,6 +53,9 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
 
         _hubManager = hubManager;
         _hubManagerFactory = hubManagerFactory;
+        // TODO: Validate that agentId is not default(AgentId) (Value == null). Since AgentId is a value type
+        // it cannot be null, but default(AgentId) silently propagates null strings to SignalR hub invocations.
+        // Consider: if (string.IsNullOrEmpty(agentId.Value)) throw new ArgumentException(...);
         _agentId = agentId;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);

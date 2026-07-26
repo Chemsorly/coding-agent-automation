@@ -64,6 +64,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         _workItemClient = workItemClient;
         _workItemExecutor = workItemExecutor;
         _completionReporter = completionReporter;
+        // TODO: Validate agentId.Value is not null/empty — default(AgentId) would propagate null.
         _agentId = agentId;
         _lifetime = lifetime;
         _serviceProvider = serviceProvider;

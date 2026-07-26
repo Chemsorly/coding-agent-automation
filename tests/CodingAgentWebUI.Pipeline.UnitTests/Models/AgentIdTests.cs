@@ -55,6 +55,14 @@ public class AgentIdTests
     }
 
     [Fact]
+    public void DefaultToString_ReturnsEmptyString()
+    {
+        var id = default(AgentId);
+
+        id.ToString().Should().Be(string.Empty);
+    }
+
+    [Fact]
     public void Default_HasNullValue()
     {
         var id = default(AgentId);

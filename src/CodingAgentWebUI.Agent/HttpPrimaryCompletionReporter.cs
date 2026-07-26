@@ -38,6 +38,7 @@ public sealed class HttpPrimaryCompletionReporter : IJobCompletionReporter
         _workItemId = workItemId;
         _lifecycleClient = lifecycleClient;
         _connectionManager = connectionManager;
+        // TODO: Validate agentId.Value is not null/empty — default(AgentId) would propagate null.
         _agentId = agentId;
         _logger = logger;
     }

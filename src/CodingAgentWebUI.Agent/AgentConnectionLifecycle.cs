@@ -84,6 +84,8 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
 
+        // TODO: Validate that agentId.Value is not null/empty. default(AgentId) would propagate null
+        // to SignalR hub invocations (RegisterAgent, Heartbeat). See AgentConnectionManager for same pattern.
         _agentId = agentId.Value;
 
         var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;

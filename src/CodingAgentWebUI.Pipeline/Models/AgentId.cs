@@ -17,5 +17,5 @@ public readonly record struct AgentId(string Value)
         return new(value);
     }
 
-    public override string ToString() => Value;
+    public override string ToString() => Value ?? string.Empty;
 }

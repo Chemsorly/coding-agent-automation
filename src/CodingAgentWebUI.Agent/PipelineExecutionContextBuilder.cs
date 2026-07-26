@@ -42,6 +42,10 @@ internal sealed class PipelineExecutionContextBuilder
         Serilog.ILogger logger,
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null,
+        // TODO: PullRequestFinalizationService was changed from required to optional during the
+        // AgentIdentity→AgentId migration. This weakens type-safety — consider making it required again
+        // (non-nullable) so the compiler enforces that callers always provide it, since CreatePullRequestAsync
+        // depends on it at runtime.
         PullRequestFinalizationService? finalization = null)
     {
         _qualityGateValidator = qualityGateValidator;
@@ -242,14 +246,18 @@ internal sealed class PipelineExecutionContextBuilder
         return ctx;
     }
 
-    // TODO: _finalization! uses null-forgiving operator on a nullable field. Either make the constructor
-    // parameter required or add a null guard (e.g., ArgumentNullException.ThrowIfNull) to prevent
-    // NullReferenceException if this method is called when finalization was not provided.
     private async Task CreatePullRequestAsync(
         PipelineRun run, QualityGateReport report, bool isDraft,
         PullRequestCreationContext context, CancellationToken ct)
     {
-        await _finalization!.RunFullPrCreationAsync(
+        if (_finalization is null)
+        {
+            throw new InvalidOperationException(
+                "CreatePullRequestAsync requires a PullRequestFinalizationService, but none was provided to the constructor. " +
+                "Ensure the PipelineExecutionContextBuilder is constructed with a non-null 'finalization' parameter.");
+        }
+
+        await _finalization.RunFullPrCreationAsync(
             run, report, isDraft,
             context.PrOrchestrator, context.RepoProvider, context.AgentProvider,
             context.BrainProvider, context.BrainSync, context.Config,
