@@ -105,7 +105,7 @@ public static partial class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Registers consolidation services: queue, dispatcher, service, and badge service.
+    /// Registers consolidation services: queue, dispatcher, workspace manager, feedback cache, service, and badge service.
     /// </summary>
     public static IServiceCollection AddConsolidationServices(
         this IServiceCollection services,
@@ -116,6 +116,15 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IProjectStore>(),
             sp.GetRequiredService<ITokenVendingService>(),
             Log.Logger));
+
+        services.AddSingleton<IConsolidationWorkspaceManager>(sp =>
+            new ConsolidationWorkspaceManager(Log.Logger, pipelineConfig));
+
+        services.AddSingleton<IConsolidationFeedbackCache>(sp =>
+            new ConsolidationFeedbackCache(
+                Log.Logger,
+                sp.GetRequiredService<IConsolidationRunStore>(),
+                sp.GetRequiredService<IPipelineRunHistoryService>()));
 
         services.AddSingleton<IConsolidationDispatchService>(sp => new ConsolidationDispatchService(
             sp.GetRequiredService<AgentRegistryService>(),
@@ -139,7 +148,9 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IConsolidationRunStore>(),
             sp.GetRequiredService<IHarnessSuggestionStore>(),
-            sp.GetRequiredService<IConsolidationDispatchService>()));
+            sp.GetRequiredService<IConsolidationDispatchService>(),
+            sp.GetRequiredService<IConsolidationWorkspaceManager>(),
+            sp.GetRequiredService<IConsolidationFeedbackCache>()));
 
         services.AddSingleton<IConsolidationRunTracker>(sp =>
             (IConsolidationRunTracker)sp.GetRequiredService<IConsolidationService>());
