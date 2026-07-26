@@ -82,21 +82,22 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     // signature is a breaking change across all callers — defer to a separate cleanup pass.
     public async Task<ConsolidationRun?> TriggerAsync(
         ConsolidationRunType type,
-        string? templateId,
+        TemplateId? templateId,
         CancellationToken ct,
         bool autoDispatch = false)
     {
-        var key = (type, templateId);
+        var templateIdValue = templateId?.Value;
+        var key = (type, templateIdValue);
 
         // Resolve template name for display
         string? templateName;
         string? projectName = null;
         if (templateId is not null)
         {
-            var (template, resolvedProjectName) = await _templateResolver.ResolveTemplateWithProjectAsync(templateId, ct);
+            var (template, resolvedProjectName) = await _templateResolver.ResolveTemplateWithProjectAsync(templateIdValue!, ct);
             if (template is null)
             {
-                _logger.Warning("Consolidation run rejected: template {TemplateId} not found", templateId);
+                _logger.Warning("Consolidation run rejected: template {TemplateId} not found", templateIdValue);
                 return null;
             }
             templateName = template.Name;
@@ -111,7 +112,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         {
             RunId = Guid.NewGuid().ToString(),
             Type = type,
-            TemplateId = templateId,
+            TemplateId = templateIdValue,
             TemplateName = templateName,
             StartedAtUtc = DateTimeOffset.UtcNow,
             Status = ConsolidationRunStatus.Running,
@@ -230,11 +231,12 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
 
     /// <inheritdoc />
     public async Task<ConsolidationRun?> GetLastRunAsync(
-        ConsolidationRunType type, string? templateId, CancellationToken ct)
+        ConsolidationRunType type, TemplateId? templateId, CancellationToken ct)
     {
+        var templateIdValue = templateId?.Value;
         var allRuns = await GetRunHistoryAsync(ct);
         return allRuns
-            .Where(r => r.Type == type && r.TemplateId == templateId)
+            .Where(r => r.Type == type && r.TemplateId == templateIdValue)
             .OrderByDescending(r => r.StartedAtUtc)
             .FirstOrDefault();
     }
@@ -409,6 +411,21 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     {
         await _runStore.SaveRunAsync(run, ct);
         _runHistoryCache = null;
+    }
+
+    /// <inheritdoc />
+    public async Task DeleteRunAsync(string runId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(runId);
+        try
+        {
+            await _runStore.DeleteRunAsync(runId, ct);
+            _runHistoryCache = null;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to delete consolidation run {RunId}", runId);
+        }
     }
 
     /// <summary>Deletes a persisted run (used when dispatch fails and the run must be rolled back).</summary>
