@@ -57,7 +57,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     public AgentWorkerService(
         AgentConnectionLifecycle connectionLifecycle,
         AgentJobSlotManager slotManager,
-        AgentIdentity agentIdentity,
+        AgentId agentId,
         IPipelineExecutor executor,
         IConsolidationExecutor consolidationExecutor,
         IJobCompletionReporter completionReporter,
@@ -67,7 +67,6 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     {
         ArgumentNullException.ThrowIfNull(connectionLifecycle);
         ArgumentNullException.ThrowIfNull(slotManager);
-        ArgumentNullException.ThrowIfNull(agentIdentity);
         ArgumentNullException.ThrowIfNull(executor);
         ArgumentNullException.ThrowIfNull(consolidationExecutor);
         ArgumentNullException.ThrowIfNull(completionReporter);
@@ -77,7 +76,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
         _connectionLifecycle = connectionLifecycle;
         _slotManager = slotManager;
-        _agentId = agentIdentity.Id;
+        // TODO: Validate agentId.Value is not null/empty — default(AgentId) would propagate null.
+        _agentId = agentId.Value;
         _executor = executor;
         _consolidationExecutor = consolidationExecutor;
         _completionReporter = completionReporter;

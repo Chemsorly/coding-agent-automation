@@ -60,7 +60,9 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
             _mockProjectStore.Object,
             _mockRunHistory.Object,
             _store,
-            _harnessStore);
+            _harnessStore,
+            workspaceManager: new ConsolidationWorkspaceManager(
+                new LoggerConfiguration().CreateLogger(), _config));
     }
 
     public void Dispose()
@@ -266,7 +268,9 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
             _mockProjectStore.Object,
             _mockRunHistory.Object,
             _store,
-            _harnessStore);
+            _harnessStore,
+            workspaceManager: new ConsolidationWorkspaceManager(
+                new LoggerConfiguration().CreateLogger(), _config));
 
         var history = await sut2.GetRunHistoryAsync(CancellationToken.None);
         history.Should().ContainSingle();
@@ -290,7 +294,9 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
             _mockProjectStore.Object,
             _mockRunHistory.Object,
             _store,
-            _harnessStore);
+            _harnessStore,
+            workspaceManager: new ConsolidationWorkspaceManager(
+                new LoggerConfiguration().CreateLogger(), _config));
         await sut2.CleanupOrphanedRunsAsync(CancellationToken.None);
 
         // Assert

@@ -152,24 +152,15 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
     public async Task GetLastSuccessfulHarnessRunTimestamp_EmptyStore_ReturnsMinValue()
     {
         var store = new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs"));
-        var harnessStore = new FileSystemHarnessSuggestionStore(Path.Combine(_tempDir, "h.json"));
-        var mockProjectStore = new Mock<IProjectStore>();
-        mockProjectStore.Setup(x => x.LoadProjectsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineProject>());
-        mockProjectStore.Setup(x => x.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new List<PipelineJobTemplate>());
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
 
-        var sut = new ConsolidationService(
+        var feedbackCache = new ConsolidationFeedbackCache(
             new LoggerConfiguration().CreateLogger(),
-            new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir },
-            mockProjectStore.Object,
-            mockHistory.Object,
             store,
-            harnessStore);
+            mockHistory.Object);
 
-        var result = await sut.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
+        var result = await feedbackCache.GetLastSuccessfulHarnessRunTimestampAsync(CancellationToken.None);
 
         result.Should().Be(DateTimeOffset.MinValue);
     }
