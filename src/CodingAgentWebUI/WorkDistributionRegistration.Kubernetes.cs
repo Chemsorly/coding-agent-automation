@@ -65,17 +65,11 @@ public static partial class WorkDistributionRegistration
             sp.GetService<IOrchestratorRunService>()));
 
         // ConsolidationDispatchHandler — handles consolidation work items
-        // TODO: Use DispatchService.LoadTemplateProvider (or extract shared helper) instead of direct
-        // JobTemplateStore.LoadFromFile — the current call lacks the .yaml → .json fallback logic that
-        // DispatchService has (DispatchService.cs:110-124). If only a .json file exists on disk but the
-        // configured path ends in .yaml, this will throw FileNotFoundException at startup.
         services.AddHostedService(sp => new ConsolidationDispatchHandler(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<ILeaderElectionService>(),
             sp.GetRequiredService<DispatchLifecycleService>(),
-            JobTemplateStore.LoadFromFile(
-                configuration.GetValue<string>("WorkDistribution:JobTemplatesPath")
-                    ?? DispatchService.DefaultJobTemplatesPath),
+            DispatchService.LoadTemplateProvider(configuration),
             sp.GetRequiredService<IConfiguration>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetService<IConsolidationRunStore>(),
