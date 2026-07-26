@@ -131,22 +131,45 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
             // have exported the counters recorded by PipelineRunInstrumentation.Dispose().
             // The host's own shutdown sequence also flushes, but is subject to SIGKILL race
             // if the K8s pod's terminationGracePeriodSeconds expires during shutdown.
-            // TODO: Add unit test coverage for ForceFlush behavior — verify MeterProvider.ForceFlush is called
-            // with 3000ms timeout, TracerProvider.ForceFlush with remaining budget, exceptions are swallowed,
-            // and null serviceProvider case skips flush gracefully.
             if (_serviceProvider is not null)
             {
                 try
                 {
                     var sw = Stopwatch.StartNew();
-                    _serviceProvider.GetService<MeterProvider>()?.ForceFlush(timeoutMilliseconds: 3000);
+                    var meterProvider = _serviceProvider.GetService<MeterProvider>();
+                    if (meterProvider is not null)
+                    {
+                        meterProvider.ForceFlush(timeoutMilliseconds: 3000);
+                    }
+                    else
+                    {
+                        _logger.Warning("MeterProvider not available in DI container — OTLP metrics will not be flushed before exit. " +
+                            "Ensure OpenTelemetry is configured via AddOpenTelemetry().WithMetrics() in Program.cs");
+                    }
+
                     var remaining = Math.Max(500, 2000 - (int)sw.ElapsedMilliseconds);
-                    _serviceProvider.GetService<TracerProvider>()?.ForceFlush(timeoutMilliseconds: remaining);
+                    var tracerProvider = _serviceProvider.GetService<TracerProvider>();
+                    if (tracerProvider is not null)
+                    {
+                        tracerProvider.ForceFlush(timeoutMilliseconds: remaining);
+                    }
+                    else
+                    {
+                        _logger.Warning("TracerProvider not available in DI container — OTLP traces will not be flushed before exit");
+                    }
+                }
+                catch (ObjectDisposedException ex)
+                {
+                    _logger.Warning(ex, "OpenTelemetry provider already disposed during flush — metrics from this run may be lost");
                 }
                 catch (Exception ex)
                 {
                     _logger.Warning(ex, "Failed to flush OpenTelemetry providers before shutdown");
                 }
+            }
+            else
+            {
+                _logger.Warning("ServiceProvider is null — cannot flush OpenTelemetry providers before exit");
             }
 
             // Set the process exit code and stop the host
