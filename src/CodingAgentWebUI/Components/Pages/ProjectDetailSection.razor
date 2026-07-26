@@ -81,6 +81,7 @@
     private int? _maxInfrastructureRetries;
     private int? _stallWarningIntervalMinutes;
     private int? _maxDecompositionSubIssues;
+    private int? _maxDecompositionSubIssueFiles;
     private int? _maxConcurrentDecompositions;
     private int? _decompositionTimeoutMinutes;
     private int? _maxOpenIssuesForContext;
@@ -156,6 +157,7 @@
         _maxInfrastructureRetries = _project.MaxInfrastructureRetries;
         _stallWarningIntervalMinutes = _project.StallWarningInterval.HasValue ? (int?)_project.StallWarningInterval.Value.TotalMinutes : null;
         _maxDecompositionSubIssues = _project.MaxDecompositionSubIssues;
+        _maxDecompositionSubIssueFiles = _project.MaxDecompositionSubIssueFiles;
         _maxConcurrentDecompositions = _project.MaxConcurrentDecompositions;
         _decompositionTimeoutMinutes = _project.DecompositionTimeout.HasValue ? (int?)_project.DecompositionTimeout.Value.TotalMinutes : null;
         _maxOpenIssuesForContext = _project.MaxOpenIssuesForContext;
@@ -311,6 +313,7 @@
 
             <h3>Decomposition</h3>
             @RenderIntOverride("Max Sub-Issues Per Epic", () => _maxDecompositionSubIssues, v => _maxDecompositionSubIssues = v, _globalConfig.MaxDecompositionSubIssues, 1, 20)
+            @RenderIntOverride("Max Files Per Sub-Issue", () => _maxDecompositionSubIssueFiles, v => _maxDecompositionSubIssueFiles = v, _globalConfig.MaxDecompositionSubIssueFiles, 1, 30)
             @RenderIntOverride("Max Concurrent Decompositions", () => _maxConcurrentDecompositions, v => _maxConcurrentDecompositions = v, _globalConfig.MaxConcurrentDecompositions, 1, 10)
             @RenderIntOverride("Decomposition Timeout (minutes)", () => _decompositionTimeoutMinutes, v => _decompositionTimeoutMinutes = v, (int)_globalConfig.DecompositionTimeout.TotalMinutes, 5, 60)
             @RenderIntOverride("Max Open Issues for Context", () => _maxOpenIssuesForContext, v => _maxOpenIssuesForContext = v, _globalConfig.MaxOpenIssuesForContext, 1, 200)
@@ -604,6 +607,7 @@
                 MaxInfrastructureRetries = _maxInfrastructureRetries,
                 StallWarningInterval = _stallWarningIntervalMinutes.HasValue ? TimeSpan.FromMinutes(_stallWarningIntervalMinutes.Value) : null,
                 MaxDecompositionSubIssues = _maxDecompositionSubIssues,
+                MaxDecompositionSubIssueFiles = _maxDecompositionSubIssueFiles,
                 MaxConcurrentDecompositions = _maxConcurrentDecompositions,
                 DecompositionTimeout = _decompositionTimeoutMinutes.HasValue ? TimeSpan.FromMinutes(_decompositionTimeoutMinutes.Value) : null,
                 MaxOpenIssuesForContext = _maxOpenIssuesForContext,

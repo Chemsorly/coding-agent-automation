@@ -52,7 +52,8 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
 
         // 3. Build analysis prompt
         var maxSubIssues = config.MaxDecompositionSubIssues;
-        var analysisPrompt = DecompositionPromptBuilder.BuildAnalysisPrompt(maxSubIssues, context.ProjectContext);
+        var maxFiles = config.MaxDecompositionSubIssueFiles;
+        var analysisPrompt = DecompositionPromptBuilder.BuildAnalysisPrompt(maxSubIssues, maxFiles, context.ProjectContext);
 
         // 4. Transition to GeneratingPlan
         context.Callbacks.TransitionTo(PipelineStep.GeneratingPlan);
@@ -121,8 +122,8 @@ public sealed class DecompositionAnalysisStep : IPipelineStep
         var reviewResult = await AdversarialReviewHelper.ExecuteReviewAsync(
             context.AgentProvider,
             run.WorkspacePath!,
-            DecompositionPromptBuilder.BuildReviewPrompt(context.ProjectContext),
-            DecompositionPromptBuilder.BuildRefinementPrompt(),
+            DecompositionPromptBuilder.BuildReviewPrompt(maxFiles, context.ProjectContext),
+            DecompositionPromptBuilder.BuildRefinementPrompt(maxFiles),
             AgentWorkspacePaths.DecompositionReviewFilePath,
             new AdversarialReviewConfig
             {

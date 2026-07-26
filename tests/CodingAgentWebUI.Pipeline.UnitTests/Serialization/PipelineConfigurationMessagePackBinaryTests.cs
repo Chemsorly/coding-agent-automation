@@ -52,7 +52,7 @@ public class PipelineConfigurationMessagePackBinaryTests
     }
 
     /// <summary>
-    /// Verify that all 63 [Key]-annotated properties survive MessagePack round-trip with correct values.
+    /// Verify that all 64 [Key]-annotated properties survive MessagePack round-trip with correct values.
     /// </summary>
     [Fact]
     public void MessagePackRoundTrip_FullyPopulatedConfig_PreservesAllPropertyValues()
@@ -113,6 +113,7 @@ public class PipelineConfigurationMessagePackBinaryTests
         deserialized.MaxRefactoringProposals.Should().Be(5);
         deserialized.HotspotAnalysisLookback.Should().Be(TimeSpan.FromDays(180));
         deserialized.MaxDecompositionSubIssues.Should().Be(15);
+        deserialized.MaxDecompositionSubIssueFiles.Should().Be(8);
         deserialized.MaxConcurrentDecompositions.Should().Be(4);
         deserialized.DecompositionTimeout.Should().Be(TimeSpan.FromMinutes(30));
         deserialized.MaxOpenIssuesForContext.Should().Be(100);
@@ -197,6 +198,7 @@ public class PipelineConfigurationMessagePackBinaryTests
         MaxRefactoringProposals = 5,
         HotspotAnalysisLookback = TimeSpan.FromDays(180),
         MaxDecompositionSubIssues = 15,
+        MaxDecompositionSubIssueFiles = 8,
         MaxConcurrentDecompositions = 4,
         DecompositionTimeout = TimeSpan.FromMinutes(30),
         MaxOpenIssuesForContext = 100,
