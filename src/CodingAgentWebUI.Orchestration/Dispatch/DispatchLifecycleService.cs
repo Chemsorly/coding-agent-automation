@@ -161,30 +161,24 @@ internal sealed class DispatchLifecycleService
             }
         }
 
-        // Load full WorkItem
+        // Load full WorkItem and run variant-specific preparation.
+        // Both FindAsync and prepareVariant are wrapped in a single try/catch to ensure the inflight
+        // PVC claim is released on any exception (transient NpgsqlException, OperationCanceledException, etc.).
+        // Without this, a transient DB failure after PVC claim would leak the PVC in _inflightPvcClaims
+        // for the lifetime of the process, shrinking the effective pool on each occurrence.
         WorkItemEntity? workItem;
-        try
-        {
-            workItem = await db.WorkItems.FindAsync([item.Id], ct);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch
-        {
-            if (claimedPvc is not null) { ReleaseInflightPvc(claimedPvc); availablePvcs.Add(claimedPvc); }
-            throw;
-        }
-
-        if (workItem is null || workItem.Status != WorkItemStatus.Pending)
-        {
-            // Item was modified by another process
-            if (claimedPvc is not null) { ReleaseInflightPvc(claimedPvc); availablePvcs.Add(claimedPvc); }
-            return;
-        }
-
-        // Variant-specific preparation (may mutate workItem, load secrets, or signal abort)
         (bool shouldProceed, Dictionary<string, string>? projectSecrets) prepareResult;
         try
         {
+            workItem = await db.WorkItems.FindAsync([item.Id], ct);
+            if (workItem is null || workItem.Status != WorkItemStatus.Pending)
+            {
+                // Item was modified by another process
+                if (claimedPvc is not null) { ReleaseInflightPvc(claimedPvc); availablePvcs.Add(claimedPvc); }
+                return;
+            }
+
+            // Variant-specific preparation (may mutate workItem, load secrets, or signal abort)
             prepareResult = await prepareVariant(workItem);
         }
         catch
@@ -211,7 +205,6 @@ internal sealed class DispatchLifecycleService
             // PVC claim is now persisted in DB — remove from inflight set since DB is source of truth
             if (claimedPvc is not null) ReleaseInflightPvc(claimedPvc);
         }
-        catch (OperationCanceledException) { throw; }
         catch (DbUpdateConcurrencyException)
         {
             Log.Warning("DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
@@ -220,6 +213,9 @@ internal sealed class DispatchLifecycleService
         }
         catch
         {
+            // Transient DB exception (e.g., NpgsqlException) — release inflight PVC claim to prevent
+            // permanent pool shrinkage. The entity is dirty in the change tracker but the PVC was never
+            // persisted, so it's safe to return it to the available pool.
             if (claimedPvc is not null) { ReleaseInflightPvc(claimedPvc); availablePvcs.Add(claimedPvc); }
             throw;
         }

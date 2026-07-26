@@ -19,6 +19,9 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     /// <summary>Maximum number of run summaries kept in memory. Older entries remain on disk.</summary>
     internal const int MaxHistorySize = 1000;
 
+    /// <summary>Default page size for paginated queries.</summary>
+    internal const int DefaultPageSize = 50;
+
     private static System.Text.Json.JsonSerializerOptions JsonOptions => PipelineJsonOptions.Default;
 
     public PipelineRunHistoryService(Serilog.ILogger logger, string runsDirectory = PipelineConstants.RunsDirectory)
@@ -33,6 +36,30 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
     public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
     {
         lock (_lock) { return Task.FromResult<IReadOnlyList<PipelineRunSummary>>(_runHistory.ToList().AsReadOnly()); }
+    }
+
+    /// <summary>Returns a paginated slice of the in-memory run history.</summary>
+    public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
+
+        lock (_lock)
+        {
+            var items = _runHistory.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+            var hasMore = items.Count > pageSize;
+            if (hasMore)
+                items = items.Take(pageSize).ToList();
+
+            return Task.FromResult(new PagedResult<PipelineRunSummary>
+            {
+                Items = items.AsReadOnly(),
+                Page = page,
+                PageSize = pageSize,
+                HasMore = hasMore
+            });
+        }
     }
 
     /// <summary>Adds a completed run to history and persists the summary to disk.</summary>

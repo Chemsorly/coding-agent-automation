@@ -15,4 +15,10 @@ public interface IPipelineRunHistoryService
 
     /// <summary>Retrieves the run history.</summary>
     Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default);
+
+    /// <summary>Retrieves the run history with pagination.</summary>
+    /// <param name="page">1-based page number.</param>
+    /// <param name="pageSize">Number of items per page.</param>
+    /// <param name="ct">Cancellation token.</param>
+    Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default);
 }
