@@ -48,6 +48,7 @@ public sealed record PipelineProject
     public int? MaxInfrastructureRetries { get; init; }
     public TimeSpan? StallWarningInterval { get; init; }
     public int? MaxDecompositionSubIssues { get; init; }
+    public int? MaxDecompositionSubIssueFiles { get; init; }
     public int? MaxConcurrentDecompositions { get; init; }
     public TimeSpan? DecompositionTimeout { get; init; }
     public int? MaxOpenIssuesForContext { get; init; }

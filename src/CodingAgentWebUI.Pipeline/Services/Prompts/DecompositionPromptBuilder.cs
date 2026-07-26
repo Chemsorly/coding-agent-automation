@@ -14,7 +14,8 @@ public static class DecompositionPromptBuilder
     /// Instructs the agent to explore the codebase and produce a decomposition plan.
     /// </summary>
     /// <param name="maxSubIssues">Maximum number of sub-issues the agent may propose.</param>
-    public static string BuildAnalysisPrompt(int maxSubIssues)
+    /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
+    public static string BuildAnalysisPrompt(int maxSubIssues, int maxFiles)
     {
         var sb = new StringBuilder();
 
@@ -72,7 +73,7 @@ public static class DecompositionPromptBuilder
         sb.AppendLine();
         sb.AppendLine("Each proposed sub-issue MUST satisfy ALL of the following constraints:");
         sb.AppendLine();
-        sb.AppendLine("- **File limit:** Create or modify a maximum of **5 files** (files only read for context do not count)");
+        sb.AppendLine($"- **File limit:** Create or modify a maximum of **{maxFiles} files** (files only read for context do not count)");
         sb.AppendLine("- **One verification criterion:** Exactly one pass/fail assertion (e.g., \"unit test X passes\", \"build succeeds with no warnings\")");
         sb.AppendLine("- **One agent run:** Completable in a single agent run (single context window, no multi-session work, no waiting on external feedback)");
         sb.AppendLine();
@@ -108,10 +109,11 @@ public static class DecompositionPromptBuilder
     /// When project context is null, returns the standard analysis prompt (backward compatible).
     /// </summary>
     /// <param name="maxSubIssues">Maximum number of sub-issues the agent may propose.</param>
+    /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
     /// <param name="projectContext">Project context for cross-repo decomposition, or null for single-repo decomposition.</param>
-    public static string BuildAnalysisPrompt(int maxSubIssues, DecompositionProjectContext? projectContext)
+    public static string BuildAnalysisPrompt(int maxSubIssues, int maxFiles, DecompositionProjectContext? projectContext)
     {
-        var prompt = BuildAnalysisPrompt(maxSubIssues);
+        var prompt = BuildAnalysisPrompt(maxSubIssues, maxFiles);
 
         if (projectContext is null)
             return prompt;
@@ -124,7 +126,8 @@ public static class DecompositionPromptBuilder
     /// Instructs the agent to produce full issue descriptions as JSON files.
     /// </summary>
     /// <param name="maxSubIssues">Maximum number of sub-issues the agent may produce.</param>
-    public static string BuildDecompositionPrompt(int maxSubIssues)
+    /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
+    public static string BuildDecompositionPrompt(int maxSubIssues, int maxFiles)
     {
         var sb = new StringBuilder();
 
@@ -206,7 +209,7 @@ public static class DecompositionPromptBuilder
         // Constraints
         sb.AppendLine("## Constraints");
         sb.AppendLine();
-        sb.AppendLine("- Each sub-issue must create or modify a maximum of **5 files**");
+        sb.AppendLine($"- Each sub-issue must create or modify a maximum of **{maxFiles} files**");
         sb.AppendLine("- Each sub-issue must have exactly **one verification criterion** in its acceptance criteria");
         sb.AppendLine("- Each sub-issue must be completable in **one agent run**");
         sb.AppendLine("- All sub-issue titles must be **unique**");
@@ -222,10 +225,11 @@ public static class DecompositionPromptBuilder
     /// When project context is null, returns the standard prompt (backward compatible).
     /// </summary>
     /// <param name="maxSubIssues">Maximum number of sub-issues the agent may produce.</param>
+    /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
     /// <param name="projectContext">Project context for cross-repo decomposition, or null for single-repo decomposition.</param>
-    public static string BuildDecompositionPrompt(int maxSubIssues, DecompositionProjectContext? projectContext)
+    public static string BuildDecompositionPrompt(int maxSubIssues, int maxFiles, DecompositionProjectContext? projectContext)
     {
-        var prompt = BuildDecompositionPrompt(maxSubIssues);
+        var prompt = BuildDecompositionPrompt(maxSubIssues, maxFiles);
 
         if (projectContext is null)
             return prompt;
@@ -237,7 +241,8 @@ public static class DecompositionPromptBuilder
     /// Builds the adversarial review prompt for plan validation.
     /// Instructs the reviewer to validate the decomposition plan against quality criteria.
     /// </summary>
-    public static string BuildReviewPrompt()
+    /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
+    public static string BuildReviewPrompt(int maxFiles)
     {
         var sb = new StringBuilder();
 
@@ -268,7 +273,7 @@ public static class DecompositionPromptBuilder
         sb.AppendLine();
         sb.AppendLine("Each sub-issue must be right-sized for autonomous agent execution:");
         sb.AppendLine();
-        sb.AppendLine("- Creates or modifies **≤5 files** (files only read for context do not count)");
+        sb.AppendLine($"- Creates or modifies **≤{maxFiles} files** (files only read for context do not count)");
         sb.AppendLine("- Has exactly **one verification criterion** (single pass/fail assertion)");
         sb.AppendLine("- Is completable in **one agent run** (single context window, no multi-session work)");
         sb.AppendLine();
@@ -318,10 +323,11 @@ public static class DecompositionPromptBuilder
     /// When project context is present, appends validation rules for targetRepository values.
     /// When project context is null, returns the standard review prompt (backward compatible).
     /// </summary>
+    /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
     /// <param name="projectContext">Project context for cross-repo decomposition, or null for single-repo decomposition.</param>
-    public static string BuildReviewPrompt(DecompositionProjectContext? projectContext)
+    public static string BuildReviewPrompt(int maxFiles, DecompositionProjectContext? projectContext)
     {
-        var prompt = BuildReviewPrompt();
+        var prompt = BuildReviewPrompt(maxFiles);
 
         if (projectContext is null)
             return prompt;
@@ -333,7 +339,8 @@ public static class DecompositionPromptBuilder
     /// Builds the refinement prompt sent back to the generator after review findings.
     /// Instructs the generator to address CRITICAL and WARNING findings.
     /// </summary>
-    public static string BuildRefinementPrompt()
+    /// <param name="maxFiles">Maximum files a single sub-issue may create or modify.</param>
+    public static string BuildRefinementPrompt(int maxFiles)
     {
         var sb = new StringBuilder();
 
@@ -365,7 +372,7 @@ public static class DecompositionPromptBuilder
         sb.AppendLine();
         sb.AppendLine("Ensure the updated plan still satisfies all original constraints:");
         sb.AppendLine();
-        sb.AppendLine("- Each sub-issue creates or modifies ≤5 files");
+        sb.AppendLine($"- Each sub-issue creates or modifies ≤{maxFiles} files");
         sb.AppendLine("- Each sub-issue has exactly one verification criterion");
         sb.AppendLine("- Each sub-issue is completable in one agent run");
         sb.AppendLine("- Dependencies point backward (no cycles)");

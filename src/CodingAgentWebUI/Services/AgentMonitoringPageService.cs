@@ -158,7 +158,7 @@ public class AgentMonitoringPageService
     {
         try
         {
-            var allConsolidationRuns = await _consolidationService.GetRunHistoryAsync(CancellationToken.None);
+            var allConsolidationRuns = await _consolidationService.GetRunHistoryAsync(CancellationToken.None) ?? [];
             ActiveConsolidationRuns = allConsolidationRuns
                 .Where(r => r.Status == ConsolidationRunStatus.Running)
                 .ToList();

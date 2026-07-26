@@ -518,6 +518,92 @@ public class DispatchOrchestrationServiceTests
     }
 
     [Fact]
+    public async Task PrepareDistributionRequestAsync_MapsSteeringContent_WhenProjectAndRepoHaveSteeringContent()
+    {
+        SetupStandardMocks();
+
+        var projectWithSteering = new PipelineProject
+        {
+            Id = "proj-1",
+            Name = "TestProject",
+            Enabled = true,
+            SteeringContent = "## Project Instructions\nAlways use structured logging."
+        };
+
+        var repoConfigWithSteering = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"],
+            SteeringContent = "## Repo Instructions\nFollow the decisions in decisions.md."
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithSteering);
+        _mockConfigStore
+            .Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { repoConfigWithSteering });
+
+        var service = CreateService();
+        IDispatchOrchestrationService iface = service;
+
+        var request = await iface.PrepareDistributionRequestAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "test-user",
+            project: projectWithSteering,
+            taskType: WorkItemTaskType.Implementation,
+            runType: PipelineRunType.Implementation,
+            ct: CancellationToken.None);
+
+        request.Should().NotBeNull();
+        request!.ProjectSteeringContent.Should().Be("## Project Instructions\nAlways use structured logging.");
+        request.RepoSteeringContent.Should().Be("## Repo Instructions\nFollow the decisions in decisions.md.");
+    }
+
+    [Fact]
+    public async Task PrepareDistributionRequestAsync_LeavesSteeringContentNull_WhenNoSteeringConfigured()
+    {
+        SetupStandardMocks();
+
+        var repoConfigWithLabels = new ProviderConfig
+        {
+            Id = "repo-1",
+            DisplayName = "Repo",
+            ProviderType = "github",
+            Kind = ProviderKind.Repository,
+            RequiredLabels = ["dotnet"]
+        };
+        _mockConfigStore
+            .Setup(s => s.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfigWithLabels);
+
+        var service = CreateService();
+        IDispatchOrchestrationService iface = service;
+
+        var request = await iface.PrepareDistributionRequestAsync(
+            issueIdentifier: "issue-42",
+            issueProviderId: "issue-1",
+            repoProviderId: "repo-1",
+            brainProviderId: null,
+            pipelineProviderId: null,
+            initiatedBy: "test-user",
+            project: TestProject,
+            taskType: WorkItemTaskType.Implementation,
+            runType: PipelineRunType.Implementation,
+            ct: CancellationToken.None);
+
+        request.Should().NotBeNull();
+        request!.ProjectSteeringContent.Should().BeNull();
+        request.RepoSteeringContent.Should().BeNull();
+    }
+
+    [Fact]
     public async Task PrepareReviewDistributionRequestAsync_IncludesReviewSpecificFields()
     {
         SetupStandardMocks();
