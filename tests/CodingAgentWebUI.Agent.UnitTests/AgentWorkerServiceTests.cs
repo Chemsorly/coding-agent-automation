@@ -48,7 +48,7 @@ public class AgentWorkerServiceTests : IDisposable
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var act = () => new AgentWorkerService(null!, new AgentJobSlotManager(() => Task.CompletedTask), new AgentIdentity("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
+        var act = () => new AgentWorkerService(null!, new AgentJobSlotManager(() => Task.CompletedTask), new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("connectionLifecycle");
     }
 
@@ -60,7 +60,7 @@ public class AgentWorkerServiceTests : IDisposable
         var (_, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         var act = () => new AgentWorkerService(
-            lifecycle, slotManager, new AgentIdentity("test-agent"), null!, CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
+            lifecycle, slotManager, new AgentId("test-agent"), null!, CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("executor");
     }
 
@@ -71,7 +71,7 @@ public class AgentWorkerServiceTests : IDisposable
         var (_, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         var act = () => new AgentWorkerService(
-            lifecycle, slotManager, new AgentIdentity("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), null!);
+            lifecycle, slotManager, new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), null!);
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
     }
 
@@ -846,7 +846,7 @@ public class AgentWorkerServiceTests : IDisposable
         var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
         var lifecycle = new AgentConnectionLifecycle(
             hubManager, hubManagerFactory, signalRReporter, slotManager,
-            new AgentIdentity("test-agent"),
+            new AgentId("test-agent"),
             mockLifetime.Object, mockLogger.Object);
 
         // Override ExtendedRetryDelay to zero for fast test execution
@@ -882,7 +882,7 @@ public class AgentWorkerServiceTests : IDisposable
         var slotManager = new AgentJobSlotManager(() => Task.CompletedTask);
         var lifecycle = new AgentConnectionLifecycle(
             hubManager, hubManagerFactory, signalRReporter, slotManager,
-            new AgentIdentity("test-agent"),
+            new AgentId("test-agent"),
             mockLifetime.Object, mockLogger.Object);
 
         // Use a non-zero delay so the Task.Delay actually awaits (and can be cancelled)
@@ -931,7 +931,7 @@ public class AgentWorkerServiceTests : IDisposable
             new Pipeline.Models.PipelineConfiguration(),
             mockQualityGateValidator.Object,
             mockLogger.Object,
-            agentIdentity: new Pipeline.Models.AgentIdentity("test-agent"));
+            agentIdentity: new Pipeline.Models.AgentId("test-agent"));
     }
 
     private static LocalConsolidationExecutor CreateMockConsolidationExecutor()

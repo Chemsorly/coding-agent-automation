@@ -21,7 +21,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
 {
     private volatile HubConnectionManager _hubManager;
     private readonly HubConnectionManagerFactory _hubManagerFactory;
-    private readonly AgentIdentity _agentIdentity;
+    private readonly AgentId _agentId;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
 
@@ -44,17 +44,19 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     public AgentConnectionManager(
         HubConnectionManager hubManager,
         HubConnectionManagerFactory hubManagerFactory,
-        AgentIdentity agentIdentity,
+        AgentId agentId,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(hubManager);
         ArgumentNullException.ThrowIfNull(hubManagerFactory);
-        ArgumentNullException.ThrowIfNull(agentIdentity);
         ArgumentNullException.ThrowIfNull(logger);
 
         _hubManager = hubManager;
         _hubManagerFactory = hubManagerFactory;
-        _agentIdentity = agentIdentity;
+        // TODO: Validate that agentId is not default(AgentId) (Value == null). Since AgentId is a value type
+        // it cannot be null, but default(AgentId) silently propagates null strings to SignalR hub invocations.
+        // Consider: if (string.IsNullOrEmpty(agentId.Value)) throw new ArgumentException(...);
+        _agentId = agentId;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
 
@@ -80,7 +82,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         await _signalRPipeline.ExecuteAsync(async token =>
             await _hubManager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), ct);
 
-        _logger.Information("Agent {AgentId} connected and registered", _agentIdentity.Id);
+        _logger.Information("Agent {AgentId} connected and registered", _agentId.Value);
 
         // Start heartbeat loop
         _heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -132,13 +134,13 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
             if (_hubManager.IsConnected)
             {
                 await _hubManager.Connection.InvokeAsync(
-                    HubMethodNames.DeregisterAgent, _agentIdentity.Id);
-                _logger.Information("Agent {AgentId} deregistered from orchestrator", _agentIdentity.Id);
+                    HubMethodNames.DeregisterAgent, _agentId.Value);
+                _logger.Information("Agent {AgentId} deregistered from orchestrator", _agentId.Value);
             }
         }
         catch (Exception ex)
         {
-            _logger.Warning(ex, "Failed to deregister agent {AgentId} (best-effort)", _agentIdentity.Id);
+            _logger.Warning(ex, "Failed to deregister agent {AgentId} (best-effort)", _agentId.Value);
         }
 
         // Stop connection
@@ -205,7 +207,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
     {
         PipelineTelemetry.AgentReconnections.Add(1);
         _logger.Information("Agent {AgentId} reconnected (connection: {ConnectionId}), re-registering",
-            _agentIdentity.Id, connectionId);
+            _agentId.Value, connectionId);
 
         if (_currentRegistration is null)
         {
@@ -218,11 +220,11 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
             await _signalRPipeline.ExecuteAsync(async token =>
                 await _hubManager.Connection.InvokeAsync(
                     HubMethodNames.RegisterAgent, _currentRegistration, token), CancellationToken.None);
-            _logger.Information("Agent {AgentId} re-registered after reconnection", _agentIdentity.Id);
+            _logger.Information("Agent {AgentId} re-registered after reconnection", _agentId.Value);
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to re-register agent {AgentId} after reconnection", _agentIdentity.Id);
+            _logger.Error(ex, "Failed to re-register agent {AgentId} after reconnection", _agentId.Value);
         }
 
         if (OnReconnected is not null)
@@ -272,7 +274,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
 
                 await SafeDisposeAsync(oldManager);
 
-                _logger.Information("Agent {AgentId} reconnected and re-registered after terminal close", _agentIdentity.Id);
+                _logger.Information("Agent {AgentId} reconnected and re-registered after terminal close", _agentId.Value);
                 return;
             }
             catch (Exception ex)
@@ -282,7 +284,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
             }
         }
 
-        _logger.Error("All {MaxAttempts} reconnection attempts exhausted for agent {AgentId}", maxAttempts, _agentIdentity.Id);
+        _logger.Error("All {MaxAttempts} reconnection attempts exhausted for agent {AgentId}", maxAttempts, _agentId.Value);
     }
 
     // ── Private: Heartbeat ───────────────────────────────────────────────
@@ -302,7 +304,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
                     var stepValue = Volatile.Read(ref _currentStep);
                     var heartbeat = new HeartbeatMessage
                     {
-                        AgentId = _agentIdentity.Id,
+                        AgentId = _agentId.Value,
                         Timestamp = DateTimeOffset.UtcNow,
                         CurrentStep = stepValue == NullStep ? null : (PipelineStep)stepValue,
                         MemoryUsageMb = Process.GetCurrentProcess().WorkingSet64 / (1024 * 1024)
@@ -316,7 +318,7 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
                 catch (Exception ex)
                 {
                     PipelineTelemetry.AgentHeartbeatFailures.Add(1);
-                    _logger.Warning(ex, "Heartbeat failed for agent {AgentId}, will retry on next tick", _agentIdentity.Id);
+                    _logger.Warning(ex, "Heartbeat failed for agent {AgentId}, will retry on next tick", _agentId.Value);
                 }
             }
         }

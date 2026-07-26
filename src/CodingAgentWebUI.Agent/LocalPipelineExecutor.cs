@@ -45,7 +45,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     private readonly IBrainUpdateService? _brainUpdateService;
     private readonly IPipelineRunHistoryService? _historyService;
     private readonly IOpenIssueContextWriter _openIssueContextWriter;
-    private readonly AgentIdentity _agentIdentity;
+    private readonly AgentId _agentId;
     private readonly AgentProviderResolver _providerResolver;
     private readonly IPipelineReporterFactory _reporterFactory;
     private readonly PipelineExecutionContextBuilder _contextBuilder;
@@ -60,7 +60,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         IBrainUpdateService? brainUpdateService = null,
         IPipelineRunHistoryService? historyService = null,
         IOpenIssueContextWriter? openIssueContextWriter = null,
-        AgentIdentity? agentIdentity = null,
+        AgentId? agentIdentity = null,
         IPipelineReporterFactory? reporterFactory = null)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
@@ -76,14 +76,14 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         _brainUpdateService = brainUpdateService;
         _historyService = historyService;
         _openIssueContextWriter = openIssueContextWriter ?? new OpenIssueContextWriter(logger);
-        _agentIdentity = agentIdentity ?? new AgentIdentity(Environment.MachineName);
+        _agentId = agentIdentity ?? new AgentId(Environment.MachineName);
         _providerResolver = new AgentProviderResolver(logger);
         _reporterFactory = reporterFactory ?? new PipelineReporterFactory(logger);
         var feedbackService = new FeedbackService(logger);
         var finalization = new PullRequestFinalizationService(logger);
         _contextBuilder = new PipelineExecutionContextBuilder(
-            qualityGateValidator, _reporterFactory, feedbackService, _agentIdentity, logger,
-            finalization, brainUpdateService, historyService);
+            qualityGateValidator, _reporterFactory, feedbackService, _agentId, logger,
+            brainUpdateService, historyService, finalization);
         _logger = logger;
     }
 
@@ -106,7 +106,7 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             job.JobId, job.IssueIdentifier, job.RunType, job.ProjectId, job.ProjectName,
             ActivityKind.Consumer,
             PipelineTelemetry.ExtractTraceContext(job.TraceContext));
-        instrumentation.Activity?.SetTag("pipeline.agent_id", _agentIdentity.Id);
+        instrumentation.Activity?.SetTag("pipeline.agent_id", _agentId.Value);
 
         var config = job.PipelineConfiguration;
         var issueOps = new OrchestratorProxy(connection, job.JobId);

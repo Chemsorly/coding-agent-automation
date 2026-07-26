@@ -116,7 +116,8 @@ public class ConsolidationServicePropertyTests : IDisposable
         var sut = new ConsolidationService(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
             new FileSystemConsolidationRunStore(runsDir),
-            new FileSystemHarnessSuggestionStore(Path.Combine(runsDir, "harness.json")));
+            new FileSystemHarnessSuggestionStore(Path.Combine(runsDir, "harness.json")),
+            workspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config));
 
         var count = Math.Min(runCount.Get, 5);
         var types = new[] { ConsolidationRunType.BrainConsolidation, ConsolidationRunType.RefactoringDetection };
@@ -193,7 +194,8 @@ public class ConsolidationServicePropertyTests : IDisposable
         var sut = new ConsolidationService(
             Serilog.Log.Logger, config, mockProjectStore.Object, mockHistory.Object,
             new FileSystemConsolidationRunStore(runsDir),
-            new FileSystemHarnessSuggestionStore(Path.Combine(runsDir, "harness.json")));
+            new FileSystemHarnessSuggestionStore(Path.Combine(runsDir, "harness.json")),
+            workspaceManager: new ConsolidationWorkspaceManager(Serilog.Log.Logger, config));
 
         // First trigger succeeds
         var first = sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None)

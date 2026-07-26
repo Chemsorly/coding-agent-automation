@@ -202,7 +202,7 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
             .ReturnsAsync(new List<ProviderConfig>());
         _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
-        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockStore.Setup(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 
@@ -387,7 +387,7 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
         cut.Find(".template-add-row .btn-save").Click();
 
         // MoveTemplateAsync should NOT be called
-        _mockStore.Verify(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        _mockStore.Verify(s => s.MoveTemplateAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()), Times.Never);
 
         // Error status should be shown
         Assert.NotNull(statusMessage);

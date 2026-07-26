@@ -4,14 +4,18 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// Strongly-typed wrapper for agent IDs.
 /// Prevents accidental transposition of string parameters in method signatures
 /// (e.g., IAgentCancellationSender.SendCancelJobAsync has agentId and runId as consecutive string params).
+/// Used as the canonical agent identifier type throughout the system (DI registration, constructor injection).
 /// </summary>
+// TODO: The primary constructor does not validate its input — new AgentId(null!) or default(AgentId)
+// produces an instance with Value == null, bypassing the validation in the implicit conversion operator.
+// Consider adding a constructor guard or a factory method to ensure Value is never null/empty.
 public readonly record struct AgentId(string Value)
 {
-    // TODO: Consider adding ArgumentException.ThrowIfNullOrEmpty(value) in the implicit conversion
-    // operator for defense-in-depth. Currently null strings are silently wrapped, deferring failure
-    // to ThrowIfNullOrEmpty deeper in the call chain. Mirrors known issue in ProviderConfigId/RunId.
-    public static implicit operator AgentId(string value) => new(value);
-    // TODO: Consider returning Value ?? string.Empty to satisfy the .NET contract that ToString()
-    // returns a non-null string. default(AgentId) currently produces null from ToString().
-    public override string ToString() => Value;
+    public static implicit operator AgentId(string value)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(value);
+        return new(value);
+    }
+
+    public override string ToString() => Value ?? string.Empty;
 }
