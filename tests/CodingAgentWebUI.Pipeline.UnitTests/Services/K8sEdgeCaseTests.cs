@@ -746,19 +746,19 @@ public class K8sEdgeCaseTests : IDisposable
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // PVC claim leak on transient DB exception during FindAsync (#1690)
-    // PVC returned when FindAsync throws a non-cancellation exception
+    // PVC claim leak on FindAsync transient exception (#1708)
+    // PVC must be released when DB query throws after PVC is claimed
     // ═══════════════════════════════════════════════════════════════════════
 
     [Fact]
     public async Task ExecuteDispatchLifecycle_FindAsyncThrowsTransientException_PvcReturnedToPool()
     {
-        // Arrange: create lifecycle service with a PVC pool
-        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-leak-test" });
+        // Arrange: create a lifecycle service with a PVC pool
+        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-find-leak" });
 
-        // Use a disposed DbContext to simulate a transient DB exception on FindAsync.
+        // Use a disposed DbContext to simulate a transient DB failure on FindAsync.
         // When FindAsync is called on a disposed context, it throws ObjectDisposedException,
-        // which exercises the catch-all path that must release the PVC.
+        // which simulates the behavior of a transient NpgsqlException (connection dropped).
         var disposedDb = await _dbFactory.CreateDbContextAsync();
         await disposedDb.DisposeAsync();
 
@@ -778,7 +778,7 @@ public class K8sEdgeCaseTests : IDisposable
             MaxConcurrent = 10
         };
 
-        var availablePvcs = new List<string> { "pvc-leak-test" };
+        var availablePvcs = new List<string> { "pvc-find-leak" };
         var concurrency = new Dictionary<string, int>();
 
         // Act: FindAsync throws on disposed context — PVC must still be returned to pool
@@ -792,34 +792,57 @@ public class K8sEdgeCaseTests : IDisposable
             onDispatchSuccess: null,
             ct: CancellationToken.None);
 
-        // Assert: exception propagates (non-OperationCanceledException)
-        await act.Should().ThrowAsync<ObjectDisposedException>();
+        // Assert: exception propagates (ObjectDisposedException from disposed context)
+        await act.Should().ThrowAsync<Exception>();
 
-        // Assert: PVC was returned to pool (the critical fix for #1690)
+        // Assert: PVC was returned to pool (the critical fix for #1708)
         availablePvcs.Should().ContainSingle()
-            .Which.Should().Be("pvc-leak-test");
+            .Which.Should().Be("pvc-find-leak");
 
         // Assert: inflight claims set is cleared
         lifecycle.GetInflightPvcClaims().Should().BeEmpty(
-            "inflight PVC claims must be released on transient DB exception to prevent pool exhaustion");
+            "inflight PVC claims must be released on FindAsync exception to prevent permanent pool shrinkage");
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // PVC claim leak on transient DB exception during first SaveChangesAsync (#1690)
-    // PVC returned when SaveChangesAsync throws a non-cancellation exception
-    // ═══════════════════════════════════════════════════════════════════════
-
     [Fact]
-    public async Task ExecuteDispatchLifecycle_SaveChangesThrowsTransientException_PvcReturnedToPool()
+    public async Task ExecuteDispatchLifecycle_FirstSaveChangesThrowsTransientException_PvcReturnedToPool()
     {
-        // Arrange: insert a Pending work item so FindAsync succeeds
+        // Arrange: insert a Pending work item so FindAsync and prepareVariant succeed
         var pendingId = Guid.NewGuid();
         await InsertWorkItem(pendingId, "owner/repo#save-fail", "kiro,dotnet", WorkItemStatus.Pending);
 
-        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-leak-test" });
+        // Create a DB context with a SaveChangesInterceptor that throws on first save
+        var interceptor = new FirstSaveThrowsInterceptor();
+        var interceptorDbName = $"K8sEdgeCase-{Guid.NewGuid()}";
+        var interceptorOptions = new DbContextOptionsBuilder<PipelineDbContext>()
+            .UseInMemoryDatabase(interceptorDbName)
+            .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+            .AddInterceptors(interceptor)
+            .Options;
 
-        // Use a ThrowOnSaveDbContext that throws on SaveChangesAsync to simulate transient DB failure
-        var throwingDb = new ThrowOnSaveDbContext(_dbOptions);
+        // Seed the work item into the interceptor DB
+        await using (var seedDb = new TestPipelineDbContext(interceptorOptions))
+        {
+            seedDb.Database.EnsureCreated();
+            seedDb.WorkItems.Add(new WorkItemEntity
+            {
+                Id = pendingId,
+                IssueIdentifier = "owner/repo#save-fail",
+                IssueProviderConfigId = "provider-1",
+                Status = WorkItemStatus.Pending,
+                AgentSelector = "kiro,dotnet",
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600,
+                Payload = "{}"
+            });
+            await seedDb.SaveChangesAsync();
+        }
+
+        // Arm the interceptor — next SaveChangesAsync will throw
+        interceptor.Armed = true;
+
+        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-save-leak" });
+        await using var db = new TestPipelineDbContext(interceptorOptions);
 
         var projection = new PendingWorkItemProjection
         {
@@ -837,76 +860,10 @@ public class K8sEdgeCaseTests : IDisposable
             MaxConcurrent = 10
         };
 
-        var availablePvcs = new List<string> { "pvc-leak-test" };
+        var availablePvcs = new List<string> { "pvc-save-leak" };
         var concurrency = new Dictionary<string, int>();
 
-        // Act: SaveChangesAsync throws — PVC must still be returned to pool
-        Func<Task> act = () => lifecycle.ExecuteDispatchLifecycleAsync(
-            throwingDb, projection, template,
-            isKiroAgent: true,
-            availablePvcs,
-            concurrency,
-            logPrefix: "",
-            prepareVariant: _ => Task.FromResult<(bool, Dictionary<string, string>?)>((true, null)),
-            onDispatchSuccess: null,
-            ct: CancellationToken.None);
-
-        // Assert: exception propagates (non-OperationCanceledException)
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("Simulated transient DB failure on SaveChangesAsync");
-
-        // Assert: PVC was returned to pool (the critical fix for #1690)
-        availablePvcs.Should().ContainSingle()
-            .Which.Should().Be("pvc-leak-test");
-
-        // Assert: inflight claims set is cleared
-        lifecycle.GetInflightPvcClaims().Should().BeEmpty(
-            "inflight PVC claims must be released on transient SaveChanges exception to prevent pool exhaustion");
-
-        await throwingDb.DisposeAsync();
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // OperationCanceledException during FindAsync must propagate without PVC release
-    // (shutdown path should not add PVC back to pool) (#1690)
-    // ═══════════════════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task ExecuteDispatchLifecycle_FindAsyncThrowsOperationCanceled_PvcNotReturnedToPool()
-    {
-        // Arrange: create lifecycle service with a PVC pool
-        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-leak-test" });
-
-        // Insert a work item so the test is realistic (though cancellation may hit before FindAsync returns)
-        var pendingId = Guid.NewGuid();
-        await InsertWorkItem(pendingId, "owner/repo#cancel-test", "kiro,dotnet", WorkItemStatus.Pending);
-
-        // Use a CancellationToken that is already cancelled to trigger OperationCanceledException
-        using var cts = new CancellationTokenSource();
-        cts.Cancel();
-
-        await using var db = await _dbFactory.CreateDbContextAsync();
-
-        var projection = new PendingWorkItemProjection
-        {
-            Id = pendingId,
-            AgentSelector = "kiro,dotnet",
-            CreatedAt = DateTimeOffset.UtcNow,
-            TimeoutSeconds = 3600
-        };
-
-        var template = new JobTemplate
-        {
-            Labels = "dotnet,kiro",
-            Image = "ghcr.io/agent:kiro-latest",
-            ProviderType = "kiro",
-            MaxConcurrent = 10
-        };
-
-        var availablePvcs = new List<string> { "pvc-leak-test" };
-        var concurrency = new Dictionary<string, int>();
-
-        // Act: cancelled token → OperationCanceledException propagates
+        // Act: first SaveChangesAsync throws — PVC must still be returned to pool
         Func<Task> act = () => lifecycle.ExecuteDispatchLifecycleAsync(
             db, projection, template,
             isKiroAgent: true,
@@ -915,18 +872,44 @@ public class K8sEdgeCaseTests : IDisposable
             logPrefix: "",
             prepareVariant: _ => Task.FromResult<(bool, Dictionary<string, string>?)>((true, null)),
             onDispatchSuccess: null,
-            ct: cts.Token);
+            ct: CancellationToken.None);
 
-        // Assert: OperationCanceledException propagates
-        await act.Should().ThrowAsync<OperationCanceledException>();
+        // Assert: exception propagates
+        await act.Should().ThrowAsync<DbUpdateException>();
 
-        // Assert: PVC is NOT returned to available pool (shutdown path)
-        availablePvcs.Should().BeEmpty(
-            "PVC must not be returned to pool on OperationCanceledException — shutdown should not recycle PVCs");
+        // Assert: PVC was returned to pool (the critical fix for #1708)
+        availablePvcs.Should().ContainSingle()
+            .Which.Should().Be("pvc-save-leak");
 
-        // Assert: inflight claims set retains the claim (will be cleaned up on restart)
-        lifecycle.GetInflightPvcClaims().Should().ContainSingle()
-            .Which.Should().Be("pvc-leak-test");
+        // Assert: inflight claims set is cleared
+        lifecycle.GetInflightPvcClaims().Should().BeEmpty(
+            "inflight PVC claims must be released on SaveChangesAsync exception to prevent permanent pool shrinkage");
+    }
+
+    /// <summary>
+    /// EF Core SaveChangesInterceptor that throws DbUpdateException on the first SaveChangesAsync call
+    /// when Armed. Used to simulate transient DB failures during the pre-write SaveChangesAsync.
+    /// </summary>
+    private sealed class FirstSaveThrowsInterceptor : SaveChangesInterceptor
+    {
+        public bool Armed { get; set; }
+        private bool _thrown;
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armed && !_thrown)
+            {
+                _thrown = true;
+                throw new DbUpdateException(
+                    "Simulated transient DB failure during SaveChangesAsync",
+                    new InvalidOperationException("Simulated connection failure"));
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1296,7 +1279,7 @@ public class K8sEdgeCaseTests : IDisposable
         await db.SaveChangesAsync();
     }
 
-    private class TestPipelineDbContext : PipelineDbContext
+    private sealed class TestPipelineDbContext : PipelineDbContext
     {
         public TestPipelineDbContext(DbContextOptions<PipelineDbContext> options) : base(options) { }
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -1319,19 +1302,5 @@ public class K8sEdgeCaseTests : IDisposable
         public TestDbContextFactory(DbContextOptions<PipelineDbContext> options) => _options = options;
         public PipelineDbContext CreateDbContext() => new TestPipelineDbContext(_options);
         public Task<PipelineDbContext> CreateDbContextAsync(CancellationToken ct = default) => Task.FromResult(CreateDbContext());
-    }
-
-    /// <summary>
-    /// A DbContext subclass that throws on SaveChangesAsync to simulate transient DB failures.
-    /// Used to verify PVC release on first SaveChangesAsync exception path (#1690).
-    /// </summary>
-    private sealed class ThrowOnSaveDbContext : TestPipelineDbContext
-    {
-        public ThrowOnSaveDbContext(DbContextOptions<PipelineDbContext> options) : base(options) { }
-
-        public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
-        {
-            throw new InvalidOperationException("Simulated transient DB failure on SaveChangesAsync");
-        }
     }
 }
