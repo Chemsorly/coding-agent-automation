@@ -9,6 +9,8 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
 /// <summary>
 /// Unit tests for consolidation workspace isolation.
+/// Tests the extracted ConsolidationWorkspaceManager and workspace cleanup
+/// behavior via ConsolidationService delegation.
 /// Validates: Requirements 9.1, 9.3, 9.4
 /// </summary>
 public sealed class ConsolidationWorkspaceTests : IDisposable
@@ -20,6 +22,7 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly PipelineConfiguration _config;
     private readonly List<PipelineJobTemplate> _templates;
+    private readonly ConsolidationWorkspaceManager _workspaceManager;
 
     public ConsolidationWorkspaceTests()
     {
@@ -48,6 +51,9 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
         {
             WorkspaceBaseDirectory = _tempDir
         };
+
+        _workspaceManager = new ConsolidationWorkspaceManager(
+            new LoggerConfiguration().CreateLogger(), _config);
 
         // Mock IProjectStore to return a default project owning all templates
         _mockProjectStore = new Mock<IProjectStore>();
@@ -80,7 +86,8 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
         _mockProjectStore.Object,
         _mockRunHistory.Object,
         new FileSystemConsolidationRunStore(_runsDir),
-        new FileSystemHarnessSuggestionStore(_suggestionsPath));
+        new FileSystemHarnessSuggestionStore(_suggestionsPath),
+        workspaceManager: _workspaceManager);
 
     // ── Workspace uses separate directory from pipeline ───────────────────
 
@@ -88,10 +95,9 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
     public void GetWorkspacePath_ReturnsPathUnderConsolidationSubdirectory()
     {
         // Validates: Requirement 9.1 — consolidation uses separate directory from pipeline
-        var sut = CreateSut();
         var runId = Guid.NewGuid().ToString();
 
-        var workspacePath = sut.GetWorkspacePath(runId);
+        var workspacePath = _workspaceManager.GetWorkspacePath(runId);
 
         // Workspace should be under {base}/consolidation/{runId}/
         workspacePath.Should().StartWith(Path.Combine(_tempDir, "consolidation"));
@@ -102,10 +108,9 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
     public void GetWorkspacePath_IsSeparateFromRegularPipelineWorkspace()
     {
         // Validates: Requirement 9.1 — consolidation workspaces are distinct from pipeline workspaces
-        var sut = CreateSut();
         var runId = Guid.NewGuid().ToString();
 
-        var consolidationPath = sut.GetWorkspacePath(runId);
+        var consolidationPath = _workspaceManager.GetWorkspacePath(runId);
 
         // Regular pipeline workspaces are directly under WorkspaceBaseDirectory (not in /consolidation/)
         var regularPipelinePath = Path.Combine(_tempDir, runId);
@@ -118,10 +123,9 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
     public void CreateWorkspace_CreatesDirectoryOnDisk()
     {
         // Validates: Requirement 9.1
-        var sut = CreateSut();
         var runId = Guid.NewGuid().ToString();
 
-        var workspacePath = sut.CreateWorkspace(runId);
+        var workspacePath = _workspaceManager.CreateWorkspace(runId);
 
         Directory.Exists(workspacePath).Should().BeTrue();
     }
@@ -130,11 +134,10 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
     public void CreateWorkspace_ReturnsPathMatchingGetWorkspacePath()
     {
         // Validates: Requirement 9.1
-        var sut = CreateSut();
         var runId = Guid.NewGuid().ToString();
 
-        var createdPath = sut.CreateWorkspace(runId);
-        var expectedPath = sut.GetWorkspacePath(runId);
+        var createdPath = _workspaceManager.CreateWorkspace(runId);
+        var expectedPath = _workspaceManager.GetWorkspacePath(runId);
 
         createdPath.Should().Be(expectedPath);
     }
@@ -152,7 +155,7 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
         run.Should().NotBeNull();
 
         // Create the workspace directory (simulating what the executor would do)
-        var workspacePath = sut.CreateWorkspace(run!.RunId);
+        var workspacePath = _workspaceManager.CreateWorkspace(run!.RunId);
         Directory.Exists(workspacePath).Should().BeTrue();
 
         // Mark as succeeded — should trigger cleanup
@@ -175,7 +178,7 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
         run.Should().NotBeNull();
 
         // Create the workspace directory
-        var workspacePath = sut.CreateWorkspace(run!.RunId);
+        var workspacePath = _workspaceManager.CreateWorkspace(run!.RunId);
         Directory.Exists(workspacePath).Should().BeTrue();
 
         // Mark as failed — workspace should be retained

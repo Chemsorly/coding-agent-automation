@@ -244,7 +244,7 @@ public class WorkItemExecutorRouterTests
             mockOrchestrator.Object, mockHttpFactory.Object,
             new PipelineConfiguration(), mockQgValidator.Object,
             Mock.Of<Serilog.ILogger>(),
-            agentIdentity: new AgentIdentity("test-agent"));
+            agentIdentity: new AgentId("test-agent"));
     }
 
     private static LocalConsolidationExecutor CreateMockConsolidationExecutor()

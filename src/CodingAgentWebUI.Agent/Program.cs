@@ -156,7 +156,7 @@ try
     }
 
     // ── Agent identity (single source of truth for AGENT_ID) ──
-    builder.Services.AddSingleton(new AgentIdentity(agentId));
+    builder.Services.Add(ServiceDescriptor.Singleton(typeof(AgentId), new AgentId(agentId)));
 
     // ── Hub connection manager ──
     builder.Services.AddSingleton(sp =>
@@ -175,7 +175,7 @@ try
         Log.Logger,
         sp.GetRequiredService<IBrainUpdateService>(),
         openIssueContextWriter: sp.GetRequiredService<IOpenIssueContextWriter>(),
-        agentIdentity: sp.GetRequiredService<AgentIdentity>(),
+        agentIdentity: sp.GetRequiredService<AgentId>(),
         reporterFactory: sp.GetRequiredService<IPipelineReporterFactory>()));
 
     // ── Consolidation executor ──
@@ -215,14 +215,14 @@ try
         builder.Services.AddSingleton<IAgentConnectionManager>(sp => new AgentConnectionManager(
             sp.GetRequiredService<HubConnectionManager>(),
             sp.GetRequiredService<HubConnectionManagerFactory>(),
-            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<AgentId>(),
             Log.Logger));
 
         builder.Services.AddSingleton<IJobCompletionReporter>(sp => new HttpPrimaryCompletionReporter(
             workItemId!,
             sp.GetRequiredService<IWorkItemLifecycleClient>(),
             sp.GetRequiredService<IAgentConnectionManager>(),
-            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<AgentId>(),
             Log.Logger));
 
         builder.Services.AddSingleton(sp => new WorkItemAgentService(
@@ -231,7 +231,7 @@ try
             sp.GetRequiredService<IAgentConnectionManager>(),
             sp.GetRequiredService<IWorkItemExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),
-            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger,
             serviceProvider: sp));
@@ -254,7 +254,7 @@ try
             // AgentJobSlotManager -> AgentConnectionLifecycle -> AgentJobSlotManager.
             // The signalReady callback is only invoked at runtime (after DI construction),
             // so lazy resolution is safe here.
-            var agentId = sp.GetRequiredService<AgentIdentity>().Id;
+            var agentId = sp.GetRequiredService<AgentId>().Value;
             return new AgentJobSlotManager(async () =>
             {
                 try
@@ -274,13 +274,13 @@ try
             sp.GetRequiredService<HubConnectionManagerFactory>(),
             sp.GetRequiredService<SignalRCompletionReporter>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
-            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
         builder.Services.AddSingleton(sp => new AgentWorkerService(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
-            sp.GetRequiredService<AgentIdentity>(),
+            sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IPipelineExecutor>(),
             sp.GetRequiredService<IConsolidationExecutor>(),
             sp.GetRequiredService<IJobCompletionReporter>(),

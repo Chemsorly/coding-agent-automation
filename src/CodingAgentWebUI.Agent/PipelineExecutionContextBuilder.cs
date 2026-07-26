@@ -22,8 +22,8 @@ internal sealed class PipelineExecutionContextBuilder
     private readonly IBrainUpdateService? _brainUpdateService;
     private readonly IPipelineRunHistoryService? _historyService;
     private readonly FeedbackService _feedbackService;
-    private readonly PullRequestFinalizationService _finalization;
-    private readonly AgentIdentity _agentIdentity;
+    private readonly PullRequestFinalizationService? _finalization;
+    private readonly AgentId _agentId;
     private readonly Serilog.ILogger _logger;
 
     /// <summary>
@@ -33,26 +33,29 @@ internal sealed class PipelineExecutionContextBuilder
     internal Action? _testThrowAfterCtsCreation;
 
     // TODO: Add ArgumentNullException.ThrowIfNull for required parameters (qualityGateValidator,
-    // reporterFactory, feedbackService, agentIdentity, logger) to fail fast instead of NRE in Build().
+    // reporterFactory, feedbackService, logger) to fail fast instead of NRE in Build().
     public PipelineExecutionContextBuilder(
         IQualityGateValidator qualityGateValidator,
         IPipelineReporterFactory reporterFactory,
         FeedbackService feedbackService,
-        AgentIdentity agentIdentity,
+        AgentId agentId,
         Serilog.ILogger logger,
-        PullRequestFinalizationService finalization,
         IBrainUpdateService? brainUpdateService = null,
-        IPipelineRunHistoryService? historyService = null)
+        IPipelineRunHistoryService? historyService = null,
+        // TODO: PullRequestFinalizationService was changed from required to optional during the
+        // AgentIdentity→AgentId migration. This weakens type-safety — consider making it required again
+        // (non-nullable) so the compiler enforces that callers always provide it, since CreatePullRequestAsync
+        // depends on it at runtime.
+        PullRequestFinalizationService? finalization = null)
     {
         _qualityGateValidator = qualityGateValidator;
         _reporterFactory = reporterFactory;
         _feedbackService = feedbackService;
-        _agentIdentity = agentIdentity;
+        _agentId = agentId;
         _logger = logger;
-        // TODO: Add ArgumentNullException.ThrowIfNull(finalization) guard here for defensive fail-fast behavior
-        _finalization = finalization;
         _brainUpdateService = brainUpdateService;
         _historyService = historyService;
+        _finalization = finalization;
     }
 
     /// <summary>
@@ -80,7 +83,7 @@ internal sealed class PipelineExecutionContextBuilder
             repoProviderConfigId: job.RepoProviderConfigId,
             runType: job.RunType,
             initiatedBy: job.InitiatedBy,
-            agentId: _agentIdentity.Id,
+            agentId: _agentId.Value,
             brainProviderConfigId: brainProvider is not null ? job.BrainProviderConfigId : null,
             reviewPrBranchName: job.LinkedPullRequest?.BranchName,
             reviewPrTargetBranch: job.ReviewPrTargetBranch,
@@ -247,6 +250,13 @@ internal sealed class PipelineExecutionContextBuilder
         PipelineRun run, QualityGateReport report, bool isDraft,
         PullRequestCreationContext context, CancellationToken ct)
     {
+        if (_finalization is null)
+        {
+            throw new InvalidOperationException(
+                "CreatePullRequestAsync requires a PullRequestFinalizationService, but none was provided to the constructor. " +
+                "Ensure the PipelineExecutionContextBuilder is constructed with a non-null 'finalization' parameter.");
+        }
+
         await _finalization.RunFullPrCreationAsync(
             run, report, isDraft,
             context.PrOrchestrator, context.RepoProvider, context.AgentProvider,
