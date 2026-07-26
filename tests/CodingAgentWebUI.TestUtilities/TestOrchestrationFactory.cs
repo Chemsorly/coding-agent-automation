@@ -129,6 +129,20 @@ public static class TestOrchestrationFactory
         private readonly List<PipelineRunSummary> _runs = new();
         public Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<PipelineRunSummary>>(_runs.AsReadOnly());
+        public Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default)
+        {
+            var items = _runs.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+            var hasMore = items.Count > pageSize;
+            if (hasMore)
+                items = items.Take(pageSize).ToList();
+            return Task.FromResult(new PagedResult<PipelineRunSummary>
+            {
+                Items = items.AsReadOnly(),
+                Page = page,
+                PageSize = pageSize,
+                HasMore = hasMore
+            });
+        }
         public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default)
         {
             _runs.Add(run.ToSummary());
