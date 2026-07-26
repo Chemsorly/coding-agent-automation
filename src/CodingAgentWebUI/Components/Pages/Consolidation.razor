@@ -409,7 +409,12 @@
 
         try
         {
-            var run = await ConsolidationService.TriggerAsync(type, templateId, CancellationToken.None, autoDispatch);
+            // TODO: `new TemplateId(tid)` bypasses ThrowIfNullOrEmpty validation. While `tid`
+            // cannot be null here (pattern match ensures it), an empty-string templateId would
+            // pass through without error. Consider using the implicit conversion instead:
+            // TemplateId? typedTemplateId = templateId is { Length: > 0 } tid ? (TemplateId)tid : null;
+            TemplateId? typedTemplateId = templateId is { } tid ? new TemplateId(tid) : (TemplateId?)null;
+            var run = await ConsolidationService.TriggerAsync(type, typedTemplateId, CancellationToken.None, autoDispatch);
             if (run == null)
             {
                 _statusMessage = type switch

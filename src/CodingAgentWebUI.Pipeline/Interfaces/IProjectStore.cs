@@ -27,8 +27,8 @@ public interface IProjectStore
     Task SaveTemplateAsync(string projectId, PipelineJobTemplate template, CancellationToken ct);
 
     /// <summary>Delete a template. Removes the template ID from the project's TemplateIds.</summary>
-    Task DeleteTemplateAsync(string projectId, string templateId, CancellationToken ct);
+    Task DeleteTemplateAsync(string projectId, TemplateId templateId, CancellationToken ct);
 
     /// <summary>Move a template from one project to another. Updates TemplateIds on both projects.</summary>
-    Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, string templateId, CancellationToken ct);
+    Task MoveTemplateAsync(string sourceProjectId, string targetProjectId, TemplateId templateId, CancellationToken ct);
 }

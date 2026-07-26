@@ -99,7 +99,7 @@ public class AgentWorkerServiceReconnectionTests
                 CodingAgentWebUI.Infrastructure.Resilience.ResiliencePipelineFactory.CreateSignalRPipeline(mockLogger.Object),
                 new CriticalMessageBuffer(), mockLogger.Object),
             new AgentJobSlotManager(() => Task.CompletedTask),
-            new AgentIdentity("test"),
+            new AgentId("test"),
             Mock.Of<IHostApplicationLifetime>(),
             mockLogger.Object);
 

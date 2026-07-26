@@ -504,6 +504,88 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task DrainPendingItems_ShutdownDuringLabelSwapBackoff_FlagsForReconciliation()
+    {
+        // Arrange: insert a Pending WorkItem
+        var workItemId = Guid.NewGuid();
+        var request = new JobDistributionRequest
+        {
+            IssueIdentifier = "org/repo#300",
+            IssueProviderConfigId = "issue-provider-1",
+            RepoProviderConfigId = "repo-1",
+            InitiatedBy = "loop",
+            TaskType = WorkItemTaskType.Implementation,
+            AgentSelector = "",
+            RunId = workItemId.ToString(),
+            TimeoutSeconds = 3600
+        };
+        var payload = JsonSerializer.Serialize(request, PipelineJsonOptions.Default);
+
+        await using (var db = await _dbFactory.CreateDbContextAsync())
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = workItemId,
+                TaskType = WorkItemTaskType.Implementation,
+                IssueIdentifier = "org/repo#300",
+                IssueProviderConfigId = "issue-provider-1",
+                Status = WorkItemStatus.Pending,
+                Payload = payload,
+                AgentSelector = "",
+                CreatedAt = DateTimeOffset.UtcNow,
+                TimeoutSeconds = 3600
+            });
+            await db.SaveChangesAsync();
+        }
+
+        // Setup: idle agent available
+        _mockResolver.Setup(r => r.ResolveAgent(""))
+            .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        _mockAgentComm.Setup(c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        // Setup: label swap fails with transient error AND cancels the CTS to simulate
+        // shutdown arriving during the subsequent Task.Delay backoff (#1681)
+        using var cts = new CancellationTokenSource();
+        _mockLabelService
+            .Setup(l => l.SwapLabelStrictAsync("issue-provider-1", "org/repo#300", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()))
+            .Callback(() => cts.Cancel())
+            .ThrowsAsync(new HttpRequestException("API unavailable"));
+
+        var service = CreateService();
+
+        // Act: invoke DrainPendingItemsAsync directly with a real cancellable token.
+        // Cannot use InvokeDrainAsync because it passes CancellationToken.None — the fix's
+        // finally block checks ct.IsCancellationRequested which requires a real token.
+        var method = typeof(PendingWorkItemDrainService).GetMethod("DrainPendingItemsAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException("DrainPendingItemsAsync not found");
+        var task = (Task)method.Invoke(service, [cts.Token])!;
+        try
+        {
+            await task;
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected: OCE propagates from Task.Delay when ct is cancelled
+        }
+
+        // Assert: label swap was called exactly 1 time (backoff was interrupted by shutdown)
+        _mockLabelService.Verify(
+            l => l.SwapLabelStrictAsync("issue-provider-1", "org/repo#300", AgentLabels.InProgress, LabelTargetKind.Issue, It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // Assert: NeedsLabelReconciliation IS set (the finally block fired)
+        await using var checkDb = await _dbFactory.CreateDbContextAsync();
+        var item = await checkDb.WorkItems.FindAsync(workItemId);
+        item.Should().NotBeNull();
+        item!.NeedsLabelReconciliation.Should().BeTrue("shutdown during backoff should flag for reconciliation");
+
+        // Assert: dispatch itself succeeded (status is Dispatched, not reverted)
+        item.Status.Should().Be(WorkItemStatus.Dispatched);
+    }
+
+    [Fact]
     public async Task DrainPendingItems_SignalRDeliveryFails_RevertsWorkItemToPending()
     {
         // Arrange: insert a Pending WorkItem

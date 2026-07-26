@@ -391,14 +391,14 @@ internal sealed class TemplatePoller
     /// to ensure a failed template doesn't leave stale partial data in queues.
     /// </summary>
     internal static void ClearQueuesForTemplate(
-        string templateId,
+        TemplateId templateId,
         Dictionary<string, List<IssueSummary>> issueQueues,
         Dictionary<string, List<PullRequestSummary>> prQueues,
         Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues)
     {
-        issueQueues[templateId] = new List<IssueSummary>();
-        prQueues[templateId] = new List<PullRequestSummary>();
-        decompositionQueues[templateId] = new List<(IssueSummary, PipelineRunType)>();
+        issueQueues[templateId.Value] = new List<IssueSummary>();
+        prQueues[templateId.Value] = new List<PullRequestSummary>();
+        decompositionQueues[templateId.Value] = new List<(IssueSummary, PipelineRunType)>();
     }
 
     /// <summary>
