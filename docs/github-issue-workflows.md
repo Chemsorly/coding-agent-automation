@@ -21,7 +21,7 @@ The pipeline uses these `agent:*` labels (created automatically on first run):
 | `agent:epic-review` | 🟡 Yellow | Decomposition plan posted, awaiting human approval |
 | `agent:epic-approved` | 🟢 Green | Plan approved, queued for sub-issue creation |
 
-Only one `agent:*` label should be present on an issue at a time. The pipeline swaps labels atomically (removes all, then adds the new one).
+Only one `agent:*` label should be present on an issue at a time (except during the brief swap window). The pipeline swaps labels by first adding the new label, then removing all other `agent:*` labels. This add-first ordering ensures the issue is never left without a status label if the operation is interrupted mid-swap. During the brief swap window, two `agent:*` labels may coexist on the issue.
 
 ## Flow 1: Happy Path
 
