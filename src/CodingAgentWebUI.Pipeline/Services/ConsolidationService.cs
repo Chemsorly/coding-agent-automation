@@ -124,7 +124,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
         {
             _logger.Warning(
                 "Consolidation run rejected: {Type} for template {TemplateId} is already running or queued",
-                type, templateId ?? "Global");
+                type, templateIdValue ?? "Global");
             return null;
         }
 
