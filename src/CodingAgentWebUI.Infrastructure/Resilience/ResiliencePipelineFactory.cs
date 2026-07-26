@@ -4,6 +4,7 @@ using NGitLab;
 using Octokit;
 using Polly;
 using Polly.Retry;
+using Polly.Timeout;
 using Serilog;
 using ILogger = Serilog.ILogger;
 
@@ -56,6 +57,7 @@ public static class ResiliencePipelineFactory
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
                     .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException)
+                    .Handle<TimeoutRejectedException>()
                     .Handle<Octokit.AuthorizationException>()
                     .Handle<ApiException>(ex => IsRetryableApiException(ex))
                     .Handle<Octokit.RateLimitExceededException>()
@@ -88,6 +90,7 @@ public static class ResiliencePipelineFactory
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
                     .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException)
+                    .Handle<TimeoutRejectedException>()
                     .Handle<Octokit.AuthorizationException>()
                     .Handle<ApiException>(ex => IsRetryableApiException(ex))
                     .Handle<Octokit.NotFoundException>(ex =>
@@ -127,7 +130,8 @@ public static class ResiliencePipelineFactory
                 UseJitter = true,
                 Delay = TimeSpan.FromSeconds(2),
                 ShouldHandle = new PredicateBuilder()
-                    .Handle<LibGit2SharpException>(ex => IsTransientGitException(ex)),
+                    .Handle<LibGit2SharpException>(ex => IsTransientGitException(ex))
+                    .Handle<TimeoutRejectedException>(),
                 OnRetry = args =>
                 {
                     RecordRetryEvent(args, logger, "GitNetwork", 2);
@@ -159,7 +163,8 @@ public static class ResiliencePipelineFactory
                 ShouldHandle = new PredicateBuilder()
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
-                    .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException),
+                    .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException)
+                    .Handle<TimeoutRejectedException>(),
                 OnRetry = args =>
                 {
                     RecordRetryEvent(args, logger, "Http", DefaultMaxRetryAttempts);
@@ -197,6 +202,7 @@ public static class ResiliencePipelineFactory
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
                     .Handle<IOException>()
+                    .Handle<TimeoutRejectedException>()
                     .Handle<InvalidOperationException>(ex =>
                         ex.Message.Contains("not in the 'Connected' state", StringComparison.OrdinalIgnoreCase) ||
                         ex.Message.Contains("connection was stopped", StringComparison.OrdinalIgnoreCase)),
@@ -233,6 +239,7 @@ public static class ResiliencePipelineFactory
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
                     .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException)
+                    .Handle<TimeoutRejectedException>()
                     .Handle<GitLabException>(ex => IsRetryableGitLabException(ex)),
                 OnRetry = args =>
                 {
@@ -269,6 +276,7 @@ public static class ResiliencePipelineFactory
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()
                     .Handle<TaskCanceledException>(ex => ex.InnerException is TimeoutException)
+                    .Handle<TimeoutRejectedException>()
                     .Handle<GitLabException>(ex => (int)ex.StatusCode >= 500),
                 OnRetry = args =>
                 {
