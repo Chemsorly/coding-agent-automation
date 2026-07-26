@@ -74,16 +74,13 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             client => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions),
             "ListOpenIssues", ct);
 
+        var hasMore = issues.Count > pageSize;
+
         var items = issues
             .Where(i => i.PullRequest == null)
             .Select(MapToIssueSummary)
+            .Take(pageSize)
             .ToList();
-
-        // HasMore is approximate: PR filtering may cause false negatives when the
-        // extra item fetched for detection is a pull request that gets filtered out.
-        var hasMore = items.Count > pageSize;
-        if (hasMore)
-            items = items.Take(pageSize).ToList();
 
         return new PagedResult<IssueSummary>
         {
@@ -127,14 +124,13 @@ public class GitHubIssueProvider : GitHubProviderBase, IIssueProvider
             client => client.Issue.GetAllForRepository(Owner, Repo, request, apiOptions),
             "ListClosedIssues", ct);
 
+        var hasMore = issues.Count > pageSize;
+
         var items = issues
             .Where(i => i.PullRequest == null)
             .Select(MapToIssueSummary)
+            .Take(pageSize)
             .ToList();
-
-        var hasMore = items.Count > pageSize;
-        if (hasMore)
-            items = items.Take(pageSize).ToList();
 
         return new PagedResult<IssueSummary>
         {
