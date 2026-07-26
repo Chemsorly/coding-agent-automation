@@ -12,7 +12,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Serilog;
-using static CodingAgentWebUI.Orchestration.Dispatch.DispatchService;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 

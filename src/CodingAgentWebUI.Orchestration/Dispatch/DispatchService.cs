@@ -357,18 +357,4 @@ public sealed class DispatchService : BackgroundService
             .ToList();
     }
 
-    /// <summary>
-    /// Lightweight projection of pending work items (no Payload loaded).
-    /// </summary>
-    internal sealed record PendingWorkItemProjection
-    {
-        public required Guid Id { get; init; }
-        public required string AgentSelector { get; init; }
-        public required DateTimeOffset CreatedAt { get; init; }
-        public required int TimeoutSeconds { get; init; }
-        public WorkItemTaskType TaskType { get; init; }
-        public string? ProjectId { get; init; }
-        public string? IssueIdentifier { get; init; }
-        public string? IssueProviderConfigId { get; init; }
-    }
 }

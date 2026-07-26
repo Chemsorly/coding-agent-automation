@@ -4,7 +4,6 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Moq;
 using Xunit;
-using static CodingAgentWebUI.Orchestration.Dispatch.DispatchService;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 
