@@ -389,6 +389,148 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
             "AddRunToHistoryAsync must not mutate the caller's PipelineRun.CurrentStep");
     }
 
+    // ── Pagination tests ──────────────────────────────────────────────────
+
+    // TODO: Add boundary/edge case tests for pagination parameter validation (page=0, pageSize=0, pageSize > MaxHistorySize).
+
+    [Fact]
+    public async Task GetRunHistoryPaged_ReturnsFirstPage_WithCorrectItems()
+    {
+        // Arrange: seed 5 runs with distinct timestamps
+        for (var i = 0; i < 5; i++)
+        {
+            var run = CreateCompletedRun(
+                Guid.NewGuid().ToString(),
+                $"org/repo#{i + 1}",
+                $"Run {i + 1}",
+                startedAt: DateTimeOffset.UtcNow.AddMinutes(-i));
+            await _sut.AddRunToHistoryAsync(run);
+        }
+
+        // Act: request page 1, pageSize 3
+        var result = await _sut.GetRunHistoryAsync(page: 1, pageSize: 3);
+
+        // Assert
+        result.Page.Should().Be(1);
+        result.PageSize.Should().Be(3);
+        result.Items.Should().HaveCount(3);
+        result.HasMore.Should().BeTrue();
+        // Newest first (StartedAt descending)
+        result.Items[0].IssueIdentifier.Should().Be("org/repo#1");
+        result.Items[1].IssueIdentifier.Should().Be("org/repo#2");
+        result.Items[2].IssueIdentifier.Should().Be("org/repo#3");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryPaged_ReturnsSecondPage_WithCorrectSkip()
+    {
+        // Arrange: seed 5 runs
+        for (var i = 0; i < 5; i++)
+        {
+            var run = CreateCompletedRun(
+                Guid.NewGuid().ToString(),
+                $"org/repo#{i + 1}",
+                $"Run {i + 1}",
+                startedAt: DateTimeOffset.UtcNow.AddMinutes(-i));
+            await _sut.AddRunToHistoryAsync(run);
+        }
+
+        // Act: request page 2, pageSize 3
+        var result = await _sut.GetRunHistoryAsync(page: 2, pageSize: 3);
+
+        // Assert: skips first 3, returns remaining 2
+        result.Page.Should().Be(2);
+        result.PageSize.Should().Be(3);
+        result.Items.Should().HaveCount(2);
+        result.HasMore.Should().BeFalse();
+        result.Items[0].IssueIdentifier.Should().Be("org/repo#4");
+        result.Items[1].IssueIdentifier.Should().Be("org/repo#5");
+    }
+
+    [Fact]
+    public async Task GetRunHistoryPaged_HasMoreFalse_WhenExactlyPageSizeItems()
+    {
+        // Arrange: seed exactly 3 runs
+        for (var i = 0; i < 3; i++)
+        {
+            var run = CreateCompletedRun(
+                Guid.NewGuid().ToString(),
+                $"org/repo#{i + 1}",
+                $"Run {i + 1}",
+                startedAt: DateTimeOffset.UtcNow.AddMinutes(-i));
+            await _sut.AddRunToHistoryAsync(run);
+        }
+
+        // Act: request page 1, pageSize 3
+        var result = await _sut.GetRunHistoryAsync(page: 1, pageSize: 3);
+
+        // Assert: exactly pageSize items, no more beyond
+        result.Items.Should().HaveCount(3);
+        result.HasMore.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetRunHistoryPaged_EmptyPage_WhenBeyondData()
+    {
+        // Arrange: seed 2 runs
+        for (var i = 0; i < 2; i++)
+        {
+            var run = CreateCompletedRun(
+                Guid.NewGuid().ToString(),
+                $"org/repo#{i + 1}",
+                $"Run {i + 1}",
+                startedAt: DateTimeOffset.UtcNow.AddMinutes(-i));
+            await _sut.AddRunToHistoryAsync(run);
+        }
+
+        // Act: request page 2 (beyond data with pageSize=3)
+        var result = await _sut.GetRunHistoryAsync(page: 2, pageSize: 3);
+
+        // Assert: no items, no more
+        result.Items.Should().BeEmpty();
+        result.HasMore.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task GetRunHistoryPaged_FiltersConsolidationRuns_MaintainsCorrectPageSize()
+    {
+        // Arrange: seed 4 normal runs + 2 consolidation ghost entries in between
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            for (var i = 0; i < 6; i++)
+            {
+                var isConsolidation = (i == 2 || i == 4); // Ghost entries at positions 2 and 4
+                var summary = new PipelineRunSummary
+                {
+                    RunId = Guid.NewGuid().ToString(),
+                    IssueIdentifier = isConsolidation ? $"consolidation-{i}" : $"org/repo#{i}",
+                    IssueTitle = isConsolidation ? "Consolidation" : $"Run {i}",
+                    FinalStep = PipelineStep.Completed,
+                    StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-i),
+                    InitiatedBy = isConsolidation ? ConsolidationConstants.InitiatedBy : "manual"
+                };
+                db.PipelineRuns.Add(new PipelineRunEntity
+                {
+                    RunId = Guid.Parse(summary.RunId),
+                    IssueIdentifier = summary.IssueIdentifier,
+                    IssueTitle = summary.IssueTitle,
+                    FinalStep = summary.FinalStep,
+                    StartedAt = summary.StartedAtOffset,
+                    SummaryJson = System.Text.Json.JsonSerializer.Serialize(summary, PipelineJsonOptions.Default)
+                });
+            }
+            db.SaveChanges();
+        }
+
+        // Act: request page 1, pageSize 3 — should get 3 valid items despite consolidation rows
+        var result = await _sut.GetRunHistoryAsync(page: 1, pageSize: 3);
+
+        // Assert: 3 non-consolidation items returned, HasMore true (4th valid item exists)
+        result.Items.Should().HaveCount(3);
+        result.HasMore.Should().BeTrue();
+        result.Items.Should().NotContain(s => s.InitiatedBy == ConsolidationConstants.InitiatedBy);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static PipelineRun CreateCompletedRun(

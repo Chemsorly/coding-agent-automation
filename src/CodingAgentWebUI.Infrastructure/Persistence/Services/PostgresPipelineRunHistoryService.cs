@@ -22,6 +22,9 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     /// <summary>Maximum number of run summaries returned by <see cref="GetRunHistoryAsync"/>.</summary>
     internal const int MaxHistorySize = 1000;
 
+    /// <summary>Default page size for paginated queries.</summary>
+    internal const int DefaultPageSize = 50;
+
     private static readonly JsonSerializerOptions JsonOptions = PipelineJsonOptions.Default;
 
     public PostgresPipelineRunHistoryService(
@@ -72,6 +75,19 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
     public async Task<IReadOnlyList<PipelineRunSummary>> GetRunHistoryAsync(CancellationToken ct = default)
     {
         return await GetRunHistoryInternalAsync(ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<PagedResult<PipelineRunSummary>> GetRunHistoryAsync(int page, int pageSize, CancellationToken ct = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
+        // TODO: Add upper bound for 'page' parameter to prevent integer overflow in (page - 1) * pageSize.
+        // With page=2_147_485 and pageSize=1000, unchecked multiplication wraps negative. Consider:
+        // ArgumentOutOfRangeException.ThrowIfGreaterThan(page, MaxHistorySize / pageSize + 1);
+
+        return await GetRunHistoryPagedInternalAsync(page, pageSize, ct).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -166,6 +182,58 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             .Select(DeserializeSummary)
             .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
             .ToList()!;
+    }
+
+    private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedInternalAsync(int page, int pageSize, CancellationToken ct)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync(ct).ConfigureAwait(false);
+
+        // We need pageSize + 1 valid (non-consolidation) items to determine HasMore.
+        // Because consolidation ghost entries may exist in the table (defense-in-depth filter),
+        // we over-fetch and loop until we have enough valid items or exhaust the table.
+        var skip = checked((page - 1) * pageSize);
+        const int batchMultiplier = 2; // Over-fetch factor to reduce round-trips
+        var items = new List<PipelineRunSummary>();
+        var dbOffset = skip;
+        var hasMore = false;
+
+        while (items.Count < pageSize + 1)
+        {
+            var batchSize = (pageSize + 1 - items.Count) * batchMultiplier;
+            var entities = await db.PipelineRuns
+                .AsNoTracking()
+                .OrderByDescending(r => r.StartedAt)
+                .Skip(dbOffset)
+                .Take(batchSize)
+                .ToListAsync(ct).ConfigureAwait(false);
+
+            if (entities.Count == 0)
+                break; // No more rows in the table
+
+            var batch = entities
+                .Select(DeserializeSummary)
+                .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+                .ToList();
+
+            items.AddRange(batch!);
+            dbOffset += entities.Count;
+
+            // If we fetched fewer rows than requested, we've exhausted the table
+            if (entities.Count < batchSize)
+                break;
+        }
+
+        hasMore = items.Count > pageSize;
+        if (hasMore)
+            items = items.Take(pageSize).ToList();
+
+        return new PagedResult<PipelineRunSummary>
+        {
+            Items = items!,
+            Page = page,
+            PageSize = pageSize,
+            HasMore = hasMore
+        };
     }
 
     private async Task AddRunToHistoryInternalAsync(PipelineRunSummary summary, CancellationToken ct)
