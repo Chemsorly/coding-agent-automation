@@ -31,7 +31,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
     private readonly IAgentConnectionManager _connectionManager;
     private readonly IWorkItemExecutor _workItemExecutor;
     private readonly IJobCompletionReporter _completionReporter;
-    private readonly AgentIdentity _agentIdentity;
+    private readonly AgentId _agentId;
     private readonly IHostApplicationLifetime _lifetime;
     private readonly IServiceProvider? _serviceProvider;
     private readonly Serilog.ILogger _logger;
@@ -45,7 +45,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         IAgentConnectionManager connectionManager,
         IWorkItemExecutor workItemExecutor,
         IJobCompletionReporter completionReporter,
-        AgentIdentity agentIdentity,
+        AgentId agentId,
         IHostApplicationLifetime lifetime,
         Serilog.ILogger logger,
         // TODO: Consider making serviceProvider required (non-nullable) — it's always available in DI factory
@@ -57,7 +57,6 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         ArgumentNullException.ThrowIfNull(connectionManager);
         ArgumentNullException.ThrowIfNull(workItemExecutor);
         ArgumentNullException.ThrowIfNull(completionReporter);
-        ArgumentNullException.ThrowIfNull(agentIdentity);
         ArgumentNullException.ThrowIfNull(lifetime);
         ArgumentNullException.ThrowIfNull(logger);
 
@@ -65,7 +64,8 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         _workItemClient = workItemClient;
         _workItemExecutor = workItemExecutor;
         _completionReporter = completionReporter;
-        _agentIdentity = agentIdentity;
+        // TODO: Validate agentId.Value is not null/empty — default(AgentId) would propagate null.
+        _agentId = agentId;
         _lifetime = lifetime;
         _serviceProvider = serviceProvider;
         _logger = logger;
@@ -94,7 +94,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("WorkItemAgent.Execute");
         activity?.SetTag("work_item_id", _workItemId);
-        activity?.SetTag("agent_id", _agentIdentity.Id);
+        activity?.SetTag("agent_id", _agentId.Value);
 
         int exitCode = 1;
         try
@@ -175,7 +175,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         var runningUpdate = new WorkItemStatusUpdate
         {
             Status = "Running",
-            AgentId = _agentIdentity.Id
+            AgentId = _agentId.Value
         };
         var accepted = await _workItemClient.PostStatusAsync(_workItemId, runningUpdate, ct);
         if (!accepted)
@@ -193,7 +193,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
 
         var registration = new AgentRegistrationMessage
         {
-            AgentId = _agentIdentity.Id,
+            AgentId = _agentId.Value,
             Hostname = Environment.MachineName,
             Labels = labels,
             ActiveJob = ActiveJobStateFactory.Create(
@@ -204,7 +204,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         {
             await _connectionManager.ConnectAndRegisterAsync(registration, ct);
             _logger.Information("Registered agent {AgentId} with orchestrator hub (ActiveJob={WorkItemId})",
-                _agentIdentity.Id, _workItemId);
+                _agentId.Value, _workItemId);
         }
         catch (Exception ex) when (!ct.IsCancellationRequested)
         {
@@ -283,7 +283,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
             var cancelUpdate = new WorkItemStatusUpdate
             {
                 Status = "Cancelled",
-                AgentId = _agentIdentity.Id,
+                AgentId = _agentId.Value,
                 ErrorMessage = "Agent received SIGTERM"
             };
             await _workItemClient.PostStatusAsync(_workItemId, cancelUpdate, CancellationToken.None);
@@ -303,7 +303,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
             var failUpdate = new WorkItemStatusUpdate
             {
                 Status = "Failed",
-                AgentId = _agentIdentity.Id,
+                AgentId = _agentId.Value,
                 ErrorMessage = errorMessage,
                 FailureReason = "AgentError"
             };

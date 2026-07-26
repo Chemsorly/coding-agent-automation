@@ -44,12 +44,12 @@ internal static class TestAgentWorkerServiceFactory
         // that records invocations so tests can assert signalReady was called.
         var lifecycle = new AgentConnectionLifecycle(
             hm, hmFactory, signalRReporter, slotManager,
-            new AgentIdentity("test-agent"),
+            new AgentId("test-agent"),
             lifetime, mockLogger);
 
         var service = new AgentWorkerService(
             lifecycle, slotManager,
-            new AgentIdentity("test-agent"),
+            new AgentId("test-agent"),
             CreateMockExecutor(mockOrchestrator),
             CreateMockConsolidationExecutor(mockOrchestrator),
             reporter,
@@ -95,7 +95,7 @@ internal static class TestAgentWorkerServiceFactory
             new PipelineConfiguration(),
             mockQualityGateValidator.Object,
             mockLogger.Object,
-            agentIdentity: new AgentIdentity("test-agent"));
+            agentIdentity: new AgentId("test-agent"));
     }
 
     private static LocalConsolidationExecutor CreateMockConsolidationExecutor(KiroCliLib.Core.IKiroCliOrchestrator orchestrator)
