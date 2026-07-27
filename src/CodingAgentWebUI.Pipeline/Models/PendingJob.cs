@@ -59,6 +59,16 @@ public sealed record PendingJob
     public bool AutoDispatch { get; init; }
 
     /// <summary>
+    /// Number of failed dispatch attempts for this pending job.
+    /// Persists across drain cycles because ReEnqueue preserves the same object reference.
+    /// Used to enforce a max-retry limit for consolidation jobs.
+    /// NOTE: Mutable (not init-only) because the value is incremented across drain cycles
+    /// on the same object reference. External mutation is not expected — RetryCount is only
+    /// written by JobQueueDrainService in the Orchestration assembly.
+    /// </summary>
+    public int RetryCount { get; set; }
+
+    /// <summary>
     /// Whether this pending job is a consolidation job.
     /// Uses TaskType as the primary discriminator (stored on the WorkItem row, always reliable),
     /// with ConsolidationRunType.HasValue as a secondary indicator for legacy in-memory mode.

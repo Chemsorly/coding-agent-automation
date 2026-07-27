@@ -231,6 +231,10 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     else
                     {
                         // Dispatch failed — revert to Pending for next cycle
+                        // TODO: Add retry limit for consolidation dispatch failures in DB mode.
+                        // This path has the same unlimited retry pattern as JobQueueDrainService (fixed in #1691).
+                        // The DB-mode fix is structurally different (WorkItemEntity.RetryCount vs PendingJob.RetryCount)
+                        // and requires TransitionAsync to Failed instead of Pending when limit is exhausted.
                         _agentResolver.ReleaseAgent(agentId);
                         // Note: this path still uses `ct` — the outer catch handler provides the safety net
                         // by retrying with CancellationToken.None if this revert fails during shutdown.

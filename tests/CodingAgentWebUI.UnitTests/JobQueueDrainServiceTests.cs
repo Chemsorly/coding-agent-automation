@@ -23,6 +23,7 @@ public class JobQueueDrainServiceTests
     private readonly Mock<IJobDispatcher> _mockJobDispatcher;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService;
+    private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore;
     private readonly JobQueueDrainService _service;
 
     public JobQueueDrainServiceTests()
@@ -39,8 +40,19 @@ public class JobQueueDrainServiceTests
             .Setup(c => c.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
         _mockConsolidationDispatchService = new Mock<IConsolidationDispatchService>();
+        _mockConsolidationRunStore = new Mock<IConsolidationRunStore>();
+        _mockConsolidationRunStore
+            .Setup(s => s.GetByIdAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string runId, CancellationToken _) => new ConsolidationRun
+            {
+                RunId = runId,
+                Status = ConsolidationRunStatus.Queued,
+                Type = ConsolidationRunType.BrainConsolidation,
+                StartedAtUtc = DateTime.UtcNow
+            });
         _service = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object,
-            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger);
+            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger,
+            _mockConsolidationRunStore.Object);
     }
 
     private AgentEntry RegisterIdleAgent(string agentId = "agent-1", IReadOnlyList<string>? labels = null)
@@ -61,6 +73,18 @@ public class JobQueueDrainServiceTests
         EnqueuedAt = DateTimeOffset.UtcNow,
         InitiatedBy = "test",
         RequiredLabels = labels ?? Array.Empty<string>()
+    };
+
+    private PendingJob CreateConsolidationJob(string runId = "crun-1", ConsolidationRunType? type = null) => new()
+    {
+        IssueIdentifier = runId,
+        IssueProviderId = "consolidation",
+        RepoProviderId = "",
+        InitiatedBy = "consolidation",
+        EnqueuedAt = DateTimeOffset.UtcNow,
+        RequiredLabels = Array.Empty<string>(),
+        ConsolidationRunType = type ?? ConsolidationRunType.BrainConsolidation,
+        ConsolidationWorkspacePath = "/tmp/ws"
     };
 
     [Fact]
@@ -454,7 +478,7 @@ public class JobQueueDrainServiceTests
 
         await _service.DrainAsync(CancellationToken.None);
 
-        // Job should be re-enqueued
+        // Job should be re-enqueued (RetryCount=1 < MaxConsolidationRetries=5)
         _dispatcher.QueueLength.Should().Be(1);
     }
 
@@ -515,8 +539,230 @@ public class JobQueueDrainServiceTests
 
         await _service.DrainAsync(CancellationToken.None);
 
-        // Job should be re-enqueued (exception handled)
+        // Job should be re-enqueued (RetryCount=1 < MaxConsolidationRetries=5)
         _dispatcher.QueueLength.Should().Be(1);
+    }
+
+    #endregion
+
+    #region Consolidation retry limit (#1691)
+
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_FailsLessThanMaxRetries_ReEnqueuesEachTime()
+    {
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(CreateConsolidationJob("crun-retry"));
+
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        // Drain 4 times — each should re-enqueue (4 < MaxConsolidationRetries=5)
+        for (var i = 0; i < 4; i++)
+        {
+            await _service.DrainAsync(CancellationToken.None);
+            _dispatcher.QueueLength.Should().Be(1, $"job should still be in queue after attempt {i + 1}");
+        }
+
+        // Verify RetryCount was incremented on each attempt
+        var queuedJobs = _dispatcher.GetQueuedJobs();
+        queuedJobs.Should().HaveCount(1);
+        queuedJobs[0].RetryCount.Should().Be(4);
+
+        // Verify SaveRunAsync was never called (never exceeded limit)
+        _mockConsolidationRunStore.Verify(
+            s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_FailsMaxRetries_TransitionsToFailed()
+    {
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(CreateConsolidationJob("crun-exhaust"));
+
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        // Drain 5 times — on the 5th, should transition to Failed instead of re-enqueueing
+        for (var i = 0; i < JobQueueDrainService.MaxConsolidationRetries; i++)
+        {
+            await _service.DrainAsync(CancellationToken.None);
+        }
+
+        // Queue should be empty (job NOT re-enqueued)
+        _dispatcher.QueueLength.Should().Be(0);
+
+        // SaveRunAsync should have been called with a Failed run
+        _mockConsolidationRunStore.Verify(
+            s => s.SaveRunAsync(
+                It.Is<ConsolidationRun>(r =>
+                    r.RunId == "crun-exhaust" &&
+                    r.Status == ConsolidationRunStatus.Failed &&
+                    r.Summary != null &&
+                    r.Summary.Contains("Max dispatch retries exhausted")),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_DispatchThrowsAndExceedsMaxRetries_TransitionsToFailed()
+    {
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(CreateConsolidationJob("crun-throw-exhaust"));
+
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Agent error"));
+
+        // Drain 5 times — on the 5th exception, should transition to Failed
+        for (var i = 0; i < JobQueueDrainService.MaxConsolidationRetries; i++)
+        {
+            await _service.DrainAsync(CancellationToken.None);
+        }
+
+        // Queue should be empty
+        _dispatcher.QueueLength.Should().Be(0);
+
+        // SaveRunAsync should have been called with a Failed run
+        _mockConsolidationRunStore.Verify(
+            s => s.SaveRunAsync(
+                It.Is<ConsolidationRun>(r =>
+                    r.RunId == "crun-throw-exhaust" &&
+                    r.Status == ConsolidationRunStatus.Failed &&
+                    r.Summary != null &&
+                    r.Summary.Contains("Max dispatch retries exhausted")),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DrainAsync_NonConsolidationJob_DispatchFails_StillReEnqueuesAfterManyFailures()
+    {
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(CreateJob("issue-no-limit"));
+
+        _mockJobDispatcher
+            .Setup(d => d.DispatchToAgentDirectAsync(It.IsAny<AgentEntry>(), It.IsAny<PendingJob>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        // Drain 10 times (more than MaxConsolidationRetries=5) — non-consolidation jobs should still re-enqueue
+        for (var i = 0; i < 10; i++)
+        {
+            await _service.DrainAsync(CancellationToken.None);
+            _dispatcher.QueueLength.Should().Be(1, $"non-consolidation job should still be in queue after attempt {i + 1}");
+        }
+
+        // SaveRunAsync should never be called (retry limit only applies to consolidation jobs)
+        _mockConsolidationRunStore.Verify(
+            s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task DrainAsync_NonConsolidationJob_DispatchThrows_StillReEnqueuedAfterManyFailures()
+    {
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(CreateJob("issue-throw-no-limit"));
+
+        _mockJobDispatcher
+            .Setup(d => d.DispatchToAgentDirectAsync(It.IsAny<AgentEntry>(), It.IsAny<PendingJob>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Provider error"));
+
+        // Drain 10 times — non-consolidation jobs should still re-enqueue on exception
+        for (var i = 0; i < 10; i++)
+        {
+            await _service.DrainAsync(CancellationToken.None);
+            _dispatcher.QueueLength.Should().Be(1, $"non-consolidation job should still be in queue after exception attempt {i + 1}");
+        }
+
+        // SaveRunAsync should never be called
+        _mockConsolidationRunStore.Verify(
+            s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_RetryCountPersistsAcrossDrainCycles()
+    {
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(CreateConsolidationJob("crun-persist"));
+
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        await _service.DrainAsync(CancellationToken.None);
+        await _service.DrainAsync(CancellationToken.None);
+
+        // After 2 drains, the job in the queue should have RetryCount==2
+        var queuedJobs = _dispatcher.GetQueuedJobs();
+        queuedJobs.Should().HaveCount(1);
+        queuedJobs[0].RetryCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_FailsMaxRetries_WhenRunStoreIsNull_StillStopsReenqueuing()
+    {
+        var logger = new Mock<ILogger>().Object;
+        var serviceWithoutStore = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object,
+            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger,
+            consolidationRunStore: null);
+
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(CreateConsolidationJob("crun-nullstore"));
+
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        for (var i = 0; i < JobQueueDrainService.MaxConsolidationRetries; i++)
+        {
+            await serviceWithoutStore.DrainAsync(CancellationToken.None);
+        }
+
+        // Queue should be empty (dedup released even without store)
+        _dispatcher.QueueLength.Should().Be(0);
+
+        // Dedup entry should be released
+        _dispatcher.IsIssueQueued("crun-nullstore").Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_FailsMaxRetries_WhenRunAlreadyFailed_StillReleasesDedup()
+    {
+        // Setup: mock returns a run already in Failed status — FailConsolidationAsync should
+        // skip the store write but the dedup is still released (MarkIssueComplete called first).
+        _mockConsolidationRunStore
+            .Setup(s => s.GetByIdAsync("crun-already-failed", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ConsolidationRun
+            {
+                RunId = "crun-already-failed",
+                Status = ConsolidationRunStatus.Failed,
+                Type = ConsolidationRunType.BrainConsolidation,
+                StartedAtUtc = DateTime.UtcNow
+            });
+
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(CreateConsolidationJob("crun-already-failed"));
+
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        for (var i = 0; i < JobQueueDrainService.MaxConsolidationRetries; i++)
+        {
+            await _service.DrainAsync(CancellationToken.None);
+        }
+
+        // Queue should be empty (dedup released)
+        _dispatcher.QueueLength.Should().Be(0);
+
+        // SaveRunAsync should NOT be called (run already in terminal state)
+        _mockConsolidationRunStore.Verify(
+            s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     #endregion
