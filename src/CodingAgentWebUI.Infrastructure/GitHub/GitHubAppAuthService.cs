@@ -121,8 +121,14 @@ public sealed class GitHubAppAuthService
         // Fast path: return cached token if still valid with buffer
         if (_cachedToken is not null && _timeProvider.GetUtcNow() < _tokenExpiresAt - _renewalBuffer)
         {
+            _logger.Debug(
+                "GitHub App token cache hit (expires {ExpiresAt}, remaining {RemainingMin:F1} min)",
+                _tokenExpiresAt, (_tokenExpiresAt - _timeProvider.GetUtcNow()).TotalMinutes);
             return _cachedToken;
         }
+
+        var reason = _cachedToken is null ? "no cached token" : $"token near expiry (expires {_tokenExpiresAt:O})";
+        _logger.Debug("GitHub App token refresh triggered: {Reason}", reason);
 
         await _semaphore.WaitAsync(ct);
         try
@@ -130,6 +136,7 @@ public sealed class GitHubAppAuthService
             // Double-check after acquiring semaphore — another thread may have refreshed
             if (_cachedToken is not null && _timeProvider.GetUtcNow() < _tokenExpiresAt - _renewalBuffer)
             {
+                _logger.Debug("GitHub App token refreshed by another thread while waiting for semaphore");
                 return _cachedToken;
             }
 
@@ -145,8 +152,8 @@ public sealed class GitHubAppAuthService
                 _tokenExpiresAt = response.ExpiresAt;
 
                 _logger.Information(
-                    "GitHub App installation token acquired, expires at {ExpiresAt}",
-                    _tokenExpiresAt);
+                    "GitHub App installation token acquired, expires at {ExpiresAt} (lifetime {LifetimeMin:F0} min)",
+                    _tokenExpiresAt, (_tokenExpiresAt - _timeProvider.GetUtcNow()).TotalMinutes);
 
                 return _cachedToken;
             }
@@ -157,8 +164,8 @@ public sealed class GitHubAppAuthService
                 {
                     _logger.Warning(
                         ex,
-                        "Failed to renew GitHub App token, using cached token (expires {ExpiresAt})",
-                        _tokenExpiresAt);
+                        "Failed to renew GitHub App token, using cached token (expires {ExpiresAt}, remaining {RemainingMin:F1} min)",
+                        _tokenExpiresAt, (_tokenExpiresAt - _timeProvider.GetUtcNow()).TotalMinutes);
                     return _cachedToken;
                 }
 
