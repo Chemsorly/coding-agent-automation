@@ -28,6 +28,10 @@ internal static class ConsolidationRehydrationExtensions
         var consolidationService = app.Services.GetRequiredService<IConsolidationService>();
         await consolidationService.CleanupOrphanedRunsAsync(CancellationToken.None);
 
+        // Load live config from the store (the startup singleton may be stale in DB mode)
+        var configStore = app.Services.GetRequiredService<IPipelineConfigStore>();
+        var liveConfig = await configStore.LoadPipelineConfigAsync(CancellationToken.None);
+
         // Rehydrate queued consolidation runs via IWorkDistributor (unified dispatch path)
         var queuedRuns = await consolidationService.RehydrateQueuedRunsAsync(CancellationToken.None);
         if (queuedRuns.Count > 0)
@@ -52,7 +56,7 @@ internal static class ConsolidationRehydrationExtensions
                     InitiatedBy = ConsolidationConstants.InitiatedBy,
                     TaskType = WorkItemTaskType.Consolidation,
                     AgentSelector = string.Join(",", selectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
-                    TimeoutSeconds = (int)pipelineConfig.AgentTimeout.TotalSeconds,
+                    TimeoutSeconds = (int)liveConfig.AgentTimeout.TotalSeconds,
                     ConsolidationRunType = run.Type,
                     ConsolidationTemplateId = run.TemplateId,
                     ConsolidationWorkspacePath = workspaceManager.GetWorkspacePath(run.RunId),

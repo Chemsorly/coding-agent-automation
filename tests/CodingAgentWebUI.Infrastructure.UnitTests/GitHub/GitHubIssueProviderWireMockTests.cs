@@ -270,10 +270,10 @@ public class GitHubIssueProviderWireMockTests : WireMockTestBase
             .ToList();
 #pragma warning restore CS8602
 
-        // Token is cached: both requests use the first token (no redundant refresh)
+        // Each request delegates to the token provider (no local caching — upstream GitHubAppAuthService caches)
         authHeaders.Should().HaveCount(2);
         authHeaders[0].Should().Contain("token-first");
-        authHeaders[1].Should().Contain("token-first");
-        callCount.Should().Be(1, "token provider should only be called once due to caching");
+        authHeaders[1].Should().Contain("token-second");
+        callCount.Should().Be(2, "token provider is called per request (caching is upstream)");
     }
 }

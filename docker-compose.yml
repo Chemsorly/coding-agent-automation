@@ -19,7 +19,7 @@ x-agent-common: &agent-common
     interval: 10s
     timeout: 5s
     retries: 3
-    start_period: 30s
+    start_period: 120s
   depends_on:
     orchestrator:
       condition: service_healthy
@@ -66,7 +66,7 @@ services:
     networks:
       - coding-agent-net
 
-  agent-dotnet-1:
+  agent-kiro-dotnet-1:
     <<: *agent-common
     build:
       context: .
@@ -75,12 +75,12 @@ services:
       - ./config/kiro-cli-data-1:/home/ubuntu/.local/share/kiro-cli
     environment:
       <<: *agent-env
-      AGENT_ID: agent-1
+      AGENT_ID: agent-kiro-dotnet-1
       AGENT_LABELS: kiro,dotnet,dotnet10
       OTEL_SERVICE_NAME: coding-agent-worker-dotnet-1
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-1
 
-  agent-dotnet-2:
+  agent-kiro-dotnet-2:
     <<: *agent-common
     build:
       context: .
@@ -89,12 +89,12 @@ services:
       - ./config/kiro-cli-data-2:/home/ubuntu/.local/share/kiro-cli
     environment:
       <<: *agent-env
-      AGENT_ID: agent-2
+      AGENT_ID: agent-kiro-dotnet-2
       AGENT_LABELS: kiro,dotnet,dotnet10
       OTEL_SERVICE_NAME: coding-agent-worker-dotnet-2
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-2
 
-  agent-python:
+  agent-kiro-python:
     <<: *agent-common
     build:
       context: .
@@ -103,12 +103,12 @@ services:
       - ./config/kiro-cli-data-3:/home/ubuntu/.local/share/kiro-cli
     environment:
       <<: *agent-env
-      AGENT_ID: agent-python
+      AGENT_ID: agent-kiro-python
       AGENT_LABELS: kiro,python,python312
       OTEL_SERVICE_NAME: coding-agent-worker-python
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-python
 
-  agent-java:
+  agent-kiro-java:
     <<: *agent-common
     build:
       context: .
@@ -117,7 +117,7 @@ services:
       - ./config/kiro-cli-data-4:/home/ubuntu/.local/share/kiro-cli
     environment:
       <<: *agent-env
-      AGENT_ID: agent-java
+      AGENT_ID: agent-kiro-java
       AGENT_LABELS: kiro,java,java21
       OTEL_SERVICE_NAME: coding-agent-worker-java
       OTEL_RESOURCE_ATTRIBUTES: deployment.environment=${DEPLOYMENT_ENVIRONMENT:-production},service.namespace=coding-agent-automation,service.instance.id=agent-java
