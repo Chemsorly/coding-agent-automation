@@ -62,23 +62,37 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
 
         // Resolve the correct provider config based on the requested kind.
         // Brain repos need their own scoped token (different repository scope).
-        ProviderConfig? targetConfig = null;
+        // Brain config lookup uses ProviderKind.Repository as storage kind — brain provider configs
+        // are stored as Repository kind with RepositoryRole.Brain.
+        ProviderConfig? targetConfig;
 
-        if (providerKind == ProviderKind.Brain && !string.IsNullOrEmpty(brainProviderConfigId))
+        if (providerKind == ProviderKind.Brain)
         {
+            if (string.IsNullOrEmpty(brainProviderConfigId))
+            {
+                _logger.Warning("Brain token refresh for job {JobId}: brainProviderConfigId is null/empty " +
+                    "(run in memory: {RunFound}). Brain sync will be disabled.",
+                    jobId, run is not null);
+                throw new HubException($"Brain provider config ID not available for job {jobId}. " +
+                    "Brain sync cannot be performed.");
+            }
+
             targetConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId, ProviderKind.Repository, ct);
+            if (targetConfig is null)
+            {
+                _logger.Warning("Brain token refresh for job {JobId}: config {BrainConfigId} not found in store",
+                    jobId, brainProviderConfigId);
+                throw new HubException($"Brain provider config '{brainProviderConfigId}' not found for job {jobId}");
+            }
         }
-
-        if (targetConfig is null)
+        else
         {
-            // Default: use the work repo config (covers Repository kind and fallback)
             targetConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId!, ProviderKind.Repository, ct);
-        }
-
-        if (targetConfig is null)
-        {
-            _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);
-            throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
+            if (targetConfig is null)
+            {
+                _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);
+                throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
+            }
         }
 
         // GitHub App auth: generate a short-lived scoped token via JWT exchange

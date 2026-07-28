@@ -259,7 +259,7 @@ public sealed class AgentTokenRefreshServiceTests
     }
 
     [Fact]
-    public async Task RefreshToken_BrainKind_NoBrainConfig_FallsBackToRepoConfig()
+    public async Task RefreshToken_BrainKind_NullBrainProviderConfigId_ThrowsHubException()
     {
         var repoConfig = new ProviderConfig
         {
@@ -279,21 +279,23 @@ public sealed class AgentTokenRefreshServiceTests
             IssueTitle = "Test",
             IssueProviderConfigId = "issue-1",
             RepoProviderConfigId = "repo-1",
-            BrainProviderConfigId = null // No brain
+            BrainProviderConfigId = null // No brain configured
         };
 
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
         _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfig);
 
-        _mockTokenVending.Setup(t => t.GenerateAgentTokenAsync(repoConfig, It.IsAny<CancellationToken>(), false))
-            .ReturnsAsync(("repo-token", DateTimeOffset.UtcNow.AddHours(1)));
-
         var service = CreateService();
 
-        var result = await service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
+        var act = () => service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
 
-        result.Token.Should().Be("repo-token");
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*Brain provider config ID not available*");
+        // Verify fallback was NOT attempted — the exception is thrown before the fallback
+        _mockFacade.Verify(
+            f => f.GetProviderConfigByIdAsync("repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()),
+            Times.Never);
     }
 
     #endregion
@@ -331,6 +333,7 @@ public sealed class AgentTokenRefreshServiceTests
     }
 
     // TODO: Add negative test for K8s mode when repoProviderConfigId is empty — the guard at AgentTokenRefreshService.cs:56 throws HubException but no test covers this path (e.g., GetWorkItemProviderConfigIdsAsync returns ("", "brain-id"))
+    // TODO: Add K8s-mode brain token refresh failure tests — when GetRun returns null and GetWorkItemProviderConfigIdsAsync returns null brainProviderConfigId with ProviderKind.Brain, the service should throw HubException (covered by SignalR-mode test but not K8s path at line 43-61)
 
     #endregion
 }

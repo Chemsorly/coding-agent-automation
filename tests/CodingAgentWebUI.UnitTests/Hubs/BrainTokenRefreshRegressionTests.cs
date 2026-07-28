@@ -3,6 +3,7 @@ using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
+using Microsoft.AspNetCore.SignalR;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -167,8 +168,8 @@ public class BrainTokenRefreshRegressionTests
     }
 
     /// <summary>
-    /// Regression: If brain config is not found (e.g., removed after run started),
-    /// falls back to work repo config gracefully.
+    /// Regression: If brain config is not found in store (e.g., removed after run started),
+    /// throws HubException instead of silently falling back to work config (misscoped token).
     /// </summary>
     [Fact]
     public async Task RefreshToken_BrainKind_BrainConfigMissing_FallsBackToWorkConfig()
@@ -206,26 +207,17 @@ public class BrainTokenRefreshRegressionTests
             .ReturnsAsync(workConfig);
         // brain-repo-missing returns null (default Moq behavior)
 
-        ProviderConfig? capturedConfig = null;
-        _mockTokenVending
-            .Setup(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<ProviderConfig, CancellationToken, bool>((config, _, _) => capturedConfig = config)
-            .ReturnsAsync(("ghs_fallback_token", DateTimeOffset.UtcNow.AddHours(1)));
-
         var service = CreateService();
 
-        // Act: Should not throw, falls back to work config
-        var response = await service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
-
-        // Assert: Fell back to work config
-        capturedConfig.Should().NotBeNull();
-        capturedConfig!.Id.Should().Be("work-repo-1");
-        response.Token.Should().Be("ghs_fallback_token");
+        // Act & Assert: Throws HubException, does not silently fall back
+        var act = () => service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*not found for job*");
     }
 
     /// <summary>
-    /// Regression: If no BrainProviderConfigId is set on the run, Brain kind falls back
-    /// to work config (brain sync was never configured for this run).
+    /// Regression: If no BrainProviderConfigId is set on the run, Brain kind throws HubException
+    /// instead of silently falling back to work config (misscoped token).
     /// </summary>
     [Fact]
     public async Task RefreshToken_BrainKind_NoBrainConfigId_FallsBackToWorkConfig()
@@ -260,19 +252,11 @@ public class BrainTokenRefreshRegressionTests
         _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("work-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(workConfig);
 
-        ProviderConfig? capturedConfig = null;
-        _mockTokenVending
-            .Setup(t => t.GenerateAgentTokenAsync(It.IsAny<ProviderConfig>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
-            .Callback<ProviderConfig, CancellationToken, bool>((config, _, _) => capturedConfig = config)
-            .ReturnsAsync(("ghs_work_token", DateTimeOffset.UtcNow.AddHours(1)));
-
         var service = CreateService();
 
-        // Act
-        var response = await service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
-
-        // Assert: Falls back to work config since no brain is configured
-        capturedConfig.Should().NotBeNull();
-        capturedConfig!.Id.Should().Be("work-repo-1");
+        // Act & Assert: Throws HubException, does not silently fall back
+        var act = () => service.RefreshTokenAsync("job-1", ProviderKind.Brain, CancellationToken.None);
+        await act.Should().ThrowAsync<HubException>()
+            .WithMessage("*Brain provider config ID not available*");
     }
 }
