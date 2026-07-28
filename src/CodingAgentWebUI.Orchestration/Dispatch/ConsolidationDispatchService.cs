@@ -84,8 +84,13 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         ArgumentNullException.ThrowIfNull(run);
         ArgumentNullException.ThrowIfNull(workspacePath);
 
+        // Load live config from the store at dispatch time. The startup singleton (_config) may be
+        // stale if settings were changed via the UI after the orchestrator started (the UI writes to
+        // the DB-backed store, but the singleton is loaded once from the JSON file at boot).
+        var liveConfig = await _configStore.LoadPipelineConfigAsync(ct);
+
         // Resolve required labels from the template's repo provider config (if template-scoped)
-        var requiredLabels = await ResolveRequiredLabelsAsync(templateId, ct);
+        var requiredLabels = await ResolveRequiredLabelsAsync(templateId, liveConfig, ct);
 
         // Resolve the agent profile to get the full MatchLabels (the template key).
         // Required labels are a subset used for agent selection; MatchLabels is the full set
@@ -108,7 +113,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
                 InitiatedBy = ConsolidationConstants.InitiatedBy,
                 TaskType = WorkItemTaskType.Consolidation,
                 AgentSelector = string.Join(",", agentSelectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
-                TimeoutSeconds = (int)_config.AgentTimeout.TotalSeconds,
+                TimeoutSeconds = (int)liveConfig.AgentTimeout.TotalSeconds,
                 ConsolidationRunType = type,
                 ConsolidationTemplateId = templateId,
                 ConsolidationWorkspacePath = workspacePath,
@@ -133,7 +138,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
 
         try
         {
-            await DispatchToAgentAsync(run, type, templateId, feedbackDataJson, workspacePath, agent, ct);
+            await DispatchToAgentAsync(run, type, templateId, feedbackDataJson, workspacePath, agent, liveConfig, ct);
             return ConsolidationDispatchResult.Dispatched;
         }
         catch (Exception ex)
@@ -200,7 +205,10 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
                 feedbackDataJson = await RegenerateFeedbackDataAsync(runId, ct);
             }
 
-            await DispatchToAgentAsync(run, type, templateId, feedbackDataJson, workspacePath, agent, ct);
+            // Load live config at dispatch time (same fix as TryDispatchAsync — avoids stale startup singleton)
+            var liveConfig = await _configStore.LoadPipelineConfigAsync(ct);
+
+            await DispatchToAgentAsync(run, type, templateId, feedbackDataJson, workspacePath, agent, liveConfig, ct);
 
             // Transition run from Queued → Running after successful dispatch
             // (previously done in the deleted DrainConsolidationJobsAsync)
@@ -243,6 +251,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         string? feedbackDataJson,
         string workspacePath,
         AgentEntry agent,
+        PipelineConfiguration liveConfig,
         CancellationToken ct)
     {
         // Delegate config resolution and token vending to shared preparer
@@ -259,7 +268,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
             TemplateId = templateId,
             TemplateName = run.TemplateName,
             ProviderConfigs = preparation.ProviderConfigs,
-            PipelineConfiguration = _config,
+            PipelineConfiguration = liveConfig,
             LastSuccessfulRunUtc = lastSuccessfulRunUtc?.UtcDateTime,
             FeedbackDataJson = feedbackDataJson,
             WorkspacePath = workspacePath,
@@ -367,17 +376,17 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     /// Resolves required agent labels for the given template.
     /// Uses project-based template lookup via IProjectStore.
     /// </summary>
-    internal async Task<IReadOnlyList<string>> ResolveRequiredLabelsAsync(string? templateId, CancellationToken ct)
+    internal async Task<IReadOnlyList<string>> ResolveRequiredLabelsAsync(string? templateId, PipelineConfiguration config, CancellationToken ct)
     {
         if (templateId is null)
-            return JobDeduplicationGuardService.ResolveRequiredLabels(null, _config);
+            return JobDeduplicationGuardService.ResolveRequiredLabels(null, config);
 
         var template = await ResolveTemplateAsync(templateId, ct);
         if (template is null)
-            return JobDeduplicationGuardService.ResolveRequiredLabels(null, _config);
+            return JobDeduplicationGuardService.ResolveRequiredLabels(null, config);
 
         var repoConfig = await _configStore.GetProviderConfigByIdAsync(template.RepoProviderId, ProviderKind.Repository, ct);
-        return JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, _config);
+        return JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, config);
     }
 
     /// <summary>
