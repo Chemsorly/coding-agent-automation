@@ -377,6 +377,53 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task Build_SetsModelNameFromAgentProvider()
+    {
+        SetupReporterFactory();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.Model).Returns("claude-sonnet-4-5");
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var builder = CreateBuilder();
+        var job = CreateTestJob();
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        result.Run.ModelName.Should().Be("claude-sonnet-4-5");
+        await result.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Build_SetsModelNameToNull_WhenAgentProviderModelIsNull()
+    {
+        SetupReporterFactory();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var builder = CreateBuilder();
+        var job = CreateTestJob();
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        result.Run.ModelName.Should().BeNull();
+        await result.DisposeAsync();
+    }
+
+    [Fact]
     public async Task Build_SuccessPath_DoesNotDisposeResources()
     {
         // Verify that on the success path, reporter and CTS remain undisposed
