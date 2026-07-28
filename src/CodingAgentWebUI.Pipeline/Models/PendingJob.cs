@@ -59,6 +59,24 @@ public sealed record PendingJob
     public bool AutoDispatch { get; init; }
 
     /// <summary>
+    /// Number of consecutive failed dispatch attempts.
+    /// Incremented by <c>JobQueueDrainService</c> when <c>TryDispatchToAgentAsync</c> fails for a
+    /// consolidation job. Persists across drain cycles because <c>ReEnqueue</c> puts the same
+    /// object reference back into the <c>ConcurrentQueue</c>. Defaults to 0.
+    /// Not applicable to non-consolidation jobs (implementation, review, decomposition).
+    /// </summary>
+    /// <remarks>
+    /// NOTE: This is a mutable property on a <c>sealed record</c>. It participates in
+    /// compiler-generated equality/hash-code, so two <c>PendingJob</c> instances representing
+    /// the same issue but with different <c>RetryCount</c> values will compare as unequal.
+    /// This is acceptable because <c>PendingJob</c> instances in the queue are compared by
+    /// reference identity only; the dedup dictionary uses composite string keys. Do NOT use
+    /// <c>with { }</c> copy-construction on queued <c>PendingJob</c> objects — the copy will
+    /// reset <c>RetryCount</c> to 0, discarding the accumulated retry count.
+    /// </remarks>
+    public int RetryCount { get; set; }
+
+    /// <summary>
     /// Whether this pending job is a consolidation job.
     /// Uses TaskType as the primary discriminator (stored on the WorkItem row, always reliable),
     /// with ConsolidationRunType.HasValue as a secondary indicator for legacy in-memory mode.

@@ -46,6 +46,13 @@ public sealed class JobQueueDrainService : BackgroundService
     /// </summary>
     internal static readonly TimeSpan DefaultDrainInterval = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// Maximum number of failed dispatch attempts for consolidation jobs before
+    /// transitioning to Failed status. Non-consolidation jobs (implementation, review,
+    /// decomposition) are not subject to this limit.
+    /// </summary>
+    internal const int MaxConsolidationRetries = 5;
+
     internal JobQueueDrainService(
         JobDeduplicationGuardService dispatcher,
         IAgentRegistryService registry,
@@ -230,12 +237,21 @@ public sealed class JobQueueDrainService : BackgroundService
                     }
                     else
                     {
-                        // TODO: Add retry limit for consolidation jobs (old DrainConsolidationJobsAsync had MaxRetryCount=5).
-                        // Without a limit, a persistently-failing job will be re-enqueued indefinitely. (#1084 follow-up)
+                        pendingJob.RetryCount++;
+                        if (pendingJob.RetryCount >= MaxConsolidationRetries)
+                        {
+                            _logger.Error(
+                                "Drain: consolidation job {RunId} failed dispatch {AttemptCount} times, marking as Failed",
+                                pendingJob.IssueIdentifier, pendingJob.RetryCount);
+await FailConsolidationAsync(pendingJob, CancellationToken.None);
+                    }
+                    else
+                    {
                         _logger.Warning(
-                            "Drain: failed to dispatch consolidation job {RunId}, re-enqueuing",
-                            pendingJob.IssueIdentifier);
-                        _dispatcher.ReEnqueue(pendingJob);
+                            "Drain: failed to dispatch consolidation job {RunId} (attempt {Attempt}/{Max}), re-enqueuing",
+                                pendingJob.IssueIdentifier, pendingJob.RetryCount, MaxConsolidationRetries);
+                            _dispatcher.ReEnqueue(pendingJob);
+                        }
                     }
                 }
                 else
@@ -266,14 +282,80 @@ public sealed class JobQueueDrainService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.Error(ex,
-                    "Drain: exception dispatching job for issue {IssueIdentifier} to agent {AgentId}, re-enqueuing",
-                    pendingJob.IssueIdentifier, agent.AgentId);
-                _dispatcher.ReEnqueue(pendingJob);
+                if (pendingJob.IsConsolidation)
+                {
+                    pendingJob.RetryCount++;
+                    if (pendingJob.RetryCount >= MaxConsolidationRetries)
+                    {
+                        _logger.Error(ex,
+                            "Drain: consolidation job {RunId} failed dispatch {AttemptCount} times (exception), marking as Failed",
+                            pendingJob.IssueIdentifier, pendingJob.RetryCount);
+                        await FailConsolidationAsync(pendingJob, CancellationToken.None);
+                    }
+                    else
+                    {
+                        _logger.Error(ex,
+                            "Drain: exception dispatching consolidation job {RunId} (attempt {Attempt}/{Max}), re-enqueuing",
+                            pendingJob.IssueIdentifier, pendingJob.RetryCount, MaxConsolidationRetries);
+                        _dispatcher.ReEnqueue(pendingJob);
+                    }
+                }
+                else
+                {
+                    _logger.Error(ex,
+                        "Drain: exception dispatching job for issue {IssueIdentifier} to agent {AgentId}, re-enqueuing",
+                        pendingJob.IssueIdentifier, agent.AgentId);
+                    _dispatcher.ReEnqueue(pendingJob);
+                }
             }
         }
 
         return dispatchedCount;
+    }
+
+    private async Task FailConsolidationAsync(Pipeline.Models.PendingJob job, CancellationToken ct)
+    {
+        // Callers pass CancellationToken.None to ensure the terminal transition
+        // completes even if the original drain cycle was cancelled. A cancelled token
+        // would cause SaveRunAsync to throw, leaving the run in a non-terminal state.
+
+        // Release dedup entry unconditionally — this prevents the job from being
+        // re-enqueued again even if the store persist step silently fails.
+        _dispatcher.MarkIssueComplete(job.IssueIdentifier, job.IssueProviderId);
+
+        if (_consolidationRunStore is not null)
+        {
+            var run = await _consolidationRunStore.GetByIdAsync(job.IssueIdentifier, ct);
+            if (run is not null)
+            {
+                // Guard: don't overwrite already-terminal runs (Succeeded / Failed / Cancelled).
+                // This prevents the retry-driven failure from stomping on a concurrent success
+                // from HeartbeatMonitor or manual UI cancellation.
+                // TODO: Add test verifying this guard works when HeartbeatMonitor concurrently
+                // marks the run as terminal before the 5th retry's FailConsolidationAsync call.
+                if (run.Status is Pipeline.Models.ConsolidationRunStatus.Succeeded
+                    or Pipeline.Models.ConsolidationRunStatus.Failed
+                    or Pipeline.Models.ConsolidationRunStatus.Cancelled)
+                {
+                    _logger.Debug(
+                        "Skipping failure transition for consolidation run {RunId}: already terminal ({Status})",
+                        job.IssueIdentifier, run.Status);
+                    return;
+                }
+
+                run.Status = Pipeline.Models.ConsolidationRunStatus.Failed;
+                run.Summary = $"Max dispatch retries exhausted ({job.RetryCount} attempts)";
+                run.CompletedAtUtc = DateTimeOffset.UtcNow;
+                await _consolidationRunStore.SaveRunAsync(run, ct);
+                _logger.Information(
+                    "Consolidation run {RunId} transitioned to Failed: max retries exhausted",
+                    job.IssueIdentifier);
+            }
+            else
+            {
+                _logger.Warning("Cannot fail consolidation run {RunId}: not found in store", job.IssueIdentifier);
+            }
+        }
     }
 
     private async Task<IReadOnlyList<string>> ResolveRequiredLabelsAsync(Pipeline.Models.PendingJob job, CancellationToken ct)
