@@ -121,8 +121,6 @@ public partial class AgentCoding : IDisposable
     private void CancelDelete() => _showDeleteConfirm = false;
     private void ConfirmRemoveTemplate(PipelineJobTemplate template) { _deletingTemplate = template; _showDeleteConfirm = true; }
 
-    // TODO: Add bUnit tests verifying _undoSnackbar.Show() is called when LoopService.IsLoopActive == false
-    // TODO: Add regression test invoking each toggle with loop inactive to assert snackbar is still shown
     private async Task ToggleTemplateEnabled((PipelineJobTemplate template, bool enabled) args)
     {
         var (success, error) = await PageService.ToggleTemplateEnabledAsync(args.template, args.enabled);
@@ -220,11 +218,6 @@ public partial class AgentCoding : IDisposable
 
     // ── Loop Controls ──
 
-    // TODO: Consider deriving CanStartLoop from `StartLoopDisabledReason == null` to maintain a single source of truth
-    // and prevent drift if additional conditions are added in the future.
-    // TODO: The Browse buttons use a different disabled condition (no template selected in dropdown) than CanStartLoop
-    // (provider/template availability). Per acceptance criteria, Start Loop should also be disabled when Browse is disabled.
-    // Evaluate whether these conditions should be aligned.
     private bool CanStartLoop =>
         _templates.Any(t => t.Enabled) &&
         _issueProviders.Count > 0 &&
@@ -316,7 +309,7 @@ public partial class AgentCoding : IDisposable
     private async Task DrawerToggleLabel(string label)
     {
         if (_drawerTemplate == null) return;
-        PageService.ToggleDrawerLabel(label);
+        PageService.IssueDrawer.ToggleLabel(label);
         var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, 1);
         if (error != null) _errorMessage = error;
         else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
@@ -325,7 +318,7 @@ public partial class AgentCoding : IDisposable
     private async Task DrawerClearLabels()
     {
         if (_drawerTemplate == null) return;
-        PageService.ClearDrawerLabelFilter();
+        PageService.IssueDrawer.ClearLabelFilter();
         var error = await PageService.LoadDrawerIssuesAsync(_drawerTemplate, 1);
         if (error != null) _errorMessage = error;
         else _ = CheckDrawerDependenciesInBackground(_drawerTemplate);
@@ -342,8 +335,6 @@ public partial class AgentCoding : IDisposable
         catch (OperationCanceledException) { /* expected on drawer close */ }
     }
 
-    // NOTE: Setting the dispatching flag before calling the service ensures StateHasChanged
-    // renders the spinner/disabled state. The service also sets it (idempotent).
     private async Task DispatchFromDrawer(IssueSummary issue)
     {
         PageService.IssueDrawerDispatching = true;
@@ -355,6 +346,7 @@ public partial class AgentCoding : IDisposable
             else _errorMessage = error;
         }
         catch (Exception ex) { _errorMessage = $"Dispatch failed: {ex.Message}"; }
+        finally { StateHasChanged(); }
     }
 
     // ── PR Drawer ──
@@ -388,7 +380,7 @@ public partial class AgentCoding : IDisposable
     private async Task PrDrawerToggleLabel(string label)
     {
         if (_prDrawerTemplate == null) return;
-        PageService.TogglePrDrawerLabel(label);
+        PageService.PrDrawer.ToggleLabel(label);
         var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, 1);
         if (error != null) _errorMessage = error;
     }
@@ -396,13 +388,11 @@ public partial class AgentCoding : IDisposable
     private async Task PrDrawerClearLabels()
     {
         if (_prDrawerTemplate == null) return;
-        PageService.ClearPrDrawerLabelFilter();
+        PageService.PrDrawer.ClearLabelFilter();
         var error = await PageService.LoadPrDrawerPageAsync(_prDrawerTemplate, 1);
         if (error != null) _errorMessage = error;
     }
 
-    // NOTE: Setting the dispatching flag before calling the service ensures StateHasChanged
-    // renders the spinner/disabled state. The service also sets it (idempotent).
     private async Task DispatchPrReviewFromDrawer(PullRequestSummary pr)
     {
         PageService.PrDrawerDispatching = true;
@@ -448,7 +438,7 @@ public partial class AgentCoding : IDisposable
     private async Task EpicDrawerToggleLabel(string label)
     {
         if (_epicDrawerTemplate == null) return;
-        PageService.ToggleEpicDrawerLabel(label);
+        PageService.EpicDrawer.ToggleLabel(label);
         var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, 1);
         if (error != null) _errorMessage = error;
     }
@@ -456,13 +446,11 @@ public partial class AgentCoding : IDisposable
     private async Task EpicDrawerClearLabels()
     {
         if (_epicDrawerTemplate == null) return;
-        PageService.ClearEpicDrawerLabelFilter();
+        PageService.EpicDrawer.ClearLabelFilter();
         var error = await PageService.LoadEpicDrawerIssuesAsync(_epicDrawerTemplate, 1);
         if (error != null) _errorMessage = error;
     }
 
-    // NOTE: Setting the dispatching flag before calling the service ensures StateHasChanged
-    // renders the spinner/disabled state. The service also sets it (idempotent).
     private async Task DispatchDecompositionFromDrawer(IssueSummary issue)
     {
         PageService.EpicDrawerDispatching = true;
@@ -474,6 +462,7 @@ public partial class AgentCoding : IDisposable
             else _errorMessage = error;
         }
         catch (Exception ex) { _errorMessage = $"Dispatch failed: {ex.Message}"; }
+        finally { StateHasChanged(); }
     }
 
     // ── Helpers ──

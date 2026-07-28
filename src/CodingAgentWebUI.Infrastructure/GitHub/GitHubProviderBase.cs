@@ -136,6 +136,14 @@ public abstract class GitHubProviderBase : IAsyncDisposable
                 return await operation(client);
             }, context);
         }
+        catch (Octokit.AuthorizationException ex)
+        {
+            Log.Warning(ex,
+                "GitHub API authorization failed for {Operation} on {Owner}/{Repo} after all retries. " +
+                "This may indicate an expired/revoked token or installation access change",
+                operationName, Owner, Repo);
+            throw;
+        }
         catch (Octokit.RateLimitExceededException ex)
         {
             Log.Warning(ex, "GitHub API rate limit exceeded, reset at {Reset}", ex.Reset);
