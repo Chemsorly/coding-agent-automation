@@ -34,6 +34,9 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public AgentProviderType ProviderType => AgentProviderType.OpenCode;
 
     /// <inheritdoc />
+    public string? Model => _model;
+
+    /// <inheritdoc />
     public string McpConfigPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".opencode", "mcp.json");
 
     /// <inheritdoc />

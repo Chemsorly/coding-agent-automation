@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Agent.KiroCli;
 using CodingAgentWebUI.Infrastructure;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -91,7 +90,7 @@ internal sealed class PipelineExecutionContextBuilder
             reviewPrAuthor: job.ReviewPrAuthor,
             linkedIssueContexts: job.LinkedIssueContexts);
         run.RepositoryName = repoProvider.RepositoryFullName;
-        run.ModelName = agentProvider is KiroCliAgentProvider kp ? kp.Model : null;
+        run.ModelName = agentProvider.Model;
         run.PipelineProviderConfigId = job.PipelineProviderConfigId;
         run.LinkedPullRequest = job.LinkedPullRequest;
         run.ProjectId = job.ProjectId;
