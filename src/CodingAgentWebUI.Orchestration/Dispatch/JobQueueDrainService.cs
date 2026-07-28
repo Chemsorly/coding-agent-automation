@@ -41,7 +41,7 @@ public sealed class JobQueueDrainService : BackgroundService
 
     private readonly SemaphoreSlim _wakeSignal = new(0, int.MaxValue);
 
-/// <summary>
+    /// <summary>
     /// Default interval between periodic sweeps when no explicit signal arrives.
     /// </summary>
     internal static readonly TimeSpan DefaultDrainInterval = TimeSpan.FromSeconds(10);
