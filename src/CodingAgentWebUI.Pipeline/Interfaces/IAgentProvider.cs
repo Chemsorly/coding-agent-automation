@@ -7,6 +7,13 @@ public enum AgentProviderType { KiroCli, OpenCode }
 public interface IAgentProvider : IAsyncDisposable
 {
     AgentProviderType ProviderType { get; }
+
+    /// <summary>
+    /// The model identifier for this agent provider (e.g., "claude-sonnet-4-5", "auto"),
+    /// or null if no model is configured.
+    /// </summary>
+    string? Model { get; }
+
     AgentHealthStatus GetHealthStatus();
 
     /// <summary>
