@@ -81,3 +81,6 @@ core
 
 # Local Postgres data (docker-compose bind mount)
 config/postgres/
+
+# Pipeline steering (auto-generated, do not commit)
+AGENTS.md
