@@ -47,7 +47,6 @@ public class AgentCodingPageService : IDisposable
         _dispatchOrchestration = dispatchOrchestration;
 
         _issueDrawer = new DrawerStateService<IssueSummary>(
-            "issue",
             LoadDrawerIssuesAsync,
             LoadDrawerLabelsPrivateAsync,
             (issue, template) => DispatchIssueAsync(issue, template),
@@ -55,13 +54,11 @@ public class AgentCodingPageService : IDisposable
             postLoadAsync: CheckDrawerDependenciesInBackgroundAsync);
 
         _prDrawer = new DrawerStateService<PullRequestSummary>(
-            "pr",
             LoadPrDrawerPageAsync,
             LoadPrDrawerLabelsAsync,
             (pr, template) => DispatchPrReviewAsync(pr, template));
 
         _epicDrawer = new DrawerStateService<IssueSummary>(
-            "epic",
             LoadEpicDrawerIssuesAsync,
             LoadEpicDrawerLabelsAsync,
             (issue, template) => DispatchDecompositionAsync(issue, template),

@@ -10,7 +10,6 @@ namespace CodingAgentWebUI.Services;
 /// </summary>
 public class DrawerStateService<TItem> : IDisposable
 {
-    private readonly string _drawerKind;
     private readonly Func<PipelineJobTemplate, Task<string?>> _loadItemsAsync;
     private readonly Func<PipelineJobTemplate, Task<string?>> _loadLabelsAsync;
     private readonly Func<TItem, PipelineJobTemplate, Task<(bool Success, string? Error, string? SuccessMessage)>> _dispatchAsync;
@@ -35,14 +34,12 @@ public class DrawerStateService<TItem> : IDisposable
     public CancellationToken CancellationToken => _cts?.Token ?? CancellationToken.None;
 
     public DrawerStateService(
-        string drawerKind,
         Func<PipelineJobTemplate, Task<string?>> loadItemsAsync,
         Func<PipelineJobTemplate, Task<string?>> loadLabelsAsync,
         Func<TItem, PipelineJobTemplate, Task<(bool Success, string? Error, string? SuccessMessage)>> dispatchAsync,
         bool closeOnDispatch = false,
         Func<PipelineJobTemplate, Task>? postLoadAsync = null)
     {
-        _drawerKind = drawerKind;
         _loadItemsAsync = loadItemsAsync;
         _loadLabelsAsync = loadLabelsAsync;
         _dispatchAsync = dispatchAsync;

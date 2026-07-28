@@ -20,7 +20,6 @@ public class DrawerStateServiceTests
         bool closeOnDispatch = false)
     {
         return new DrawerStateService<IssueSummary>(
-            "issue",
             loadItems ?? (_ => Task.FromResult<string?>(null)),
             loadLabels ?? (_ => Task.FromResult<string?>(null)),
             (i, t) => Task.FromResult<(bool, string?, string?)>((true, null, "Dispatched")),
@@ -30,7 +29,6 @@ public class DrawerStateServiceTests
     private DrawerStateService<PullRequestSummary> CreatePrDrawer(bool closeOnDispatch = false)
     {
         return new DrawerStateService<PullRequestSummary>(
-            "pr",
             _ => Task.FromResult<string?>(null),
             _ => Task.FromResult<string?>(null),
             (p, t) => Task.FromResult<(bool, string?, string?)>((true, null, "Dispatched")),
@@ -42,7 +40,6 @@ public class DrawerStateServiceTests
     {
         var template = MakeTemplate();
         var drawer = new DrawerStateService<IssueSummary>(
-            "issue",
             _ => Task.FromResult<string?>(null),
             _ => Task.FromResult<string?>(null),
             (i, t) => Task.FromResult<(bool, string?, string?)>((true, null, "Dispatched")),
@@ -60,7 +57,6 @@ public class DrawerStateServiceTests
 
         DrawerStateService<IssueSummary>? captured = null;
         var drawer = new DrawerStateService<IssueSummary>(
-            "test",
             _ =>
             {
                 captured!.Items = loadedItems;
@@ -92,7 +88,6 @@ public class DrawerStateServiceTests
         bool notified = false;
 
         var drawer = new DrawerStateService<IssueSummary>(
-            "test",
             _ => Task.FromResult<string?>(null),
             _ => Task.FromResult<string?>(null),
             (i, t) => Task.FromResult<(bool, string?, string?)>((true, null, null)));
@@ -113,7 +108,6 @@ public class DrawerStateServiceTests
         var tcs = new TaskCompletionSource<bool>();
 
         var drawer = new DrawerStateService<IssueSummary>(
-            "test",
             _ => Task.FromResult<string?>(null),
             _ => Task.FromResult<string?>(null),
             (i, t) => Task.FromResult<(bool, string?, string?)>((true, null, null)),
@@ -173,7 +167,6 @@ public class DrawerStateServiceTests
         bool openCalled = false;
         var template = MakeTemplate();
         var drawer = new DrawerStateService<IssueSummary>(
-            "test",
             _ => { openCalled = true; return Task.FromResult<string?>(null); },
             _ => Task.FromResult<string?>(null),
             (i, t) => Task.FromResult<(bool, string?, string?)>((true, null, null)));
@@ -198,7 +191,6 @@ public class DrawerStateServiceTests
     {
         bool dispatchCalled = false;
         var drawer = new DrawerStateService<IssueSummary>(
-            "test",
             _ => Task.FromResult<string?>(null),
             _ => Task.FromResult<string?>(null),
             (i, t) => { dispatchCalled = true; return Task.FromResult<(bool, string?, string?)>((true, null, "ok")); },
@@ -268,7 +260,6 @@ public class DrawerStateServiceTests
     public async Task DispatchAsync_DoesNotClose_OnFailure()
     {
         var drawer = new DrawerStateService<IssueSummary>(
-            "test",
             _ => Task.FromResult<string?>(null),
             _ => Task.FromResult<string?>(null),
             (i, t) => Task.FromResult<(bool, string?, string?)>((false, "dispatch failed", null)),
@@ -386,7 +377,6 @@ public class DrawerStateServiceTests
         bool postLoadCalled = false;
 
         var drawer = new DrawerStateService<IssueSummary>(
-            "test",
             _ => Task.FromResult<string?>("Failed to load items"),
             _ => Task.FromResult<string?>(null),
             (i, t) => Task.FromResult<(bool, string?, string?)>((true, null, null)),
