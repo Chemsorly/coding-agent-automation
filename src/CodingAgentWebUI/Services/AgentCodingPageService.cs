@@ -45,6 +45,27 @@ public class AgentCodingPageService : IDisposable
         _providerFactory = providerFactory;
         _dependencyChecker = dependencyChecker;
         _dispatchOrchestration = dispatchOrchestration;
+
+        _issueDrawer = new DrawerStateService<IssueSummary>(
+            "issue",
+            LoadDrawerIssuesAsync,
+            LoadDrawerLabelsPrivateAsync,
+            (issue, template) => DispatchIssueAsync(issue, template),
+            closeOnDispatch: true,
+            postLoadAsync: CheckDrawerDependenciesInBackgroundAsync);
+
+        _prDrawer = new DrawerStateService<PullRequestSummary>(
+            "pr",
+            LoadPrDrawerPageAsync,
+            LoadPrDrawerLabelsAsync,
+            (pr, template) => DispatchPrReviewAsync(pr, template));
+
+        _epicDrawer = new DrawerStateService<IssueSummary>(
+            "epic",
+            LoadEpicDrawerIssuesAsync,
+            LoadEpicDrawerLabelsAsync,
+            (issue, template) => DispatchDecompositionAsync(issue, template),
+            closeOnDispatch: true);
     }
 
     // ── State ──
@@ -61,40 +82,47 @@ public class AgentCodingPageService : IDisposable
     public PipelineConfiguration PipelineConfig { get; private set; } = new();
     public int MaxRetries { get; private set; } = 3;
 
-    // Drawer state
-    public List<IssueSummary> DrawerIssues { get; private set; } = new();
-    public int DrawerPage { get; private set; } = 1;
-    public bool DrawerHasMore { get; private set; }
-    public bool DrawerLoading { get; private set; }
+    // Drawer state — managed by DrawerStateService<TItem> instances
+    private readonly DrawerStateService<IssueSummary> _issueDrawer;
+    private readonly DrawerStateService<PullRequestSummary> _prDrawer;
+    private readonly DrawerStateService<IssueSummary> _epicDrawer;
+
+    // ── Backward-compatible drawer accessors ──
+
+    public DrawerStateService<IssueSummary> IssueDrawer => _issueDrawer;
+    public DrawerStateService<PullRequestSummary> PrDrawer => _prDrawer;
+    public DrawerStateService<IssueSummary> EpicDrawer => _epicDrawer;
+
+    // Backward-compatible wrappers for existing consumers
+    public bool IsIssueDrawerOpen => _issueDrawer.IsOpen;
+    public bool IsPrDrawerOpen => _prDrawer.IsOpen;
+    public bool IsEpicDrawerOpen => _epicDrawer.IsOpen;
+    public PipelineJobTemplate? IssueDrawerTemplate => _issueDrawer.Template;
+    public PipelineJobTemplate? PrDrawerTemplate => _prDrawer.Template;
+    public PipelineJobTemplate? EpicDrawerTemplate => _epicDrawer.Template;
+    public bool IssueDrawerDispatching { get => _issueDrawer.IsDispatching; set => _issueDrawer.IsDispatching = value; }
+    public bool PrDrawerDispatching { get => _prDrawer.IsDispatching; set => _prDrawer.IsDispatching = value; }
+    public bool EpicDrawerDispatching { get => _epicDrawer.IsDispatching; set => _epicDrawer.IsDispatching = value; }
+    public List<IssueSummary> DrawerIssues => _issueDrawer.Items;
+    public int DrawerPage => _issueDrawer.Page;
+    public bool DrawerHasMore => _issueDrawer.HasMore;
+    public bool DrawerLoading => _issueDrawer.Loading;
+    public List<string> DrawerLabels => _issueDrawer.Labels;
+    public List<string> DrawerSelectedLabels => _issueDrawer.SelectedLabels;
+    public List<PullRequestSummary> PrDrawerPrs => _prDrawer.Items;
+    public int PrDrawerPage => _prDrawer.Page;
+    public bool PrDrawerHasMore => _prDrawer.HasMore;
+    public bool PrDrawerLoading => _prDrawer.Loading;
+    public List<string> PrDrawerLabels => _prDrawer.Labels;
+    public List<string> PrDrawerSelectedLabels => _prDrawer.SelectedLabels;
+    public List<IssueSummary> EpicDrawerIssues => _epicDrawer.Items;
+    public int EpicDrawerPage => _epicDrawer.Page;
+    public bool EpicDrawerHasMore => _epicDrawer.HasMore;
+    public bool EpicDrawerLoading => _epicDrawer.Loading;
+    public List<string> EpicDrawerLabels => _epicDrawer.Labels;
+    public List<string> EpicDrawerSelectedLabels => _epicDrawer.SelectedLabels;
     public Dictionary<string, DependencyCheckResult> DrawerReadiness { get; private set; } = new();
-    public List<string> DrawerLabels { get; private set; } = new();
-    public List<string> DrawerSelectedLabels { get; private set; } = new();
 
-    public List<PullRequestSummary> PrDrawerPrs { get; private set; } = new();
-    public int PrDrawerPage { get; private set; } = 1;
-    public bool PrDrawerHasMore { get; private set; }
-    public bool PrDrawerLoading { get; private set; }
-    public List<string> PrDrawerLabels { get; private set; } = new();
-    public List<string> PrDrawerSelectedLabels { get; private set; } = new();
-
-    public List<IssueSummary> EpicDrawerIssues { get; private set; } = new();
-    public int EpicDrawerPage { get; private set; } = 1;
-    public bool EpicDrawerHasMore { get; private set; }
-    public bool EpicDrawerLoading { get; private set; }
-    public List<string> EpicDrawerLabels { get; private set; } = new();
-    public List<string> EpicDrawerSelectedLabels { get; private set; } = new();
-
-    // Drawer lifecycle state
-    public bool IsIssueDrawerOpen { get; private set; }
-    public bool IsPrDrawerOpen { get; private set; }
-    public bool IsEpicDrawerOpen { get; private set; }
-    public PipelineJobTemplate? IssueDrawerTemplate { get; private set; }
-    public PipelineJobTemplate? PrDrawerTemplate { get; private set; }
-    public PipelineJobTemplate? EpicDrawerTemplate { get; private set; }
-    // TODO: These setters should be `private set` for encapsulation consistency — they are only mutated internally.
-    public bool IssueDrawerDispatching { get; set; }
-    public bool PrDrawerDispatching { get; set; }
-    public bool EpicDrawerDispatching { get; set; }
     public HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssues { get; private set; } = new();
 
     public string ActiveDrawerTab => IsIssueDrawerOpen ? "issue" : IsPrDrawerOpen ? "pr" : IsEpicDrawerOpen ? "epic" : "";
@@ -107,9 +135,10 @@ public class AgentCodingPageService : IDisposable
         _ => null
     };
 
-    private CancellationTokenSource? _drawerCts;
-
-    public CancellationToken DrawerCancellationToken => _drawerCts?.Token ?? CancellationToken.None;
+    // TODO: DrawerCancellationToken now returns only the issue drawer's CTS. Consumers using this for
+    // non-issue drawer operations will get the wrong token. Consider removing and directing callers
+    // to the specific DrawerStateService instance's CancellationToken.
+    public CancellationToken DrawerCancellationToken => _issueDrawer.CancellationToken;
 
     // ── Initialization ──
 
@@ -253,55 +282,69 @@ public class AgentCodingPageService : IDisposable
 
     public void ResumeLoop() => _loopService.ResumeLoop();
 
-    // ── Issue Drawer ──
+    // ── Issue Drawer Data ──
 
-    public async Task<string?> LoadDrawerIssuesAsync(PipelineJobTemplate template, int page)
+    private async Task<string?> LoadDrawerIssuesAsync(PipelineJobTemplate template)
     {
-        DrawerLoading = true;
-        DrawerPage = page;
+        _issueDrawer.Loading = true;
+        _issueDrawer.Page = 1;
         try
         {
             var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
-            if (providerConfig == null) { DrawerLoading = false; return "Issue provider not found for this template."; }
+            if (providerConfig == null) { _issueDrawer.Loading = false; return "Issue provider not found for this template."; }
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-            var labels = DrawerSelectedLabels.Count > 0 ? DrawerSelectedLabels : null;
-            var result = await provider.ListOpenIssuesAsync(page, 15, labels, CancellationToken.None);
-            DrawerIssues = result.Items.ToList(); DrawerHasMore = result.HasMore;
+            var labels = _issueDrawer.SelectedLabels.Count > 0 ? _issueDrawer.SelectedLabels : null;
+            var result = await provider.ListOpenIssuesAsync(_issueDrawer.Page, 15, labels, CancellationToken.None);
+            _issueDrawer.Items = result.Items.ToList(); _issueDrawer.HasMore = result.HasMore;
             return null;
         }
-        catch (Exception ex) { DrawerIssues.Clear(); return $"Failed to load issues: {ex.Message}"; }
-        finally { DrawerLoading = false; }
+        catch (Exception ex) { _issueDrawer.Items.Clear(); return $"Failed to load issues: {ex.Message}"; }
+        finally { _issueDrawer.Loading = false; }
     }
 
-    public async Task<string?> LoadDrawerLabelsAsync(PipelineJobTemplate template)
+    private async Task<string?> LoadDrawerLabelsPrivateAsync(PipelineJobTemplate template)
     {
         try
         {
             var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
-            if (providerConfig == null) return null; // non-fatal, just no label filter
+            if (providerConfig == null) return null;
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
             var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
-            DrawerLabels = labels.ToList();
+            _issueDrawer.Labels = labels.ToList();
             return null;
         }
         catch
         {
-            DrawerLabels.Clear();
-            return null; // non-fatal
+            _issueDrawer.Labels.Clear();
+            return null;
         }
     }
 
-    public void ToggleDrawerLabel(string label)
+    /// <summary>Public pagination-aware loader for issue drawer (used by Switch path and code-behind).</summary>
+    public async Task<string?> LoadDrawerIssuesPageAsync(PipelineJobTemplate template, int page)
     {
-        if (DrawerSelectedLabels.Contains(label))
-            DrawerSelectedLabels.Remove(label);
-        else
-            DrawerSelectedLabels.Add(label);
+        _issueDrawer.Loading = true;
+        _issueDrawer.Page = page;
+        try
+        {
+            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
+            if (providerConfig == null) { _issueDrawer.Loading = false; return "Issue provider not found for this template."; }
+            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
+            var labels = _issueDrawer.SelectedLabels.Count > 0 ? _issueDrawer.SelectedLabels : null;
+            var result = await provider.ListOpenIssuesAsync(page, 15, labels, CancellationToken.None);
+            _issueDrawer.Items = result.Items.ToList(); _issueDrawer.HasMore = result.HasMore;
+            return null;
+        }
+        catch (Exception ex) { _issueDrawer.Items.Clear(); return $"Failed to load issues: {ex.Message}"; }
+        finally { _issueDrawer.Loading = false; }
     }
 
-    public void ClearDrawerLabelFilter() => DrawerSelectedLabels.Clear();
+    // Backward-compatible wrapper for existing code-behind pagination
+    public Task<string?> LoadDrawerIssuesAsync(PipelineJobTemplate template, int page)
+        => LoadDrawerIssuesPageAsync(template, page);
 
-    public void ClearDrawerIssues() { DrawerIssues.Clear(); DrawerPage = 1; DrawerHasMore = false; DrawerReadiness.Clear(); DrawerSelectedLabels.Clear(); }
+    public Task<string?> LoadDrawerLabelsAsync(PipelineJobTemplate template)
+        => LoadDrawerLabelsPrivateAsync(template);
 
     /// <summary>
     /// Checks dependency readiness for all current drawer issues asynchronously.
@@ -312,7 +355,7 @@ public class AgentCodingPageService : IDisposable
         var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == template.IssueProviderId);
         if (providerConfig == null) return;
 
-        var issues = DrawerIssues.ToList(); // snapshot
+        var issues = _issueDrawer.Items.ToList(); // snapshot
         var stateCache = new Dictionary<int, bool>();
 
         try
@@ -333,6 +376,8 @@ public class AgentCodingPageService : IDisposable
             // Best-effort: partial results are still useful
         }
     }
+
+    public void ClearDrawerIssues() { _issueDrawer.Items.Clear(); _issueDrawer.Page = 1; _issueDrawer.HasMore = false; DrawerReadiness.Clear(); _issueDrawer.SelectedLabels.Clear(); }
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchIssueAsync(
         IssueSummary issue, PipelineJobTemplate template)
@@ -376,27 +421,27 @@ public class AgentCodingPageService : IDisposable
             "Could not dispatch — issue is already being processed or queued, or no agents are available.");
     }
 
-    // ── PR Drawer ──
+    // ── PR Drawer Data ──
 
-    public async Task<string?> LoadPrDrawerPageAsync(PipelineJobTemplate template, int page)
+    private async Task<string?> LoadPrDrawerPageAsync(PipelineJobTemplate template)
     {
-        PrDrawerLoading = true;
-        PrDrawerPage = page;
+        _prDrawer.Loading = true;
+        _prDrawer.Page = 1;
         try
         {
             var repoConfig = RepoProviders.FirstOrDefault(p => p.Id == template.RepoProviderId);
-            if (repoConfig == null) { PrDrawerPrs = new(); PrDrawerLoading = false; return null; }
+            if (repoConfig == null) { _prDrawer.Items = new(); _prDrawer.Loading = false; return null; }
             await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
-            var labels = PrDrawerSelectedLabels.Count > 0 ? PrDrawerSelectedLabels : null;
-            var result = await repoProvider.ListOpenPullRequestsAsync(page, 15, labels, CancellationToken.None);
-            PrDrawerPrs = result.Items.ToList(); PrDrawerHasMore = result.HasMore;
+            var labels = _prDrawer.SelectedLabels.Count > 0 ? _prDrawer.SelectedLabels : null;
+            var result = await repoProvider.ListOpenPullRequestsAsync(_prDrawer.Page, 15, labels, CancellationToken.None);
+            _prDrawer.Items = result.Items.ToList(); _prDrawer.HasMore = result.HasMore;
             return null;
         }
-        catch (Exception ex) { PrDrawerPrs = new(); return $"Failed to load pull requests: {ex.Message}"; }
-        finally { PrDrawerLoading = false; }
+        catch (Exception ex) { _prDrawer.Items = new(); return $"Failed to load pull requests: {ex.Message}"; }
+        finally { _prDrawer.Loading = false; }
     }
 
-    public async Task<string?> LoadPrDrawerLabelsAsync(PipelineJobTemplate template)
+    private async Task<string?> LoadPrDrawerLabelsAsync(PipelineJobTemplate template)
     {
         try
         {
@@ -404,19 +449,32 @@ public class AgentCodingPageService : IDisposable
             if (providerConfig == null) return null;
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
             var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
-            PrDrawerLabels = labels.ToList();
+            _prDrawer.Labels = labels.ToList();
             return null;
         }
-        catch (Exception ex) { Logger.Warning(ex, "Failed to load PR drawer labels"); PrDrawerLabels.Clear(); return null; }
+        catch (Exception ex) { Logger.Warning(ex, "Failed to load PR drawer labels"); _prDrawer.Labels.Clear(); return null; }
     }
 
-    public void TogglePrDrawerLabel(string label)
+    /// <summary>Public pagination-aware loader for PR drawer.</summary>
+    public async Task<string?> LoadPrDrawerPageAsync(PipelineJobTemplate template, int page)
     {
-        if (PrDrawerSelectedLabels.Contains(label)) PrDrawerSelectedLabels.Remove(label);
-        else PrDrawerSelectedLabels.Add(label);
+        _prDrawer.Loading = true;
+        _prDrawer.Page = page;
+        try
+        {
+            var repoConfig = RepoProviders.FirstOrDefault(p => p.Id == template.RepoProviderId);
+            if (repoConfig == null) { _prDrawer.Items = new(); _prDrawer.Loading = false; return null; }
+            await using var repoProvider = _providerFactory.CreateRepositoryProvider(repoConfig);
+            var labels = _prDrawer.SelectedLabels.Count > 0 ? _prDrawer.SelectedLabels : null;
+            var result = await repoProvider.ListOpenPullRequestsAsync(page, 15, labels, CancellationToken.None);
+            _prDrawer.Items = result.Items.ToList(); _prDrawer.HasMore = result.HasMore;
+            return null;
+        }
+        catch (Exception ex) { _prDrawer.Items = new(); return $"Failed to load pull requests: {ex.Message}"; }
+        finally { _prDrawer.Loading = false; }
     }
 
-    public void ClearPrDrawerLabelFilter() { PrDrawerPrs.Clear(); PrDrawerPage = 1; PrDrawerHasMore = false; PrDrawerSelectedLabels.Clear(); }
+    public void ClearPrDrawerLabelFilter() { _prDrawer.Items.Clear(); _prDrawer.Page = 1; _prDrawer.HasMore = false; _prDrawer.SelectedLabels.Clear(); }
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchPrReviewAsync(
         PullRequestSummary pr, PipelineJobTemplate template)
@@ -462,45 +520,43 @@ public class AgentCodingPageService : IDisposable
             $"PR #{pr.Identifier} is already being processed or queued.");
     }
 
-    // ── Epic Drawer ──
+    // ── Epic Drawer Data ──
 
-    public async Task<string?> LoadEpicDrawerIssuesAsync(PipelineJobTemplate template, int page = 1)
+    private async Task<string?> LoadEpicDrawerIssuesAsync(PipelineJobTemplate template)
     {
-        EpicDrawerLoading = true;
-        EpicDrawerPage = page;
+        _epicDrawer.Loading = true;
+        _epicDrawer.Page = 1;
         try
         {
             var parentProject = GetParentProject(template.Id);
             var epicProviderId = !string.IsNullOrEmpty(parentProject?.EpicIssueProviderId) ? parentProject.EpicIssueProviderId : template.IssueProviderId;
             var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == epicProviderId);
-            if (providerConfig == null) { EpicDrawerLoading = false; return "Epic issue provider not found."; }
+            if (providerConfig == null) { _epicDrawer.Loading = false; return "Epic issue provider not found."; }
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
 
-            // Build label filter: always include epic markers + any user-selected labels
             var epicLabels = new List<string> { AgentLabels.Epic };
-            if (EpicDrawerSelectedLabels.Count > 0)
-                epicLabels.AddRange(EpicDrawerSelectedLabels);
+            if (_epicDrawer.SelectedLabels.Count > 0)
+                epicLabels.AddRange(_epicDrawer.SelectedLabels);
 
             var approvedLabels = new List<string> { AgentLabels.EpicApproved };
-            if (EpicDrawerSelectedLabels.Count > 0)
-                approvedLabels.AddRange(EpicDrawerSelectedLabels);
+            if (_epicDrawer.SelectedLabels.Count > 0)
+                approvedLabels.AddRange(_epicDrawer.SelectedLabels);
 
-            var epicResult = await provider.ListOpenIssuesAsync(page, 8, epicLabels, CancellationToken.None);
-            var approvedResult = await provider.ListOpenIssuesAsync(page, 8, approvedLabels, CancellationToken.None);
+            var epicResult = await provider.ListOpenIssuesAsync(_epicDrawer.Page, 8, epicLabels, CancellationToken.None);
+            var approvedResult = await provider.ListOpenIssuesAsync(_epicDrawer.Page, 8, approvedLabels, CancellationToken.None);
 
-            // Deduplicate: issues with both agent:epic and agent:epic-approved appear in both queries
-            EpicDrawerIssues = epicResult.Items.Concat(approvedResult.Items)
+            _epicDrawer.Items = epicResult.Items.Concat(approvedResult.Items)
                 .GroupBy(i => i.Identifier)
                 .Select(g => g.First())
                 .ToList();
-            EpicDrawerHasMore = epicResult.HasMore || approvedResult.HasMore;
+            _epicDrawer.HasMore = epicResult.HasMore || approvedResult.HasMore;
             return null;
         }
-        catch (Exception ex) { EpicDrawerIssues.Clear(); return $"Failed to load epics: {ex.Message}"; }
-        finally { EpicDrawerLoading = false; }
+        catch (Exception ex) { _epicDrawer.Items.Clear(); return $"Failed to load epics: {ex.Message}"; }
+        finally { _epicDrawer.Loading = false; }
     }
 
-    public async Task<string?> LoadEpicDrawerLabelsAsync(PipelineJobTemplate template)
+    private async Task<string?> LoadEpicDrawerLabelsAsync(PipelineJobTemplate template)
     {
         try
         {
@@ -510,22 +566,48 @@ public class AgentCodingPageService : IDisposable
             if (providerConfig == null) return null;
             await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
             var labels = await provider.ListRepositoryLabelsAsync(CancellationToken.None);
-            // Exclude the epic markers themselves from the filter UI
-            EpicDrawerLabels = labels.Where(l => !l.StartsWith(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)).ToList();
+            _epicDrawer.Labels = labels.Where(l => !l.StartsWith(AgentLabels.Epic, StringComparison.OrdinalIgnoreCase)).ToList();
             return null;
         }
-        catch (Exception ex) { Logger.Warning(ex, "Failed to load epic drawer labels"); EpicDrawerLabels.Clear(); return null; }
+        catch (Exception ex) { Logger.Warning(ex, "Failed to load epic drawer labels"); _epicDrawer.Labels.Clear(); return null; }
     }
 
-    public void ToggleEpicDrawerLabel(string label)
+    /// <summary>Public pagination-aware loader for epic drawer.</summary>
+    public async Task<string?> LoadEpicDrawerIssuesAsync(PipelineJobTemplate template, int page = 1)
     {
-        if (EpicDrawerSelectedLabels.Contains(label)) EpicDrawerSelectedLabels.Remove(label);
-        else EpicDrawerSelectedLabels.Add(label);
+        _epicDrawer.Loading = true;
+        _epicDrawer.Page = page;
+        try
+        {
+            var parentProject = GetParentProject(template.Id);
+            var epicProviderId = !string.IsNullOrEmpty(parentProject?.EpicIssueProviderId) ? parentProject.EpicIssueProviderId : template.IssueProviderId;
+            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == epicProviderId);
+            if (providerConfig == null) { _epicDrawer.Loading = false; return "Epic issue provider not found."; }
+            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
+
+            var epicLabels = new List<string> { AgentLabels.Epic };
+            if (_epicDrawer.SelectedLabels.Count > 0)
+                epicLabels.AddRange(_epicDrawer.SelectedLabels);
+
+            var approvedLabels = new List<string> { AgentLabels.EpicApproved };
+            if (_epicDrawer.SelectedLabels.Count > 0)
+                approvedLabels.AddRange(_epicDrawer.SelectedLabels);
+
+            var epicResult = await provider.ListOpenIssuesAsync(page, 8, epicLabels, CancellationToken.None);
+            var approvedResult = await provider.ListOpenIssuesAsync(page, 8, approvedLabels, CancellationToken.None);
+
+            _epicDrawer.Items = epicResult.Items.Concat(approvedResult.Items)
+                .GroupBy(i => i.Identifier)
+                .Select(g => g.First())
+                .ToList();
+            _epicDrawer.HasMore = epicResult.HasMore || approvedResult.HasMore;
+            return null;
+        }
+        catch (Exception ex) { _epicDrawer.Items.Clear(); return $"Failed to load epics: {ex.Message}"; }
+        finally { _epicDrawer.Loading = false; }
     }
 
-    public void ClearEpicDrawerLabelFilter() => EpicDrawerSelectedLabels.Clear();
-
-    public void ClearEpicDrawerIssues() { EpicDrawerIssues.Clear(); EpicDrawerPage = 1; EpicDrawerHasMore = false; EpicDrawerSelectedLabels.Clear(); }
+    public void ClearEpicDrawerIssues() { _epicDrawer.Items.Clear(); _epicDrawer.Page = 1; _epicDrawer.HasMore = false; _epicDrawer.SelectedLabels.Clear(); }
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchDecompositionAsync(
         IssueSummary issue, PipelineJobTemplate template)
@@ -576,17 +658,17 @@ public class AgentCodingPageService : IDisposable
 
     private void HideOtherDrawers(string keepOpen)
     {
-        if (keepOpen != "issue") IsIssueDrawerOpen = false;
-        if (keepOpen != "pr") IsPrDrawerOpen = false;
-        if (keepOpen != "epic") IsEpicDrawerOpen = false;
+        if (keepOpen != "issue") _issueDrawer.IsOpen = false;
+        if (keepOpen != "pr") _prDrawer.IsOpen = false;
+        if (keepOpen != "epic") _epicDrawer.IsOpen = false;
     }
 
     /// <summary>Closes whichever drawer is currently open.</summary>
     public void CloseActiveDrawer()
     {
-        if (IsIssueDrawerOpen) CloseIssueDrawer();
-        else if (IsPrDrawerOpen) ClosePrDrawer();
-        else if (IsEpicDrawerOpen) CloseEpicDrawer();
+        if (_issueDrawer.IsOpen) _issueDrawer.Close();
+        else if (_prDrawer.IsOpen) _prDrawer.Close();
+        else if (_epicDrawer.IsOpen) _epicDrawer.Close();
     }
 
     // ── Issue Drawer Orchestration ──
@@ -595,32 +677,29 @@ public class AgentCodingPageService : IDisposable
     {
         var template = Templates.FirstOrDefault(t => t.Id == templateId);
         if (template == null) return null;
-        return await OpenDrawerCoreAsync("issue", template, notifyStateChanged,
-            t => { IssueDrawerTemplate = t; IsIssueDrawerOpen = true; },
-            LoadDrawerLabelsAsync, t => LoadDrawerIssuesAsync(t, 1),
-            CheckDrawerDependenciesInBackgroundAsync);
+        HideOtherDrawers("issue");
+        await RefreshActiveIssuesAsync();
+        return await _issueDrawer.OpenAsync(template, notifyStateChanged);
     }
 
-    public void CloseIssueDrawer()
-    {
-        IsIssueDrawerOpen = false;
-        IssueDrawerTemplate = null;
-        CancelCts();
-        ClearDrawerIssues();
-    }
+    public void CloseIssueDrawer() { _issueDrawer.Close(); DrawerReadiness.Clear(); }
 
     public Task<string?> SwitchToIssueDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
-        => SwitchToDrawerCoreAsync("issue", templateId, notifyStateChanged,
-            IssueDrawerTemplate, () => DrawerIssues.Count > 0,
-            () => IsIssueDrawerOpen = true,
-            OpenIssueDrawerAsync);
+    {
+        HideOtherDrawers("issue");
+        return _issueDrawer.SwitchAsync(templateId, notifyStateChanged,
+            () => _issueDrawer.Items.Count > 0,
+            async (id, ns) =>
+            {
+                var template = Templates.FirstOrDefault(t => t.Id == id);
+                if (template == null) return null;
+                await RefreshActiveIssuesAsync();
+                return template;
+            });
+    }
 
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromIssueDrawerAsync(IssueSummary issue)
-        => DispatchFromDrawerCoreAsync(
-            IssueDrawerTemplate, issue,
-            dispatching => IssueDrawerDispatching = dispatching,
-            (i, t) => DispatchIssueAsync(i, t),
-            CloseIssueDrawer);
+        => _issueDrawer.DispatchAsync(issue, null);
 
     // ── PR Drawer Orchestration ──
 
@@ -629,31 +708,27 @@ public class AgentCodingPageService : IDisposable
         if (string.IsNullOrEmpty(templateId)) return null;
         var template = Templates.FirstOrDefault(t => t.Id == templateId);
         if (template == null) return null;
-        return await OpenDrawerCoreAsync("pr", template, notifyStateChanged,
-            t => { PrDrawerTemplate = t; IsPrDrawerOpen = true; },
-            LoadPrDrawerLabelsAsync, t => LoadPrDrawerPageAsync(t, 1));
+        HideOtherDrawers("pr");
+        return await _prDrawer.OpenAsync(template, notifyStateChanged);
     }
 
-    public void ClosePrDrawer()
-    {
-        IsPrDrawerOpen = false;
-        PrDrawerTemplate = null;
-        CancelCts();
-        ClearPrDrawerLabelFilter();
-    }
+    public void ClosePrDrawer() => _prDrawer.Close();
 
     public Task<string?> SwitchToPrDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
-        => SwitchToDrawerCoreAsync("pr", templateId, notifyStateChanged,
-            PrDrawerTemplate, () => PrDrawerPrs.Count > 0,
-            () => IsPrDrawerOpen = true,
-            OpenPrDrawerAsync);
+    {
+        HideOtherDrawers("pr");
+        return _prDrawer.SwitchAsync(templateId, notifyStateChanged,
+            () => _prDrawer.Items.Count > 0,
+            async (id, ns) =>
+            {
+                var template = Templates.FirstOrDefault(t => t.Id == id);
+                if (template == null) return null;
+                return template;
+            });
+    }
 
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromPrDrawerAsync(PullRequestSummary pr)
-        => DispatchFromDrawerCoreAsync(
-            PrDrawerTemplate, pr,
-            dispatching => PrDrawerDispatching = dispatching,
-            (p, t) => DispatchPrReviewAsync(p, t),
-            null); // PR drawer intentionally stays open on success for multi-dispatch
+        => _prDrawer.DispatchAsync(pr, null);
 
     // ── Epic Drawer Orchestration ──
 
@@ -662,118 +737,36 @@ public class AgentCodingPageService : IDisposable
         if (string.IsNullOrEmpty(templateId)) return null;
         var template = Templates.FirstOrDefault(t => t.Id == templateId);
         if (template == null) return null;
-        return await OpenDrawerCoreAsync("epic", template, notifyStateChanged,
-            t => { EpicDrawerTemplate = t; IsEpicDrawerOpen = true; },
-            LoadEpicDrawerLabelsAsync, t => LoadEpicDrawerIssuesAsync(t, 1));
+        HideOtherDrawers("epic");
+        return await _epicDrawer.OpenAsync(template, notifyStateChanged);
     }
 
-    public void CloseEpicDrawer()
-    {
-        IsEpicDrawerOpen = false;
-        EpicDrawerTemplate = null;
-        CancelCts();
-        ClearEpicDrawerIssues();
-    }
+    public void CloseEpicDrawer() => _epicDrawer.Close();
 
     public Task<string?> SwitchToEpicDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
-        => SwitchToDrawerCoreAsync("epic", templateId, notifyStateChanged,
-            EpicDrawerTemplate, () => EpicDrawerIssues.Count > 0,
-            () => IsEpicDrawerOpen = true,
-            OpenEpicDrawerAsync);
+    {
+        HideOtherDrawers("epic");
+        return _epicDrawer.SwitchAsync(templateId, notifyStateChanged,
+            () => _epicDrawer.Items.Count > 0,
+            async (id, ns) =>
+            {
+                var template = Templates.FirstOrDefault(t => t.Id == id);
+                if (template == null) return null;
+                return template;
+            });
+    }
 
     public Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromEpicDrawerAsync(IssueSummary issue)
-        => DispatchFromDrawerCoreAsync(
-            EpicDrawerTemplate, issue,
-            dispatching => EpicDrawerDispatching = dispatching,
-            (i, t) => DispatchDecompositionAsync(i, t),
-            CloseEpicDrawer);
-
-    // ── Drawer Lifecycle Helpers ──
-
-    /// <summary>
-    /// Shared open lifecycle: hide other drawers → set state → cancel/reset CTS → refresh active issues →
-    /// notify → load labels + items in parallel → optionally run post-load action.
-    /// </summary>
-    private async Task<string?> OpenDrawerCoreAsync(
-        string drawerKind,
-        PipelineJobTemplate template,
-        Func<Task>? notifyStateChanged,
-        Action<PipelineJobTemplate> setTemplateAndOpen,
-        Func<PipelineJobTemplate, Task<string?>> loadLabelsAsync,
-        Func<PipelineJobTemplate, Task<string?>> loadItemsAsync,
-        Func<PipelineJobTemplate, Task>? postLoadAsync = null)
-    {
-        HideOtherDrawers(drawerKind);
-        setTemplateAndOpen(template);
-        CancelAndResetCts();
-        await RefreshActiveIssuesAsync();
-        if (notifyStateChanged != null) await notifyStateChanged();
-        var labelsTask = loadLabelsAsync(template);
-        var error = await loadItemsAsync(template);
-        // TODO: labelsTask return value (string? error) is silently discarded — matches pre-existing behavior
-        // but the Func<..., Task<string?>> signature misleadingly suggests the error is handled.
-        await labelsTask;
-        if (error != null) return error;
-        // TODO: Fire-and-forget discards exceptions from postLoadAsync (e.g. CheckDrawerDependenciesInBackgroundAsync).
-        // Unobserved faults may trigger TaskScheduler.UnobservedTaskException. Consider adding a fault continuation.
-        if (postLoadAsync != null) _ = postLoadAsync(template);
-        return null;
-    }
-
-    /// <summary>
-    /// Shared switch lifecycle: hide other drawers → evaluate hasData → check cache → reuse or do a full open.
-    /// The hasData func is evaluated after HideOtherDrawers to avoid stale reads if HideOtherDrawers
-    /// is ever modified to clear data collections.
-    /// Note: HideOtherDrawers is called here AND inside openAsync (via OpenDrawerCoreAsync).
-    /// The double-call is harmless (idempotent) and preserves pre-existing behavior.
-    /// </summary>
-    private async Task<string?> SwitchToDrawerCoreAsync(
-        string drawerKind,
-        string templateId,
-        Func<Task>? notifyStateChanged,
-        PipelineJobTemplate? cachedTemplate,
-        Func<bool> hasData,
-        Action setOpen,
-        Func<string, Func<Task>?, Task<string?>> openAsync)
-    {
-        HideOtherDrawers(drawerKind);
-        if (cachedTemplate != null && hasData())
-        {
-            setOpen();
-            return null;
-        }
-        return await openAsync(templateId, notifyStateChanged);
-    }
-
-    /// <summary>
-    /// Shared dispatch lifecycle: set dispatching flag → guard null template → dispatch → optionally close on success.
-    /// </summary>
-    private async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchFromDrawerCoreAsync<TItem>(
-        PipelineJobTemplate? drawerTemplate,
-        TItem item,
-        Action<bool> setDispatching,
-        Func<TItem, PipelineJobTemplate, Task<(bool Success, string? Error, string? SuccessMessage)>> dispatchAsync,
-        Action? closeDrawer)
-    {
-        setDispatching(true);
-        try
-        {
-            if (drawerTemplate == null) return (false, "No template selected. Please select a template first.", null);
-            var (success, error, successMessage) = await dispatchAsync(item, drawerTemplate);
-            if (success && closeDrawer != null) closeDrawer();
-            return (success, error, successMessage);
-        }
-        finally { setDispatching(false); }
-    }
+        => _epicDrawer.DispatchAsync(issue, null);
 
     // ── Dependency Check (with CTS) ──
 
     private async Task CheckDrawerDependenciesInBackgroundAsync(PipelineJobTemplate template)
     {
-        var cts = _drawerCts;
+        var token = _issueDrawer.CancellationToken;
         try
         {
-            await CheckDrawerDependenciesAsync(template, null, cts?.Token ?? CancellationToken.None);
+            await CheckDrawerDependenciesAsync(template, null, token);
         }
         catch (OperationCanceledException) { /* expected on drawer close */ }
     }
@@ -829,24 +822,10 @@ public class AgentCodingPageService : IDisposable
     public PipelineProject? GetParentProject(string templateId) =>
         Projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
 
-    private void CancelAndResetCts()
-    {
-        _drawerCts?.Cancel();
-        _drawerCts?.Dispose();
-        _drawerCts = new CancellationTokenSource();
-    }
-
-    private void CancelCts()
-    {
-        _drawerCts?.Cancel();
-        _drawerCts?.Dispose();
-        _drawerCts = null;
-    }
-
     public void Dispose()
     {
-        _drawerCts?.Cancel();
-        _drawerCts?.Dispose();
-        _drawerCts = null;
+        _issueDrawer.Dispose();
+        _prDrawer.Dispose();
+        _epicDrawer.Dispose();
     }
 }
