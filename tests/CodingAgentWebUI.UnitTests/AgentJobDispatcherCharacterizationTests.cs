@@ -512,6 +512,22 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
     // propagate correctly through the shared helpers and are caught by the try/catch in each dispatch method.
     // The issue prerequisites require "characterization tests covering dispatch success and failure paths".
 
+    // TODO: Add decomposition characterization test with EpicIssueProviderId set on the project
+    // to exercise the DecompositionProjectContext branch (cross-repo template lookup and additional
+    // repo provider configs). Currently all decomposition tests use projects without EpicIssueProviderId,
+    // meaning the DecompositionProjectContext construction and ProviderConfig resolution for secondary
+    // repos is untested.
+
+    // TODO: Add dedicated unit tests for IDispatchPreparationHandler implementations
+    // (ImplementationDispatchPreparation, ReviewDispatchPreparation, DecompositionDispatchPreparation).
+    // Currently all three strategy classes are tested only indirectly through AgentJobDispatcherTests
+    // and AgentJobDispatcherCharacterizationTests. Isolated tests are needed for:
+    //   - PrepareDispatchCoreAsync returning null (implementation path)
+    //   - ReserveRunIdAsync returning null (review and decomposition paths)
+    //   - PreFetchLinkedIssuesAsync failure paths (review path)
+    //   - DecompositionProjectContext building (decomposition path)
+    //   - Message customizer delegate correctness for each path
+
     public void Dispose()
     {
         _httpClient.Dispose();

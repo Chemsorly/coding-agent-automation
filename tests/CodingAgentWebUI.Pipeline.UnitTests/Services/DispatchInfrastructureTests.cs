@@ -110,4 +110,11 @@ public class DispatchInfrastructureTests
         // DispatchResolutionService.ConfigStore is the same store passed in
         infra.Resolution.ConfigStore.Should().BeSameAs(_mockConfigStore.Object);
     }
+
+    // TODO: Add dedicated unit tests for PrepareAndResolveConfigAsync and BuildSyntheticIssueContext
+    // (extracted from AgentJobDispatcher.Execution.cs in #1733). PrepareAndResolveConfigAsync
+    // orchestrates PrepareProviderConfigsAsync → PipelineConfigurationResolver.ResolveAsync and
+    // should be tested for: provider config build failure, pipeline config load failure, template
+    // load failure, and successful resolution. BuildSyntheticIssueContext should be tested for
+    // null description coalescing and IssueDescriptionParser.Parse interaction.
 }
