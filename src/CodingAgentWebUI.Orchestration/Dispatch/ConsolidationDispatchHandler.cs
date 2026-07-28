@@ -65,10 +65,9 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _pipelineConfigStore = pipelineConfigStore;
         _projectStore = projectStore;
         _agentProfileStore = agentProfileStore;
-        _options = new DispatchServiceOptions();
-        InitializeOptions(configuration);
+        _options = DispatchServiceOptionsFactory.Create(configuration);
         _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
-        _rateLimiter = CreateRateLimiter();
+        _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
     }
 
     /// <summary>
@@ -101,37 +100,8 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _agentProfileStore = agentProfileStore;
         _options = options;
         _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
-        _rateLimiter = CreateRateLimiter();
+        _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
     }
-
-    // TODO: Replace with DispatchServiceOptionsFactory.Create() to eliminate duplication with DispatchService
-    private void InitializeOptions(IConfiguration configuration)
-    {
-        configuration.GetSection("WorkDistribution:Dispatch").Bind(_options);
-
-        var pvcList = configuration.GetSection("WorkDistribution:CredentialPools:Kiro").Get<List<string>>();
-        if (pvcList is not null)
-            _options.KiroPvcPool = pvcList;
-
-        _options.OrchestratorUrl = configuration.GetValue<string>("WorkDistribution:OrchestratorUrl") ?? "";
-        _options.AgentApiKeySecretName = configuration.GetValue<string>("WorkDistribution:AgentApiKeySecretName") ?? "";
-        _options.AgentServiceAccountName = configuration.GetValue<string>("WorkDistribution:AgentServiceAccountName") ?? "";
-        _options.Namespace = configuration.GetValue<string>("WorkDistribution:Namespace")
-            ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
-            ?? "default";
-        _options.OpencodeConfigSecretName = configuration.GetValue<string>("WorkDistribution:OpencodeConfigSecretName") ?? "";
-    }
-
-    // TODO: Replace with DispatchServiceOptions.CreateRateLimiter() to eliminate duplication with DispatchService
-    private TokenBucketRateLimiter CreateRateLimiter() => new(new TokenBucketRateLimiterOptions
-    {
-        TokenLimit = _options.RateLimitPerSecond,
-        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-        QueueLimit = 0,
-        ReplenishmentPeriod = TimeSpan.FromSeconds(1),
-        TokensPerPeriod = _options.RateLimitPerSecond,
-        AutoReplenishment = true
-    });
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -250,12 +220,6 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         }
     }
 
-    /// <summary>
-    /// Queries the database to build concurrency state (active counts per selector group)
-    /// and determines available PVCs for kiro agents.
-    /// </summary>
-    // TODO: Consider calling WorkDistributionTelemetry.UpdateCredentialPoolMetrics here for parity with DispatchService.BuildDispatchStateAsync
-    // TODO: Consider reusing DispatchLifecycleService.QueryAvailablePvcsAsync instead of inlining PVC logic (duplicated with DispatchService)
     private async Task<(Dictionary<string, int> ConcurrencyBySelector, List<string> AvailablePvcs)> BuildDispatchStateAsync(
         PipelineDbContext db, CancellationToken ct)
     {
@@ -266,18 +230,11 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
             .ToListAsync(ct);
         var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
 
-        var claimedPvcs = await db.WorkItems
-            .Where(w => w.ClaimedPvcName != null &&
-                        (w.Status == WorkItemStatus.Pending ||
-                         w.Status == WorkItemStatus.Dispatched ||
-                         w.Status == WorkItemStatus.Running))
-            .Select(w => w.ClaimedPvcName!)
-            .ToListAsync(ct);
-        var inflightClaims = _lifecycle.GetInflightPvcClaims();
-        var availablePvcs = _options.KiroPvcPool
-            .Except(claimedPvcs, StringComparer.Ordinal)
-            .Where(pvc => !inflightClaims.Contains(pvc))
-            .ToList();
+        var pvcResult = await _lifecycle.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
+        var availablePvcs = pvcResult.AvailablePvcs;
+        // TODO: Call WorkDistributionTelemetry.UpdateCredentialPoolMetrics(availablePvcs.Count, pvcResult.ClaimedCount)
+        // for parity with DispatchService.BuildDispatchStateAsync and DispatchStateBuilder.BuildStateAsync.
+        // Both other call sites report credential pool metrics; this handler currently does not.
 
         return (concurrencyBySelector, availablePvcs);
     }
