@@ -1,12 +1,10 @@
 using AwesomeAssertions;
-using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.Services;
 using Moq;
 using ILogger = Serilog.ILogger;
 
@@ -23,11 +21,15 @@ public class JobQueueDrainServiceTests
     private readonly Mock<IJobDispatcher> _mockJobDispatcher;
     private readonly Mock<IConfigurationStore> _mockConfigStore;
     private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService;
+    private readonly Mock<IConsolidationRunStore> _mockRunStore;
+    private readonly Mock<ILogger> _mockLogger;
     private readonly JobQueueDrainService _service;
+    private readonly JobQueueDrainService _serviceWithRunStore;
 
     public JobQueueDrainServiceTests()
     {
-        var logger = new Mock<ILogger>().Object;
+        _mockLogger = new Mock<ILogger>();
+        var logger = _mockLogger.Object;
         _registry = new AgentRegistryService(logger);
         _dispatcher = new JobDeduplicationGuardService(_registry, logger);
         _mockJobDispatcher = new Mock<IJobDispatcher>();
@@ -39,8 +41,11 @@ public class JobQueueDrainServiceTests
             .Setup(c => c.GetProviderConfigByIdAsync(It.IsAny<string>(), It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderConfig?)null);
         _mockConsolidationDispatchService = new Mock<IConsolidationDispatchService>();
+        _mockRunStore = new Mock<IConsolidationRunStore>();
         _service = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object,
             _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger);
+        _serviceWithRunStore = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object,
+            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger, _mockRunStore.Object);
     }
 
     private AgentEntry RegisterIdleAgent(string agentId = "agent-1", IReadOnlyList<string>? labels = null)
@@ -456,6 +461,8 @@ public class JobQueueDrainServiceTests
 
         // Job should be re-enqueued
         _dispatcher.QueueLength.Should().Be(1);
+        // Attempt counter should be incremented
+        _dispatcher.GetQueuedJobs()[0].ConsolidationDispatchAttempt.Should().Be(1);
     }
 
     [Fact]
@@ -517,6 +524,251 @@ public class JobQueueDrainServiceTests
 
         // Job should be re-enqueued (exception handled)
         _dispatcher.QueueLength.Should().Be(1);
+        // Attempt counter should be incremented
+        _dispatcher.GetQueuedJobs()[0].ConsolidationDispatchAttempt.Should().Be(1);
+    }
+
+    #endregion
+
+    #region Consolidation retry limit (Issue #1691)
+
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_ExhaustedRetries_TransitionsToFailed()
+    {
+        var run = new ConsolidationRun
+        {
+            RunId = "crun-exhaust",
+            Status = ConsolidationRunStatus.Queued,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTime.UtcNow
+        };
+        _mockRunStore.Reset();
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync("crun-exhaust", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(run);
+        _mockRunStore
+            .Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockConsolidationDispatchService.Reset();
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+                It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        RegisterIdleAgent();
+
+        for (var cycle = 1; cycle <= 5; cycle++)
+        {
+            if (cycle == 1)
+            {
+                _dispatcher.EnqueueJob(new PendingJob
+                {
+                    IssueIdentifier = "crun-exhaust",
+                    IssueProviderId = "consolidation",
+                    RepoProviderId = "",
+                    InitiatedBy = "consolidation",
+                    EnqueuedAt = DateTimeOffset.UtcNow,
+                    RequiredLabels = Array.Empty<string>(),
+                    ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
+                    ConsolidationWorkspacePath = "/tmp/ws"
+                });
+            }
+
+            await _serviceWithRunStore.DrainAsync(CancellationToken.None);
+
+            if (cycle < 5)
+            {
+                _dispatcher.QueueLength.Should().Be(1, "cycle {0}: job should be re-enqueued", cycle);
+                _dispatcher.GetQueuedJobs()[0].ConsolidationDispatchAttempt.Should().Be(cycle,
+                    "cycle {0}: attempt count should be {0}", cycle);
+            }
+            else
+            {
+                _dispatcher.QueueLength.Should().Be(0, "job should be discarded after 5 failures");
+                _dispatcher.IsIssueQueued("crun-exhaust").Should().BeFalse(
+                    "dedup entry should be removed after 5 failures");
+            }
+        }
+
+        _mockRunStore.Verify(
+            s => s.SaveRunAsync(
+                It.Is<ConsolidationRun>(r => r.RunId == "crun-exhaust" && r.Status == ConsolidationRunStatus.Failed),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_ExhaustedRetriesViaException_TransitionsToFailed()
+    {
+        var run = new ConsolidationRun
+        {
+            RunId = "crun-exhaust-ex",
+            Status = ConsolidationRunStatus.Queued,
+            Type = ConsolidationRunType.RefactoringDetection,
+            StartedAtUtc = DateTime.UtcNow
+        };
+        _mockRunStore.Reset();
+        _mockRunStore
+            .Setup(s => s.GetByIdAsync("crun-exhaust-ex", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(run);
+        _mockRunStore
+            .Setup(s => s.SaveRunAsync(It.IsAny<ConsolidationRun>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockConsolidationDispatchService.Reset();
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+                It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Agent unavailable"));
+
+        RegisterIdleAgent();
+
+        for (var cycle = 1; cycle <= 5; cycle++)
+        {
+            if (cycle == 1)
+            {
+                _dispatcher.EnqueueJob(new PendingJob
+                {
+                    IssueIdentifier = "crun-exhaust-ex",
+                    IssueProviderId = "consolidation",
+                    RepoProviderId = "",
+                    InitiatedBy = "consolidation",
+                    EnqueuedAt = DateTimeOffset.UtcNow,
+                    RequiredLabels = Array.Empty<string>(),
+                    ConsolidationRunType = ConsolidationRunType.RefactoringDetection,
+                    ConsolidationWorkspacePath = "/tmp/ws"
+                });
+            }
+
+            await _serviceWithRunStore.DrainAsync(CancellationToken.None);
+
+            if (cycle < 5)
+            {
+                _dispatcher.QueueLength.Should().Be(1, "cycle {0}: job should be re-enqueued", cycle);
+                _dispatcher.GetQueuedJobs()[0].ConsolidationDispatchAttempt.Should().Be(cycle,
+                    "cycle {0}: exception path should also increment attempt count", cycle);
+            }
+            else
+            {
+                _dispatcher.QueueLength.Should().Be(0, "job should be discarded after 5 exceptions");
+                _dispatcher.IsIssueQueued("crun-exhaust-ex").Should().BeFalse();
+            }
+        }
+
+        _mockRunStore.Verify(
+            s => s.SaveRunAsync(
+                It.Is<ConsolidationRun>(r => r.RunId == "crun-exhaust-ex" && r.Status == ConsolidationRunStatus.Failed),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+    }
+
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_RetryCountPreservedAcrossCycles()
+    {
+        _mockConsolidationDispatchService.Reset();
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+                It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "crun-counter",
+            IssueProviderId = "consolidation",
+            RepoProviderId = "",
+            InitiatedBy = "consolidation",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            RequiredLabels = Array.Empty<string>(),
+            ConsolidationRunType = ConsolidationRunType.BrainConsolidation,
+            ConsolidationWorkspacePath = "/tmp/ws"
+        });
+
+        await _service.DrainAsync(CancellationToken.None);
+        _dispatcher.QueueLength.Should().Be(1);
+        _dispatcher.GetQueuedJobs()[0].ConsolidationDispatchAttempt.Should().Be(1);
+
+        await _service.DrainAsync(CancellationToken.None);
+        _dispatcher.QueueLength.Should().Be(1);
+        _dispatcher.GetQueuedJobs()[0].ConsolidationDispatchAttempt.Should().Be(2);
+
+        await _service.DrainAsync(CancellationToken.None);
+        _dispatcher.QueueLength.Should().Be(1);
+        _dispatcher.GetQueuedJobs()[0].ConsolidationDispatchAttempt.Should().Be(3);
+
+        await _service.DrainAsync(CancellationToken.None);
+        _dispatcher.QueueLength.Should().Be(1);
+        _dispatcher.GetQueuedJobs()[0].ConsolidationDispatchAttempt.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task DrainAsync_NonConsolidationJob_ExceptionDoesNotTriggerRetryLimit()
+    {
+        _mockJobDispatcher.Reset();
+        _mockJobDispatcher
+            .Setup(d => d.DispatchToAgentDirectAsync(It.IsAny<AgentEntry>(), It.IsAny<PendingJob>(),
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Provider error"));
+
+        RegisterIdleAgent();
+        _dispatcher.EnqueueJob(CreateJob("issue-no-limit"));
+
+        for (var i = 0; i < 7; i++)
+        {
+            await _service.DrainAsync(CancellationToken.None);
+            _dispatcher.QueueLength.Should().Be(1, "pipeline job should not be discarded (cycle {0})", i + 1);
+            _dispatcher.IsIssueQueued("issue-no-limit").Should().BeTrue(
+                "pipeline job dedup should remain active (cycle {0})", i + 1);
+        }
+    }
+
+    [Fact]
+    public async Task DrainAsync_ConsolidationJob_ExhaustedRetries_StoreNull_StillDiscardsJob()
+    {
+        _mockConsolidationDispatchService.Reset();
+        _mockConsolidationDispatchService
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
+                It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(false);
+
+        RegisterIdleAgent();
+
+        for (var cycle = 1; cycle <= 5; cycle++)
+        {
+            if (cycle == 1)
+            {
+                _dispatcher.EnqueueJob(new PendingJob
+                {
+                    IssueIdentifier = "crun-no-store",
+                    IssueProviderId = "consolidation",
+                    RepoProviderId = "",
+                    InitiatedBy = "consolidation",
+                    EnqueuedAt = DateTimeOffset.UtcNow,
+                    RequiredLabels = Array.Empty<string>(),
+                    ConsolidationRunType = ConsolidationRunType.HarnessSuggestions,
+                    ConsolidationWorkspacePath = "/tmp/ws"
+                });
+            }
+
+            await _service.DrainAsync(CancellationToken.None);
+
+            if (cycle < 5)
+            {
+                _dispatcher.QueueLength.Should().Be(1, "cycle {0}: job should be re-enqueued", cycle);
+            }
+            else
+            {
+                _dispatcher.QueueLength.Should().Be(0, "job should be discarded even without run store");
+                _dispatcher.IsIssueQueued("crun-no-store").Should().BeFalse(
+                    "dedup entry should be removed even without run store");
+            }
+        }
+
+        _mockLogger.Verify(
+            l => l.Warning(
+                "Drain: cannot update consolidation run {RunId} to {Status} — no IConsolidationRunStore available",
+                It.IsAny<string>(),
+                It.IsAny<ConsolidationRunStatus>()),
+            Times.AtLeastOnce);
     }
 
     #endregion

@@ -46,6 +46,19 @@ public sealed class JobQueueDrainService : BackgroundService
     /// </summary>
     internal static readonly TimeSpan DefaultDrainInterval = TimeSpan.FromSeconds(10);
 
+    /// <summary>
+    /// Maximum number of times the drain service will attempt to dispatch a consolidation job
+    /// before giving up and transitioning the run to Failed. Matches the limit from the old
+    /// <c>DrainConsolidationJobsAsync</c> path that was refactored into this unified drain.
+    /// Non-consolidation jobs are not subject to this limit.
+    /// </summary>
+    /// <remarks>
+    /// TODO: This is currently a <c>const</c>. If runtime configurability is needed in the future
+    /// (e.g., via appsettings or <see cref="PipelineConfiguration"/>), promote to an
+    /// <c>IAppSettings</c>-backed property or a constructor-injected configuration object.
+    /// </remarks>
+    internal const int MaxConsolidationDispatchRetries = 5;
+
     internal JobQueueDrainService(
         JobDeduplicationGuardService dispatcher,
         IAgentRegistryService registry,
@@ -230,12 +243,7 @@ public sealed class JobQueueDrainService : BackgroundService
                     }
                     else
                     {
-                        // TODO: Add retry limit for consolidation jobs (old DrainConsolidationJobsAsync had MaxRetryCount=5).
-                        // Without a limit, a persistently-failing job will be re-enqueued indefinitely. (#1084 follow-up)
-                        _logger.Warning(
-                            "Drain: failed to dispatch consolidation job {RunId}, re-enqueuing",
-                            pendingJob.IssueIdentifier);
-                        _dispatcher.ReEnqueue(pendingJob);
+                        await HandleConsolidationDispatchFailureAsync(pendingJob, ct);
                     }
                 }
                 else
@@ -267,9 +275,18 @@ public sealed class JobQueueDrainService : BackgroundService
             catch (Exception ex)
             {
                 _logger.Error(ex,
-                    "Drain: exception dispatching job for issue {IssueIdentifier} to agent {AgentId}, re-enqueuing",
+                    "Drain: exception dispatching job for issue {IssueIdentifier} to agent {AgentId}",
                     pendingJob.IssueIdentifier, agent.AgentId);
-                _dispatcher.ReEnqueue(pendingJob);
+
+                if (pendingJob.IsConsolidation)
+                {
+                    await HandleConsolidationDispatchFailureAsync(pendingJob, ct);
+                }
+                else
+                {
+                    // Pipeline jobs: re-enqueue unconditionally (no retry limit)
+                    _dispatcher.ReEnqueue(pendingJob);
+                }
             }
         }
 
@@ -287,6 +304,94 @@ public sealed class JobQueueDrainService : BackgroundService
         var repoConfig = await _configStore.GetProviderConfigByIdAsync(
             job.RepoProviderId, Pipeline.Models.ProviderKind.Repository, ct);
         return JobDeduplicationGuardService.ResolveRequiredLabels(repoConfig, pipelineConfig);
+    }
+
+    /// <summary>
+    /// Handles a failed consolidation job dispatch attempt by incrementing the retry counter
+    /// and either re-enqueuing the job (if under the limit) or discarding it and transitioning
+    /// the <see cref="ConsolidationRun"/> to Failed (if retries are exhausted).
+    /// </summary>
+    /// <remarks>
+    /// Consolidation jobs enqueued via the legacy path use <c>IssueProviderId = "consolidation"</c>
+    /// (= <see cref="Pipeline.Models.ConsolidationConstants.ProviderConfigId"/>). The
+    /// <see cref="JobDeduplicationGuardService.MarkIssueComplete"/> call relies on this value
+    /// to remove the correct dedup entry. If future code changes the <c>IssueProviderId</c> for
+    /// consolidation jobs, the dedup removal would silently fail.
+    /// </remarks>
+    private async Task HandleConsolidationDispatchFailureAsync(Pipeline.Models.PendingJob pendingJob, CancellationToken ct)
+    {
+        var nextAttempt = pendingJob.ConsolidationDispatchAttempt + 1;
+
+        if (nextAttempt >= MaxConsolidationDispatchRetries)
+        {
+            _logger.Warning(
+                "Drain: consolidation job {RunId} failed dispatch {Attempt}/{Max} times, discarding and marking as Failed",
+                pendingJob.IssueIdentifier, nextAttempt, MaxConsolidationDispatchRetries);
+
+            _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
+            await TryUpdateRunStatusAsync(pendingJob.IssueIdentifier, Pipeline.Models.ConsolidationRunStatus.Failed, ct);
+            return;
+        }
+
+        _logger.Warning(
+            "Drain: failed to dispatch consolidation job {RunId} (attempt {Attempt}/{Max}), re-enqueuing",
+            pendingJob.IssueIdentifier, nextAttempt, MaxConsolidationDispatchRetries);
+
+        pendingJob = pendingJob with { ConsolidationDispatchAttempt = nextAttempt };
+        _dispatcher.ReEnqueue(pendingJob);
+    }
+
+    /// <summary>
+    /// Attempts to update the consolidation run status via <see cref="IConsolidationRunStore"/>.
+    /// If the store is not available (<c>null</c>), skips the update and logs a warning.
+    /// If the store throws, logs the error but does not propagate — the job is already discarded
+    /// from the in-memory queue, and a storage failure should not re-enqueue it indefinitely.
+    /// </summary>
+    /// <remarks>
+    /// TODO: This method performs a read-modify-write (GetById → mutate → SaveRun) without
+    /// optimistic concurrency control. A concurrent cancellation handler or admin cancel could
+    /// modify <c>ConsolidationRun.Status</c> between the read and save, and this write would
+    /// silently overwrite that change with <c>Failed</c>. Consider a CAS pattern or compare
+    /// the status before saving and skip the write if it already changed.
+    /// </remarks>
+    private async Task TryUpdateRunStatusAsync(
+        string runId,
+        Pipeline.Models.ConsolidationRunStatus newStatus,
+        CancellationToken ct)
+    {
+        if (_consolidationRunStore is null)
+        {
+            _logger.Warning(
+                "Drain: cannot update consolidation run {RunId} to {Status} — no IConsolidationRunStore available",
+                runId, newStatus);
+            return;
+        }
+
+        try
+        {
+            var run = await _consolidationRunStore.GetByIdAsync(runId, ct);
+            if (run is null)
+            {
+                _logger.Warning(
+                    "Drain: consolidation run {RunId} not found, cannot update to {Status}",
+                    runId, newStatus);
+                return;
+            }
+
+            run.Status = newStatus;
+            run.CompletedAtUtc = DateTimeOffset.UtcNow;
+            await _consolidationRunStore.SaveRunAsync(run, ct);
+
+            _logger.Information(
+                "Drain: consolidation run {RunId} transitioned to {Status} after exhausting dispatch retries",
+                runId, newStatus);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex,
+                "Drain: failed to update consolidation run {RunId} status to {Status} — job already discarded from queue",
+                runId, newStatus);
+        }
     }
 
 }

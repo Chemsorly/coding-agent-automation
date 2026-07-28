@@ -59,6 +59,14 @@ public sealed record PendingJob
     public bool AutoDispatch { get; init; }
 
     /// <summary>
+    /// Number of times the drain service has attempted to dispatch this consolidation job to an agent.
+    /// Incremented on each dispatch failure. When this reaches <c>JobQueueDrainService.MaxConsolidationDispatchRetries</c>
+    /// (5), the job is discarded and the <c>ConsolidationRun</c> transitions to <c>Failed</c>.
+    /// Irrelevant for non-consolidation jobs (always 0).
+    /// </summary>
+    public int ConsolidationDispatchAttempt { get; init; }
+
+    /// <summary>
     /// Whether this pending job is a consolidation job.
     /// Uses TaskType as the primary discriminator (stored on the WorkItem row, always reliable),
     /// with ConsolidationRunType.HasValue as a secondary indicator for legacy in-memory mode.
