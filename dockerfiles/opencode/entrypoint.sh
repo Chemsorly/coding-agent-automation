@@ -118,7 +118,6 @@ trap cleanup TERM INT
 # Username: opencode, Password: OPENCODE_SERVER_PASSWORD
 # Expected response: HTTP 200 with body containing "healthy": true
 HEALTH_URL="http://127.0.0.1:4096/global/health"
-AUTH_HEADER=$(printf 'opencode:%s' "$OPENCODE_SERVER_PASSWORD" | base64 -w 0)
 MAX_WAIT=90
 WAITED=0
 
@@ -131,9 +130,9 @@ while [ "$WAITED" -lt "$MAX_WAIT" ]; do
         exit 1
     fi
 
-    # Attempt health check with Basic auth
+    # Attempt health check with Basic auth (curl -u handles encoding internally)
     RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
-        -H "Authorization: Basic $AUTH_HEADER" \
+        -u "opencode:${OPENCODE_SERVER_PASSWORD}" \
         "$HEALTH_URL" 2>/dev/null) || true
 
     if [ "$RESPONSE" = "200" ]; then
