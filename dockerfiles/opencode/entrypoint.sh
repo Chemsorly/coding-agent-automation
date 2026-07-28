@@ -37,7 +37,7 @@ echo "Generated OPENCODE_SERVER_PASSWORD (${#OPENCODE_SERVER_PASSWORD} chars)"
 # -----------------------------------------------------------------------------
 if [ -n "$OPENCODE_CONFIG_CONTENT" ]; then
     mkdir -p /home/ubuntu/.config/opencode
-    echo "$OPENCODE_CONFIG_CONTENT" > /home/ubuntu/.config/opencode/opencode.json
+    printf '%s' "$OPENCODE_CONFIG_CONTENT" > /home/ubuntu/.config/opencode/opencode.json
     echo "Wrote OPENCODE_CONFIG_CONTENT to /home/ubuntu/.config/opencode/opencode.json"
 fi
 
@@ -118,8 +118,8 @@ trap cleanup TERM INT
 # Username: opencode, Password: OPENCODE_SERVER_PASSWORD
 # Expected response: HTTP 200 with body containing "healthy": true
 HEALTH_URL="http://127.0.0.1:4096/global/health"
-AUTH_HEADER=$(printf 'opencode:%s' "$OPENCODE_SERVER_PASSWORD" | base64)
-MAX_WAIT=30
+AUTH_HEADER=$(printf 'opencode:%s' "$OPENCODE_SERVER_PASSWORD" | base64 -w 0)
+MAX_WAIT=90
 WAITED=0
 
 echo "Waiting for OpenCode server to become healthy (max ${MAX_WAIT}s)..."

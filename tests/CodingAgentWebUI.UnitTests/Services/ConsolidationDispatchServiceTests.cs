@@ -48,6 +48,10 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>());
 
+        // Default: LoadPipelineConfigAsync returns a default config (tests can override)
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" });
+
         // Default: return empty projects (no templates will resolve without project ownership)
         _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>());
@@ -771,6 +775,68 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
             _mockLogger.Object,
             runStore,
             runTracker: new Lazy<IConsolidationRunTracker>(() => tracker));
+    }
+
+    // ── Live config reload regression test ─────────────────────────────
+
+    /// <summary>
+    /// Regression test: ConsolidationDispatchService must send the LIVE pipeline configuration
+    /// from the config store in the job message, not the stale startup singleton.
+    /// Bug: Program.cs loaded pipelineConfig from a missing JSON file (→ defaults with 30-min timeout),
+    /// while the DB store had the user-configured 2-hour timeout. The consolidation dispatch path
+    /// sent the stale 30-min default, causing runs to be cancelled prematurely.
+    /// </summary>
+    [Fact]
+    public async Task TryDispatchAsync_JobMessage_UsesLiveConfigFromStore_NotStartupSingleton()
+    {
+        // Arrange: startup singleton has DEFAULT 30-min timeout (simulates missing JSON file scenario)
+        var staleStartupConfig = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = "/tmp",
+            AgentTimeout = TimeSpan.FromMinutes(30) // stale default
+        };
+
+        // The config store returns the LIVE value (user set 120 min via UI → saved to DB)
+        var liveConfig = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = "/tmp",
+            AgentTimeout = TimeSpan.FromMinutes(120) // live DB value
+        };
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(liveConfig);
+
+        RegisterIdleAgent();
+
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
+
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        ConsolidationJobMessage? capturedMessage = null;
+        _mockAgentComm
+            .Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg)
+            .Returns(Task.CompletedTask);
+
+        var svc = CreateService(staleStartupConfig);
+        var run = new ConsolidationRun
+        {
+            RunId = "r1",
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            TemplateName = "Test"
+        };
+
+        // Act
+        var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
+
+        // Assert
+        result.Should().Be(ConsolidationDispatchResult.Dispatched);
+        capturedMessage.Should().NotBeNull();
+        capturedMessage!.PipelineConfiguration.AgentTimeout.Should().Be(
+            TimeSpan.FromMinutes(120),
+            "job message must carry the LIVE config from the store, not the stale startup singleton");
     }
 
     #endregion
