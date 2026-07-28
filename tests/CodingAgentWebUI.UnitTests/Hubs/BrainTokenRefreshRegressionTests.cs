@@ -172,26 +172,9 @@ public class BrainTokenRefreshRegressionTests
     /// throws HubException instead of silently falling back to work config (misscoped token).
     /// </summary>
     [Fact]
-    public async Task RefreshToken_BrainKind_BrainConfigMissing_FallsBackToWorkConfig()
+    public async Task RefreshToken_BrainKind_BrainConfigMissing_ThrowsHubException()
     {
         // Arrange: Only work config exists, brain config was removed
-        var workConfig = new ProviderConfig
-        {
-            Id = "work-repo-1",
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Work Repo",
-            RepositoryRole = RepositoryRole.Work,
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
-                [ProviderSettingKeys.ClientId] = "client-1",
-                [ProviderSettingKeys.InstallationId] = "12345",
-                [ProviderSettingKeys.Owner] = "org",
-                [ProviderSettingKeys.Repo] = "work-repo"
-            }
-        };
-
         var run = new PipelineRun
         {
             RunId = "job-1",
@@ -203,8 +186,6 @@ public class BrainTokenRefreshRegressionTests
         };
 
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("work-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workConfig);
         // brain-repo-missing returns null (default Moq behavior)
 
         var service = CreateService();
@@ -220,24 +201,8 @@ public class BrainTokenRefreshRegressionTests
     /// instead of silently falling back to work config (misscoped token).
     /// </summary>
     [Fact]
-    public async Task RefreshToken_BrainKind_NoBrainConfigId_FallsBackToWorkConfig()
+    public async Task RefreshToken_BrainKind_NoBrainConfigId_ThrowsHubException()
     {
-        var workConfig = new ProviderConfig
-        {
-            Id = "work-repo-1",
-            Kind = ProviderKind.Repository,
-            ProviderType = "GitHub",
-            DisplayName = "Work Repo",
-            Settings = new Dictionary<string, string>
-            {
-                [ProviderSettingKeys.PrivateKeyBase64] = "dGVzdA==",
-                [ProviderSettingKeys.ClientId] = "client-1",
-                [ProviderSettingKeys.InstallationId] = "12345",
-                [ProviderSettingKeys.Owner] = "org",
-                [ProviderSettingKeys.Repo] = "work-repo"
-            }
-        };
-
         var run = new PipelineRun
         {
             RunId = "job-1",
@@ -249,8 +214,6 @@ public class BrainTokenRefreshRegressionTests
         };
 
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
-        _mockFacade.Setup(f => f.GetProviderConfigByIdAsync("work-repo-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(workConfig);
 
         var service = CreateService();
 
