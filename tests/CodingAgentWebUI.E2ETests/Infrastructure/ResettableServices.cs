@@ -16,14 +16,12 @@ public sealed class ResettablePipelineOrchestrationService : PipelineOrchestrati
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
-        IPipelineExecutionFacade executionFacade,
-        IPipelineCompletionFacade completionFacade,
         IPipelineCancellationFacade cancellationFacade,
         PipelineRunLifecycleService lifecycle,
         ILabelService labelService,
         ILogger logger)
-        : base(configStore, configStore, providerFactory, issueParser, executionFacade,
-               completionFacade, cancellationFacade, lifecycle, labelService, logger)
+        : base(configStore, configStore, providerFactory, issueParser,
+               cancellationFacade, lifecycle, labelService, logger)
     {
         _lifecycleForReset = lifecycle;
     }

@@ -25,8 +25,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly ILabelService _labelSwapper;
     private readonly IssueDescriptionParser _issueParser;
-    private readonly IPipelineExecutionFacade _executionFacade;
-    private readonly IPipelineCompletionFacade _completionFacade;
     private readonly IPipelineCancellationFacade _cancellationFacade;
     private readonly Serilog.ILogger _logger;
 
@@ -37,8 +35,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         IConfigurationStore configurationStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
-        IPipelineExecutionFacade executionFacade,
-        IPipelineCompletionFacade completionFacade,
         IPipelineCancellationFacade cancellationFacade,
         PipelineRunLifecycleService lifecycle,
         ILabelService labelSwapper,
@@ -48,8 +44,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         ArgumentNullException.ThrowIfNull(configurationStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(issueParser);
-        ArgumentNullException.ThrowIfNull(executionFacade);
-        ArgumentNullException.ThrowIfNull(completionFacade);
         ArgumentNullException.ThrowIfNull(cancellationFacade);
         ArgumentNullException.ThrowIfNull(lifecycle);
         ArgumentNullException.ThrowIfNull(labelSwapper);
@@ -59,8 +53,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         _labelSwapper = labelSwapper;
         _issueParser = issueParser;
         _logger = logger;
-        _executionFacade = executionFacade;
-        _completionFacade = completionFacade;
         _cancellationFacade = cancellationFacade;
         _providerManager = new PipelineProviderManager(configurationStore, providerFactory, logger);
         _lifecycle = lifecycle;

@@ -177,22 +177,12 @@ builder.Services.AddAuthorization(options =>
 });
 
 // Configure Serilog
-var orchestratorLogLevel = Environment.GetEnvironmentVariable("LOG_LEVEL")?.ToLowerInvariant() switch
-{
-    "debug" or "dbg" => Serilog.Events.LogEventLevel.Debug,
-    "verbose" or "trace" => Serilog.Events.LogEventLevel.Verbose,
-    "warning" or "warn" => Serilog.Events.LogEventLevel.Warning,
-    "error" or "err" => Serilog.Events.LogEventLevel.Error,
-    _ => Serilog.Events.LogEventLevel.Information
-};
-var dbLogLevel = Environment.GetEnvironmentVariable("DB_LOG_LEVEL")?.ToLowerInvariant() switch
-{
-    "debug" or "dbg" => Serilog.Events.LogEventLevel.Debug,
-    "information" or "info" => Serilog.Events.LogEventLevel.Information,
-    "verbose" or "trace" => Serilog.Events.LogEventLevel.Verbose,
-    "error" or "err" => Serilog.Events.LogEventLevel.Error,
-    _ => Serilog.Events.LogEventLevel.Warning
-};
+var orchestratorLogLevel = LogLevelParser.Parse(
+    Environment.GetEnvironmentVariable("LOG_LEVEL"),
+    Serilog.Events.LogEventLevel.Information);
+var dbLogLevel = LogLevelParser.Parse(
+    Environment.GetEnvironmentVariable("DB_LOG_LEVEL"),
+    Serilog.Events.LogEventLevel.Warning);
 builder.Host.UseSerilog((ctx, lc) => lc
     .MinimumLevel.Is(orchestratorLogLevel)
     // Suppress noisy ASP.NET Core framework logging (health checks, static files, Blazor negotiation, auth)

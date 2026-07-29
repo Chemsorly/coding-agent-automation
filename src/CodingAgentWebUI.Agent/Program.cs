@@ -58,14 +58,9 @@ if (!isK8sMode && string.IsNullOrEmpty(orchestratorUrl))
 }
 
 // ── Configure Serilog ──
-var logLevel = Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel)?.ToLowerInvariant() switch
-{
-    "debug" or "dbg" => Serilog.Events.LogEventLevel.Debug,
-    "verbose" or "trace" => Serilog.Events.LogEventLevel.Verbose,
-    "warning" or "warn" => Serilog.Events.LogEventLevel.Warning,
-    "error" or "err" => Serilog.Events.LogEventLevel.Error,
-    _ => Serilog.Events.LogEventLevel.Information
-};
+var logLevel = LogLevelParser.Parse(
+    Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel),
+    Serilog.Events.LogEventLevel.Information);
 Log.Logger = new LoggerConfiguration()
     .MinimumLevel.Is(logLevel)
     // Suppress noisy ASP.NET Core request logging (health checks every 10s)
