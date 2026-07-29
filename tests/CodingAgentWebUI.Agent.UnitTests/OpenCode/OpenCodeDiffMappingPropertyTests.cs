@@ -77,8 +77,7 @@ public class OpenCodeDiffMappingPropertyTests
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();
-        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "diff-session-002");
-        await ctx.Provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+        ctx.Provider.SetLastKnownSessionIdForTest("diff-session-002");
 
         var json = JsonSerializer.Serialize(input.Diffs, OpenCodeJson.JsonOptions);
         ctx.Handler.ForUrlPattern("/session/.+/diff", HttpStatusCode.OK, json);
@@ -105,8 +104,7 @@ public class OpenCodeDiffMappingPropertyTests
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();
-        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "diff-session-003");
-        await ctx.Provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+        ctx.Provider.SetLastKnownSessionIdForTest("diff-session-003");
 
         // Enqueue an error response for the diff endpoint
         ctx.Handler.ForUrlPattern("/session/.+/diff", input.StatusCode, "{\"error\":\"test failure\"}");
@@ -128,8 +126,7 @@ public class OpenCodeDiffMappingPropertyTests
     {
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();
-        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "diff-session-004");
-        await ctx.Provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+        ctx.Provider.SetLastKnownSessionIdForTest("diff-session-004");
 
         ctx.Handler.ForUrlPattern("/session/.+/diff", HttpStatusCode.OK, "[]");
 
