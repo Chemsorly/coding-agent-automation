@@ -34,14 +34,7 @@ public sealed class DispatchServiceOptions
 
     /// <summary>
     /// Creates a <see cref="TokenBucketRateLimiter"/> configured from <see cref="RateLimitPerSecond"/>.
+    /// Delegates to <see cref="RateLimiterFactory.CreateTokenBucket"/>.
     /// </summary>
-    public TokenBucketRateLimiter CreateRateLimiter() => new(new TokenBucketRateLimiterOptions
-    {
-        TokenLimit = RateLimitPerSecond,
-        QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
-        QueueLimit = 0,
-        ReplenishmentPeriod = TimeSpan.FromSeconds(1),
-        TokensPerPeriod = RateLimitPerSecond,
-        AutoReplenishment = true
-    });
+    public TokenBucketRateLimiter CreateRateLimiter() => RateLimiterFactory.CreateTokenBucket(RateLimitPerSecond);
 }
