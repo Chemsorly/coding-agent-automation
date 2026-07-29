@@ -1,8 +1,6 @@
 using CodingAgentWebUI.E2ETests.Fakes;
-using CodingAgentWebUI.Infrastructure.Git;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
-using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
@@ -106,16 +104,6 @@ public sealed class E2EWebApplicationFactory : WebApplicationFactory<Program>
             ConfigStore,
             FakeProviders,
             new IssueDescriptionParser(),
-            new PipelineExecutionFacade(
-                new AgentPhaseExecutor(Serilog.Log.Logger),
-                new QualityGateExecutor(QualityGateValidator, new PullRequestOrchestrator(Serilog.Log.Logger), new CiLogWriter(Serilog.Log.Logger), new FeedbackService(Serilog.Log.Logger), Serilog.Log.Logger),
-                QualityGateValidator,
-                new BrainSyncService(new BrainUpdateService(Serilog.Log.Logger), Serilog.Log.Logger)),
-            new PipelineCompletionFacade(
-                new PullRequestOrchestrator(Serilog.Log.Logger),
-                new PullRequestFinalizationService(Serilog.Log.Logger),
-                new FeedbackService(Serilog.Log.Logger),
-                HistoryService),
             new PipelineCancellationFacade(null, null),
             lifecycle,
             TestOrchestrationFactory.NoOpLabelService.Instance,

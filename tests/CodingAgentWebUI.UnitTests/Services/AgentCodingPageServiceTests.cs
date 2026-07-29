@@ -729,24 +729,29 @@ public class AgentCodingPageServiceTests
     [Fact]
     public async Task SwitchToIssueDrawer_ReusesCache_WhenDataExists()
     {
-        // TODO: This test does not actually validate cache reuse vs re-fetch — DrawerIssues is cleared on close,
-        // so the switch always calls open again. Asserting only IsIssueDrawerOpen passes regardless of which path is taken.
         var template = MakeTemplate();
         _service.Templates.Add(template);
         _service.IssueProviders.Add(MakeProvider("ip-1"));
+        _service.RepoProviders.Add(MakeProvider("rp-1", ProviderKind.Repository));
         SetupMockIssueProvider();
+        SetupMockRepoProviderForCacheTest();
 
-        // First open to populate data
+        // Open issue drawer to populate data
         await _service.OpenIssueDrawerAsync("t-1");
         Assert.True(_service.IsIssueDrawerOpen);
+        Assert.NotEmpty(_service.DrawerIssues);
 
-        // Close and then switch — should reuse cached data
-        _service.CloseIssueDrawer();
+        // Open PR drawer — hides issue drawer but does NOT clear cached data
+        await _service.OpenPrDrawerAsync("t-1");
+        Assert.True(_service.IsPrDrawerOpen);
         Assert.False(_service.IsIssueDrawerOpen);
+        Assert.NotEmpty(_service.DrawerIssues); // still cached
 
-        // After CloseIssueDrawer, DrawerIssues is cleared, so switch will call open again
-        await _service.SwitchToIssueDrawerAsync("t-1");
+        // Switch back to issue drawer — should reuse cache (fast path), NOT re-fetch
+        var error = await _service.SwitchToIssueDrawerAsync("t-1");
+        Assert.Null(error);
         Assert.True(_service.IsIssueDrawerOpen);
+        Assert.False(_service.IsPrDrawerOpen);
     }
 
     // TODO: These deferred-evaluation tests don't truly prove the fix prevents a regression because
@@ -1013,13 +1018,25 @@ public class AgentCodingPageServiceTests
     }
 
     [Fact]
-    public void Dispose_CancelsCts()
+    public async Task Dispose_CancelsCts()
     {
-        // TODO: This test only verifies no-throw — it does not assert that a pending CancellationToken is actually
-        // cancelled. Open a drawer first, capture the CTS token, dispose, and assert token.IsCancellationRequested.
-        // Should not throw
+        var template = MakeTemplate();
+        _service.Templates.Add(template);
+        _service.IssueProviders.Add(MakeProvider("ip-1"));
+        SetupMockIssueProvider();
+
+        await _service.OpenIssueDrawerAsync("t-1");
+        Assert.True(_service.IsIssueDrawerOpen);
+
+        var token = _service.IssueDrawer.CancellationToken;
+        Assert.False(token.IsCancellationRequested);
+
         _service.Dispose();
-        _service.Dispose(); // double-dispose safe
+
+        Assert.True(token.IsCancellationRequested);
+
+        // double-dispose safe
+        _service.Dispose();
     }
 
     [Fact]
@@ -1051,6 +1068,22 @@ public class AgentCodingPageServiceTests
             .ReturnsAsync(Array.Empty<string>());
         _mockProviderFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
             .Returns(mockIssueProvider.Object);
+    }
+
+    private void SetupMockRepoProviderForCacheTest()
+    {
+        var mockRepoProvider = new Mock<IRepositoryProvider>();
+        mockRepoProvider.Setup(r => r.ListOpenPullRequestsAsync(It.IsAny<int>(), It.IsAny<int>(), It.IsAny<IReadOnlyList<string>?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PagedResult<PullRequestSummary>
+            {
+                Items = new List<PullRequestSummary>
+                {
+                    new() { Identifier = "99", Title = "PR", BranchName = "feat/x", TargetBranch = "main", Url = "http://x", Number = 99, Description = "", Labels = Array.Empty<string>(), IsDraft = false }
+                },
+                Page = 1, PageSize = 15, HasMore = false
+            });
+        _mockProviderFactory.Setup(f => f.CreateRepositoryProvider(It.IsAny<ProviderConfig>()))
+            .Returns(mockRepoProvider.Object);
     }
 
     private void SetupMockRepoProvider()
