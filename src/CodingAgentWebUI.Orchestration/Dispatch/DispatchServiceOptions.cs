@@ -1,5 +1,3 @@
-using System.Threading.RateLimiting;
-
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
@@ -31,10 +29,4 @@ public sealed class DispatchServiceOptions
 
     /// <summary>K8s Secret name containing opencode config file (mounted for opencode agents).</summary>
     public string OpencodeConfigSecretName { get; set; } = "";
-
-    /// <summary>
-    /// Creates a <see cref="TokenBucketRateLimiter"/> configured from <see cref="RateLimitPerSecond"/>.
-    /// Delegates to <see cref="RateLimiterFactory.CreateTokenBucket"/>.
-    /// </summary>
-    public TokenBucketRateLimiter CreateRateLimiter() => RateLimiterFactory.CreateTokenBucket(RateLimitPerSecond);
 }
