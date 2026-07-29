@@ -1,4 +1,3 @@
-using System.Reflection;
 using AwesomeAssertions;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Pipeline.Models;
@@ -19,7 +18,7 @@ public class AgentWorkerServiceReconnectionTests
     public void CalculateReconnectionDelay_FirstAttempt_ReturnsBaseDelay()
     {
         // 2^1 = 2 seconds + 0-1s jitter
-        var delay = InvokeCalculateReconnectionDelay(1);
+        var delay = ReconnectionHelper.CalculateReconnectionDelay(1);
         delay.Should().BeGreaterThanOrEqualTo(TimeSpan.FromSeconds(2));
         delay.Should().BeLessThan(TimeSpan.FromSeconds(3));
     }
@@ -28,21 +27,27 @@ public class AgentWorkerServiceReconnectionTests
     public void CalculateReconnectionDelay_ExponentialIncrease()
     {
         // attempt 2 → 2^2=4s, attempt 3 → 2^3=8s, attempt 4 → 2^4=16s
-        var delay2 = InvokeCalculateReconnectionDelay(2);
-        var delay3 = InvokeCalculateReconnectionDelay(3);
-        var delay4 = InvokeCalculateReconnectionDelay(4);
+        var delay2 = ReconnectionHelper.CalculateReconnectionDelay(2);
+        var delay3 = ReconnectionHelper.CalculateReconnectionDelay(3);
+        var delay4 = ReconnectionHelper.CalculateReconnectionDelay(4);
 
         // Each delay (minus jitter) should be ~double the previous
         delay2.Should().BeGreaterThanOrEqualTo(TimeSpan.FromSeconds(4));
+        delay2.Should().BeLessThan(TimeSpan.FromSeconds(5));
         delay3.Should().BeGreaterThanOrEqualTo(TimeSpan.FromSeconds(8));
+        delay3.Should().BeLessThan(TimeSpan.FromSeconds(9));
         delay4.Should().BeGreaterThanOrEqualTo(TimeSpan.FromSeconds(16));
+        delay4.Should().BeLessThan(TimeSpan.FromSeconds(17));
+
+        delay3.Should().BeGreaterThan(delay2);
+        delay4.Should().BeGreaterThan(delay3);
     }
 
     [Fact]
     public void CalculateReconnectionDelay_CappedAt120Seconds_PlusJitter()
     {
         // At attempt 8+, delay should be capped at 120s + up to 1s jitter
-        var delay = InvokeCalculateReconnectionDelay(20);
+        var delay = ReconnectionHelper.CalculateReconnectionDelay(20);
         delay.Should().BeGreaterThanOrEqualTo(TimeSpan.FromSeconds(120));
         delay.Should().BeLessThanOrEqualTo(TimeSpan.FromSeconds(121));
     }
@@ -53,7 +58,7 @@ public class AgentWorkerServiceReconnectionTests
         // Test many attempts — none should exceed 121s
         for (int i = 1; i <= 100; i++)
         {
-            var delay = InvokeCalculateReconnectionDelay(i);
+            var delay = ReconnectionHelper.CalculateReconnectionDelay(i);
             delay.Should().BeLessThanOrEqualTo(TimeSpan.FromSeconds(121),
                 $"attempt {i} should not exceed 2 minutes + 1s jitter");
         }
@@ -124,16 +129,6 @@ public class AgentWorkerServiceReconnectionTests
         // We can't easily trigger Closed without a real server,
         // but we verify subscription compiles and the manager is in a valid state
         manager.IsConnected.Should().BeFalse();
-    }
-
-    private static TimeSpan InvokeCalculateReconnectionDelay(int attempt)
-    {
-        // CalculateReconnectionDelay is internal static on AgentConnectionLifecycle
-        var method = typeof(AgentConnectionLifecycle).GetMethod(
-            "CalculateReconnectionDelay",
-            BindingFlags.NonPublic | BindingFlags.Static);
-        method.Should().NotBeNull("CalculateReconnectionDelay should exist as an internal static method");
-        return (TimeSpan)method!.Invoke(null, [attempt])!;
     }
 
     private static HubConnectionManager CreateTestHubManager()

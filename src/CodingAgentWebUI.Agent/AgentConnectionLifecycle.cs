@@ -214,7 +214,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         const int maxAttempts = 10;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var delay = CalculateReconnectionDelay(attempt);
+            var delay = ReconnectionHelper.CalculateReconnectionDelay(attempt);
             _logger.Information("Reconnection attempt {Attempt}/{Max} after {Delay:F1}s",
                 attempt, maxAttempts, delay.TotalSeconds);
 
@@ -439,10 +439,4 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         await manager.Connection.InvokeAsync(HubMethodNames.Heartbeat, heartbeat, ct);
     }
 
-    internal static TimeSpan CalculateReconnectionDelay(int attempt)
-    {
-        var baseSeconds = Math.Min(Math.Pow(2, attempt), 120);
-        var jitter = Random.Shared.NextDouble(); // 0–1s
-        return TimeSpan.FromSeconds(baseSeconds + jitter);
     }
-}
