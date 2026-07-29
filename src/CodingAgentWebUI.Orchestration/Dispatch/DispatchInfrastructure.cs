@@ -57,6 +57,54 @@ public sealed class DispatchInfrastructure
         Resolution = resolution;
     }
 
+    // ── Config Resolution (extracted from AgentJobDispatcher) ─────────────────────
+
+    /// <summary>
+    /// Prepares provider configs and resolves the pipeline configuration for a dispatch.
+    /// Shared by implementation and review paths which both use the load-and-resolve overload.
+    /// The decomposition path does NOT use this helper because it loads config early for
+    /// <see cref="PipelineConfiguration.WorkspaceBaseDirectory"/> access before run creation.
+    /// </summary>
+    internal async Task<(IReadOnlyList<ProviderConfig> ProviderConfigs, PipelineConfiguration Config)> PrepareAndResolveConfigAsync(
+        string repoProviderId,
+        string agentProviderId,
+        string? brainProviderId,
+        string? pipelineProviderId,
+        PipelineProject project,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        var providerConfigs = await PrepareProviderConfigsAsync(
+            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId, logger, ct);
+
+        var config = await PipelineConfigurationResolver.ResolveAsync(
+            Resolution.ConfigStore.LoadPipelineConfigAsync,
+            Resolution.ConfigStore.LoadAllTemplatesAsync,
+            project, repoProviderId, brainProviderId, providerConfigs, ct);
+
+        return (providerConfigs, config);
+    }
+
+    /// <summary>
+    /// Builds a synthetic <see cref="IssueDetail"/> and <see cref="ParsedIssue"/> from metadata
+    /// (e.g., PR title/description or epic title). Used by review and decomposition dispatch paths
+    /// which don't have a real issue to fetch from the provider.
+    /// </summary>
+    internal static (IssueDetail IssueDetail, ParsedIssue ParsedIssue) BuildSyntheticIssueContext(
+        string identifier, string title, string? description)
+    {
+        var desc = description ?? string.Empty;
+        var issueDetail = new IssueDetail
+        {
+            Identifier = identifier,
+            Title = title,
+            Description = desc,
+            Labels = Array.Empty<string>()
+        };
+        var parsedIssue = new IssueDescriptionParser().Parse(desc);
+        return (issueDetail, parsedIssue);
+    }
+
     // ── Provider Config Building (inlined from ProviderConfigBuilder) ──────────────
 
     /// <summary>
