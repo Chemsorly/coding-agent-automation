@@ -101,27 +101,20 @@ public class OpenCodeFactoryAndLifecycleTests
     // ── KillAsync Tests ─────────────────────────────────────────────────
 
     /// <summary>
-    /// KillAsync sends POST /session/:id/abort when a session is active.
+    /// KillAsync is a no-op when no session has been executed (no _lastKnownSessionId).
     /// **Validates: Requirements 1.7**
     /// </summary>
     [Fact]
     public async Task KillAsync_SessionActive_SendsAbort()
     {
-        // Arrange — establish a session first
+        // Arrange — no session established (stateless: EnsureSessionAsync is no-op)
         var ctx = OpenCodeTestHelpers.CreateTestContext();
-        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "session-to-kill");
-        await ctx.Provider.EnsureSessionAsync("/tmp/workspace", CancellationToken.None);
 
-        // Enqueue response for the abort call
-        ctx.Handler.EnqueueOk();
-
-        // Act
+        // Act — KillAsync with no _lastKnownSessionId should be a no-op
         await ctx.Provider.KillAsync();
 
-        // Assert — verify POST /session/session-to-kill/abort was called
-        var abortRequest = ctx.Handler.Requests.Last();
-        Assert.Equal(HttpMethod.Post, abortRequest.Method);
-        Assert.Equal("/session/session-to-kill/abort", abortRequest.Path);
+        // Assert — no HTTP calls made (no session to abort)
+        Assert.Empty(ctx.Handler.Requests);
     }
 
     /// <summary>
@@ -148,37 +141,33 @@ public class OpenCodeFactoryAndLifecycleTests
     [Fact]
     public async Task KillAsync_HttpError_DoesNotThrow()
     {
-        // Arrange — establish a session first
+        // Arrange — set session ID directly, then enqueue error for abort
         var ctx = OpenCodeTestHelpers.CreateTestContext();
-        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "session-error");
-        await ctx.Provider.EnsureSessionAsync("/tmp/workspace", CancellationToken.None);
-
-        // Enqueue error response for abort
+        ctx.Provider.SetLastKnownSessionIdForTest("session-error");
         ctx.Handler.EnqueueResponse(HttpStatusCode.InternalServerError, "abort failed");
 
-        // Act & Assert — should not throw
+        // Act & Assert — should not throw even when server returns error
         await ctx.Provider.KillAsync();
     }
 
     // ── GetLatestSessionIdAsync Tests ───────────────────────────────────
 
     /// <summary>
-    /// GetLatestSessionIdAsync returns stored session ID after session creation.
+    /// GetLatestSessionIdAsync returns null when no ExecuteAsync has been called (stateless design).
     /// **Validates: Requirements 6.4**
     /// </summary>
     [Fact]
     public async Task GetLatestSessionIdAsync_AfterSessionCreation_ReturnsStoredId()
     {
-        // Arrange
+        // Arrange — stateless: EnsureSessionAsync is no-op, so no session is stored
         var ctx = OpenCodeTestHelpers.CreateTestContext();
-        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "stored-session-123");
         await ctx.Provider.EnsureSessionAsync("/tmp/workspace", CancellationToken.None);
 
         // Act
         var sessionId = await ctx.Provider.GetLatestSessionIdAsync("/tmp/workspace", CancellationToken.None);
 
-        // Assert
-        Assert.Equal("stored-session-123", sessionId);
+        // Assert — null because no ExecuteAsync has been called
+        Assert.Null(sessionId);
     }
 
     /// <summary>
@@ -201,31 +190,24 @@ public class OpenCodeFactoryAndLifecycleTests
     // ── DisposeAsync Tests ──────────────────────────────────────────────
 
     /// <summary>
-    /// DisposeAsync clears the session ID without making HTTP calls.
+    /// DisposeAsync clears the last known session ID without making HTTP calls.
     /// **Validates: Requirements 6.4**
     /// </summary>
     [Fact]
     public async Task DisposeAsync_ClearsSessionWithoutHttpCalls()
     {
-        // Arrange — establish a session first
+        // Arrange — provider starts with no session (stateless design)
         var ctx = OpenCodeTestHelpers.CreateTestContext();
-        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "session-to-dispose");
-        await ctx.Provider.EnsureSessionAsync("/tmp/workspace", CancellationToken.None);
-
-        // Verify session exists
-        var sessionBefore = await ctx.Provider.GetLatestSessionIdAsync("/tmp/workspace", CancellationToken.None);
-        Assert.Equal("session-to-dispose", sessionBefore);
-
         var requestCountBefore = ctx.Handler.Requests.Count;
 
         // Act
         await ctx.Provider.DisposeAsync();
 
-        // Assert — session should be cleared
+        // Assert — GetLatestSessionIdAsync returns null (no session state)
         var sessionAfter = await ctx.Provider.GetLatestSessionIdAsync("/tmp/workspace", CancellationToken.None);
         Assert.Null(sessionAfter);
 
-        // Assert — no additional HTTP calls were made during dispose
+        // Assert — no HTTP calls were made during dispose
         Assert.Equal(requestCountBefore, ctx.Handler.Requests.Count);
     }
 

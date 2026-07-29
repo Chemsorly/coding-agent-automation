@@ -20,9 +20,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger _logger;
     private readonly string? _model;
-    private volatile string? _currentSessionId;
-    private volatile string? _currentSessionWorkspacePath;
-    private volatile bool _sseEmittedAssistantContent;
     private long _lastOutputTimeTicks; // Interlocked access for DateTime
     private int _activeExecutionCount; // Tracks concurrent executions for correct IsExecuting
     private volatile string? _sessionStatus; // "idle", "busy", "retry"
@@ -30,6 +27,22 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     private volatile string? _allSessionsSummary; // Cached summary from polling GET /session/status
     private CancellationTokenSource? _sessionStatusPollCts; // Controls the background polling loop
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long Input, long Output, long Reasoning, long CacheRead, long CacheWrite, double Cost)> _lastSessionTokens = new();
+
+    /// <summary>
+    /// Last session ID returned by the opencode server (used only for health/diagnostics — NOT for session routing).
+    /// Session routing is always based on workspace path: each ExecuteAsync call resolves its own session.
+    /// </summary>
+    private volatile string? _lastKnownSessionId;
+
+    /// <summary>
+    /// Per-workspace session cache. Maps absolute workspace path → session ID.
+    /// Sessions are scoped to their workspace: different workspaces always get fresh sessions.
+    /// UseResume=true within the same workspace reuses the cached session.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _sessionByWorkspace = new(StringComparer.Ordinal);
+
+    /// <summary>Test-only: sets _lastKnownSessionId for verifying diff/kill behavior.</summary>
+    internal void SetLastKnownSessionIdForTest(string? sessionId) => _lastKnownSessionId = sessionId;
 
     public AgentProviderType ProviderType => AgentProviderType.OpenCode;
 
@@ -86,91 +99,11 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         };
     }
 
-    public async Task EnsureSessionAsync(WorkspacePath workspacePath, CancellationToken ct)
+    public Task EnsureSessionAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
-        try
-        {
-            var absolutePath = Path.GetFullPath(workspacePath);
-
-            if (_currentSessionId is not null)
-            {
-                // If workspace path changed, we need a new session regardless
-                if (_currentSessionWorkspacePath != null && _currentSessionWorkspacePath != absolutePath)
-                {
-                    _logger.Debug("Workspace path changed from {Old} to {New}, creating new session",
-                        _currentSessionWorkspacePath, absolutePath);
-                    _currentSessionId = null;
-                    _currentSessionWorkspacePath = null;
-                }
-                else
-                {
-                    // Validate existing session
-                    var validated = await ValidateExistingSessionAsync(_currentSessionId, ct);
-                    if (validated)
-                        return;
-                }
-
-                // Session no longer valid — create a new one
-            }
-
-            // Create a new session
-            await CreateNewSessionAsync(workspacePath, ct);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to ensure OpenCode session for workspace {WorkspacePath}", workspacePath);
-        }
-    }
-
-    private async Task<bool> ValidateExistingSessionAsync(string sessionId, CancellationToken ct)
-    {
-        using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
-
-        try
-        {
-            var response = await client.GetAsync($"/session/{sessionId}", ct);
-
-            if (response.IsSuccessStatusCode)
-                return true;
-
-            if (response.StatusCode == HttpStatusCode.NotFound)
-                return false;
-
-            // Other error status — treat as invalid
-            return false;
-        }
-        catch (Exception ex)
-        {
-            // Network error during validation — keep existing session (don't discard it)
-            _logger.Warning(ex, "Failed to validate existing OpenCode session {SessionId}", sessionId);
-            return true;
-        }
-    }
-
-    private async Task CreateNewSessionAsync(string workspacePath, CancellationToken ct)
-    {
-        using var client = CreateDirectoryClient();
-
-        // OpenCode requires an absolute path for the session directory.
-        // Consolidation jobs pass relative paths (e.g., "./workspaces/consolidation/{guid}/refactoring")
-        // which would otherwise resolve to the wrong directory on the server.
-        var absolutePath = Path.GetFullPath(workspacePath);
-        var title = Path.GetFileName(absolutePath) ?? absolutePath;
-
-        // The Path field is kept for backward compatibility, but the x-opencode-directory
-        // header (set by CreateDirectoryClient) is the primary mechanism for scoping the
-        // session to the correct workspace directory.
-        var request = new CreateSessionRequest { Title = title, Path = absolutePath };
-
-        var response = await client.PostAsJsonAsync("/session", request, OpenCodeJson.JsonOptions, ct);
-        response.EnsureSuccessStatusCode();
-
-        var result = await response.Content.ReadFromJsonAsync<CreateSessionResponse>(OpenCodeJson.JsonOptions, ct);
-        if (result is not null)
-        {
-            _currentSessionId = result.Id;
-            _currentSessionWorkspacePath = absolutePath;
-        }
+        // No-op: sessions are now created per-ExecuteAsync call based on the workspace path.
+        // The opencode server manages session lifecycle internally.
+        return Task.CompletedTask;
     }
 
     public async Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
@@ -181,26 +114,17 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         _allSessionsSummary = null;
         LastOutputTime = DateTime.UtcNow; // Reset so stall monitor measures from this call's start
 
-        // For isolated (non-resume) calls, use a local flag so concurrent calls don't
-        // interfere with each other's SSE dedup logic. Shared calls use the instance field.
-        var isIsolatedCall = !request.UseResume && string.IsNullOrEmpty(request.ResumeSessionId);
-        var localSseEmitted = false;
+        var sseEmitted = false;
+        // NOTE: Per-call local variable for SSE dedup — avoids races with concurrent parallel calls.
 
-        // Only reset shared flag for non-isolated calls
-        if (!isIsolatedCall)
-            _sseEmittedAssistantContent = false;
-
-        // For isolated calls, use a local CTS to avoid the overwrite race where concurrent
-        // calls clobber each other's _sessionStatusPollCts. For shared calls, use the field
-        // (serial execution guarantees no race).
         var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        if (!isIsolatedCall)
-            _sessionStatusPollCts = pollCts;
+        _sessionStatusPollCts = pollCts;
         var pollTask = PollAllSessionStatusesAsync(pollCts.Token);
 
         try
         {
-            // 1. Session selection
+            // 1. Session selection — always create/resolve per workspace path (stateless)
+            var workspacePath = Path.GetFullPath(request.WorkspacePath);
             var sessionId = await ResolveSessionIdAsync(request, ct);
             if (sessionId is null)
             {
@@ -211,17 +135,15 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 };
             }
 
-            // For isolated calls, determine workspace path locally (not from shared field)
-            var workspacePath = isIsolatedCall
-                ? Path.GetFullPath(request.WorkspacePath)
-                : _currentSessionWorkspacePath;
+            // Track for diagnostics/health only
+            _lastKnownSessionId = sessionId;
 
             // 2. Timeout enforcement
             var sseCts = new CancellationTokenSource();
 
             // 3. Start SSE reader (always — needed for permission auto-approval)
             var sseTask = ConnectAndProcessSseAsync(sessionId, onOutputLine, sseCts.Token,
-                workspacePath, sseEmitted => { if (isIsolatedCall) localSseEmitted = true; else _sseEmittedAssistantContent = true; });
+                workspacePath, _ => { sseEmitted = true; });
 
             // 4. Send message (synchronous — blocks until agent finishes)
             AgentResult result;
@@ -231,9 +153,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                     request.Timeout, ct,
                     async linkedCt =>
                     {
-                        using var client = workspacePath is not null
-                            ? CreateDirectoryClientForPath(workspacePath)
-                            : CreateDirectoryClient();
+                        using var client = CreateDirectoryClientForPath(workspacePath);
 
                         var parts = new List<MessagePart>
                         {
@@ -286,6 +206,17 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
                         if (!response.IsSuccessStatusCode)
                         {
+                            // 404/410: session no longer exists (e.g., opencode server restarted).
+                            // Evict the stale cached session and let the caller retry via the pipeline retry logic.
+                            if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
+                            {
+                                _logger.Warning("Session {SessionId} not found on server (HTTP {Status}) — evicting from cache",
+                                    sessionId, (int)response.StatusCode);
+                                _sessionByWorkspace.TryRemove(workspacePath, out _);
+                                if (_lastKnownSessionId == sessionId)
+                                    _lastKnownSessionId = null;
+                            }
+
                             var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
                             return new AgentResult
                             {
@@ -321,12 +252,10 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                             .ToList();
 
                         // Dedup: Only emit HTTP response lines to the output callback if
-                        // SSE did not already stream assistant content. When SSE is active,
-                        // message.part.updated events provide real-time [assistant] prefixed
-                        // lines — emitting the HTTP response too would duplicate the content.
-                        // The HTTP response fallback ensures output still appears when SSE
-                        // fails to connect or drops before streaming any assistant text.
-                        var sseAlreadyEmitted = isIsolatedCall ? localSseEmitted : _sseEmittedAssistantContent;
+                        // SSE did not already stream assistant content for this call.
+                        // Use the local `sseEmitted` variable — not the shared _sseEmittedAssistantContent
+                        // which can be set by concurrent parallel calls.
+                        var sseAlreadyEmitted = sseEmitted;
                         if (onOutputLine is not null && !sseAlreadyEmitted)
                         {
                             foreach (var line in outputLines)
@@ -405,30 +334,40 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         finally
         {
             Interlocked.Decrement(ref _activeExecutionCount);
-            // Stop polling — use local CTS (avoids the overwrite race)
+            // Stop polling
             try { pollCts.Cancel(); } catch { }
             try { await pollTask.ConfigureAwait(false); } catch { }
             pollCts.Dispose();
-            if (!isIsolatedCall)
-                _sessionStatusPollCts = null;
+            _sessionStatusPollCts = null;
         }
     }
 
     public async Task KillAsync()
     {
-        var sessionId = _currentSessionId;
-        if (sessionId is null)
+        // Abort all active workspace sessions (parallel execution may have multiple)
+        var sessionIds = _sessionByWorkspace.Values.Distinct().ToList();
+
+        // Also include _lastKnownSessionId in case it's not in the workspace cache
+        // (e.g., set via explicit ResumeSessionId)
+        var lastKnown = _lastKnownSessionId;
+        if (lastKnown is not null && !sessionIds.Contains(lastKnown))
+            sessionIds.Add(lastKnown);
+
+        if (sessionIds.Count == 0)
             return;
 
-        try
+        foreach (var sessionId in sessionIds)
         {
-            _logger.Debug("POST /session/{SessionId}/abort", sessionId);
-            using var client = CreateDirectoryClient();
-            await client.PostAsync($"/session/{sessionId}/abort", null);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to abort OpenCode session {SessionId}", sessionId);
+            try
+            {
+                _logger.Debug("POST /session/{SessionId}/abort", sessionId);
+                using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
+                await client.PostAsync($"/session/{sessionId}/abort", null);
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to abort OpenCode session {SessionId}", sessionId);
+            }
         }
     }
 
@@ -491,13 +430,13 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     public Task<string?> GetLatestSessionIdAsync(WorkspacePath workspacePath, CancellationToken ct)
     {
-        return Task.FromResult(_currentSessionId);
+        return Task.FromResult(_lastKnownSessionId);
     }
 
     public ValueTask DisposeAsync()
     {
-        _currentSessionId = null;
-        _currentSessionWorkspacePath = null;
+        _lastKnownSessionId = null;
+        _sessionByWorkspace.Clear();
         return ValueTask.CompletedTask;
     }
 
@@ -505,7 +444,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     public async Task<IReadOnlyList<FileChangeSummary>> GetSessionDiffAsync(CancellationToken ct)
     {
-        var sessionId = _currentSessionId;
+        var sessionId = _lastKnownSessionId;
         if (sessionId is null)
             return Array.Empty<FileChangeSummary>();
 
@@ -550,18 +489,13 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     // ── Internal helpers ────────────────────────────────────────────────
 
     /// <summary>
-    /// Creates an HttpClient with the x-opencode-directory header set to the current workspace path.
-    /// OpenCode uses this header to scope all operations (file reads, shell commands, sessions)
-    /// to the specified directory instead of the server's CWD.
+    /// Creates an HttpClient without a workspace-specific directory header.
+    /// Used only for global operations (health check, session status polling).
+    /// For workspace-scoped operations, always use <see cref="CreateDirectoryClientForPath"/>.
     /// </summary>
     private HttpClient CreateDirectoryClient()
     {
-        var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
-        if (_currentSessionWorkspacePath is not null)
-        {
-            client.DefaultRequestHeaders.Add("x-opencode-directory", _currentSessionWorkspacePath);
-        }
-        return client;
+        return _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
     }
 
     /// <summary>
@@ -577,39 +511,31 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
     private async Task<string?> ResolveSessionIdAsync(AgentRequest request, CancellationToken ct)
     {
-        // ResumeSessionId takes precedence
+        // ResumeSessionId takes precedence (explicit session targeting, e.g., adversarial review refinement)
         if (!string.IsNullOrEmpty(request.ResumeSessionId))
         {
-            _currentSessionId = request.ResumeSessionId;
             return request.ResumeSessionId;
         }
 
-        // UseResume = true → reuse existing if available
-        if (request.UseResume && _currentSessionId is not null)
-            return _currentSessionId;
+        var workspacePath = Path.GetFullPath(request.WorkspacePath);
 
-        // UseResume=false → isolated call. Create a new session WITHOUT touching shared
-        // _currentSessionId. This enables safe parallel execution: each concurrent call
-        // gets its own session ID returned directly, avoiding the race where multiple
-        // threads overwrite/read the shared field and end up sharing a session.
-        if (!request.UseResume)
+        // UseResume=true within the same workspace → reuse the cached session for that workspace
+        if (request.UseResume && _sessionByWorkspace.TryGetValue(workspacePath, out var cachedSessionId))
         {
-            var sessionId = await CreateIsolatedSessionAsync(request.WorkspacePath, ct);
-            if (sessionId is not null)
-            {
-                // Update shared state so subsequent UseResume=true calls can find this session.
-                // This write is safe: parallel callers don't read _currentSessionId (they use
-                // the local return value), and sequential callers (UseResume=true) only run
-                // after all parallel calls complete.
-                _currentSessionId = sessionId;
-                _currentSessionWorkspacePath = Path.GetFullPath(request.WorkspacePath);
-            }
-            return sessionId;
+            _logger.Debug("Reusing cached session {SessionId} for workspace {WorkspacePath}",
+                cachedSessionId, workspacePath);
+            return cachedSessionId;
         }
 
-        // Fallback: UseResume=true but no existing session — create one (shared path)
-        await EnsureSessionAsync(request.WorkspacePath, ct);
-        return _currentSessionId;
+        // Create a fresh session for this workspace (UseResume=false, or no cached session yet)
+        var sessionId = await CreateIsolatedSessionAsync(request.WorkspacePath, ct);
+        if (sessionId is not null)
+        {
+            // Cache the session for this workspace so future UseResume=true calls reuse it
+            _sessionByWorkspace[workspacePath] = sessionId;
+            _lastKnownSessionId = sessionId;
+        }
+        return sessionId;
     }
 
     /// <summary>
@@ -679,8 +605,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         {
             try
             {
-                // Must use CreateDirectoryClient() to include x-opencode-directory header,
-                // otherwise the server returns statuses scoped to the wrong workspace instance.
+                // GET /session/status returns all sessions globally — no directory header needed.
                 using var client = CreateDirectoryClient();
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
