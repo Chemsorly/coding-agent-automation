@@ -32,9 +32,8 @@ public class OpenCodeDiffMappingPropertyTests
         // Arrange
         var ctx = OpenCodeTestHelpers.CreateTestContext();
 
-        // Enqueue session creation so _currentSessionId is set
-        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, "diff-session-001");
-        await ctx.Provider.EnsureSessionAsync("/workspace", CancellationToken.None);
+        // Enqueue session creation so _lastKnownSessionId is set
+        ctx.Provider.SetLastKnownSessionIdForTest("diff-session-001");
 
         // Enqueue the diff response using URL pattern to match GET /session/:id/diff
         var json = JsonSerializer.Serialize(input.Diffs, OpenCodeJson.JsonOptions);

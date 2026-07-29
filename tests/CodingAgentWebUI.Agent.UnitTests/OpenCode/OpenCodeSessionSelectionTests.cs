@@ -236,4 +236,102 @@ public class OpenCodeSessionSelectionTests
         Assert.NotNull(messageRequest);
         Assert.Contains(newSessionId, messageRequest.Path);
     }
+
+    /// <summary>
+    /// Regression test: UseResume=true on a DIFFERENT workspace must NOT reuse the session
+    /// from the previous workspace. This was the original bug — cross-workspace session leakage
+    /// caused the LLM to see prior conversation context and hallucinate "already done".
+    /// **Validates: cross-workspace isolation**
+    /// </summary>
+    [Fact]
+    public async Task UseResume_True_DifferentWorkspace_CreatesNewSession()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+        var sessionA = "session-workspace-a";
+        var sessionB = "session-workspace-b";
+
+        // Run 1 on workspace A (UseResume=false — fresh session)
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, sessionA);
+        ctx.Handler.ForUrlPattern($"/session/{sessionA}/message", new SendMessageResponse
+        {
+            Parts = [new MessagePart { Type = "text", Text = "workspace A response" }]
+        });
+        var requestA = OpenCodeTestHelpers.CreateRequest(
+            prompt: "run on workspace A", useResume: false, workspacePath: "/tmp/workspace-a");
+        await ctx.Provider.ExecuteAsync(requestA, CancellationToken.None);
+
+        // Run 2 on workspace B with UseResume=true — must NOT reuse session A
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, sessionB);
+        ctx.Handler.ForUrlPattern($"/session/{sessionB}/message", new SendMessageResponse
+        {
+            Parts = [new MessagePart { Type = "text", Text = "workspace B response" }]
+        });
+        var requestB = OpenCodeTestHelpers.CreateRequest(
+            prompt: "run on workspace B", useResume: true, workspacePath: "/tmp/workspace-b");
+        var result = await ctx.Provider.ExecuteAsync(requestB, CancellationToken.None);
+
+        Assert.Equal(ExitCodes.Success, result.ExitCode);
+
+        // Assert: two separate sessions were created
+        var sessionCreates = ctx.Handler.Requests
+            .Where(r => r.Method == HttpMethod.Post && r.Path == "/session")
+            .ToList();
+        Assert.Equal(2, sessionCreates.Count);
+
+        // Assert: the message for run B went to sessionB, NOT sessionA
+        var messageRequests = ctx.Handler.Requests
+            .Where(r => r.Method == HttpMethod.Post && r.Path.Contains("/message"))
+            .ToList();
+        Assert.Equal(2, messageRequests.Count);
+        Assert.Contains(sessionB, messageRequests[1].Path);
+        Assert.DoesNotContain(sessionA, messageRequests[1].Path);
+    }
+
+    /// <summary>
+    /// When the cached session is stale (server returned 404), the entry is evicted from the cache
+    /// and the call returns GeneralFailure. The next call with UseResume=true will create a fresh session.
+    /// </summary>
+    [Fact]
+    public async Task UseResume_True_StaleSession_Returns404_EvictsCache()
+    {
+        var ctx = OpenCodeTestHelpers.CreateTestContext();
+        var staleSessionId = "stale-session-001";
+
+        // Establish a session
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, staleSessionId);
+        ctx.Handler.ForUrlPattern($"/session/{staleSessionId}/message", new SendMessageResponse
+        {
+            Parts = [new MessagePart { Type = "text", Text = "ok" }]
+        });
+        var firstRequest = OpenCodeTestHelpers.CreateRequest(prompt: "first", useResume: false);
+        await ctx.Provider.ExecuteAsync(firstRequest, CancellationToken.None);
+
+        // Server restarted — session no longer exists
+        ctx.Handler.ForUrlPattern($"/session/{staleSessionId}/message",
+            HttpStatusCode.NotFound, "{\"error\":\"session not found\"}");
+
+        var secondRequest = OpenCodeTestHelpers.CreateRequest(prompt: "second", useResume: true);
+        var result = await ctx.Provider.ExecuteAsync(secondRequest, CancellationToken.None);
+
+        // Current behaviour: fails with GeneralFailure (stale session evicted, retry not automatic)
+        Assert.Equal(ExitCodes.GeneralFailure, result.ExitCode);
+
+        // The stale session should be evicted — next UseResume=true will create a fresh session
+        var newSessionId = "recovered-session";
+        OpenCodeTestHelpers.EnqueueSessionCreated(ctx.Handler, newSessionId);
+        ctx.Handler.ForUrlPattern($"/session/{newSessionId}/message", new SendMessageResponse
+        {
+            Parts = [new MessagePart { Type = "text", Text = "recovered" }]
+        });
+        var thirdRequest = OpenCodeTestHelpers.CreateRequest(prompt: "third", useResume: true);
+        var recoveredResult = await ctx.Provider.ExecuteAsync(thirdRequest, CancellationToken.None);
+
+        Assert.Equal(ExitCodes.Success, recoveredResult.ExitCode);
+
+        // Verify a new session was created for the third call (stale was evicted)
+        var sessionCreates = ctx.Handler.Requests
+            .Where(r => r.Method == HttpMethod.Post && r.Path == "/session")
+            .ToList();
+        Assert.Equal(2, sessionCreates.Count); // 1 original + 1 recovery
+    }
 }
