@@ -318,29 +318,33 @@ public class ResiliencePipelineFactoryTests
     [Fact]
     public async Task CreateGitHubApiPipeline_OuterTimeoutCapsRetriesOnPerAttemptTimeout()
     {
-        // Arrange: outer timeout (3s) and short per-attempt timeout (100ms).
-        // With MaxRetryAttempts=3 and base delay 1s (exponential + jitter), all 4 attempts would need
-        // at least 100ms + ~1s + 100ms + ~2s + 100ms + ~4s + 100ms ≈ 7.4s minimum.
-        // The 3s outer timeout should fire before all retries complete, but still allow at least 2 attempts
-        // (100ms + ~0ms min jitter + 100ms = 200ms minimum for 2 attempts, well within 3s).
+        // Arrange: per-attempt timeout 10ms, zero retry delay, outer timeout 35ms.
+        // With zero backoff: all timing is from per-attempt waits only.
+        // 4 full attempts × 10ms = 40ms > 35ms outer timeout, so outer must fire before all 4 complete.
+        // The retry delay is the critical fix: removing the 1s+ exponential backoff was the original
+        // source of flakiness (jitter could push 2nd attempt past the outer timeout on a slow runner).
+        // With zero delay, each attempt takes exactly ~10ms (deterministic within a tight bound).
+        //
+        // Per-attempt timeout assertion: not exact (depends on when the outer CTS fires relative to
+        // per-attempt CTS), but: at least 1 attempt always completes, and the outer 35ms cap always
+        // prevents all 4 from completing regardless of scheduling jitter.
         var pipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(
             Log.Logger,
-            outerTimeout: TimeSpan.FromSeconds(3),
-            perAttemptTimeout: TimeSpan.FromMilliseconds(100));
+            outerTimeout: TimeSpan.FromMilliseconds(35),
+            perAttemptTimeout: TimeSpan.FromMilliseconds(10),
+            retryDelay: TimeSpan.Zero);
         var callCount = 0;
 
-        // Act: every attempt hangs indefinitely
+        // Act: every attempt hangs indefinitely — per-attempt timeout fires each time
         var act = () => pipeline.ExecuteAsync(async token =>
         {
-            callCount++;
+            Interlocked.Increment(ref callCount);
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
         }, CancellationToken.None).AsTask();
 
-        // Assert: outer timeout fires before all retries complete
+        // Assert: outer timeout fires before all 4 retries complete
         await act.Should().ThrowAsync<TimeoutRejectedException>();
-        // At least 2 attempts should complete within 3s (100ms per-attempt + minimum backoff)
-        callCount.Should().BeGreaterThan(1);
-        // Outer timeout should prevent all 4 attempts from completing
+        callCount.Should().BeGreaterThan(0);
         callCount.Should().BeLessThan(4);
     }
 

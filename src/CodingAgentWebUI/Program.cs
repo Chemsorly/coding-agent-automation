@@ -107,9 +107,12 @@ var pipelineConfig = await configStore.LoadPipelineConfigAsync(CancellationToken
 
 // Domain service registrations (extracted into focused extension methods)
 var dbConnectionString = CodingAgentWebUI.Services.DatabaseConnectionResolver.Resolve(builder.Configuration);
+var workDistributionMode = builder.Configuration.GetValue<string>("WorkDistribution:Mode") ?? "SignalR";
+var isKubernetesMode = string.Equals(workDistributionMode, "Kubernetes", StringComparison.OrdinalIgnoreCase);
 builder.Services.AddSingleton(new CodingAgentWebUI.Services.FeatureFlags
 {
-    IsDatabaseMode = !string.IsNullOrEmpty(dbConnectionString)
+    IsDatabaseMode = !string.IsNullOrEmpty(dbConnectionString),
+    IsKubernetesMode = isKubernetesMode
 });
 if (string.IsNullOrEmpty(dbConnectionString))
 {

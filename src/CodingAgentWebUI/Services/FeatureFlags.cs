@@ -11,4 +11,10 @@ public sealed class FeatureFlags
     /// (Database:Host is configured). False in JSON-file mode.
     /// </summary>
     public bool IsDatabaseMode { get; init; }
+
+    /// <summary>
+    /// True when the orchestrator is running in Kubernetes work distribution mode
+    /// (WorkDistribution:Mode == "Kubernetes"). False in SignalR and Legacy modes.
+    /// </summary>
+    public bool IsKubernetesMode { get; init; }
 }

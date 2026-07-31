@@ -1,9 +1,19 @@
 @using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
+@using CodingAgentWebUI.Orchestration.Dispatch
 
 <section class="settings-section">
     <h2>Agent Profiles</h2>
     <p class="section-description">Profiles map agents to their capabilities via labels. When a job is dispatched, the agent's labels are matched against profile labels (ALL must match) to determine MCP servers and provider config.</p>
+
+    @if (_missingTemplates.Count > 0)
+    {
+        <div class="agent-detail-error" style="margin-bottom: 12px;">
+            <Icon Name="alert-octagon" Size="16" />
+            <strong>Dispatch will fail:</strong> @_missingTemplates.Count profile(s) have no matching job template in the <code>orchestrator-job-templates</code> ConfigMap.
+            Work items routed to these profiles will fail at dispatch. See highlighted rows below.
+        </div>
+    }
 
     @if (_profiles.Count == 0)
     {
@@ -21,6 +31,10 @@
                         <th>Enabled</th>
                         <th>Priority</th>
                         <th>MCP</th>
+                        @if (JobTemplateStore is not null)
+                        {
+                            <th>Template</th>
+                        }
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -52,6 +66,26 @@
                             <td><Icon Name="@(profile.Enabled ? "check-circle" : "x-circle")" /></td>
                             <td>@profile.Priority</td>
                             <td>@profile.McpServers.Count(s => !s.Disabled)</td>
+                            @if (JobTemplateStore is not null)
+                            {
+                                <td>
+                                    @if (_missingTemplates.Contains(profile.Id))
+                                    {
+                                        <span class="template-missing"
+                                              title="No job template matches labels [@string.Join(", ", profile.MatchLabels)]. Work items will fail at dispatch.">
+                                            <Icon Name="alert-octagon" Size="14" /> No template
+                                        </span>
+                                    }
+                                    else if (profile.Enabled && profile.MatchLabels.Count > 0)
+                                    {
+                                        <Icon Name="check-circle" Size="14" title="Template matched" />
+                                    }
+                                    else
+                                    {
+                                        <span class="monitoring-muted" title="@(profile.MatchLabels.Count == 0 ? "Default profile — no template lookup needed" : "Profile disabled")">—</span>
+                                    }
+                                </td>
+                            }
                             <td>
                                 <button class="btn-edit" @onclick="() => EditProfile(profile)">Edit</button>
                                 <button class="btn-delete" @onclick="() => ConfirmDelete(profile)">Delete</button>
@@ -220,8 +254,14 @@
     [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
     [Parameter] public IReadOnlyList<ProviderConfig> AgentProviders { get; set; } = [];
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
+    /// <summary>
+    /// Job template store injected in k8s mode only. Null in SignalR/Legacy modes.
+    /// When non-null, profiles whose MatchLabels have no matching template show a warning.
+    /// </summary>
+    [Parameter] public JobTemplateStore? JobTemplateStore { get; set; }
 
     private List<AgentProfile> _profiles = new();
+    private HashSet<string> _missingTemplates = new();
     private bool _showForm;
     private AgentProfile? _editingProfile;
     private ProfileForm _form = new();
@@ -244,11 +284,32 @@
         try
         {
             _profiles = (await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None)).ToList();
+            _missingTemplates = ComputeMissingTemplates(_profiles, JobTemplateStore);
         }
         catch (Exception ex)
         {
             await OnShowStatus.InvokeAsync(($"Failed to load profiles: {ex.Message}", true));
         }
+    }
+
+    /// <summary>
+    /// Returns IDs of enabled profiles whose MatchLabels have no matching job template.
+    /// Returns empty set when JobTemplateStore is null (non-k8s mode).
+    /// </summary>
+    private static HashSet<string> ComputeMissingTemplates(
+        IReadOnlyList<AgentProfile> profiles, JobTemplateStore? store)
+    {
+        if (store is null) return [];
+        var missing = new HashSet<string>();
+        foreach (var profile in profiles)
+        {
+            if (!profile.Enabled || profile.MatchLabels.Count == 0)
+                continue;
+            var selector = JobTemplateStore.NormalizeLabels(string.Join(",", profile.MatchLabels));
+            if (store.Resolve(selector) is null)
+                missing.Add(profile.Id);
+        }
+        return missing;
     }
 
     private void ShowAddForm()
