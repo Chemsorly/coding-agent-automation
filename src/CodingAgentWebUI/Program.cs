@@ -132,6 +132,14 @@ builder.Services.AddConsolidationServices(pipelineConfig);
 builder.Services.AddWorkDistribution(builder.Configuration);
 builder.Services.AddDatabaseHealthServices(builder.Configuration);
 
+// JobTemplateStore — registered unconditionally so Settings.razor injection never fails.
+// In k8s mode, the real store is registered inside AddWorkDistribution → RegisterKubernetesMode.
+// In all other modes, an empty sentinel is registered here.
+// The empty store is never used for dispatch (DispatchService only runs in k8s mode).
+if (!isKubernetesMode)
+    builder.Services.AddSingleton<CodingAgentWebUI.Orchestration.Dispatch.JobTemplateStore>(
+        CodingAgentWebUI.Orchestration.Dispatch.JobTemplateStore.CreateEmpty());
+
 // Infrastructure health aggregation — reads from DatabaseHealthState + IConnectionMultiplexer (both optional)
 builder.Services.AddSingleton<CodingAgentWebUI.Services.InfrastructureHealthService>();
 

@@ -31,7 +31,7 @@
                         <th>Enabled</th>
                         <th>Priority</th>
                         <th>MCP</th>
-                        @if (JobTemplateStore is not null)
+                        @if (IsKubernetesMode)
                         {
                             <th>Template</th>
                         }
@@ -66,7 +66,7 @@
                             <td><Icon Name="@(profile.Enabled ? "check-circle" : "x-circle")" /></td>
                             <td>@profile.Priority</td>
                             <td>@profile.McpServers.Count(s => !s.Disabled)</td>
-                            @if (JobTemplateStore is not null)
+                            @if (IsKubernetesMode)
                             {
                                 <td>
                                     @if (_missingTemplates.Contains(profile.Id))
@@ -259,6 +259,8 @@
     /// When non-null, profiles whose MatchLabels have no matching template show a warning.
     /// </summary>
     [Parameter] public JobTemplateStore? JobTemplateStore { get; set; }
+    /// <summary>When true, the Template column and validation are active (k8s mode).</summary>
+    [Parameter] public bool IsKubernetesMode { get; set; }
 
     private List<AgentProfile> _profiles = new();
     private HashSet<string> _missingTemplates = new();
@@ -284,7 +286,7 @@
         try
         {
             _profiles = (await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None)).ToList();
-            _missingTemplates = ComputeMissingTemplates(_profiles, JobTemplateStore);
+            _missingTemplates = ComputeMissingTemplates(_profiles, JobTemplateStore, IsKubernetesMode);
         }
         catch (Exception ex)
         {
@@ -294,12 +296,12 @@
 
     /// <summary>
     /// Returns IDs of enabled profiles whose MatchLabels have no matching job template.
-    /// Returns empty set when JobTemplateStore is null (non-k8s mode).
+    /// Returns empty set when not in k8s mode.
     /// </summary>
     private static HashSet<string> ComputeMissingTemplates(
-        IReadOnlyList<AgentProfile> profiles, JobTemplateStore? store)
+        IReadOnlyList<AgentProfile> profiles, JobTemplateStore? store, bool isKubernetesMode = true)
     {
-        if (store is null) return [];
+        if (!isKubernetesMode || store is null) return [];
         var missing = new HashSet<string>();
         foreach (var profile in profiles)
         {

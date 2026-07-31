@@ -33,6 +33,12 @@ public sealed class JobTemplateStore
     }
 
     /// <summary>
+    /// Creates an empty store with no templates. Used in non-k8s modes where
+    /// JobTemplateStore must be registered in DI but is never used for dispatch.
+    /// </summary>
+    public static JobTemplateStore CreateEmpty() => new(new Dictionary<string, JobTemplate>());
+
+    /// <summary>
     /// Loads templates from a YAML string. Normalizes labels for lookup.
     /// Duplicate label sets: last entry wins.
     /// </summary>
