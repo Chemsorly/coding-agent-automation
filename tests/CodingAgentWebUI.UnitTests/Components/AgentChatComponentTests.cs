@@ -53,6 +53,7 @@ public class AgentChatComponentTests : BunitContext
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
+        Services.AddSingleton(new FeatureFlags());  // defaults: IsKubernetesMode = false
     }
 
     [Fact]
@@ -122,5 +123,27 @@ public class AgentChatComponentTests : BunitContext
     {
         var cut = Render<AgentChat>();
         cut.Dispose();
+    }
+
+    [Fact]
+    public void AgentChat_ShowsChatUI_InSignalRMode()
+    {
+        // FeatureFlags defaults to IsKubernetesMode = false — chat UI should be present
+        var cut = Render<AgentChat>();
+
+        Assert.Contains("Interactive Chat", cut.Markup);
+        Assert.DoesNotContain("not available in Kubernetes mode", cut.Markup);
+    }
+
+    [Fact]
+    public void AgentChat_ShowsUnavailableMessage_InKubernetesMode()
+    {
+        Services.AddSingleton(new FeatureFlags { IsKubernetesMode = true });
+
+        var cut = Render<AgentChat>();
+
+        Assert.Contains("not available in Kubernetes mode", cut.Markup);
+        Assert.DoesNotContain("Interactive Chat", cut.Markup);
+        Assert.DoesNotContain("agent-select", cut.Markup);
     }
 }
