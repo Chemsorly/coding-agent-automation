@@ -16,6 +16,7 @@
 @inject PipelineRunLifecycleService PipelineLifecycle
 @inject IHubContext<CodingAgentWebUI.Hubs.AgentHub, IAgentHubClient> HubContext
 @inject IJSRuntime JS
+@inject FeatureFlags Features
 
 <PageTitle>Agent Chat - Coding Agent</PageTitle>
 
@@ -24,6 +25,17 @@
         <h1>Agent Chat</h1>
     </header>
 
+    @if (Features.IsKubernetesMode)
+    {
+        <section class="settings-section" style="margin: 16px 20px;">
+            <div class="monitoring-empty">
+                <Icon Name="message-circle" Size="20" />
+                Agent Chat is not available in Kubernetes mode. Chat requires a persistent agent connection, which is not supported with ephemeral k8s job pods.
+            </div>
+        </section>
+    }
+    else
+    {
     <section class="settings-section" style="margin: 16px 20px;">
         @if (!_isChatActive)
         {
@@ -102,6 +114,7 @@
             </div>
         }
     </section>
+    }
 </div>
 
 @code {

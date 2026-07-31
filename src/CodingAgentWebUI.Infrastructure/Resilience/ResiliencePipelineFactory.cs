@@ -38,10 +38,12 @@ public static class ResiliencePipelineFactory
     internal static ResiliencePipeline CreateGitHubApiPipeline(
         ILogger logger,
         TimeSpan? outerTimeout = null,
-        TimeSpan? perAttemptTimeout = null)
+        TimeSpan? perAttemptTimeout = null,
+        TimeSpan? retryDelay = null)
     {
         var outer = outerTimeout ?? DefaultOuterTimeout;
         var perAttempt = perAttemptTimeout ?? DefaultTimeout;
+        var delay = retryDelay ?? TimeSpan.FromSeconds(1);
 
         return new ResiliencePipelineBuilder()
             // Outer timeout: caps total time including all retries and rate-limit delays.
@@ -52,7 +54,7 @@ public static class ResiliencePipelineFactory
                 MaxRetryAttempts = DefaultMaxRetryAttempts,
                 BackoffType = DelayBackoffType.Exponential,
                 UseJitter = true,
-                Delay = TimeSpan.FromSeconds(1),
+                Delay = delay,
                 ShouldHandle = new PredicateBuilder()
                     .Handle<HttpRequestException>()
                     .Handle<SocketException>()

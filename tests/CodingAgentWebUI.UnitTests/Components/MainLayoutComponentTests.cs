@@ -52,6 +52,7 @@ public class MainLayoutComponentTests : BunitContext
         var emptyServiceProvider = new ServiceCollection().BuildServiceProvider();
         Services.AddSingleton(new InfrastructureHealthService(emptyServiceProvider, emptyConfig));
         Services.AddSingleton<IAgentRegistryService>(new AgentRegistryService(mockLogger.Object));
+        Services.AddSingleton(new FeatureFlags());  // defaults: IsKubernetesMode = false
     }
 
     [Fact]
@@ -177,5 +178,25 @@ public class MainLayoutComponentTests : BunitContext
 
         _jsMock.Verify(js => js.InvokeAsync<IJSVoidResult>("setSidebarCollapsed",
             It.Is<object[]>(args => args.Length > 0 && (string)args[0] == "true")), Times.Once);
+    }
+
+    [Fact]
+    public void Sidebar_AgentChatLink_PresentInSignalRMode()
+    {
+        // FeatureFlags defaults to IsKubernetesMode = false — link should be visible
+        var cut = Render<MainLayout>();
+
+        Assert.Contains("agent-chat", cut.Markup);
+    }
+
+    [Fact]
+    public void Sidebar_AgentChatLink_HiddenInKubernetesMode()
+    {
+        // Replace default FeatureFlags with k8s mode enabled
+        Services.AddSingleton(new FeatureFlags { IsKubernetesMode = true });
+
+        var cut = Render<MainLayout>();
+
+        Assert.DoesNotContain("agent-chat", cut.Markup);
     }
 }

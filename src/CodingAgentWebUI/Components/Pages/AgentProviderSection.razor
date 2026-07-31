@@ -102,15 +102,22 @@
                         }
                         @if (_form.ProviderType == "KiroCli")
                         {
-                            <button class="btn-edit" @onclick="FetchModels" disabled="@_loadingModels">
-                                @(_loadingModels ? "Loading..." : "Fetch Models")
-                            </button>
+                            @if (!IsKubernetesMode)
+                            {
+                                <button class="btn-edit" @onclick="FetchModels" disabled="@_loadingModels">
+                                    @(_loadingModels ? "Loading..." : "Fetch Models")
+                                </button>
+                            }
                         }
                     </div>
                     <span class="form-hint">
                         @if (_form.ProviderType == "OpenCode")
                         {
                             @:Enter model in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>). Use <code>opencode models</code> in the container to list available models.
+                        }
+                        else if (IsKubernetesMode)
+                        {
+                            @:Enter model name manually (e.g. <code>claude-sonnet-4</code>). To list available models, run <code>kiro-cli chat --list-models</code> inside the agent container.
                         }
                         else
                         {
@@ -191,6 +198,8 @@
     [Parameter] public EventCallback OnSaved { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
     [Parameter] public ModelFetchService? ModelFetchService { get; set; }
+    /// <summary>When true, the Fetch Models button is hidden (not available in k8s mode).</summary>
+    [Parameter] public bool IsKubernetesMode { get; set; }
 
     private CancellationTokenSource _cts = new();
     private bool _showForm;

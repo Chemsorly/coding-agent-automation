@@ -39,6 +39,8 @@ public class SettingsPageComponentTests : BunitContext
         Services.AddScoped<NotificationService>();
         Services.AddSingleton(new ProjectChangeNotifier());
         Services.AddSingleton(new FeatureFlags { IsDatabaseMode = false });
+        // JobTemplateStore is injected into Settings.razor; register empty store for non-k8s tests
+        Services.AddSingleton<JobTemplateStore>(JobTemplateStore.CreateEmpty());
     }
 
     private void SetupDefaults()

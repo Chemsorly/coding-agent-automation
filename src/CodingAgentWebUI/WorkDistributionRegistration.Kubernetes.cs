@@ -54,12 +54,17 @@ public static partial class WorkDistributionRegistration
                 options);
         });
 
+        // JobTemplateStore — single load, shared by DispatchService, ConsolidationDispatchHandler, and UI validation.
+        services.AddSingleton<JobTemplateStore>(sp =>
+            DispatchService.LoadTemplateProvider(sp.GetRequiredService<IConfiguration>()));
+
         // DispatchService — handles regular (non-consolidation) work items
         services.AddHostedService(sp => new DispatchService(
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<ILeaderElectionService>(),
             sp.GetRequiredService<DispatchLifecycleService>(),
             sp.GetRequiredService<IConfiguration>(),
+            sp.GetRequiredService<JobTemplateStore>(),
             sp.GetService<ILabelService>(),
             sp.GetService<IAgentProfileStore>(),
             sp.GetService<IOrchestratorRunService>()));
@@ -69,7 +74,7 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
             sp.GetRequiredService<ILeaderElectionService>(),
             sp.GetRequiredService<DispatchLifecycleService>(),
-            DispatchService.LoadTemplateProvider(configuration),
+            sp.GetRequiredService<JobTemplateStore>(),
             sp.GetRequiredService<IConfiguration>(),
             sp.GetRequiredService<WorkItemTransitionService>(),
             sp.GetService<IConsolidationRunStore>(),

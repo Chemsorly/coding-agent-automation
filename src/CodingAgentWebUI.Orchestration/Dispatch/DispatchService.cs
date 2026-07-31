@@ -37,6 +37,7 @@ public sealed class DispatchService : BackgroundService
     private readonly IOrchestratorRunService? _runService;
     private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly TokenBucketRateLimiter _rateLimiter;
+    private volatile bool _startupValidationRun;
 
     internal DispatchService(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -108,6 +109,10 @@ public sealed class DispatchService : BackgroundService
 
             Log.Information("DispatchService: leader acquired, entering poll loop");
 
+            // Reset so validation re-runs on each leadership tenure.
+            // Allows detection of ConfigMap changes during leadership loss/re-acquisition.
+            _startupValidationRun = false;
+
             // Create linked token: cancels on EITHER host stop OR leadership loss
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(
                 stoppingToken, _leaderElection.LeaderToken);
@@ -156,6 +161,18 @@ public sealed class DispatchService : BackgroundService
 
     private async Task PollAndDispatchAsync(CancellationToken ct)
     {
+        // Run once per leadership tenure: warn about enabled AgentProfiles with no matching JobTemplate.
+        // K8s mode only — templates are static for the pod lifetime, so no false positives.
+        if (!_startupValidationRun)
+        {
+            _startupValidationRun = true;
+            if (_agentProfileStore is not null)
+            {
+                var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
+                await ValidateAgentProfileTemplateMappingAsync(profiles, _templateProvider, Log);
+            }
+        }
+
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
         var pendingItems = await db.WorkItems
@@ -310,6 +327,49 @@ public sealed class DispatchService : BackgroundService
         return configuredPvcs
             .Except(claimedPvcs, StringComparer.Ordinal)
             .ToList();
+    }
+
+    /// <summary>
+    /// Validates that every enabled <see cref="AgentProfile"/> has a matching entry in the
+    /// <see cref="JobTemplateStore"/>. Logs a warning for each profile whose
+    /// <see cref="AgentProfile.MatchLabels"/> do not resolve to any template.
+    /// <para>
+    /// Called once per leadership tenure at the start of the first poll cycle.
+    /// K8s mode only: templates are loaded from a static ConfigMap mount and do not change
+    /// for the lifetime of the pod, so there are no false positives.
+    /// </para>
+    /// </summary>
+    /// <returns>Display names of profiles with no matching template (for testing).</returns>
+    internal static async Task<IReadOnlyList<string>> ValidateAgentProfileTemplateMappingAsync(
+        IReadOnlyList<AgentProfile> profiles,
+        JobTemplateStore templateStore,
+        ILogger logger)
+    {
+        var missing = new List<string>();
+
+        foreach (var profile in profiles)
+        {
+            if (!profile.Enabled || profile.MatchLabels.Count == 0)
+                continue;
+
+            var selector = NormalizeSelector(string.Join(",", profile.MatchLabels));
+            if (templateStore.Resolve(selector) is null)
+            {
+                missing.Add(profile.DisplayName);
+                logger.Warning(
+                    "DispatchService: AgentProfile '{ProfileName}' (labels=[{Labels}]) has no matching JobTemplate. " +
+                    "Work items requiring this profile will fail with 'No job template for selector'. " +
+                    "Add a job template with labels matching [{Labels}] to the job-templates ConfigMap.",
+                    profile.DisplayName,
+                    selector);
+            }
+        }
+
+        if (missing.Count == 0)
+            logger.Information("DispatchService: startup validation — all {Count} enabled profile(s) have a matching job template",
+                profiles.Count(p => p.Enabled));
+
+        return await Task.FromResult<IReadOnlyList<string>>(missing);
     }
 
 }

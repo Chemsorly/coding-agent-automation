@@ -19,6 +19,7 @@
 @inject NotificationService NotificationService
 @inject ProjectChangeNotifier ProjectNotifier
 @inject FeatureFlags Features
+@inject JobTemplateStore? JobTemplateStore
 
 <PageTitle>Settings - Coding Agent</PageTitle>
 
@@ -77,7 +78,8 @@
                         OnDelete="id => DeleteProvider(id, ProviderKind.Agent)"
                         OnSaved="OnAgentProviderSaved"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
-                        ModelFetchService="ModelFetchService" />
+                        ModelFetchService="ModelFetchService"
+                        IsKubernetesMode="Features.IsKubernetesMode" />
                     break;
                 case SettingsNodes.ProvidersPipeline:
                     <PipelineProviderSection
@@ -132,6 +134,8 @@
                     <AgentProfileSection
                         ConfigStore="ConfigStore"
                         AgentProviders="_agentProviders"
+                        JobTemplateStore="JobTemplateStore"
+                        IsKubernetesMode="Features.IsKubernetesMode"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.QualityGateConfigs:

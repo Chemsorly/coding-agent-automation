@@ -5,6 +5,7 @@
 @inject IPipelineLoopService LoopService
 @inject ConsolidationBadgeService BadgeService
 @inject IJSRuntime JS
+@inject FeatureFlags Features
 
 <div class="app-layout">
     @* TODO: The @if guard and CSS display:none on .sidebar-overlay-backdrop are redundant — if @if is removed for animation purposes, CSS still hides it outside <600px *@
@@ -20,10 +21,13 @@
             <span class="sidebar-label">Coding Agent</span>
         </div>
 
-        <NavLink href="agent-chat" class="sidebar-link">
-            <span class="sidebar-icon" aria-hidden="true"><Icon Name="message-circle" Size="20" /></span>
-            <span class="sidebar-label">Agent Chat</span>
-        </NavLink>
+        @if (!Features.IsKubernetesMode)
+        {
+            <NavLink href="agent-chat" class="sidebar-link">
+                <span class="sidebar-icon" aria-hidden="true"><Icon Name="message-circle" Size="20" /></span>
+                <span class="sidebar-label">Agent Chat</span>
+            </NavLink>
+        }
         <NavLink href="agent-coding" class="sidebar-link">
             <span class="sidebar-icon" aria-hidden="true"><Icon Name="bot" Size="20" /></span>
             <span class="sidebar-label">Agent Coding</span>

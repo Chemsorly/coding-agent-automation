@@ -107,9 +107,12 @@ var pipelineConfig = await configStore.LoadPipelineConfigAsync(CancellationToken
 
 // Domain service registrations (extracted into focused extension methods)
 var dbConnectionString = CodingAgentWebUI.Services.DatabaseConnectionResolver.Resolve(builder.Configuration);
+var workDistributionMode = builder.Configuration.GetValue<string>("WorkDistribution:Mode") ?? "SignalR";
+var isKubernetesMode = string.Equals(workDistributionMode, "Kubernetes", StringComparison.OrdinalIgnoreCase);
 builder.Services.AddSingleton(new CodingAgentWebUI.Services.FeatureFlags
 {
-    IsDatabaseMode = !string.IsNullOrEmpty(dbConnectionString)
+    IsDatabaseMode = !string.IsNullOrEmpty(dbConnectionString),
+    IsKubernetesMode = isKubernetesMode
 });
 if (string.IsNullOrEmpty(dbConnectionString))
 {
@@ -128,6 +131,14 @@ builder.Services.AddOrchestrationServices(pipelineConfig,
 builder.Services.AddConsolidationServices(pipelineConfig);
 builder.Services.AddWorkDistribution(builder.Configuration);
 builder.Services.AddDatabaseHealthServices(builder.Configuration);
+
+// JobTemplateStore — registered unconditionally so Settings.razor injection never fails.
+// In k8s mode, the real store is registered inside AddWorkDistribution → RegisterKubernetesMode.
+// In all other modes, an empty sentinel is registered here.
+// The empty store is never used for dispatch (DispatchService only runs in k8s mode).
+if (!isKubernetesMode)
+    builder.Services.AddSingleton<CodingAgentWebUI.Orchestration.Dispatch.JobTemplateStore>(
+        CodingAgentWebUI.Orchestration.Dispatch.JobTemplateStore.CreateEmpty());
 
 // Infrastructure health aggregation — reads from DatabaseHealthState + IConnectionMultiplexer (both optional)
 builder.Services.AddSingleton<CodingAgentWebUI.Services.InfrastructureHealthService>();
