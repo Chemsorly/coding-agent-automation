@@ -137,8 +137,12 @@ builder.Services.AddDatabaseHealthServices(builder.Configuration);
 // In all other modes, an empty sentinel is registered here.
 // The empty store is never used for dispatch (DispatchService only runs in k8s mode).
 if (!isKubernetesMode)
+{
     builder.Services.AddSingleton<CodingAgentWebUI.Orchestration.Dispatch.JobTemplateStore>(
         CodingAgentWebUI.Orchestration.Dispatch.JobTemplateStore.CreateEmpty());
+    // ModelFetchJobService is resolved via IServiceProvider.GetService<> (not @inject) in Settings.razor
+    // so no registration needed here — GetService<> returns null when the type is unregistered.
+}
 
 // Infrastructure health aggregation — reads from DatabaseHealthState + IConnectionMultiplexer (both optional)
 builder.Services.AddSingleton<CodingAgentWebUI.Services.InfrastructureHealthService>();

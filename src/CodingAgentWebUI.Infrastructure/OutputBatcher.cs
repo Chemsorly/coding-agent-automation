@@ -1,8 +1,74 @@
 namespace CodingAgentWebUI.Infrastructure;
 
 /// <summary>
+/// Controls when the <see cref="OutputBatcher"/> flush loop wakes up.
+/// Production: real <see cref="PeriodicTimer"/>. Tests: <see cref="ManualFlushTrigger"/>.
+/// </summary>
+public interface IFlushTrigger : IAsyncDisposable
+{
+    /// <summary>
+    /// Wait until the next flush tick. Returns <c>false</c> when the trigger is stopped.
+    /// </summary>
+    ValueTask<bool> WaitForNextTickAsync(CancellationToken ct);
+}
+
+/// <summary>
+/// Production implementation — wraps <see cref="PeriodicTimer"/>.
+/// </summary>
+internal sealed class PeriodicTimerFlushTrigger : IFlushTrigger
+{
+    private readonly PeriodicTimer _timer;
+
+    public PeriodicTimerFlushTrigger(TimeSpan interval) => _timer = new PeriodicTimer(interval);
+
+    public ValueTask<bool> WaitForNextTickAsync(CancellationToken ct)
+        => _timer.WaitForNextTickAsync(ct);
+
+    public ValueTask DisposeAsync()
+    {
+        _timer.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}
+
+/// <summary>
+/// Test implementation — each call to <see cref="Tick"/> unblocks one
+/// <see cref="WaitForNextTickAsync"/> waiter. No real time passes.
+/// Call <see cref="Stop"/> to make the flush loop exit cleanly.
+/// </summary>
+public sealed class ManualFlushTrigger : IFlushTrigger
+{
+    // Each Tick() releases one permit; WaitForNextTickAsync() consumes one.
+    private readonly SemaphoreSlim _gate = new(0);
+    private volatile bool _stopped;
+
+    /// <summary>Unblocks one pending <see cref="WaitForNextTickAsync"/> call.</summary>
+    public void Tick() => _gate.Release();
+
+    /// <summary>Causes all future and current <see cref="WaitForNextTickAsync"/> calls to return false.</summary>
+    public void Stop()
+    {
+        _stopped = true;
+        _gate.Release(); // wake any blocked waiter so it can observe _stopped
+    }
+
+    public async ValueTask<bool> WaitForNextTickAsync(CancellationToken ct)
+    {
+        await _gate.WaitAsync(ct);
+        return !_stopped;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        Stop();
+        _gate.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}
+
+/// <summary>
 /// Batches output lines to reduce SignalR invocation frequency.
-/// Flushes every 250ms or every 50 lines, whichever comes first.
+/// Flushes on every trigger tick or every 50 lines, whichever comes first.
 /// Thread-safe via <see cref="SemaphoreSlim"/>.
 /// </summary>
 /// <remarks>
@@ -17,19 +83,23 @@ namespace CodingAgentWebUI.Infrastructure;
 /// operations (microseconds). The flush gate (<c>_flushGate</c>) serializes <see cref="OnFlush"/>
 /// invocations to preserve batch ordering without blocking <see cref="AddLineAsync"/> callers.
 /// </para>
+/// <para>
+/// <b>Testability:</b> Pass a <see cref="ManualFlushTrigger"/> to control when timer ticks
+/// fire without any real-time delays.
+/// </para>
 /// </remarks>
 public sealed class OutputBatcher : IAsyncDisposable
 {
     private readonly List<string> _buffer = [];
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly SemaphoreSlim _flushGate = new(1, 1);
-    private readonly PeriodicTimer _timer;
+    private readonly IFlushTrigger _trigger;
     private readonly Task _flushLoop;
     private readonly CancellationTokenSource _cts = new();
     private readonly TimeSpan _flushTimeout;
 
     private const int MaxBatchSize = 50;
-    private static readonly TimeSpan FlushInterval = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan DefaultFlushInterval = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// Default flush timeout: 5 seconds. Bounds how long the flush gate is held during
@@ -44,7 +114,7 @@ public sealed class OutputBatcher : IAsyncDisposable
     public event Func<IReadOnlyList<string>, Task>? OnFlush;
 
     /// <summary>
-    /// Creates a new OutputBatcher with optional flush timeout.
+    /// Creates an <see cref="OutputBatcher"/> with the real periodic timer (production path).
     /// </summary>
     /// <param name="flushTimeout">
     /// Maximum duration for the <see cref="OnFlush"/> callback before it is abandoned.
@@ -52,9 +122,18 @@ public sealed class OutputBatcher : IAsyncDisposable
     /// to disable the timeout (legacy behavior, not recommended for production).
     /// </param>
     public OutputBatcher(TimeSpan? flushTimeout = null)
+        : this(new PeriodicTimerFlushTrigger(DefaultFlushInterval), flushTimeout)
     {
+    }
+
+    /// <summary>
+    /// Creates an <see cref="OutputBatcher"/> with an explicit flush trigger.
+    /// Use <see cref="ManualFlushTrigger"/> in tests to avoid real-time waits.
+    /// </summary>
+    public OutputBatcher(IFlushTrigger trigger, TimeSpan? flushTimeout = null)
+    {
+        _trigger = trigger;
         _flushTimeout = flushTimeout ?? DefaultFlushTimeout;
-        _timer = new PeriodicTimer(FlushInterval);
         _flushLoop = Task.Run(FlushLoopAsync);
     }
 
@@ -89,7 +168,7 @@ public sealed class OutputBatcher : IAsyncDisposable
     {
         try
         {
-            while (await _timer.WaitForNextTickAsync(_cts.Token))
+            while (await _trigger.WaitForNextTickAsync(_cts.Token))
             {
                 List<string>? batch = null;
 
@@ -162,7 +241,7 @@ public sealed class OutputBatcher : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         _cts.Cancel();
-        _timer.Dispose();
+        await _trigger.DisposeAsync();
 
         try { await _flushLoop; }
         catch (OperationCanceledException) { }

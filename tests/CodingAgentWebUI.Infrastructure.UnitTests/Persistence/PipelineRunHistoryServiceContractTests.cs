@@ -261,19 +261,36 @@ public class FilePipelineRunHistoryServiceContractTests : PipelineRunHistoryServ
 
     public override void Dispose()
     {
-        // Retry deletion: the file-based implementation uses fire-and-forget PersistRunSummaryAsync
-        // which may still be writing files when Dispose runs (especially after MaxHistorySize test).
-        for (var attempt = 0; attempt < 5; attempt++)
+        if (!Directory.Exists(_tempDir))
+            return;
+
+        // The file-based implementation uses fire-and-forget PersistRunSummaryAsync which may
+        // still hold a .tmp file open via AtomicFileWriter (Windows FlushFileBuffers can take
+        // 100-500ms). Retry with fixed delay; on final failure delete files individually,
+        // skipping locked .tmp files, so the directory itself can be removed.
+        for (var attempt = 0; attempt < 10; attempt++)
         {
             try
             {
-                if (Directory.Exists(_tempDir))
-                    Directory.Delete(_tempDir, recursive: true);
+                Directory.Delete(_tempDir, recursive: true);
                 return;
             }
-            catch (IOException) when (attempt < 4)
+            catch (IOException) when (attempt < 9)
             {
                 Thread.Sleep(100);
+            }
+            catch (IOException)
+            {
+                // Final attempt: delete files individually, skipping locked .tmp files.
+                // Locked .tmp files are in-flight AtomicFileWriter temp files; the OS reclaims
+                // them when the process exits. Do not propagate cleanup failures as test failures.
+                try
+                {
+                    foreach (var file in Directory.EnumerateFiles(_tempDir, "*", SearchOption.AllDirectories))
+                        try { File.Delete(file); } catch (IOException) { }
+                    Directory.Delete(_tempDir, recursive: true);
+                }
+                catch { /* best-effort — leftover temp files are harmless */ }
             }
         }
     }

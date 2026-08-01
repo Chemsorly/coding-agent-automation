@@ -41,6 +41,8 @@ public class SettingsPageComponentTests : BunitContext
         Services.AddSingleton(new FeatureFlags { IsDatabaseMode = false });
         // JobTemplateStore is injected into Settings.razor; register empty store for non-k8s tests
         Services.AddSingleton<JobTemplateStore>(JobTemplateStore.CreateEmpty());
+        // ModelFetchJobService: resolved via IServiceProvider.GetService<> in Settings.razor
+        // No registration needed — GetService returns null when unregistered.
     }
 
     private void SetupDefaults()

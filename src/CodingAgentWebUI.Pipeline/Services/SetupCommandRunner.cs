@@ -1,19 +1,31 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace CodingAgentWebUI.Pipeline.Services;
 
 /// <summary>
-/// Shared utility for running environment setup commands as external bash processes
+/// Shared utility for running environment setup commands as external shell processes
 /// with timeout handling, secret injection, and output masking.
+/// On Linux/macOS uses <c>/bin/bash -c</c>; on Windows uses <c>cmd.exe /c</c>.
 /// Follows the same pattern as <see cref="GitProcessRunner"/>.
 /// </summary>
 public static class SetupCommandRunner
 {
+    // Shell executable and argument prefix for the current platform.
+    // Internal so tests can verify or override the shell in integration scenarios.
+    internal static readonly string ShellExecutable = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+        ? "cmd.exe"
+        : "/bin/bash";
+
+    internal static readonly string ShellFlag = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+        ? "/c"
+        : "-c";
+
     /// <summary>
-    /// Runs a bash command with environment secret injection, 120-second timeout,
+    /// Runs a shell command with environment secret injection, 120-second timeout,
     /// concurrent stdout/stderr capture, and secret masking on all output.
     /// </summary>
-    /// <param name="command">The bash command to execute.</param>
+    /// <param name="command">The shell command to execute.</param>
     /// <param name="stepName">Human-readable step name for error messages.</param>
     /// <param name="workingDirectory">Working directory for the process.</param>
     /// <param name="environmentSecrets">Secrets to inject as environment variables and mask in output.</param>
@@ -52,14 +64,14 @@ public static class SetupCommandRunner
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "/bin/bash",
+                FileName = ShellExecutable,
                 WorkingDirectory = workingDirectory,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
-            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(ShellFlag);
             psi.ArgumentList.Add(command);
 
             // Inject secrets as environment variables into the child process

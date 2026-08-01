@@ -96,7 +96,7 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
         var service = CreateService();
 
         // Act
-        await InvokeDrainAsync(service, expectedMinLatency: 55.0);
+        await InvokeDrainAsync(service, expectedMinLatency: 55.0, expectedMaxLatency: 120.0);
 
         // Assert: latency should be >= 55s (UtcNow - OriginalEnqueuedAt), not ~10s (UtcNow - CreatedAt)
         _dispatchLatencies.Should().Contain(v => v >= 55.0, "latency should reflect OriginalEnqueuedAt (60s ago), not CreatedAt (10s ago)");
@@ -119,8 +119,12 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
 
         var service = CreateService();
 
+        // Clear any latencies captured from previous tests in this process
+        while (_dispatchLatencies.TryTake(out _)) { }
+        while (_pendingDurations.TryTake(out _)) { }
+
         // Act
-        await InvokeDrainAsync(service, expectedMinLatency: 10.0);
+        await InvokeDrainAsync(service, expectedMinLatency: 10.0, expectedMaxLatency: 30.0);
 
         // Assert: latency should be ~15s (UtcNow - CreatedAt)
         _dispatchLatencies.Should().Contain(v => v >= 10.0 && v < 50.0, "latency should fall back to CreatedAt (15s ago)");
@@ -160,7 +164,7 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
         var service = CreateServiceWithConsolidation();
 
         // Act
-        await InvokeDrainAsync(service, expectedMinLatency: 85.0);
+        await InvokeDrainAsync(service, expectedMinLatency: 85.0, expectedMaxLatency: 180.0);
 
         // Assert: latency should be ~90s (UtcNow - OriginalEnqueuedAt), not ~5s
         _dispatchLatencies.Should().Contain(v => v >= 85.0, "consolidation latency should reflect OriginalEnqueuedAt (90s ago)");
@@ -246,18 +250,24 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
         await db.SaveChangesAsync();
     }
 
-    private async Task InvokeDrainAsync(PendingWorkItemDrainService service, double expectedMinLatency = 0.0)
+    private async Task InvokeDrainAsync(PendingWorkItemDrainService service, double expectedMinLatency = 0.0, double expectedMaxLatency = double.MaxValue)
     {
+        // Clear any stale metrics from concurrent tests before starting.
+        // This must happen right before Start so there's no window for another test's metric to sneak in.
+        while (_dispatchLatencies.TryTake(out _)) { }
+        while (_pendingDurations.TryTake(out _)) { }
+
         using var cts = new CancellationTokenSource();
         service.Signal();
         var task = service.StartAsync(cts.Token);
 
         // Poll for metrics to appear rather than using a fixed delay.
         // Under CI load, the drain loop may take longer than a fixed timeout.
-        // Use expectedMinLatency to avoid exiting early when a concurrent test's metric
-        // is captured by the global MeterListener before our service has dispatched.
+        // Use both expectedMinLatency and expectedMaxLatency to avoid exiting early when
+        // a concurrent test's metric (e.g., a 600s latency from a 10-min-old item) is
+        // captured by the global MeterListener before our service has dispatched.
         var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline && !_dispatchLatencies.Any(v => v >= expectedMinLatency))
+        while (DateTime.UtcNow < deadline && !_dispatchLatencies.Any(v => v >= expectedMinLatency && v <= expectedMaxLatency))
         {
             await Task.Delay(100);
         }
