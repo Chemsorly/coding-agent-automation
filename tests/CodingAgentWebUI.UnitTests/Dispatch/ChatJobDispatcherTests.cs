@@ -601,9 +601,12 @@ public class ChatJobDispatcherTests
 
         var dispatcher = CreateDispatcher(jobClient: jobClientMock.Object);
 
-        // StartAsync should not throw and should restore sessions
+        // StartAsync now returns immediately (fire-and-forget recovery)
         var act = async () => await dispatcher.StartAsync(CancellationToken.None);
         await act.Should().NotThrowAsync();
+
+        // Wait briefly for the background recovery task to complete
+        await Task.Delay(500);
 
         // Verify ListJobsAsync was called with the chat-session-id label selector
         jobClientMock.Verify(c => c.ListJobsAsync(

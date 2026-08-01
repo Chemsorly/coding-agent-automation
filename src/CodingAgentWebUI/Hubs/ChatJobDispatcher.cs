@@ -61,6 +61,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         ILeaderElectionService leaderElection,
         ILogger logger)
     {
+        ArgumentNullException.ThrowIfNull(jobClient);
+        ArgumentNullException.ThrowIfNull(hubContext);
+        ArgumentNullException.ThrowIfNull(templateStore);
+        ArgumentNullException.ThrowIfNull(registry);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentNullException.ThrowIfNull(leaderElection);
+        ArgumentNullException.ThrowIfNull(logger);
         _jobClient = jobClient;
         _hubContext = hubContext;
         _templateStore = templateStore;
@@ -75,6 +82,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     public async Task<string> DispatchChatPodAsync(
         string agentSelector, string? model, string? effort, CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(agentSelector);
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Chat.Dispatch");
 
         if (!_leaderElection.IsLeader)
@@ -384,7 +392,16 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     /// Waits for leadership before recovering sessions — non-leader replicas must not spin up
     /// background watchers for jobs they don't own.
     /// </summary>
-    public async Task StartAsync(CancellationToken ct)
+    public Task StartAsync(CancellationToken ct)
+    {
+        // Launch session recovery in the background so StartAsync returns immediately.
+        // The recovery loop waits for leadership before restoring watcher state,
+        // preventing non-leader replicas from spinning up watchers they don't own.
+        _ = Task.Run(() => RecoverSessionsAsync(ct), ct);
+        return Task.CompletedTask;
+    }
+
+    private async Task RecoverSessionsAsync(CancellationToken ct)
     {
         // Wait for leadership before recovering sessions.
         // Non-leader replicas must not spin up watchers for jobs they don't own.
@@ -413,7 +430,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                     labels.TryGetValue("caa/claimed-pvc", out var pvcLabel);
                     labels.TryGetValue("caa/chat-selector", out var selectorLabel);
 
-                    // agentId not known on restart — leave empty; watcher will still release PVC
                     RegisterSession(sessionId, job.Metadata!.Name, agentId: "", pvcLabel, selectorLabel ?? "");
 
                     _logger.Information(
@@ -612,6 +628,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     private static readonly HashSet<string> ValidEffortValues =
         new(["high", "medium", "low"], StringComparer.OrdinalIgnoreCase);
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._\-]{0,63}$")]
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._\-]{1,63}$")]
     private static partial System.Text.RegularExpressions.Regex K8sLabelValuePattern();
 }

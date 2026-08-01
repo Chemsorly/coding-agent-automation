@@ -227,7 +227,7 @@ public class AgentConnectionLifecycleChatModeTests : IDisposable
     // ── Test 7: pre-cancelled stoppingToken → ConnectAndRunAsync returns without throwing ──
 
     [Fact]
-    public async Task ConnectAndRunAsync_PreCancelledToken_ReturnsWithoutThrowing()
+    public async Task ConnectAndRunAsync_PreCancelledToken_HandledGracefully()
     {
         // Arrange
         SetEnv("AGENT_CHAT_MODE", "true");
@@ -237,19 +237,25 @@ public class AgentConnectionLifecycleChatModeTests : IDisposable
         using var cts = new CancellationTokenSource();
         cts.Cancel(); // pre-cancelled
 
-        // Act — should not throw; WaitAsync(stoppingToken) with a pre-cancelled token
-        // propagates OperationCanceledException but ConnectAndRunAsync should handle it
-        var act = async () =>
+        // Act + Assert: ConnectAndRunAsync must not propagate unexpected exception types
+        // (NullReferenceException, ObjectDisposedException, etc.) when given a pre-cancelled token.
+        // Acceptable outcomes: returns cleanly, throws OperationCanceledException, or
+        // throws HttpRequestException (no server at localhost in test env).
+        Exception? unexpected = null;
+        try
         {
-            try
-            {
-                await lifecycle.ConnectAndRunAsync(cts.Token);
-            }
-            catch { /* expected: OperationCanceledException on cancellation, HttpRequestException if no server */ }
-        };
+            await lifecycle.ConnectAndRunAsync(cts.Token);
+        }
+        catch (OperationCanceledException) { /* expected — pre-cancelled token */ }
+        catch (System.Net.Http.HttpRequestException) { /* expected — no server in test env */ }
+        catch (Exception ex)
+        {
+            unexpected = ex;
+        }
 
-        // Assert — no unhandled exception from the wrapper
-        await act.Should().NotThrowAsync();
+        unexpected.Should().BeNull(
+            "pre-cancelled token must not propagate unexpected exception types; " +
+            $"got: {unexpected?.GetType().Name}: {unexpected?.Message}");
     }
 
     // ── Test 8: AGENT_CHAT_MODEL=claude-opus-4.8 → KiroCliSettingsWriter.ApplyAsync called ──

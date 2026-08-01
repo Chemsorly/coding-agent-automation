@@ -350,10 +350,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
             await Task.WhenAny(chatTask, Task.Delay(5000));
 
         // Assert — the workspace passed to ExecutePromptAsync must be under ChatWorkspacesRoot
-        if (workspaceCapture.Count == 0 && !Directory.Exists(AgentDefaults.ChatWorkspacesRoot))
-            return; // Platform cannot create workspace — skip assertion
-
-        workspaceCapture.Should().NotBeEmpty("HandleChatPromptAsync must invoke the orchestrator");
+        workspaceCapture.Should().NotBeEmpty("HandleChatPromptAsync must invoke the orchestrator — check mock setup");
         workspaceCapture[0].Should().Be(expectedWorkspace,
             "when ChatWindowId is non-empty, workspace must be Path.Combine(ChatWorkspacesRoot, chatWindowId)");
         workspaceCapture[0].Should().StartWith(AgentDefaults.ChatWorkspacesRoot,
@@ -419,10 +416,7 @@ public class AgentWorkerServiceCancelChatTests : IDisposable
             await Task.WhenAny(chatTask, Task.Delay(5000));
 
         // Assert
-        if (workspaceCapture.Count == 0 && !Directory.Exists(AgentDefaults.ChatWorkspacePath))
-            return; // Platform cannot create workspace — skip
-
-        workspaceCapture.Should().NotBeEmpty("HandleChatPromptAsync must invoke the orchestrator");
+        workspaceCapture.Should().NotBeEmpty("HandleChatPromptAsync must invoke the orchestrator — check mock setup");
         workspaceCapture[0].Should().Be(AgentDefaults.ChatWorkspacePath,
             "when ChatWindowId is empty, workspace must fall back to static AgentDefaults.ChatWorkspacePath");
     }
