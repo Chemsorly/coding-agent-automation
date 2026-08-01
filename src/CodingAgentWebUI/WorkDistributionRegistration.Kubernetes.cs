@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
@@ -7,6 +8,7 @@ using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using k8s;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Serilog;
 
@@ -103,6 +105,24 @@ public static partial class WorkDistributionRegistration
         // Queue visibility: queries WorkItems table for Pending status
         services.AddSingleton<IPendingWorkQuery>(sp =>
             new DbPendingWorkQuery(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
+
+        // ChatJobDispatcher — on-demand ephemeral chat pod dispatch (K8s mode)
+        // ChatJobDispatcher is in the web project (requires IHubContext<AgentHub>).
+        services.AddSingleton<ChatJobDispatcher>(sp =>
+        {
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            options.ValidateAndClamp(Log.Logger);
+            return new ChatJobDispatcher(
+                sp.GetRequiredService<IKubernetesJobClient>(),
+                sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
+                sp.GetRequiredService<JobTemplateStore>(),
+                sp.GetRequiredService<AgentRegistryService>(),
+                options,
+                sp.GetRequiredService<ILeaderElectionService>(),
+                Log.Logger);
+        });
+        services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());
+        services.AddSingleton<IChatJobDispatcher>(sp => sp.GetRequiredService<ChatJobDispatcher>());
 
         // ModelFetchJobService — k8s-mode Fetch Models via one-shot agent job + SignalR response
         services.AddSingleton<ModelFetchJobService>(sp => new ModelFetchJobService(

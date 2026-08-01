@@ -157,9 +157,9 @@ public static class JobSpecBuilder
             });
         }
 
-        if (ctx.ProjectSecrets is not null && ctx.ProjectSecrets.Count > 0)
+        if (ctx.WorkItemId.HasValue && ctx.ProjectSecrets is not null && ctx.ProjectSecrets.Count > 0)
         {
-            var secretName = $"caa-secrets-{(ctx.WorkItemId ?? Guid.NewGuid()).ToString("N")[..8]}";
+            var secretName = $"caa-secrets-{ctx.WorkItemId.Value.ToString("N")[..8]}";
             volumeMounts.Add(new V1VolumeMount
             {
                 Name = "project-secrets",

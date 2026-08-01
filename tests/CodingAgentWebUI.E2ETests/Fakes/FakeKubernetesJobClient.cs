@@ -7,12 +7,18 @@ namespace CodingAgentWebUI.E2ETests.Fakes;
 /// <summary>
 /// Fake IKubernetesJobClient for K8s-mode E2E tests.
 /// Captures CreateJobAsync calls and simulates pod lifecycle.
-/// Tests can inspect CreatedJobs and configure failure behavior.
+/// Tests can inspect CreatedJobs, ChatJobs, and configure failure behavior.
 /// </summary>
 public sealed class FakeKubernetesJobClient : IKubernetesJobClient
 {
     /// <summary>All jobs created via CreateJobAsync, keyed by job name.</summary>
     public ConcurrentDictionary<string, V1Job> CreatedJobs { get; } = new();
+
+    /// <summary>
+    /// Chat jobs created via CreateJobAsync (job name starts with "caa-chat-"), keyed by job name.
+    /// Separate collection for easy test assertions about chat-specific jobs.
+    /// </summary>
+    public ConcurrentDictionary<string, V1Job> ChatJobs { get; } = new();
 
     /// <summary>All secrets created via CreateSecretAsync.</summary>
     public ConcurrentBag<V1Secret> CreatedSecrets { get; } = new();
@@ -49,6 +55,11 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
 
         var jobName = job.Metadata?.Name ?? $"job-{Guid.NewGuid()}";
         CreatedJobs[jobName] = job;
+
+        // Chat jobs are tracked separately for easy assertions
+        if (jobName.StartsWith("caa-chat-", StringComparison.OrdinalIgnoreCase))
+            ChatJobs[jobName] = job;
+
         return Task.CompletedTask;
     }
 
@@ -108,5 +119,51 @@ public sealed class FakeKubernetesJobClient : IKubernetesJobClient
         PodLogs.Clear();
         CreateJobException = null;
         FailNextCreate = false;
+        ChatJobs.Clear();
+    }
+
+    /// <summary>
+    /// Simulates a chat job reaching a terminal state (Complete or Failed).
+    /// Sets Job status conditions so <see cref="ChatJobDispatcher"/>'s background watcher
+    /// detects terminal and releases the PVC.
+    /// </summary>
+    public Task SimulateChatJobTerminalAsync(string jobName, bool success = true)
+    {
+        if (!ChatJobs.TryGetValue(jobName, out var job))
+        {
+            // Also check CreatedJobs as fallback
+            if (!CreatedJobs.TryGetValue(jobName, out job))
+                throw new InvalidOperationException($"Chat job '{jobName}' not found in ChatJobs or CreatedJobs");
+        }
+
+        job.Status ??= new k8s.Models.V1JobStatus();
+        job.Status.Conditions ??= new List<k8s.Models.V1JobCondition>();
+
+        // Remove any existing Complete/Failed conditions first
+        var existing = job.Status.Conditions
+            .Where(c => c.Type == "Complete" || c.Type == "Failed")
+            .ToList();
+        foreach (var c in existing) job.Status.Conditions.Remove(c);
+
+        job.Status.Conditions.Add(new k8s.Models.V1JobCondition
+        {
+            Type = success ? "Complete" : "Failed",
+            Status = "True",
+            LastTransitionTime = DateTime.UtcNow
+        });
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Finds a chat job by its <c>caa/chat-selector</c> label value (encoded, commas → underscores).
+    /// Returns null if no matching job exists.
+    /// </summary>
+    public V1Job? GetChatJobBySelector(string encodedSelector)
+    {
+        return ChatJobs.Values.FirstOrDefault(j =>
+            j.Metadata?.Labels != null &&
+            j.Metadata.Labels.TryGetValue("caa/chat-selector", out var val) &&
+            string.Equals(val, encodedSelector, StringComparison.OrdinalIgnoreCase));
     }
 }

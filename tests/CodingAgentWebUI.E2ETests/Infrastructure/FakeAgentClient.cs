@@ -32,6 +32,12 @@ public sealed class FakeAgentClient : IAsyncDisposable
     public ConcurrentBag<string> ReceivedConsolidationJobIds { get; } = new();
     public bool IsConnected => _connection?.State == HubConnectionState.Connected;
 
+    /// <summary>
+    /// Resolved when a <c>CancelChat</c> hub message is received.
+    /// Reset with <see cref="ResetCancelChatReceived"/> for multi-test reuse.
+    /// </summary>
+    public TaskCompletionSource CancelChatReceived { get; private set; } = new();
+
     public FakeAgentClient(string agentId, params string[] labels)
     {
         AgentId = agentId;
@@ -54,6 +60,27 @@ public sealed class FakeAgentClient : IAsyncDisposable
             AgentId = AgentId,
             Hostname = "fake-agent-host",
             Labels = Labels
+        });
+    }
+
+    /// <summary>
+    /// Connects to the SignalR hub and registers as a chat-mode agent.
+    /// Adds <c>"chat=true"</c> and <c>"chat-session-id=&lt;chatSessionId&gt;"</c> to labels,
+    /// mirroring what <c>AgentConnectionLifecycle</c> does when <c>AGENT_CHAT_MODE=true</c>.
+    /// </summary>
+    public async Task ConnectAsChatAgentAsync(string serverAddress, string apiKey, string chatSessionId)
+    {
+        await BuildAndStartConnectionAsync(serverAddress, apiKey);
+
+        var chatLabels = Labels
+            .Concat(new[] { "chat=true", $"chat-session-id={chatSessionId}" })
+            .ToArray();
+
+        await _connection!.InvokeAsync("RegisterAgent", new AgentRegistrationMessage
+        {
+            AgentId = AgentId,
+            Hostname = "fake-chat-pod",
+            Labels = chatLabels
         });
     }
 
@@ -221,6 +248,36 @@ public sealed class FakeAgentClient : IAsyncDisposable
     }
 
     /// <summary>
+    /// Resets the <see cref="CancelChatReceived"/> TCS for multi-test reuse.
+    /// </summary>
+    public void ResetCancelChatReceived()
+    {
+        CancelChatReceived = new TaskCompletionSource();
+    }
+
+    /// <summary>
+    /// Sends <c>ReportChatResponse</c> + <c>ReportChatCompleted</c> for the given session.
+    /// Simpler than <see cref="RespondToChatAsync"/> — does not wait on <see cref="ChatPromptAssigned"/>;
+    /// caller must supply the sessionId directly.
+    /// </summary>
+    public async Task SendChatResponseAsync(string sessionId, string text)
+    {
+        if (_connection is null) throw new InvalidOperationException("Not connected");
+
+        await _connection.InvokeAsync("ReportChatResponse", new ChatResponseMessage
+        {
+            SessionId = sessionId,
+            Lines = text.Split('\n')
+        });
+
+        await _connection.InvokeAsync("ReportChatCompleted", new ChatCompletedMessage
+        {
+            SessionId = sessionId,
+            ExitCode = 0
+        });
+    }
+
+    /// <summary>
     /// Responds to a previously received chat prompt by sending response lines and completion.
     /// Reads the SessionId from the captured ChatPromptMessage.
     /// </summary>
@@ -334,7 +391,7 @@ public sealed class FakeAgentClient : IAsyncDisposable
         _connection.On<JobAssignmentMessage>("AssignJob", OnAssignJob);
         _connection.On<JobId>("CancelJob", _ => { });
         _connection.On<ChatPromptMessage>("AssignChatPrompt", msg => ChatPromptAssigned.TrySetResult(msg));
-        _connection.On<string>("CancelChat", _ => { });
+        _connection.On<string>("CancelChat", sessionId => CancelChatReceived.TrySetResult());
         _connection.On<FetchModelsRequest>("RequestFetchModels", _ => { });
         _connection.On<string, ConsolidationJobMessage>("AssignConsolidationJob", OnAssignConsolidationJob);
         _connection.On("ForceDisconnect", async () =>

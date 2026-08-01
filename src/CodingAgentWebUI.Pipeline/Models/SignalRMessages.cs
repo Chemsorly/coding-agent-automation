@@ -406,6 +406,15 @@ public sealed record ChatPromptMessage
     /// </summary>
     [Key(4)]
     public string McpConfigPath { get; init; } = "/home/ubuntu/.kiro/settings/mcp.json";
+
+    /// <summary>
+    /// Stable identifier for the chat window, generated once in StartChat() and included
+    /// in every prompt for the lifetime of that window. Used to scope the agent workspace
+    /// directory so successive prompts share the same Kiro CLI session state.
+    /// Defaults to "" for backward compatibility with SignalR-mode agents that don't send it.
+    /// </summary>
+    [Key(5)]
+    public string ChatWindowId { get; init; } = "";
 }
 
 /// <summary>

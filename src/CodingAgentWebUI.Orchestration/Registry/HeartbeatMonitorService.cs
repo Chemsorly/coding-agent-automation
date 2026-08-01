@@ -118,6 +118,22 @@ public sealed class HeartbeatMonitorService : BackgroundService
         {
             if (agent.Status != AgentStatus.Disconnected)
             {
+                if (agent.Labels?.Any(l => string.Equals(l, "chat=true", StringComparison.OrdinalIgnoreCase)) == true)
+                {
+                    // Chat agents are exempt from heartbeat sweeping (they don't send periodic heartbeats).
+                    // Log a warning if the agent has been registered for an unusually long time —
+                    // this may indicate a leaked registration after a pod crash.
+                    var registeredAge = now - agent.RegisteredAt;
+                    if (registeredAge > TimeSpan.FromHours(4))
+                    {
+                        _logger.Warning(
+                            "Chat agent {AgentId} has been registered for {AgeHours:F1}h — " +
+                            "may be a leaked registration if the pod is no longer running",
+                            agent.AgentId, registeredAge.TotalHours);
+                    }
+                    continue;
+                }
+
                 if (SweepStaleHeartbeats(agent, now, heartbeatTimeout))
                 {
                     continue;

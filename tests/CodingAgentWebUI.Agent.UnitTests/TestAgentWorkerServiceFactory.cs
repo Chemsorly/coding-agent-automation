@@ -55,6 +55,7 @@ internal static class TestAgentWorkerServiceFactory
             reporter,
             mockOrchestrator,
             Mock.Of<IHttpClientFactory>(),
+            lifetime,
             mockLogger);
 
         return (service, slotManager, lifecycle);

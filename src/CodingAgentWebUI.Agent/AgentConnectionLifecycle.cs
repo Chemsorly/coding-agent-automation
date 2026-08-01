@@ -38,7 +38,25 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     private readonly ResiliencePipeline _signalRPipeline;
 
     private readonly string _agentId;
-    private readonly IReadOnlyList<string> _labels;
+    private readonly IReadOnlyList<string> _baseLabels;
+
+    // ── Chat mode fields ──────────────────────────────────────────────────────
+    /// <summary>True when the agent pod runs in chat-only mode (AGENT_CHAT_MODE=true).</summary>
+    internal bool _isChatMode = string.Equals(
+        Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Chat session identifier injected via AGENT_CHAT_SESSION_ID env var.</summary>
+    internal string _chatSessionId = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId) ?? "";
+
+    /// <summary>Resolved when SignalChatEnd() is called; unblocks the ConnectAndRunAsync wait.</summary>
+    internal readonly TaskCompletionSource _chatEndSource = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Injectable seam for KiroCliSettingsWriter.ApplyAsync. Tests override this to
+    /// capture/verify calls without writing to the real filesystem.
+    /// </summary>
+    internal Func<string, string?, CancellationToken, Task> KiroCliSettingsApplyFunc { get; set; }
+        = (model, effort, ct) => KiroCliSettingsWriter.ApplyAsync(model, effort, ct);
 
     internal TimeSpan ExtendedRetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 
@@ -89,7 +107,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         _agentId = agentId.Value;
 
         var labelsEnv = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentLabels) ?? string.Empty;
-        _labels = labelsEnv
+        _baseLabels = labelsEnv
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList()
             .AsReadOnly();
@@ -105,16 +123,34 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     /// <summary>
     /// Connects to the orchestrator, registers the agent, and runs the heartbeat loop
     /// until the <paramref name="stoppingToken"/> is cancelled.
+    /// In chat mode (<see cref="_isChatMode"/>), skips the heartbeat loop and instead
+    /// awaits <see cref="_chatEndSource"/> before returning.
     /// </summary>
     public async Task ConnectAndRunAsync(CancellationToken stoppingToken)
     {
         var manager = _hubManager
             ?? throw new ObjectDisposedException(nameof(AgentConnectionLifecycle));
 
+        // Chat mode: apply model/effort settings to ~/.kiro/settings/cli.json before connecting
+        if (_isChatMode)
+        {
+            var model = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatModel);
+            var effort = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatEffort);
+            if (!string.IsNullOrEmpty(model) && !model.Equals("auto", StringComparison.OrdinalIgnoreCase))
+                await KiroCliSettingsApplyFunc(model, effort, stoppingToken);
+        }
+
         WireEventHandlers(manager);
 
         // Connect to orchestrator
-        await manager.StartAsync(stoppingToken);
+        try
+        {
+            await manager.StartAsync(stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
+        }
 
         // Register with orchestrator
         var registration = BuildRegistrationMessage();
@@ -122,9 +158,16 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         await _signalRPipeline.ExecuteAsync(async token =>
             await manager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), stoppingToken);
         _logger.Information("Agent {AgentId} registered with labels [{Labels}]",
-            _agentId, string.Join(", ", _labels));
+            _agentId, string.Join(", ", _baseLabels));
 
-        // Heartbeat loop
+        // Chat mode: wait for SignalChatEnd() signal instead of heartbeat loop
+        if (_isChatMode)
+        {
+            await _chatEndSource.Task.WaitAsync(stoppingToken);
+            return;
+        }
+
+        // Normal mode: heartbeat loop
         using var heartbeatTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -415,13 +458,32 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         }
     }
 
-    private AgentRegistrationMessage BuildRegistrationMessage() => new()
+    private AgentRegistrationMessage BuildRegistrationMessage()
     {
-        AgentId = _agentId,
-        Hostname = Environment.MachineName,
-        Labels = _labels,
-        ActiveJob = _slotManager.BuildActiveJobState()
-    };
+        var labels = _isChatMode
+            ? [.. _baseLabels, "chat=true", $"chat-session-id={_chatSessionId}"]
+            : _baseLabels;
+
+        return new AgentRegistrationMessage
+        {
+            AgentId = _agentId,
+            Hostname = Environment.MachineName,
+            Labels = labels,
+            ActiveJob = _slotManager.BuildActiveJobState()
+        };
+    }
+
+    /// <summary>Test accessor for BuildRegistrationMessage — allows unit tests to verify label construction.</summary>
+    internal AgentRegistrationMessage BuildRegistrationMessageForTest() => BuildRegistrationMessage();
+
+    /// <summary>
+    /// Signals the chat session end, unblocking <see cref="ConnectAndRunAsync"/> in chat mode.
+    /// Idempotent — safe to call multiple times (uses TrySetResult).
+    /// </summary>
+    public void SignalChatEnd()
+    {
+        _chatEndSource.TrySetResult();
+    }
 
     private async Task SendHeartbeatAsync(CancellationToken ct)
     {

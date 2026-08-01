@@ -54,6 +54,12 @@ public class AgentChatComponentTests : BunitContext
         Services.AddSingleton(new Mock<IHubContext<AgentHub, IAgentHubClient>>().Object);
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
         Services.AddSingleton(new FeatureFlags());  // defaults: IsKubernetesMode = false
+        Services.AddSingleton(JobTemplateStore.CreateEmpty());
+        Services.AddSingleton<IChatJobDispatcher, NullChatJobDispatcher>();
+
+        // IConfiguration required by AgentChat for ChatPodConnectTimeoutSeconds
+        Services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
     }
 
     [Fact]
@@ -136,14 +142,17 @@ public class AgentChatComponentTests : BunitContext
     }
 
     [Fact]
-    public void AgentChat_ShowsUnavailableMessage_InKubernetesMode()
+    public void AgentChat_ShowsK8sLaunchUI_InKubernetesMode()
     {
+        // Task 9.1 removed the static "not available in Kubernetes mode" banner.
+        // K8s mode now shows the Job Template dropdown and Launch Chat Pod button.
         Services.AddSingleton(new FeatureFlags { IsKubernetesMode = true });
 
         var cut = Render<AgentChat>();
 
-        Assert.Contains("not available in Kubernetes mode", cut.Markup);
-        Assert.DoesNotContain("Interactive Chat", cut.Markup);
-        Assert.DoesNotContain("agent-select", cut.Markup);
+        Assert.DoesNotContain("not available in Kubernetes mode", cut.Markup);
+        Assert.Contains("Interactive Chat", cut.Markup);
+        Assert.Contains("Launch Chat Pod", cut.Markup);
+        Assert.Contains("template-select", cut.Markup);
     }
 }

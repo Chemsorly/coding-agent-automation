@@ -26,5 +26,8 @@ data:
   {{- range $i, $pvc := (.Values.credentialPools).kiro | default list }}
   WorkDistribution__CredentialPools__Kiro__{{ $i }}: {{ $pvc | quote }}
   {{- end }}
+  WorkDistribution__Dispatch__ChatSessionMaxDurationSeconds: {{ .Values.workDistribution.dispatch.chatSessionMaxDurationSeconds | quote }}
+  WorkDistribution__Dispatch__ChatPodConnectTimeoutSeconds: {{ .Values.workDistribution.dispatch.chatPodConnectTimeoutSeconds | quote }}
+  WorkDistribution__Dispatch__ChatTerminationGracePeriodSeconds: {{ .Values.workDistribution.dispatch.chatTerminationGracePeriodSeconds | quote }}
   {{- end }}
   {{- end }}

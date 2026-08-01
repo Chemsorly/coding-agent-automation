@@ -190,13 +190,13 @@ public class MainLayoutComponentTests : BunitContext
     }
 
     [Fact]
-    public void Sidebar_AgentChatLink_HiddenInKubernetesMode()
+    public void Sidebar_AgentChatLink_PresentInKubernetesMode()
     {
-        // Replace default FeatureFlags with k8s mode enabled
+        // Task 9.2 removed the IsKubernetesMode gate — nav link now always visible.
         Services.AddSingleton(new FeatureFlags { IsKubernetesMode = true });
 
         var cut = Render<MainLayout>();
 
-        Assert.DoesNotContain("agent-chat", cut.Markup);
+        Assert.Contains("agent-chat", cut.Markup);
     }
 }

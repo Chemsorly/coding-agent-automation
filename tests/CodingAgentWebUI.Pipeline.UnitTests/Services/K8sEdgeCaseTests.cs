@@ -736,10 +736,6 @@ public class K8sEdgeCaseTests : IDisposable
         availablePvcs.Should().ContainSingle()
             .Which.Should().Be("pvc-leak-test");
 
-        // Assert: inflight claims set is also cleared (prevents other services from seeing stale claims)
-        lifecycle.GetInflightPvcClaims().Should().BeEmpty(
-            "inflight PVC claims must be released on prepareVariant exception to prevent cross-service stale claim");
-
         // Assert: work item stays Pending (no FailWorkItem called — exception propagates to caller)
         var workItem = await db.WorkItems.FindAsync(pendingId);
         workItem!.Status.Should().Be(WorkItemStatus.Pending);
@@ -800,10 +796,6 @@ public class K8sEdgeCaseTests : IDisposable
         // Assert: PVC was returned to pool (the critical fix for #1708)
         availablePvcs.Should().ContainSingle()
             .Which.Should().Be("pvc-find-leak");
-
-        // Assert: inflight claims set is cleared
-        lifecycle.GetInflightPvcClaims().Should().BeEmpty(
-            "inflight PVC claims must be released on FindAsync exception to prevent permanent pool shrinkage");
     }
 
     [Fact]
@@ -882,10 +874,6 @@ public class K8sEdgeCaseTests : IDisposable
         // Assert: PVC was returned to pool (the critical fix for #1708)
         availablePvcs.Should().ContainSingle()
             .Which.Should().Be("pvc-save-leak");
-
-        // Assert: inflight claims set is cleared
-        lifecycle.GetInflightPvcClaims().Should().BeEmpty(
-            "inflight PVC claims must be released on SaveChangesAsync exception to prevent permanent pool shrinkage");
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -951,10 +939,6 @@ public class K8sEdgeCaseTests : IDisposable
         // releases the PVC before re-throwing.
         availablePvcs.Should().ContainSingle()
             .Which.Should().Be("pvc-oce-leak");
-
-        // Assert: inflight claims set is cleared
-        lifecycle.GetInflightPvcClaims().Should().BeEmpty(
-            "inflight PVC claims must be released on OperationCanceledException to prevent permanent pool shrinkage");
     }
 
     // TODO: Add test for OperationCanceledException during first SaveChangesAsync to validate

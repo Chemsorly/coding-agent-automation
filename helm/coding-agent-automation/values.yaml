@@ -214,6 +214,9 @@ workDistribution:
   dispatch:
     intervalSeconds: 10
     rateLimitPerSecond: 10
+    chatSessionMaxDurationSeconds: 7200
+    chatPodConnectTimeoutSeconds: 120
+    chatTerminationGracePeriodSeconds: 120
   # ReconciliationService settings (Kubernetes mode only)
   reconciliation:
     intervalSeconds: 30

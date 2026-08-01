@@ -77,5 +77,8 @@ public static partial class WorkDistributionRegistration
         services.AddHostedService(sp => sp.GetRequiredService<PendingWorkItemDrainService>());
 
         Log.Information("WorkDistribution: SignalR mode — SignalRWorkDistributor + PendingWorkItemDrainService registered");
+
+        // IChatJobDispatcher — null-object pattern; AgentChat.razor injects unconditionally
+        services.AddSingleton<IChatJobDispatcher, NullChatJobDispatcher>();
     }
 }
