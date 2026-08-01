@@ -243,6 +243,24 @@ public sealed class AgentRegistryService : IAgentRegistryService
     }
 
     /// <summary>
+    /// Returns all registered agents whose <see cref="AgentEntry.Labels"/> array contains
+    /// <c>"{labelKey}={labelValue}"</c>. Matching is case-insensitive (OrdinalIgnoreCase).
+    /// Used by <c>ChatJobDispatcher</c> to identify a newly-connected chat pod by its
+    /// <c>chat-session-id</c> label.
+    /// </summary>
+    /// <param name="labelKey">Label key (e.g. <c>"chat-session-id"</c>).</param>
+    /// <param name="labelValue">Label value (e.g. the dispatch GUID as a string).</param>
+    /// <returns>Read-only list of matching agents; empty if none found.</returns>
+    public IReadOnlyList<AgentEntry> GetAgentsByLabel(string labelKey, string labelValue)
+    {
+        var target = $"{labelKey}={labelValue}";
+        return _agents.Values
+            .Where(a => a.Labels?.Any(l => string.Equals(l, target, StringComparison.OrdinalIgnoreCase)) == true)
+            .ToList()
+            .AsReadOnly();
+    }
+
+    /// <summary>
     /// Clears all registered agents. Used by E2E tests for state isolation.
     /// </summary>
     internal void Reset()

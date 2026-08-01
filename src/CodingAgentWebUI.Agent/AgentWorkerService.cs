@@ -49,10 +49,12 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     private readonly IJobCompletionReporter _completionReporter;
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IHostApplicationLifetime _hostApplicationLifetime;
     private readonly Serilog.ILogger _logger;
     private readonly ResiliencePipeline _signalRPipeline;
     private readonly string _agentId;
     private readonly bool _isOpenCodeProvider;
+    private readonly bool _isChatMode;
 
     public AgentWorkerService(
         AgentConnectionLifecycle connectionLifecycle,
@@ -63,6 +65,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         IJobCompletionReporter completionReporter,
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
+        IHostApplicationLifetime hostApplicationLifetime,
         Serilog.ILogger logger)
     {
         ArgumentNullException.ThrowIfNull(connectionLifecycle);
@@ -72,6 +75,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         ArgumentNullException.ThrowIfNull(completionReporter);
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
+        ArgumentNullException.ThrowIfNull(hostApplicationLifetime);
         ArgumentNullException.ThrowIfNull(logger);
 
         _connectionLifecycle = connectionLifecycle;
@@ -83,18 +87,35 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _completionReporter = completionReporter;
         _orchestrator = orchestrator;
         _httpClientFactory = httpClientFactory;
+        _hostApplicationLifetime = hostApplicationLifetime;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
         _isOpenCodeProvider = (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
             .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
+        _isChatMode = string.Equals(
+            Environment.GetEnvironmentVariable("AGENT_CHAT_MODE"), "true", StringComparison.OrdinalIgnoreCase);
 
-        // Wire business event handlers
-        _connectionLifecycle.OnAssignJob += HandleAssignJobAsync;
-        _connectionLifecycle.OnCancelJob += HandleCancelJobAsync;
+        // Wire business event handlers (unconditional)
         _connectionLifecycle.OnAssignChatPrompt += HandleChatPromptAsync;
         _connectionLifecycle.OnCancelChat += HandleCancelChatAsync;
+        _connectionLifecycle.OnCancelJob += HandleCancelJobAsync;
         _connectionLifecycle.OnFetchModels += HandleFetchModelsAsync;
         _connectionLifecycle.OnAssignConsolidationJob += HandleAssignConsolidationJobAsync;
+
+        // OnAssignJob only in non-chat mode — chat pods must not receive work-item jobs
+        if (!_isChatMode)
+        {
+            _connectionLifecycle.OnAssignJob += HandleAssignJobAsync;
+        }
+
+        if (_isChatMode)
+        {
+            var chatSessionId = Environment.GetEnvironmentVariable("AGENT_CHAT_SESSION_ID") ?? "";
+            if (string.IsNullOrEmpty(chatSessionId))
+                _logger.Warning("AgentWorkerService: AGENT_CHAT_MODE=true but AGENT_CHAT_SESSION_ID is not set — this pod may be misconfigured");
+            else
+                _logger.Information("AgentWorkerService: running in chat mode (session={ChatSessionId})", chatSessionId);
+        }
     }
 
     /// <summary>Whether the agent is currently executing a job.</summary>
@@ -285,7 +306,9 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
                 try
                 {
-                    var chatWorkspace = AgentDefaults.ChatWorkspacePath;
+                    var chatWorkspace = string.IsNullOrEmpty(message.ChatWindowId)
+                        ? AgentDefaults.ChatWorkspacePath           // backward compat: old SignalR agents
+                        : Path.Combine(AgentDefaults.ChatWorkspacesRoot, message.ChatWindowId);
                     Directory.CreateDirectory(chatWorkspace);
 
                     if (!message.UseResume && message.McpServers is { Count: > 0 })
@@ -423,8 +446,18 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 _logger.Warning("Chat task did not complete within timeout after cancellation for session {SessionId}", sessionId);
         }
 
-        // Signal ready — the chat session is over, agent can accept jobs again
-        await SignalAgentReadyAsync();
+        if (_isChatMode)
+        {
+            // Signal chat end source so ConnectAndRunAsync returns
+            _connectionLifecycle.SignalChatEnd();
+            // DO NOT call SignalAgentReadyAsync — chat pod must not return to idle pool
+            _hostApplicationLifetime.StopApplication();
+        }
+        else
+        {
+            // Signal ready — the chat session is over, agent can accept jobs again
+            await SignalAgentReadyAsync();
+        }
     }
 
     private async Task HandleFetchModelsAsync(FetchModelsRequest request)

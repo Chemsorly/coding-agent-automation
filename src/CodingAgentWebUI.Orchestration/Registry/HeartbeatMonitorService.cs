@@ -118,6 +118,9 @@ public sealed class HeartbeatMonitorService : BackgroundService
         {
             if (agent.Status != AgentStatus.Disconnected)
             {
+                if (agent.Labels?.Any(l => string.Equals(l, "chat=true", StringComparison.OrdinalIgnoreCase)) == true)
+                    continue;
+
                 if (SweepStaleHeartbeats(agent, now, heartbeatTimeout))
                 {
                     continue;

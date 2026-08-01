@@ -8,6 +8,7 @@ using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
+using k8s.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -486,6 +487,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
             Namespace = ns
         };
     }
+
 
     // ═══════════════════════════════════════════════════════════════════════
     // G7: Agent HTTP Assignment Fetch — GET /api/work-items/{id}/assignment

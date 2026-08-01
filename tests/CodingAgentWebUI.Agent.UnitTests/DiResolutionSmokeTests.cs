@@ -348,6 +348,7 @@ public class DiResolutionSmokeTests
             sp.GetRequiredService<IJobCompletionReporter>(),
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
 
         return services.BuildServiceProvider(new ServiceProviderOptions

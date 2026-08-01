@@ -281,6 +281,7 @@ try
             sp.GetRequiredService<IJobCompletionReporter>(),
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
+            sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
         builder.Services.AddSingleton<IAgentService>(sp => sp.GetRequiredService<AgentWorkerService>());

@@ -25,14 +25,20 @@ public class AgentWorkerServiceTests : IDisposable
     public void Dispose()
     {
         // Clean up directories created by tests that invoke HandleChatPromptAsync
-        // (production code calls Directory.CreateDirectory(AgentDefaults.ChatWorkspacePath))
-        var chatWorkspace = AgentDefaults.ChatWorkspacePath;
+        // (production code calls Directory.CreateDirectory(AgentDefaults.ChatWorkspacePath)
+        // and may also create per-window workspaces under AgentDefaults.ChatWorkspacesRoot)
+        TryDeleteDir(AgentDefaults.ChatWorkspacePath);
+        TryDeleteDir(AgentDefaults.ChatWorkspacesRoot);
+    }
+
+    private static void TryDeleteDir(string path)
+    {
         try
         {
-            if (Directory.Exists(chatWorkspace))
-                Directory.Delete(chatWorkspace, recursive: true);
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
             // Also clean parent dirs if empty (e.g. /app/workspaces, /app)
-            var parent = Path.GetDirectoryName(chatWorkspace);
+            var parent = Path.GetDirectoryName(path);
             while (parent != null && Directory.Exists(parent) && !Directory.EnumerateFileSystemEntries(parent).Any())
             {
                 Directory.Delete(parent);
@@ -48,7 +54,7 @@ public class AgentWorkerServiceTests : IDisposable
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var act = () => new AgentWorkerService(null!, new AgentJobSlotManager(() => Task.CompletedTask), new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
+        var act = () => new AgentWorkerService(null!, new AgentJobSlotManager(() => Task.CompletedTask), new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("connectionLifecycle");
     }
 
@@ -60,7 +66,7 @@ public class AgentWorkerServiceTests : IDisposable
         var (_, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         var act = () => new AgentWorkerService(
-            lifecycle, slotManager, new AgentId("test-agent"), null!, CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), mockLogger.Object);
+            lifecycle, slotManager, new AgentId("test-agent"), null!, CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
         act.Should().Throw<ArgumentNullException>().WithParameterName("executor");
     }
 
@@ -71,7 +77,7 @@ public class AgentWorkerServiceTests : IDisposable
         var (_, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         var act = () => new AgentWorkerService(
-            lifecycle, slotManager, new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), null!);
+            lifecycle, slotManager, new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), null!);
         act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
     }
 

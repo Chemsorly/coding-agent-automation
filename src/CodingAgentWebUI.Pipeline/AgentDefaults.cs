@@ -10,6 +10,13 @@ public static class AgentDefaults
     /// <summary>Default workspace path for chat sessions inside agent containers.</summary>
     public const string ChatWorkspacePath = "/app/workspaces/chat";
 
+    /// <summary>
+    /// Root directory for per-window chat session workspaces.
+    /// Each chat window gets a subdirectory: <see cref="ChatWorkspacesRoot"/>/{chatWindowId}.
+    /// Distinct from <see cref="ChatWorkspacePath"/> (the legacy single-path for SignalR mode).
+    /// </summary>
+    public const string ChatWorkspacesRoot = "/app/workspaces/chat-sessions";
+
     /// <summary>Warm-up prompt sent to establish a KiroCli chat session before the real prompt.</summary>
     public const string ChatWarmUpPrompt = "hello, how are you?";
 
@@ -63,6 +70,18 @@ public static class AgentDefaults
 
     /// <summary>OpenRouter API key for LLM access.</summary>
     public const string EnvOpenRouterApiKey = "OPENROUTER_API_KEY";
+
+    /// <summary>
+    /// When "true", the agent pod runs in chat-only mode: no job assignment, no heartbeat loop.
+    /// Injected by ChatJobDispatcher post-build.
+    /// </summary>
+    public const string EnvChatModel = "AGENT_CHAT_MODEL";
+
+    /// <summary>
+    /// Effort level to apply to the Kiro CLI chat session (e.g., "high", "low").
+    /// Injected by ChatJobDispatcher post-build. Absent/auto → no override.
+    /// </summary>
+    public const string EnvChatEffort = "AGENT_CHAT_EFFORT";
 
     // ── K8s mode environment variables ───────────────────────────────────
 

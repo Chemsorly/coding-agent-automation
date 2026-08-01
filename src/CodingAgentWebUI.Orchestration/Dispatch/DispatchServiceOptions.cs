@@ -29,4 +29,13 @@ public sealed class DispatchServiceOptions
 
     /// <summary>K8s Secret name containing opencode config file (mounted for opencode agents).</summary>
     public string OpencodeConfigSecretName { get; set; } = "";
+
+    /// <summary>Maximum chat session lifetime in seconds. Sets activeDeadlineSeconds on the K8s Job. Default: 7200.</summary>
+    public int ChatSessionMaxDurationSeconds { get; set; } = 7200;
+
+    /// <summary>Time to wait for chat pod to connect before aborting. Default: 120s.</summary>
+    public int ChatPodConnectTimeoutSeconds { get; set; } = 120;
+
+    /// <summary>terminationGracePeriodSeconds on chat Job pod spec. Default: 120s.</summary>
+    public int ChatTerminationGracePeriodSeconds { get; set; } = 120;
 }
