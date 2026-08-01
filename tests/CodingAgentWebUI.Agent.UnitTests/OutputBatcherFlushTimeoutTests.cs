@@ -13,8 +13,8 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// for the entire duration. All other producers block on _lock.WaitAsync, causing a
 /// cascade that freezes the entire agent process.
 ///
-/// The fix: OutputBatcher should accept a flush timeout. When the OnFlush callback
-/// exceeds this timeout, the batcher aborts the flush and releases the lock.
+/// All tests use <see cref="ManualFlushTrigger"/> so no real-time delays are needed —
+/// the flush loop only wakes when Tick() is called explicitly.
 /// </summary>
 public class OutputBatcherFlushTimeoutTests
 {
@@ -22,42 +22,44 @@ public class OutputBatcherFlushTimeoutTests
     /// When the OnFlush handler blocks beyond the configured flush timeout,
     /// subsequent AddLineAsync calls should still complete within a bounded time.
     /// Without the fix, they block for the full duration of the hung flush handler.
+    ///
+    /// The threshold flush (50 lines) is used to trigger the blocking handler —
+    /// no timer tick required.
     /// </summary>
     [Fact]
     public async Task WhenFlushHandlerBlocks_SubsequentCallsShouldCompleteWithinBoundedTime()
     {
-        var flushStarted = new TaskCompletionSource();
+        var flushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var trigger = new ManualFlushTrigger();
 
-        // Use a short flush timeout so the test completes quickly.
-        // The default constructor now applies DefaultFlushTimeout (5s), but for
-        // tests we use 200ms to keep execution fast.
-        await using var batcher = new OutputBatcher(flushTimeout: TimeSpan.FromMilliseconds(200));
+        await using var batcher = new OutputBatcher(trigger, flushTimeout: TimeSpan.FromMilliseconds(200));
         batcher.OnFlush += async _ =>
         {
             flushStarted.TrySetResult();
-            // Simulate a half-open TCP connection: InvokeAsync hangs for a long time
+            // Simulate a half-open TCP connection: InvokeAsync hangs indefinitely
             await Task.Delay(TimeSpan.FromSeconds(30));
         };
 
-        // Fill the buffer to 49 lines
+        // Fill the buffer to 49 lines — no flush yet
         for (var i = 0; i < 49; i++)
             await batcher.AddLineAsync($"line-{i}");
 
-        // The 50th line triggers FlushInternalAsync which will block in OnFlush
+        // The 50th line crosses the threshold and fires SendBatchAsync synchronously
         var triggerTask = Task.Run(async () => await batcher.AddLineAsync("trigger-flush"));
 
-        // Wait for the blocking flush to start
-        var started = await Task.WhenAny(flushStarted.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+        // Wait for the blocking flush to start — no real-time dependency, just
+        // waiting for the threshold-triggered flush to reach OnFlush
+        var started = await Task.WhenAny(flushStarted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
         started.Should().Be(flushStarted.Task, "flush should start when buffer threshold is hit");
 
-        // Now try to add another line — this caller is a parallel review agent
-        // It should complete within 3s (the flush timeout should release the lock).
-        // Without the fix, this will block for ~30 seconds (the full flush duration).
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        // Now try to add another line — this caller is a parallel review agent.
+        // The flush timeout (200ms) should release _flushGate, allowing AddLineAsync to proceed.
+        // Without the fix this blocks for ~30 seconds.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var parallelTask = Task.Run(async () =>
             await batcher.AddLineAsync("parallel-agent-output", cts.Token));
 
-        var completedInTime = await Task.WhenAny(parallelTask, Task.Delay(TimeSpan.FromSeconds(3)));
+        var completedInTime = await Task.WhenAny(parallelTask, Task.Delay(TimeSpan.FromSeconds(5)));
         completedInTime.Should().Be(parallelTask,
             "a parallel caller should not be blocked for the full duration of a hung flush handler; " +
             "the OutputBatcher should enforce a flush timeout that releases the lock");
@@ -71,9 +73,10 @@ public class OutputBatcherFlushTimeoutTests
     [Fact]
     public async Task WhenFlushHandlerBlocks_AllParallelCallersUnblockWithinBoundedTime()
     {
-        var flushStarted = new TaskCompletionSource();
+        var flushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var trigger = new ManualFlushTrigger();
 
-        await using var batcher = new OutputBatcher(flushTimeout: TimeSpan.FromMilliseconds(200));
+        await using var batcher = new OutputBatcher(trigger, flushTimeout: TimeSpan.FromMilliseconds(200));
         batcher.OnFlush += async _ =>
         {
             flushStarted.TrySetResult();
@@ -85,64 +88,88 @@ public class OutputBatcherFlushTimeoutTests
         for (var i = 0; i < 49; i++)
             await batcher.AddLineAsync($"line-{i}");
 
-        // 50th line triggers the blocking flush
+        // 50th line triggers the blocking flush via threshold (no timer needed)
         var triggerTask = Task.Run(async () => await batcher.AddLineAsync("trigger"));
-        await Task.WhenAny(flushStarted.Task, Task.Delay(TimeSpan.FromSeconds(3)));
+        await Task.WhenAny(flushStarted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
 
         // Simulate 3 parallel review agents trying to emit output
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        // Each AddLineAsync acquires _lock (fast) — none cross the threshold alone,
+        // so they don't call SendBatchAsync directly. They complete as soon as _lock is free.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var agent1 = Task.Run(async () => await batcher.AddLineAsync("agent-1", cts.Token));
         var agent2 = Task.Run(async () => await batcher.AddLineAsync("agent-2", cts.Token));
         var agent3 = Task.Run(async () => await batcher.AddLineAsync("agent-3", cts.Token));
 
-        // All agents should complete within 3s if flush timeout is working
+        // All agents should complete within 5s once the flush timeout releases _flushGate.
+        // AddLineAsync only blocks on _lock, not _flushGate, so these complete as soon as
+        // the triggered flush's lock release propagates.
         var allAgents = Task.WhenAll(agent1, agent2, agent3);
-        var completed = await Task.WhenAny(allAgents, Task.Delay(TimeSpan.FromSeconds(3)));
+        var completed = await Task.WhenAny(allAgents, Task.Delay(TimeSpan.FromSeconds(5)));
         completed.Should().Be(allAgents,
             "all parallel review agents should unblock within a bounded time " +
             "when the flush handler is hung (flush timeout should release the lock)");
     }
 
     /// <summary>
-    /// After a flush timeout fires, the batcher's periodic timer-based flush loop
-    /// should continue operating normally — subsequent lines should be flushed by
-    /// later timer ticks rather than being stuck permanently.
+    /// After a flush timeout fires, the batcher's flush loop should continue
+    /// operating normally — subsequent trigger ticks should flush new batches.
+    ///
+    /// Uses ManualFlushTrigger to fire ticks explicitly, eliminating all real-time waits.
+    /// Sequence: add line → Tick() → first flush starts (blocks) → timeout fires →
+    ///           add second line → Tick() → second flush completes → assert flushCount > 1.
     /// </summary>
     [Fact]
-    public async Task AfterFlushTimeout_TimerBasedFlushContinuesWorking()
+    public async Task AfterFlushTimeout_TickBasedFlushContinuesWorking()
     {
         var flushCount = 0;
+        var firstFlushStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondFlushCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        await using var batcher = new OutputBatcher(flushTimeout: TimeSpan.FromMilliseconds(200));
+        var trigger = new ManualFlushTrigger();
+        // 200ms timeout — still real-time, but only this one wait is unavoidable
+        // since we're testing that the timeout actually fires.
+        await using var batcher = new OutputBatcher(trigger, flushTimeout: TimeSpan.FromMilliseconds(200));
+
         batcher.OnFlush += async _ =>
         {
             var count = Interlocked.Increment(ref flushCount);
             if (count == 1)
             {
-                // First flush blocks (simulates hung SignalR connection)
+                firstFlushStarted.TrySetResult();
+                // First flush blocks — simulates hung SignalR connection
                 await Task.Delay(TimeSpan.FromSeconds(30));
             }
-            // Subsequent flushes should complete normally
+            else
+            {
+                // Subsequent flushes complete immediately and signal recovery
+                secondFlushCompleted.TrySetResult();
+            }
         };
 
-        // Add a line — timer will try to flush it (timer fires every 250ms)
+        // Add first line, then tick to wake the flush loop
         await batcher.AddLineAsync("first-line");
+        trigger.Tick();
 
-        // Wait for the first (blocking) flush to start and the timeout to fire,
-        // then for subsequent timer flushes to succeed
-        // With the fix: ~250ms (timer) + ~200ms (timeout) + ~250ms (next timer) ≈ 700ms
-        // Use generous delays to avoid flakiness on slow CI runners.
-        await Task.Delay(TimeSpan.FromMilliseconds(2000));
+        // Wait for the blocking flush handler to start — event-driven, no fixed delay
+        var firstStarted = await Task.WhenAny(firstFlushStarted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        firstStarted.Should().Be(firstFlushStarted.Task, "first flush should start after tick");
 
-        // Add another line to be flushed by a subsequent timer tick
+        // The flush timeout (200ms) will fire and release _flushGate.
+        // We need to wait at least that long — this is the only unavoidable real-time wait,
+        // and it's bounded by the flush timeout we configured, not by scheduler jitter.
+        await Task.Delay(TimeSpan.FromMilliseconds(400)); // 2× timeout for CI headroom
+
+        // Add second line and tick — the flush loop should now process it normally
         await batcher.AddLineAsync("second-line");
-        await Task.Delay(TimeSpan.FromMilliseconds(1500));
+        trigger.Tick();
 
-        // With the flush timeout fix, the timer loop should have recovered and
-        // flushed the second batch. Without the fix, only 1 flush ever fires
-        // (the blocking one that holds the lock forever).
-        Interlocked.CompareExchange(ref flushCount, 0, 0).Should().BeGreaterThan(1,
-            "after a flush timeout, the timer-based flush loop should recover and " +
+        // Wait for the second flush to complete — event-driven, no fixed delay
+        var secondFired = await Task.WhenAny(secondFlushCompleted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        secondFired.Should().Be(secondFlushCompleted.Task,
+            "after a flush timeout, the tick-based flush loop should recover and " +
             "continue flushing subsequent batches normally");
+
+        Interlocked.CompareExchange(ref flushCount, 0, 0).Should().BeGreaterThan(1,
+            "flushCount should be > 1 once the second flush completes");
     }
 }

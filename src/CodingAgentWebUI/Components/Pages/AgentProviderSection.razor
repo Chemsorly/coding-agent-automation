@@ -102,28 +102,59 @@
                         }
                         @if (_form.ProviderType == "KiroCli")
                         {
-                            @if (!IsKubernetesMode)
+                            var pvcMissing = IsKubernetesMode
+                                && (ModelFetchJobService is null || !ModelFetchJobService.IsPvcPoolConfigured);
+                            @if (pvcMissing)
                             {
-                                <button class="btn-edit" @onclick="FetchModels" disabled="@_loadingModels">
-                                    @(_loadingModels ? "Loading..." : "Fetch Models")
+                                <button class="btn-edit" disabled
+                                        title="No credential PVC configured — set WorkDistribution:KiroPvcPool to enable Fetch Models">
+                                    Fetch Models
+                                </button>
+                            }
+                            else if (_loadingModels)
+                            {
+                                @* #2: Cancel button during active fetch *@
+                                <button class="btn-edit" disabled>
+                                    @_fetchPhase (@_fetchElapsedSeconds s…)
+                                </button>
+                                <button class="btn-cancel" @onclick="CancelFetch" style="margin-left: 4px;">
+                                    Cancel
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="btn-edit" @onclick="FetchModels">
+                                    Fetch Models
                                 </button>
                             }
                         }
                     </div>
-                    <span class="form-hint">
-                        @if (_form.ProviderType == "OpenCode")
-                        {
-                            @:Enter model in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>). Use <code>opencode models</code> in the container to list available models.
-                        }
-                        else if (IsKubernetesMode)
-                        {
-                            @:Enter model name manually (e.g. <code>claude-sonnet-4</code>). To list available models, run <code>kiro-cli chat --list-models</code> inside the agent container.
-                        }
-                        else
-                        {
-                            @:Select a model or leave as "auto" for default. Click "Fetch Models" to query available models from the CLI.
-                        }
-                    </span>
+                    @* #7: Inline PVC warning when pool is not configured *@
+                    @if (_form.ProviderType == "KiroCli" && IsKubernetesMode
+                         && (ModelFetchJobService is null || !ModelFetchJobService.IsPvcPoolConfigured))
+                    {
+                        <span class="form-hint" style="color: var(--warning-color, #e6a817);">
+                            <Icon Name="alert-triangle" Size="14" />
+                            Fetch Models requires a credential PVC. Configure at least one in <code>WorkDistribution:KiroPvcPool</code>.
+                        </span>
+                    }
+                    else
+                    {
+                        <span class="form-hint">
+                            @if (_form.ProviderType == "OpenCode")
+                            {
+                                @:Enter model in <code>provider/model</code> format (e.g. <code>anthropic/claude-sonnet-4-20250514</code>, <code>azure-foundry/Kimi-2.6</code>). Use <code>opencode models</code> in the container to list available models.
+                            }
+                            else if (IsKubernetesMode)
+                            {
+                                @:Click "Fetch Models" to dispatch a short-lived Kubernetes Job (~60s) that queries available models from the Kiro service. Requires a credential PVC in <code>WorkDistribution:KiroPvcPool</code>. Or enter a model name manually.
+                            }
+                            else
+                            {
+                                @:Select a model or leave as "auto" for default. Click "Fetch Models" to query available models from the CLI.
+                            }
+                        </span>
+                    }
                 </div>
                 @if (_form.ProviderType == "KiroCli")
                 {
@@ -198,7 +229,9 @@
     [Parameter] public EventCallback OnSaved { get; set; }
     [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
     [Parameter] public ModelFetchService? ModelFetchService { get; set; }
-    /// <summary>When true, the Fetch Models button is hidden (not available in k8s mode).</summary>
+    /// <summary>K8s-mode fetch via one-shot Job + pod logs. Used when IsKubernetesMode is true.</summary>
+    [Parameter] public ModelFetchJobService? ModelFetchJobService { get; set; }
+    /// <summary>When true, Fetch Models uses ModelFetchJobService instead of ModelFetchService.</summary>
     [Parameter] public bool IsKubernetesMode { get; set; }
 
     private CancellationTokenSource _cts = new();
@@ -209,6 +242,11 @@
     private AgentProviderForm _form = new();
     private List<AgentModelInfo> _availableModels = new();
     private bool _loadingModels;
+
+    // #8: Phase label and elapsed counter shown while fetching
+    private string _fetchPhase = "Fetching";
+    private int _fetchElapsedSeconds;
+    private System.Threading.Timer? _elapsedTimer;
 
     private void ShowAddForm()
     {
@@ -294,18 +332,48 @@
 
     private async Task FetchModels()
     {
-        if (ModelFetchService is null)
+        // #1: Guard checks before setting _loadingModels to avoid stuck state on early exit
+        if (IsKubernetesMode && ModelFetchJobService is null)
+        {
+            await OnShowStatus.InvokeAsync(("Model fetch service is not available in k8s mode.", true));
+            return;
+        }
+        if (!IsKubernetesMode && ModelFetchService is null)
         {
             await OnShowStatus.InvokeAsync(("Model fetch service is not available.", true));
             return;
         }
 
+        // #8: Reset elapsed counter and start timer
+        _fetchPhase = "Creating job…";
+        _fetchElapsedSeconds = 0;
         _loadingModels = true;
-        if (!_cts.IsCancellationRequested) StateHasChanged();
+        StateHasChanged();
+
+        _elapsedTimer = new System.Threading.Timer(_ =>
+            InvokeAsync(() => { _fetchElapsedSeconds++; StateHasChanged(); }),
+            null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+
+        // #8: Progress sink wires phase labels back into the UI
+        var progress = new Progress<string>(phase =>
+        {
+            _fetchPhase = phase;
+            InvokeAsync(StateHasChanged);
+        });
 
         try
         {
-            var (models, error) = await ModelFetchService.FetchModelsAsync(_cts.Token);
+            IReadOnlyList<AgentModelInfo> models;
+            string? error;
+
+            if (IsKubernetesMode)
+            {
+                (models, error) = await ModelFetchJobService!.FetchModelsAsync("kiro", _cts.Token, progress);
+            }
+            else
+            {
+                (models, error) = await ModelFetchService!.FetchModelsAsync(_cts.Token);
+            }
 
             if (error is not null)
             {
@@ -314,10 +382,20 @@
             }
 
             _availableModels = models.ToList();
-            if (_form.Model != "auto" && models.Count > 0 && !models.Any(m => m.ModelId == _form.Model))
-                _form.Model = "auto";
 
-            await OnShowStatus.InvokeAsync(($"{models.Count} model(s) loaded.", false));
+            // #3: Warn instead of silently resetting the model when it's not in the fetched list
+            if (_form.Model != "auto" && models.Count > 0 && !models.Any(m => m.ModelId == _form.Model))
+            {
+                await OnShowStatus.InvokeAsync((
+                    $"Your configured model '{_form.Model}' was not found in the fetched list — " +
+                    "it may be unavailable on this subscription. Select from the list or keep it manually.",
+                    true));
+                // Leave _form.Model unchanged; the operator typed it deliberately
+            }
+            else
+            {
+                await OnShowStatus.InvokeAsync(($"{models.Count} model(s) loaded.", false));
+            }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -326,8 +404,22 @@
         }
         finally
         {
+            // #1: Always reached — no stuck _loadingModels
             _loadingModels = false;
+            _elapsedTimer?.Dispose();
+            _elapsedTimer = null;
         }
+    }
+
+    // #2: Cancel the in-flight fetch and reset _cts so subsequent saves still work
+    private async Task CancelFetch()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+        _cts = new CancellationTokenSource();
+        _loadingModels = false;
+        _elapsedTimer?.Dispose();
+        _elapsedTimer = null;
     }
 
     private class AgentProviderForm
@@ -344,6 +436,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        _elapsedTimer?.Dispose();
         await _cts.CancelAsync();
         _cts.Dispose();
     }

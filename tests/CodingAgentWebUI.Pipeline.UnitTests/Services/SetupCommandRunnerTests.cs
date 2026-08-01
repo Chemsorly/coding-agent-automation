@@ -1,10 +1,14 @@
+using System.Runtime.InteropServices;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Services;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests;
 
+/// <summary>
+/// Unit tests for <see cref="SetupCommandRunner"/>.
+/// Uses platform-aware shell commands so the suite runs on both Windows (cmd.exe) and Linux (/bin/bash).
+/// </summary>
 [Trait("Category", "Integration")]
-[Trait("Platform", "Linux")]
 public class SetupCommandRunnerTests : IDisposable
 {
     private readonly string _tempDir;
@@ -21,18 +25,42 @@ public class SetupCommandRunnerTests : IDisposable
         try { Directory.Delete(_tempDir, recursive: true); } catch { }
     }
 
+    // ── Cross-platform command helpers ──────────────────────────────────
+
+    private static bool IsWindows => RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+
+    /// <summary>Echoes a string to stdout. Works on both cmd.exe and bash.</summary>
+    private static string EchoStdout(string text) => $"echo {text}";
+
+    /// <summary>Echoes a string to stderr and exits with the given code.</summary>
+    private static string EchoStderrAndExit(string text, int exitCode) =>
+        IsWindows
+            ? $"echo {text} 1>&2 & exit {exitCode}"
+            : $"echo '{text}' >&2; exit {exitCode}";
+
+    /// <summary>Echoes an environment variable value to stdout.</summary>
+    private static string EchoEnvVar(string varName) =>
+        IsWindows ? $"echo %{varName}%" : $"echo ${varName}";
+
+    /// <summary>Echoes a string to stdout then sleeps for a long time (for timeout tests).</summary>
+    private static string EchoThenSleep(string text) =>
+        IsWindows
+            ? $"echo {text} & ping -n 9999 127.0.0.1 > nul"
+            : $"echo '{text}'; sleep 9999";
+
+    /// <summary>Sleeps for a long time (for timeout/cancellation tests).</summary>
+    private static string SleepForever() =>
+        IsWindows ? "ping -n 9999 127.0.0.1 > nul" : "sleep 9999";
+
+    // ── Tests ────────────────────────────────────────────────────────────
+
     [Fact]
     public async Task RunAsync_SuccessfulCommand_ReturnsSuccessAndEmitsOutput()
     {
-        // Arrange
-        var secrets = new Dictionary<string, string>();
-
-        // Act
         var result = await SetupCommandRunner.RunAsync(
-            "echo hello", "Test Step", _tempDir, secrets,
+            EchoStdout("hello"), "Test Step", _tempDir, new Dictionary<string, string>(),
             line => _emittedLines.Add(line), CancellationToken.None);
 
-        // Assert
         result.Success.Should().BeTrue();
         result.FailureMessage.Should().BeNull();
         result.Exception.Should().BeNull();
@@ -42,15 +70,10 @@ public class SetupCommandRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_NonZeroExitCode_ReturnsFailureWithExitCodeAndStderr()
     {
-        // Arrange
-        var secrets = new Dictionary<string, string>();
-
-        // Act
         var result = await SetupCommandRunner.RunAsync(
-            "echo 'some error' >&2; exit 5", "Auth check", _tempDir, secrets,
+            EchoStderrAndExit("some error", 5), "Auth check", _tempDir, new Dictionary<string, string>(),
             line => _emittedLines.Add(line), CancellationToken.None);
 
-        // Assert
         result.Success.Should().BeFalse();
         result.FailureMessage.Should().Contain("Auth check");
         result.FailureMessage.Should().Contain("5");
@@ -61,41 +84,27 @@ public class SetupCommandRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_NonZeroExitCode_TruncatesStderrTo500Chars()
     {
-        // Arrange
-        var secrets = new Dictionary<string, string>();
         var longError = new string('x', 600);
 
-        // Act
         var result = await SetupCommandRunner.RunAsync(
-            $"echo '{longError}' >&2; exit 1", "Long Error Step", _tempDir, secrets,
+            EchoStderrAndExit(longError, 1), "Long Error Step", _tempDir, new Dictionary<string, string>(),
             line => _emittedLines.Add(line), CancellationToken.None);
 
-        // Assert
         result.Success.Should().BeFalse();
-        // The failure message should contain the truncated stderr (≤500 chars of the error content)
-        // TODO: Strengthen truncation assertion — assert failure message length is bounded or contains exactly
-        // the first 500 chars of error content, rather than only checking that the full 600-char string is absent.
         result.FailureMessage.Should().Contain("Long Error Step");
         result.FailureMessage.Should().Contain("exit code 1");
-        // Full 600 chars should not appear in the failure message
         result.FailureMessage.Should().NotContain(longError);
     }
 
     [Fact]
     public async Task RunAsync_SecretsInjectedIntoProcessEnvironment()
     {
-        // Arrange
-        var secrets = new Dictionary<string, string>
-        {
-            ["MY_SECRET_KEY"] = "secret-value-1234"
-        };
+        var secrets = new Dictionary<string, string> { ["MY_SECRET_KEY"] = "secret-value-1234" };
 
-        // Act
         var result = await SetupCommandRunner.RunAsync(
-            "echo $MY_SECRET_KEY", "Secret Test", _tempDir, secrets,
+            EchoEnvVar("MY_SECRET_KEY"), "Secret Test", _tempDir, secrets,
             line => _emittedLines.Add(line), CancellationToken.None);
 
-        // Assert
         result.Success.Should().BeTrue();
         // The secret value should be masked in emitted output
         _emittedLines.Should().NotContain(line => line.Contains("secret-value-1234"));
@@ -105,18 +114,12 @@ public class SetupCommandRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_SecretValuesMaskedInOutput()
     {
-        // Arrange
-        var secrets = new Dictionary<string, string>
-        {
-            ["TOKEN"] = "my-secret-token"
-        };
+        var secrets = new Dictionary<string, string> { ["TOKEN"] = "my-secret-token" };
 
-        // Act
         var result = await SetupCommandRunner.RunAsync(
-            "echo 'The token is my-secret-token here'", "Mask Test", _tempDir, secrets,
+            EchoStdout("my-secret-token"), "Mask Test", _tempDir, secrets,
             line => _emittedLines.Add(line), CancellationToken.None);
 
-        // Assert
         result.Success.Should().BeTrue();
         _emittedLines.Should().NotContain(line => line.Contains("my-secret-token"));
         _emittedLines.Should().Contain(line => line.Contains("***"));
@@ -125,18 +128,12 @@ public class SetupCommandRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_SecretValuesMaskedInFailureMessage()
     {
-        // Arrange
-        var secrets = new Dictionary<string, string>
-        {
-            ["API_KEY"] = "super-secret-key"
-        };
+        var secrets = new Dictionary<string, string> { ["API_KEY"] = "super-secret-key" };
 
-        // Act
         var result = await SetupCommandRunner.RunAsync(
-            "echo 'Error: super-secret-key is invalid' >&2; exit 1", "Secret Failure", _tempDir, secrets,
+            EchoStderrAndExit("super-secret-key is invalid", 1), "Secret Failure", _tempDir, secrets,
             line => _emittedLines.Add(line), CancellationToken.None);
 
-        // Assert
         result.Success.Should().BeFalse();
         result.FailureMessage.Should().NotContain("super-secret-key");
         result.FailureMessage.Should().Contain("***");
@@ -145,33 +142,25 @@ public class SetupCommandRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_CancellationTokenRespected_ThrowsOperationCanceledException()
     {
-        // Arrange
-        var secrets = new Dictionary<string, string>();
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
-        // Act
         var act = () => SetupCommandRunner.RunAsync(
-            "sleep 10", "Cancelled Step", _tempDir, secrets,
+            SleepForever(), "Cancelled Step", _tempDir, new Dictionary<string, string>(),
             line => _emittedLines.Add(line), cts.Token);
 
-        // Assert
         await act.Should().ThrowAsync<OperationCanceledException>();
     }
 
     [Fact]
     public async Task RunAsync_ExceptionDuringProcessStart_ReturnsFailureWithException()
     {
-        // Arrange — use invalid working directory to cause an exception
-        var secrets = new Dictionary<string, string>();
         var invalidDir = Path.Combine(_tempDir, "nonexistent-" + Guid.NewGuid().ToString("N"));
 
-        // Act
         var result = await SetupCommandRunner.RunAsync(
-            "echo hello", "Bad Dir Step", invalidDir, secrets,
+            EchoStdout("hello"), "Bad Dir Step", invalidDir, new Dictionary<string, string>(),
             line => _emittedLines.Add(line), CancellationToken.None);
 
-        // Assert
         result.Success.Should().BeFalse();
         result.FailureMessage.Should().Contain("Bad Dir Step");
         result.FailureMessage.Should().Contain("threw an exception");
@@ -181,15 +170,10 @@ public class SetupCommandRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_EmptySecrets_StillRunsSuccessfully()
     {
-        // Arrange
-        var secrets = new Dictionary<string, string>();
-
-        // Act
         var result = await SetupCommandRunner.RunAsync(
-            "echo works", "Empty Secrets", _tempDir, secrets,
+            EchoStdout("works"), "Empty Secrets", _tempDir, new Dictionary<string, string>(),
             line => _emittedLines.Add(line), CancellationToken.None);
 
-        // Assert
         result.Success.Should().BeTrue();
         _emittedLines.Should().Contain(line => line.Contains("works"));
     }
@@ -197,15 +181,15 @@ public class SetupCommandRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_StderrOutput_IsEmitted()
     {
-        // Arrange
-        var secrets = new Dictionary<string, string>();
+        // Command exits 0 but writes to stderr
+        var cmd = IsWindows
+            ? "echo stderr output 1>&2"
+            : "echo 'stderr output' >&2";
 
-        // Act
         var result = await SetupCommandRunner.RunAsync(
-            "echo 'stderr output' >&2", "Stderr Step", _tempDir, secrets,
+            cmd, "Stderr Step", _tempDir, new Dictionary<string, string>(),
             line => _emittedLines.Add(line), CancellationToken.None);
 
-        // Assert — command exits 0 even with stderr output
         result.Success.Should().BeTrue();
         _emittedLines.Should().Contain(line => line.Contains("stderr output"));
     }
@@ -213,44 +197,29 @@ public class SetupCommandRunnerTests : IDisposable
     [Fact]
     public async Task RunAsync_NullEmitOutput_ThrowsArgumentNullException()
     {
-        // Arrange
-        var secrets = new Dictionary<string, string>();
-
-        // Act
         var act = () => SetupCommandRunner.RunAsync(
-            "echo hello", "Null Test", _tempDir, secrets,
+            EchoStdout("hello"), "Null Test", _tempDir, new Dictionary<string, string>(),
             null!, CancellationToken.None);
 
-        // Assert
         await act.Should().ThrowAsync<ArgumentNullException>();
     }
 
     [Fact]
     public async Task RunAsync_Timeout_ReturnsFailureWithTimeoutMessage()
     {
-        // Arrange
-        var secrets = new Dictionary<string, string>();
-
-        // Act — use the internal overload with a short timeout for testability
         var result = await SetupCommandRunner.RunAsync(
-            "sleep 999", "Slow Step", _tempDir, secrets,
+            SleepForever(), "Slow Step", _tempDir, new Dictionary<string, string>(),
             _ => { }, CancellationToken.None, timeout: TimeSpan.FromSeconds(2));
 
-        // Assert
         result.Success.Should().BeFalse();
         result.FailureMessage.Should().Contain("timed out");
         result.FailureMessage.Should().Contain("Slow Step");
         result.Exception.Should().BeNull();
     }
 
-    // TODO: This test may not reliably exercise the IOException fault path on Linux.
-    // After Kill(), the pipe read-end receives EOF (completing ReadToEndAsync successfully)
-    // rather than throwing IOException. To truly verify exception observation, use a mock/wrapper
-    // around Process that forces IOException on the pipe-read tasks.
     [Fact]
     public async Task RunAsync_Timeout_DoesNotProduceUnobservedTaskException()
     {
-        // Arrange — track any unobserved task exceptions that surface during GC
         var unobservedExceptions = new List<Exception>();
         EventHandler<UnobservedTaskExceptionEventArgs> handler = (_, e) =>
         {
@@ -261,9 +230,8 @@ public class SetupCommandRunnerTests : IDisposable
         TaskScheduler.UnobservedTaskException += handler;
         try
         {
-            // Act — write to both stdout and stderr to ensure both ReadToEndAsync tasks are active when killed
             var result = await SetupCommandRunner.RunAsync(
-                "echo 'stdout data'; echo 'stderr data' >&2; sleep 999", "Hang Step", _tempDir,
+                EchoThenSleep("stdout data"), "Hang Step", _tempDir,
                 new Dictionary<string, string>(),
                 _ => { }, CancellationToken.None, timeout: TimeSpan.FromSeconds(2));
 
@@ -272,20 +240,33 @@ public class SetupCommandRunnerTests : IDisposable
             // Wait for pipe-read tasks to fault after process kill
             await Task.Delay(TimeSpan.FromSeconds(2));
 
-            // Force GC to finalize abandoned tasks and trigger UnobservedTaskException if any
             GC.Collect();
             GC.WaitForPendingFinalizers();
             GC.Collect();
 
             await Task.Delay(100);
 
-            // Assert
             unobservedExceptions.Should().BeEmpty(
                 "Abandoned stdout/stderr tasks should have their exceptions observed by ContinueWith");
         }
         finally
         {
             TaskScheduler.UnobservedTaskException -= handler;
+        }
+    }
+
+    [Fact]
+    public void SetupCommandRunner_UsesCorrectShellForPlatform()
+    {
+        if (IsWindows)
+        {
+            SetupCommandRunner.ShellExecutable.Should().Be("cmd.exe");
+            SetupCommandRunner.ShellFlag.Should().Be("/c");
+        }
+        else
+        {
+            SetupCommandRunner.ShellExecutable.Should().Be("/bin/bash");
+            SetupCommandRunner.ShellFlag.Should().Be("-c");
         }
     }
 }

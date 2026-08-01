@@ -20,6 +20,7 @@
 @inject ProjectChangeNotifier ProjectNotifier
 @inject FeatureFlags Features
 @inject JobTemplateStore? JobTemplateStore
+@inject IServiceProvider ServiceProvider
 
 <PageTitle>Settings - Coding Agent</PageTitle>
 
@@ -79,6 +80,7 @@
                         OnSaved="OnAgentProviderSaved"
                         OnShowStatus="s => ShowStatus(s.Message, s.IsError)"
                         ModelFetchService="ModelFetchService"
+                        ModelFetchJobService="ModelFetchJobService"
                         IsKubernetesMode="Features.IsKubernetesMode" />
                     break;
                 case SettingsNodes.ProvidersPipeline:
@@ -184,6 +186,10 @@
     private CancellationTokenSource? _toastCts;
     private SettingsModals? _modals;
     private SettingsTreeNav? _treeNav;
+
+    // Resolved optionally — only available in k8s mode
+    private ModelFetchJobService? ModelFetchJobService =>
+        ServiceProvider.GetService<ModelFetchJobService>();
     private string _selectedNode = SettingsNodes.ProvidersIssue;
 
     [Parameter]

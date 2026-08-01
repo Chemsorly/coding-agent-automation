@@ -1,4 +1,5 @@
 using AwesomeAssertions;
+using System.Runtime.InteropServices;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
 
@@ -806,22 +807,29 @@ public class QualityGateValidatorTests
         var validator = new ProcessExposingValidator();
         using var cts = new CancellationTokenSource();
 
-        // Act: spawn a long-running process (sleep 300s) and cancel after a brief delay
+        // Act: spawn a long-running process and cancel after a brief delay.
+        // Use a cross-platform "sleep" equivalent:
+        //   Linux: sleep 300
+        //   Windows: cmd.exe /c "ping -n 301 127.0.0.1 > nul"  (each ping takes ~1s)
         cts.CancelAfter(TimeSpan.FromMilliseconds(500));
 
-        var act = () => validator.RunProcessPublicAsync(
-            "sleep", "300", Directory.GetCurrentDirectory(), cts.Token, TimeSpan.FromMinutes(10));
+        Func<Task> act;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            act = () => validator.RunProcessPublicAsync(
+                "cmd.exe", "/c ping -n 301 127.0.0.1", Directory.GetCurrentDirectory(), cts.Token, TimeSpan.FromMinutes(10));
+        }
+        else
+        {
+            act = () => validator.RunProcessPublicAsync(
+                "sleep", "300", Directory.GetCurrentDirectory(), cts.Token, TimeSpan.FromMinutes(10));
+        }
 
         // Assert: OperationCanceledException is thrown within bounded time.
-        // The method must complete promptly (kill + 5s drain timeout at most) — if the process
-        // wasn't killed, ReadToEndAsync would block until the 300s sleep finishes.
         var sw = System.Diagnostics.Stopwatch.StartNew();
         await act.Should().ThrowAsync<OperationCanceledException>();
         sw.Stop();
 
-        // Must complete well within the drain timeout window (5s) + cancel delay (500ms) + margin.
-        // If Kill didn't work, this would take 300s (the sleep duration).
-        // Use 30s threshold to avoid flaky failures under CI load while still catching real hangs.
         sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30));
     }
 
@@ -844,7 +852,7 @@ public class QualityGateValidatorTests
     // TODO: BothPipesComplete exercises only the happy path where both pipes close instantly.
     // It cannot distinguish between sequential and concurrent drain since no timeout pressure exists.
     // It serves as a regression guard for the refactored structure.
-    [Fact]
+    [SkipOnWindowsFact("bash not available on Windows — test uses Linux-specific pipe semantics")]
     public async Task RunProcessAsync_NormalPath_PipeDrainConcurrent_BothPipesComplete()
     {
         // Arrange: spawn a process that writes to both stdout and stderr then exits cleanly
@@ -866,10 +874,9 @@ public class QualityGateValidatorTests
     // the fix, add a test where stdout completes at time X (0 < X < timeout) and stderr
     // completes at time Y where Y > timeout−X but Y < timeout (e.g., timeout=5s, stdout at 3s,
     // stderr at 4s). Old sequential code would lose stderr; new concurrent code preserves it.
-    [Fact]
+    [SkipOnWindowsFact("bash not available on Windows — test uses Linux grandchild pipe-inheritance semantics")]
     public async Task RunProcessAsync_NormalPath_PipeDrainTimeout_PreservesCompletedPipe()
     {
-        // Arrange: Use a pipe drain timeout (10s) that gives generous headroom for the stderr
         // grandchild (~2s) to complete in slow CI environments. The key invariant is that stderr
         // closes well before the timeout (so stderrTask.IsCompletedSuccessfully=true in the
         // fallback) while stdout is held open indefinitely by another grandchild.
@@ -925,10 +932,9 @@ public class QualityGateValidatorTests
     // so both old and new code complete in ~5s. The comment about "~10s for sequential" describes
     // a pattern that never existed. Consider a test that demonstrates the actual difference:
     // stdout completing partway through the timeout, with stderr needing the remaining time.
-    [Fact]
+    [SkipOnWindowsFact("bash not available on Windows — test uses Linux grandchild pipe-inheritance semantics")]
     public async Task RunProcessAsync_NormalPath_PipeDrainTimeout_CompletesWithinBoundedTime()
     {
-        // Arrange: Use a short pipe drain timeout (5s). Spawn a process where BOTH stdout and
         // stderr are held open indefinitely by a grandchild.
         //
         // This validates that concurrent drain (Task.WhenAll) completes in ~1x timeout,
@@ -979,6 +985,21 @@ public class QualityGateValidatorTests
 
             return Task.FromResult((0, "Build succeeded.", ""));
         }
+    }
+}
+
+/// <summary>
+/// Custom xUnit v2-compatible FactAttribute that skips the test on Windows.
+/// xUnit v2.9.x does not have Assert.Skip (that's a v3 feature), so a custom attribute
+/// subclassing FactAttribute is the idiomatic way to do conditional platform skipping.
+/// </summary>
+[AttributeUsage(AttributeTargets.Method)]
+internal sealed class SkipOnWindowsFact : FactAttribute
+{
+    public SkipOnWindowsFact(string reason = "Not supported on Windows")
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            Skip = reason;
     }
 }
 
