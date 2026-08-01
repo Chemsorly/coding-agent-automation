@@ -521,6 +521,9 @@ public class ChatDispatcherObservabilityTests : IDisposable
             var act = () => dispatcher.StartAsync(CancellationToken.None);
             await act.Should().NotThrowAsync("k8s startup failure must be swallowed");
 
+            // Wait for background recovery task to complete (it runs in Task.Run and throws immediately)
+            await Task.Delay(200);
+
             var warningLogs = events
                 .Where(e => e.Level == Serilog.Events.LogEventLevel.Warning &&
                             e.Message.Contains("failed to restore sessions"))
