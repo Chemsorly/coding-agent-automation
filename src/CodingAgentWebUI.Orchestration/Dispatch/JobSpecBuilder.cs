@@ -1,5 +1,5 @@
-using System.Text.Json;
 using CodingAgentWebUI.Agent;
+using System.Text.Json;
 using k8s.Models;
 using Serilog;
 
@@ -202,34 +202,22 @@ public static class JobSpecBuilder
         // ── Pod security context ────────────────────────────────────────────
         V1PodSecurityContext podSecurityContext;
         if (template.PodSecurityContext is { } pscElement)
-        {
             podSecurityContext = DeserializeK8s<V1PodSecurityContext>(pscElement);
-        }
         else
-        {
-            // Hardened defaults when no template override
             podSecurityContext = new V1PodSecurityContext
             {
                 RunAsNonRoot = true,
                 SeccompProfile = new V1SeccompProfile { Type = "RuntimeDefault" }
             };
-        }
 
         // ── Init containers ─────────────────────────────────────────────────
-        IList<V1Container>? initContainers = null;
-        if (template.InitContainers is { } icElement)
-        {
-            initContainers = DeserializeK8s<List<V1Container>>(icElement);
-        }
+        IList<V1Container>? initContainers = template.InitContainers is { } icElement
+            ? DeserializeK8s<List<V1Container>>(icElement) : null;
 
         // ── Tolerations ─────────────────────────────────────────────────────
-        IList<V1Toleration>? tolerations = null;
-        if (template.Tolerations is { } tolElement)
-        {
-            tolerations = DeserializeK8s<List<V1Toleration>>(tolElement);
-        }
+        IList<V1Toleration>? tolerations = template.Tolerations is { } tolElement
+            ? DeserializeK8s<List<V1Toleration>>(tolElement) : null;
 
-        // ── Build Job ───────────────────────────────────────────────────────
         return new V1Job
         {
             Metadata = new V1ObjectMeta

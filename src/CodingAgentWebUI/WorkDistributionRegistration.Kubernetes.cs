@@ -108,6 +108,7 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<JobTemplateStore>(),
             DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>()),
+            sp.GetRequiredService<IPipelineConfigStore>(),
             logger: Log.Logger));
 
         Log.Information("WorkDistribution: Kubernetes mode — DispatchService + ConsolidationDispatchHandler + ReconciliationService + LeaderElection registered");
