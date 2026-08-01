@@ -38,4 +38,35 @@ public sealed class DispatchServiceOptions
 
     /// <summary>terminationGracePeriodSeconds on chat Job pod spec. Default: 120s.</summary>
     public int ChatTerminationGracePeriodSeconds { get; set; } = 120;
+
+    private const int MinChatSessionMaxDurationSeconds = 60;
+    private const int MinChatPodConnectTimeoutSeconds = 5;
+    private const int MinChatTerminationGracePeriodSeconds = 5;
+
+    /// <summary>
+    /// Validates chat-related config values and clamps them to safe minimums.
+    /// Called after options binding to prevent zero/negative values that would
+    /// immediately kill or never start chat pods.
+    /// </summary>
+    public void ValidateAndClamp(Serilog.ILogger? logger = null)
+    {
+        if (ChatSessionMaxDurationSeconds < MinChatSessionMaxDurationSeconds)
+        {
+            logger?.Warning("ChatSessionMaxDurationSeconds ({Value}) is below minimum ({Min}), clamping",
+                ChatSessionMaxDurationSeconds, MinChatSessionMaxDurationSeconds);
+            ChatSessionMaxDurationSeconds = MinChatSessionMaxDurationSeconds;
+        }
+        if (ChatPodConnectTimeoutSeconds < MinChatPodConnectTimeoutSeconds)
+        {
+            logger?.Warning("ChatPodConnectTimeoutSeconds ({Value}) is below minimum ({Min}), clamping",
+                ChatPodConnectTimeoutSeconds, MinChatPodConnectTimeoutSeconds);
+            ChatPodConnectTimeoutSeconds = MinChatPodConnectTimeoutSeconds;
+        }
+        if (ChatTerminationGracePeriodSeconds < MinChatTerminationGracePeriodSeconds)
+        {
+            logger?.Warning("ChatTerminationGracePeriodSeconds ({Value}) is below minimum ({Min}), clamping",
+                ChatTerminationGracePeriodSeconds, MinChatTerminationGracePeriodSeconds);
+            ChatTerminationGracePeriodSeconds = MinChatTerminationGracePeriodSeconds;
+        }
+    }
 }

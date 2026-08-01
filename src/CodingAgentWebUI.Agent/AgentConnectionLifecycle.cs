@@ -43,10 +43,10 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
     // ── Chat mode fields ──────────────────────────────────────────────────────
     /// <summary>True when the agent pod runs in chat-only mode (AGENT_CHAT_MODE=true).</summary>
     internal bool _isChatMode = string.Equals(
-        Environment.GetEnvironmentVariable("AGENT_CHAT_MODE"), "true", StringComparison.OrdinalIgnoreCase);
+        Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Chat session identifier injected via AGENT_CHAT_SESSION_ID env var.</summary>
-    internal string _chatSessionId = Environment.GetEnvironmentVariable("AGENT_CHAT_SESSION_ID") ?? "";
+    internal string _chatSessionId = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId) ?? "";
 
     /// <summary>Resolved when SignalChatEnd() is called; unblocks the ConnectAndRunAsync wait.</summary>
     internal readonly TaskCompletionSource _chatEndSource = new(TaskCreationOptions.RunContinuationsAsynchronously);

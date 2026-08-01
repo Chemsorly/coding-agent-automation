@@ -93,7 +93,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _isOpenCodeProvider = (Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentProviderType) ?? "")
             .Equals(AgentDefaults.OpenCodeHttpClientName, StringComparison.OrdinalIgnoreCase);
         _isChatMode = string.Equals(
-            Environment.GetEnvironmentVariable("AGENT_CHAT_MODE"), "true", StringComparison.OrdinalIgnoreCase);
+            Environment.GetEnvironmentVariable(AgentDefaults.EnvChatMode), "true", StringComparison.OrdinalIgnoreCase);
 
         // Wire business event handlers (unconditional)
         _connectionLifecycle.OnAssignChatPrompt += HandleChatPromptAsync;
@@ -110,7 +110,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
         if (_isChatMode)
         {
-            var chatSessionId = Environment.GetEnvironmentVariable("AGENT_CHAT_SESSION_ID") ?? "";
+            var chatSessionId = Environment.GetEnvironmentVariable(AgentDefaults.EnvChatSessionId) ?? "";
             if (string.IsNullOrEmpty(chatSessionId))
                 _logger.Warning("AgentWorkerService: AGENT_CHAT_MODE=true but AGENT_CHAT_SESSION_ID is not set — this pod may be misconfigured");
             else

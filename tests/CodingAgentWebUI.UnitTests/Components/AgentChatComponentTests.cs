@@ -56,6 +56,10 @@ public class AgentChatComponentTests : BunitContext
         Services.AddSingleton(new FeatureFlags());  // defaults: IsKubernetesMode = false
         Services.AddSingleton(JobTemplateStore.CreateEmpty());
         Services.AddSingleton<IChatJobDispatcher, NullChatJobDispatcher>();
+
+        // IConfiguration required by AgentChat for ChatPodConnectTimeoutSeconds
+        Services.AddSingleton<Microsoft.Extensions.Configuration.IConfiguration>(
+            new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
     }
 
     [Fact]

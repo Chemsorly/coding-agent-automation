@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -25,7 +26,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Lives in the web project so it can reference <see cref="AgentHub"/> and
 /// <see cref="IAgentHubClient"/> without creating a circular project dependency.
 /// </remarks>
-public sealed class ChatJobDispatcher : IHostedService, IAsyncDisposable, IChatJobDispatcher
+public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable, IChatJobDispatcher
 {
     private readonly IKubernetesJobClient _jobClient;
     private readonly IHubContext<AgentHub, IAgentHubClient> _hubContext;
@@ -74,6 +75,11 @@ public sealed class ChatJobDispatcher : IHostedService, IAsyncDisposable, IChatJ
 
         var normalized = JobTemplateStore.NormalizeLabels(agentSelector);
         var selectorLabelValue = normalized.Replace(',', '_');
+
+        if (!K8sLabelValuePattern().IsMatch(selectorLabelValue))
+            throw new ArgumentException(
+                $"Agent selector '{agentSelector}' produces an invalid k8s label value '{selectorLabelValue}'. " +
+                "Label values must match [a-zA-Z0-9._-] and be ≤63 characters.");
 
         activity?.SetTag("agent_selector", normalized);
 
@@ -151,17 +157,21 @@ public sealed class ChatJobDispatcher : IHostedService, IAsyncDisposable, IChatJ
         // Post-build: inject env vars
         var container = job.Spec.Template.Spec.Containers[0];
         container.Env ??= new List<V1EnvVar>();
-        container.Env.Add(new V1EnvVar { Name = "AGENT_CHAT_MODE", Value = "true" });
-        container.Env.Add(new V1EnvVar { Name = "AGENT_CHAT_SESSION_ID", Value = dispatchId.ToString() });
+        container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatMode, Value = "true" });
+        container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatSessionId, Value = dispatchId.ToString() });
 
         if (!string.IsNullOrEmpty(model) && !model.Equals("auto", StringComparison.OrdinalIgnoreCase))
-            container.Env.Add(new V1EnvVar { Name = "AGENT_CHAT_MODEL", Value = model });
+            container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatModel, Value = model });
 
         if (!string.IsNullOrEmpty(effort) && !effort.Equals("auto", StringComparison.OrdinalIgnoreCase))
-            container.Env.Add(new V1EnvVar { Name = "AGENT_CHAT_EFFORT", Value = effort });
+        {
+            if (ValidEffortValues.Contains(effort))
+                container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatEffort, Value = effort });
+            else
+                _logger.Warning("ChatJobDispatcher: invalid effort value rejected: {Effort}", effort);
+        }
 
         // Post-build: set labels
-        job.Metadata.Labels ??= new Dictionary<string, string>();
         job.Metadata.Labels["caa/chat-session-id"] = dispatchId.ToString();
         job.Metadata.Labels["caa/chat-selector"] = selectorLabelValue;
         if (claimedPvc is not null)
@@ -330,18 +340,17 @@ public sealed class ChatJobDispatcher : IHostedService, IAsyncDisposable, IChatJ
                             jobName, claimedPvc ?? "none");
                 }
 
-                // Release PVC
-                if (claimedPvc is not null)
-                {
-                    ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
-                }
-
-                // Update metrics
+                // Release PVC + update metrics — gated inside TryRemove to prevent
+                // double-decrement if TerminateChatSessionAsync already did cleanup.
                 var selectorTag = new KeyValuePair<string, object?>("agent_selector", selectorEncoded);
-                ChatTelemetry.SessionsActive.Add(-1, selectorTag);
 
                 if (_sessions.TryRemove(jobName, out var removed))
                 {
+                    if (removed.ClaimedPvc is not null)
+                        ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
+
+                    ChatTelemetry.SessionsActive.Add(-1, selectorTag);
+
                     var duration = (DateTimeOffset.UtcNow - removed.ConnectedAt).TotalSeconds;
                     ChatTelemetry.SessionDuration.Record(
                         duration,
@@ -351,7 +360,7 @@ public sealed class ChatJobDispatcher : IHostedService, IAsyncDisposable, IChatJ
                     if (!string.IsNullOrEmpty(removed.AgentId))
                         _agentIdToJobName.TryRemove(removed.AgentId, out _);
 
-                    removed.WatcherCts.Dispose();
+                    try { removed.WatcherCts.Dispose(); } catch { }
                 }
 
                 return;
@@ -376,7 +385,13 @@ public sealed class ChatJobDispatcher : IHostedService, IAsyncDisposable, IChatJ
                 {
                     var labels = job.Metadata?.Labels ?? new Dictionary<string, string>();
                     labels.TryGetValue("caa/chat-session-id", out var sessionIdStr);
-                    var sessionId = Guid.Parse(sessionIdStr ?? "");
+                    if (!Guid.TryParse(sessionIdStr, out var sessionId))
+                    {
+                        _logger.Warning(
+                            "ChatJobDispatcher: chat job {Name} has missing or invalid caa/chat-session-id label — skipping",
+                            job.Metadata?.Name);
+                        continue;
+                    }
                     labels.TryGetValue("caa/claimed-pvc", out var pvcLabel);
                     labels.TryGetValue("caa/chat-selector", out var selectorLabel);
 
@@ -425,10 +440,17 @@ public sealed class ChatJobDispatcher : IHostedService, IAsyncDisposable, IChatJ
         // Clean up sessions whose watchers didn't complete
         foreach (var session in sessions)
         {
-            if (_sessions.TryRemove(session.JobName, out _))
+            if (_sessions.TryRemove(session.JobName, out var removed))
             {
-                if (!string.IsNullOrEmpty(session.AgentId))
-                    _agentIdToJobName.TryRemove(session.AgentId, out _);
+                if (!string.IsNullOrEmpty(removed.AgentId))
+                    _agentIdToJobName.TryRemove(removed.AgentId, out _);
+
+                // Decrement metrics for sessions the watcher didn't clean up
+                var selectorTag = new KeyValuePair<string, object?>(
+                    "agent_selector", removed.NormalizedSelector.Replace(',', '_'));
+                ChatTelemetry.SessionsActive.Add(-1, selectorTag);
+                if (removed.ClaimedPvc is not null)
+                    ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
             }
 
             try { session.WatcherCts.Dispose(); } catch { /* already disposed */ }
@@ -488,10 +510,12 @@ public sealed class ChatJobDispatcher : IHostedService, IAsyncDisposable, IChatJ
         }
         catch (OperationCanceledException)
         {
-            // Grace period expired — force delete
+            // Cancel watcher first so it exits without running its own cleanup
+            try { session.WatcherCts.Cancel(); } catch { }
+
             _logger.Warning(
-                "ChatJobDispatcher: grace period expired for {JobName} — force deleting and releasing PVC {Pvc}",
-                jobName, session.ClaimedPvc ?? "none");
+                "ChatJobDispatcher: grace period expired for {JobName} — force deleting job",
+                jobName);
 
             activity?.SetTag("outcome", "force_delete");
 
@@ -506,25 +530,27 @@ public sealed class ChatJobDispatcher : IHostedService, IAsyncDisposable, IChatJ
                     jobName, ex.Message);
             }
 
-            // Record metrics
-            var selectorTag = new KeyValuePair<string, object?>(
-                "agent_selector", session.NormalizedSelector.Replace(',', '_'));
-            ChatTelemetry.PodForceTerminations.Add(1, selectorTag);
-            ChatTelemetry.SessionsActive.Add(-1, selectorTag);
-            if (session.ClaimedPvc is not null)
-                ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
+            // Gate all cleanup + metrics inside TryRemove — prevents double-decrement
+            // if WatchJobUntilTerminalAsync fired terminal cleanup concurrently
+            if (_sessions.TryRemove(jobName, out var removed))
+            {
+                _agentIdToJobName.TryRemove(agentId, out _);
 
-            var duration = (DateTimeOffset.UtcNow - session.ConnectedAt).TotalSeconds;
-            ChatTelemetry.SessionDuration.Record(
-                duration,
-                selectorTag,
-                new KeyValuePair<string, object?>("outcome", "force_deleted"));
+                var selectorTag = new KeyValuePair<string, object?>(
+                    "agent_selector", removed.NormalizedSelector.Replace(',', '_'));
+                ChatTelemetry.PodForceTerminations.Add(1, selectorTag);
+                ChatTelemetry.SessionsActive.Add(-1, selectorTag);
+                if (removed.ClaimedPvc is not null)
+                    ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
 
-            _sessions.TryRemove(jobName, out _);
-            _agentIdToJobName.TryRemove(agentId, out _);
+                var duration = (DateTimeOffset.UtcNow - removed.ConnectedAt).TotalSeconds;
+                ChatTelemetry.SessionDuration.Record(
+                    duration,
+                    selectorTag,
+                    new KeyValuePair<string, object?>("outcome", "force_deleted"));
 
-            try { session.WatcherCts.Cancel(); } catch { }
-            try { session.WatcherCts.Dispose(); } catch { }
+                try { removed.WatcherCts.Dispose(); } catch { }
+            }
         }
     }
 
@@ -556,4 +582,10 @@ public sealed class ChatJobDispatcher : IHostedService, IAsyncDisposable, IChatJ
 
     private static bool IsOpencodeAgent(string providerType)
         => string.Equals(providerType, "opencode", StringComparison.OrdinalIgnoreCase);
+
+    private static readonly HashSet<string> ValidEffortValues =
+        new(["high", "medium", "low"], StringComparer.OrdinalIgnoreCase);
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._\-]{0,63}$")]
+    private static partial System.Text.RegularExpressions.Regex K8sLabelValuePattern();
 }

@@ -72,8 +72,20 @@ public static class AgentDefaults
     public const string EnvOpenRouterApiKey = "OPENROUTER_API_KEY";
 
     /// <summary>
-    /// When "true", the agent pod runs in chat-only mode: no job assignment, no heartbeat loop.
-    /// Injected by ChatJobDispatcher post-build.
+    /// When "true" (case-insensitive), the agent pod runs in chat-only mode:
+    /// no job assignment, no heartbeat loop. Set by ChatJobDispatcher env var injection.
+    /// </summary>
+    public const string EnvChatMode = "AGENT_CHAT_MODE";
+
+    /// <summary>
+    /// The dispatch GUID for the current chat session. Set by ChatJobDispatcher env var injection.
+    /// Used by AgentConnectionLifecycle to add the matching label so the dispatcher can find the agent.
+    /// </summary>
+    public const string EnvChatSessionId = "AGENT_CHAT_SESSION_ID";
+
+    /// <summary>
+    /// Model name to apply to the Kiro CLI chat session (e.g., "claude-opus-4.8").
+    /// Injected by ChatJobDispatcher post-build. Absent/auto → no override.
     /// </summary>
     public const string EnvChatModel = "AGENT_CHAT_MODEL";
 

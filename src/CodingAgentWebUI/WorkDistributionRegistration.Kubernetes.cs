@@ -108,13 +108,18 @@ public static partial class WorkDistributionRegistration
 
         // ChatJobDispatcher — on-demand ephemeral chat pod dispatch (K8s mode)
         // ChatJobDispatcher is in the web project (requires IHubContext<AgentHub>).
-        services.AddSingleton<ChatJobDispatcher>(sp => new ChatJobDispatcher(
-            sp.GetRequiredService<IKubernetesJobClient>(),
-            sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
-            sp.GetRequiredService<JobTemplateStore>(),
-            sp.GetRequiredService<AgentRegistryService>(),
-            DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>()),
-            Log.Logger));
+        services.AddSingleton<ChatJobDispatcher>(sp =>
+        {
+            var options = DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>());
+            options.ValidateAndClamp(Log.Logger);
+            return new ChatJobDispatcher(
+                sp.GetRequiredService<IKubernetesJobClient>(),
+                sp.GetRequiredService<IHubContext<AgentHub, IAgentHubClient>>(),
+                sp.GetRequiredService<JobTemplateStore>(),
+                sp.GetRequiredService<AgentRegistryService>(),
+                options,
+                Log.Logger);
+        });
         services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());
         services.AddSingleton<IChatJobDispatcher>(sp => sp.GetRequiredService<ChatJobDispatcher>());
 

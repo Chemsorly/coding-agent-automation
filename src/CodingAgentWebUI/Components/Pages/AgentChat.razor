@@ -10,6 +10,7 @@
 @using CodingAgentWebUI.Orchestration.Registry
 @using CodingAgentWebUI.Services
 @using Microsoft.AspNetCore.SignalR
+@using Microsoft.Extensions.Configuration
 @using Serilog
 @inject AgentRegistryService Registry
 @inject IConfigurationStore ConfigStore
@@ -19,6 +20,7 @@
 @inject FeatureFlags Features
 @inject IChatJobDispatcher ChatDispatcher
 @inject JobTemplateStore TemplateStore
+@inject IConfiguration Configuration
 
 <PageTitle>Agent Chat - Coding Agent</PageTitle>
 
@@ -180,10 +182,7 @@
     private CancellationTokenSource? _cts;
     private System.Threading.Timer? _elapsedTimer;
 
-    // Connect-timeout shown in the counter — read from options when available; default 120.
-    // In production this would come from DispatchServiceOptions but the Razor component
-    // doesn't have a convenient DI path for it; hardcoding the default is consistent
-    // with the UX text "up to 120s" mentioned in the spec.
+    // Connect-timeout shown in the counter — read from config in OnInitialized.
     private int _options_connectTimeout = 120;
 
     protected override void OnInitialized()
@@ -191,6 +190,9 @@
         PipelineLifecycle.OnChatResponse += HandleChatResponse;
         PipelineLifecycle.OnChatCompleted += HandleChatCompleted;
         PipelineLifecycle.OnChange += HandleStateChange;
+
+        _options_connectTimeout = Configuration.GetValue<int>(
+            "WorkDistribution:Dispatch:ChatPodConnectTimeoutSeconds", 120);
 
         if (Features.IsKubernetesMode)
         {

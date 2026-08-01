@@ -56,19 +56,26 @@ public static partial class KiroCliSettingsWriter
             // Set chat.modelDefaults.{model}.output_config.effort (only when effort provided)
             if (!string.IsNullOrEmpty(effort))
             {
-                var modelDefaults = root["chat.modelDefaults"]?.AsObject()
+                if (!ValidEffortValues.Contains(effort))
+                {
+                    Serilog.Log.Warning("KiroCliSettingsWriter: invalid effort value rejected: {Effort}", effort);
+                }
+                else
+                {
+                    var modelDefaults = root["chat.modelDefaults"]?.AsObject()
+                                        ?? new System.Text.Json.Nodes.JsonObject();
+                    root["chat.modelDefaults"] = modelDefaults;
+
+                    var modelNode = modelDefaults[model]?.AsObject()
                                     ?? new System.Text.Json.Nodes.JsonObject();
-                root["chat.modelDefaults"] = modelDefaults;
+                    modelDefaults[model] = modelNode;
 
-                var modelNode = modelDefaults[model]?.AsObject()
-                                ?? new System.Text.Json.Nodes.JsonObject();
-                modelDefaults[model] = modelNode;
+                    var outputConfig = modelNode["output_config"]?.AsObject()
+                                       ?? new System.Text.Json.Nodes.JsonObject();
+                    modelNode["output_config"] = outputConfig;
 
-                var outputConfig = modelNode["output_config"]?.AsObject()
-                                   ?? new System.Text.Json.Nodes.JsonObject();
-                modelNode["output_config"] = outputConfig;
-
-                outputConfig["effort"] = effort;
+                    outputConfig["effort"] = effort;
+                }
             }
 
             var json = root.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -86,4 +93,7 @@ public static partial class KiroCliSettingsWriter
     /// <summary>Pattern for valid model names: alphanumeric, dots, hyphens, underscores.</summary>
     [System.Text.RegularExpressions.GeneratedRegex(@"^[a-zA-Z0-9._-]+$")]
     private static partial System.Text.RegularExpressions.Regex ModelNamePattern();
+
+    private static readonly HashSet<string> ValidEffortValues =
+        new(["high", "medium", "low"], StringComparer.OrdinalIgnoreCase);
 }
