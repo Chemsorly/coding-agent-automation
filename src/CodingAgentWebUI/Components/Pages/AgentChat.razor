@@ -324,6 +324,10 @@
         {
             _launchError = $"Pod did not connect within {ex.TimeoutSeconds}s. Check cluster logs.";
         }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not the leader"))
+        {
+            _launchError = "The server is currently unavailable for chat dispatch. Please try again.";
+        }
         catch (Exception ex)
         {
             _launchError = $"Launch failed: {ex.Message}";

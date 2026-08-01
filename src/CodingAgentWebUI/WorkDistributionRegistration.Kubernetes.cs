@@ -118,6 +118,7 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<JobTemplateStore>(),
                 sp.GetRequiredService<AgentRegistryService>(),
                 options,
+                sp.GetRequiredService<ILeaderElectionService>(),
                 Log.Logger);
         });
         services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());

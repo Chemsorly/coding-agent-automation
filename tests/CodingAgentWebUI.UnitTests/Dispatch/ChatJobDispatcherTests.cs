@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
@@ -69,6 +70,14 @@ public class ChatJobDispatcherTests
         return mock;
     }
 
+    private static Mock<ILeaderElectionService> CreateAlwaysLeaderMock()
+    {
+        var mock = new Mock<ILeaderElectionService>();
+        mock.Setup(l => l.IsLeader).Returns(true);
+        mock.Setup(l => l.LeaderToken).Returns(CancellationToken.None);
+        return mock;
+    }
+
     private static Mock<IHubContext<AgentHub, IAgentHubClient>> CreateHubContextMock()
     {
         var mockClients = new Mock<IHubClients<IAgentHubClient>>();
@@ -115,6 +124,7 @@ public class ChatJobDispatcherTests
             templateStore ?? CreateTemplateStore(),
             registry ?? CreateRegistry(),
             options ?? CreateOptions(),
+            CreateAlwaysLeaderMock().Object,
             Mock.Of<ILogger>());
     }
 

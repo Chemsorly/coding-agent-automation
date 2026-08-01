@@ -245,6 +245,7 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
             templateStore,
             registry,
             shortOptions,
+            Fixture.Factory.Services.GetRequiredService<CodingAgentWebUI.Orchestration.LeaderElection.ILeaderElectionService>(),
             Serilog.Log.Logger);
 
         await dispatcher.StartAsync(CancellationToken.None);

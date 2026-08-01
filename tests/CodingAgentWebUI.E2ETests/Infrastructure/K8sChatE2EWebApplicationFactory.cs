@@ -4,6 +4,7 @@ using CodingAgentWebUI.Infrastructure.Locking;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Services;
@@ -152,6 +153,10 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<Prog
                   maxConcurrent: 5
                 """));
 
+            // ── Always-leader stub (single test process, no competition) ─────
+            services.RemoveAll<ILeaderElectionService>();
+            services.AddSingleton<ILeaderElectionService>(new AlwaysLeaderElectionService());
+
             // ── ChatJobDispatcher (real, backed by fakes) ─────────────────
             var testOptions = new DispatchServiceOptions
             {
@@ -171,6 +176,7 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<Prog
                 sp.GetRequiredService<JobTemplateStore>(),
                 sp.GetRequiredService<AgentRegistryService>(),
                 testOptions,
+                sp.GetRequiredService<ILeaderElectionService>(),
                 Serilog.Log.Logger));
 
             services.AddHostedService(sp => sp.GetRequiredService<ChatJobDispatcher>());
@@ -263,5 +269,15 @@ public sealed class K8sChatE2EWebApplicationFactory : WebApplicationFactory<Prog
     private sealed class NoOpDatabaseProbe : IDatabaseProbe
     {
         public Task ProbeAsync(CancellationToken ct) => Task.CompletedTask;
+    }
+
+    private sealed class AlwaysLeaderElectionService : ILeaderElectionService
+    {
+        public bool IsLeader => true;
+        public CancellationToken LeaderToken => CancellationToken.None;
+#pragma warning disable CS0067
+        public event Action? OnStartedLeading;
+        public event Action? OnStoppedLeading;
+#pragma warning restore CS0067
     }
 }

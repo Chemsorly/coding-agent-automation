@@ -3,6 +3,7 @@ using System.Diagnostics;
 using CodingAgentWebUI.Agent;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -33,6 +34,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     private readonly JobTemplateStore _templateStore;
     private readonly AgentRegistryService _registry;
     private readonly DispatchServiceOptions _options;
+    private readonly ILeaderElectionService _leaderElection;
     private readonly ILogger _logger;
 
     private readonly ConcurrentDictionary<string, ChatSession> _sessions = new();
@@ -56,6 +58,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         JobTemplateStore templateStore,
         AgentRegistryService registry,
         DispatchServiceOptions options,
+        ILeaderElectionService leaderElection,
         ILogger logger)
     {
         _jobClient = jobClient;
@@ -63,6 +66,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _templateStore = templateStore;
         _registry = registry;
         _options = options;
+        _leaderElection = leaderElection;
         _logger = logger;
     }
 
@@ -72,6 +76,10 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         string agentSelector, string? model, string? effort, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Chat.Dispatch");
+
+        if (!_leaderElection.IsLeader)
+            throw new InvalidOperationException(
+                "This orchestrator replica is not the leader and cannot dispatch chat pods.");
 
         var normalized = JobTemplateStore.NormalizeLabels(agentSelector);
         var selectorLabelValue = normalized.Replace(',', '_');
@@ -373,9 +381,19 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     /// <summary>
     /// Restores in-memory watcher state for any active chat jobs after orchestrator restart.
+    /// Waits for leadership before recovering sessions — non-leader replicas must not spin up
+    /// background watchers for jobs they don't own.
     /// </summary>
     public async Task StartAsync(CancellationToken ct)
     {
+        // Wait for leadership before recovering sessions.
+        // Non-leader replicas must not spin up watchers for jobs they don't own.
+        while (!ct.IsCancellationRequested && !_leaderElection.IsLeader)
+            await Task.Delay(TimeSpan.FromSeconds(2), ct);
+
+        if (ct.IsCancellationRequested)
+            return;
+
         try
         {
             var jobs = await _jobClient.ListJobsAsync(_options.Namespace, "caa/chat-session-id", ct);
@@ -463,6 +481,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Chat.Terminate");
         activity?.SetTag("agent_id", agentId);
+
+        if (!_leaderElection.IsLeader)
+        {
+            _logger.Warning(
+                "ChatJobDispatcher: TerminateChatSessionAsync called on non-leader replica for agent {AgentId} — no-op",
+                agentId);
+            return;
+        }
 
         if (!_agentIdToJobName.TryGetValue(agentId, out var jobName))
         {

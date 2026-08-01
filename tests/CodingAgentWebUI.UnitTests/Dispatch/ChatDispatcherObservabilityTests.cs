@@ -4,6 +4,7 @@ using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Hubs;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -101,6 +102,14 @@ public class ChatDispatcherObservabilityTests : IDisposable
         return agentId;
     }
 
+    private static Mock<ILeaderElectionService> CreateAlwaysLeaderMock()
+    {
+        var mock = new Mock<ILeaderElectionService>();
+        mock.Setup(l => l.IsLeader).Returns(true);
+        mock.Setup(l => l.LeaderToken).Returns(CancellationToken.None);
+        return mock;
+    }
+
     private static ChatJobDispatcher CreateDispatcher(
         IKubernetesJobClient? jobClient = null,
         AgentRegistryService? registry = null,
@@ -125,6 +134,7 @@ public class ChatDispatcherObservabilityTests : IDisposable
             templateStore,
             registry ?? CreateRegistry(),
             options ?? CreateOptions(),
+            CreateAlwaysLeaderMock().Object,
             Mock.Of<ILogger>());
     }
 
@@ -390,12 +400,17 @@ public class ChatDispatcherObservabilityTests : IDisposable
                 """;
             var templateStore = JobTemplateStore.LoadFromYaml(yaml);
 
+            var leaderMock = new Mock<ILeaderElectionService>();
+            leaderMock.Setup(l => l.IsLeader).Returns(true);
+            leaderMock.Setup(l => l.LeaderToken).Returns(CancellationToken.None);
+
             return new ChatJobDispatcher(
                 jobClient ?? CreateJobClientMock().Object,
                 hubContext ?? CreateHubContextMock().Object,
                 templateStore,
                 registry ?? CreateRegistry(),
                 options ?? CreateOptions(),
+                leaderMock.Object,
                 logger);
         }
 
