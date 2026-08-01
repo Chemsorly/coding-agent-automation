@@ -18,6 +18,7 @@ namespace CodingAgentWebUI.UnitTests;
 /// each dispatch path. These tests assert on ALL message properties to detect property-mapping
 /// regressions during refactoring.
 /// </summary>
+[Collection("ActivityListenerTests")]
 public class AgentJobDispatcherCharacterizationTests : IDisposable
 {
     private readonly Mock<ILogger> _mockLogger = new();
