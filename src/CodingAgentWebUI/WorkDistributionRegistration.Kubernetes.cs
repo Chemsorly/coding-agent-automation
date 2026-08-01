@@ -2,6 +2,7 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Orchestration.LeaderElection;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -103,12 +104,13 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<IPendingWorkQuery>(sp =>
             new DbPendingWorkQuery(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
-        // ModelFetchJobService — k8s-mode Fetch Models via one-shot job + pod logs
+        // ModelFetchJobService — k8s-mode Fetch Models via one-shot agent job + SignalR response
         services.AddSingleton<ModelFetchJobService>(sp => new ModelFetchJobService(
             sp.GetRequiredService<IKubernetesJobClient>(),
             sp.GetRequiredService<JobTemplateStore>(),
             DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>()),
             sp.GetRequiredService<IPipelineConfigStore>(),
+            sp.GetRequiredService<ModelFetchService>(),
             logger: Log.Logger));
 
         Log.Information("WorkDistribution: Kubernetes mode — DispatchService + ConsolidationDispatchHandler + ReconciliationService + LeaderElection registered");

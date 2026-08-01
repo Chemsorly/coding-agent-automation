@@ -17,7 +17,12 @@ public static class JobSpecBuilder
     /// </summary>
     public sealed record BuildContext
     {
-        public required Guid WorkItemId { get; init; }
+        /// <summary>
+        /// Work item ID. When non-null, the <c>--work-item-id</c> CLI arg and
+        /// <c>caa/work-item-id</c> label are emitted. Null for jobs that do not
+        /// correspond to a work item (e.g. model-fetch jobs).
+        /// </summary>
+        public Guid? WorkItemId { get; init; }
         public required string AgentSelector { get; init; }
         public required int TimeoutSeconds { get; set; }
         public required string JobName { get; set; }
@@ -154,7 +159,7 @@ public static class JobSpecBuilder
 
         if (ctx.ProjectSecrets is not null && ctx.ProjectSecrets.Count > 0)
         {
-            var secretName = $"caa-secrets-{ctx.WorkItemId.ToString("N")[..8]}";
+            var secretName = $"caa-secrets-{(ctx.WorkItemId ?? Guid.NewGuid()).ToString("N")[..8]}";
             volumeMounts.Add(new V1VolumeMount
             {
                 Name = "project-secrets",
@@ -178,7 +183,7 @@ public static class JobSpecBuilder
             Name = "agent",
             Image = template.Image,
             ImagePullPolicy = template.ImagePullPolicy,
-            Args = [$"--work-item-id={ctx.WorkItemId}"],
+            Args = ctx.WorkItemId is not null ? [$"--work-item-id={ctx.WorkItemId}"] : [],
             Env = envVars,
             VolumeMounts = volumeMounts,
             SecurityContext = new V1SecurityContext
@@ -224,13 +229,16 @@ public static class JobSpecBuilder
             {
                 Name = ctx.JobName,
                 NamespaceProperty = ctx.Namespace,
-                Labels = new Dictionary<string, string>
-                {
-                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
-                    ["app.kubernetes.io/component"] = "agent-job",
-                    ["caa/work-item-id"] = ctx.WorkItemId.ToString(),
-                    ["caa/agent-selector"] = ctx.AgentSelector.Replace(',', '.')
-                }
+                Labels = new Dictionary<string, string>(
+                    new[]
+                    {
+                        KeyValuePair.Create("app.kubernetes.io/managed-by", "caa-orchestrator"),
+                        KeyValuePair.Create("app.kubernetes.io/component", "agent-job"),
+                        KeyValuePair.Create("caa/agent-selector", ctx.AgentSelector.Replace(',', '.'))
+                    }
+                    .Concat(ctx.WorkItemId is not null
+                        ? [KeyValuePair.Create("caa/work-item-id", ctx.WorkItemId.ToString()!)]
+                        : []))
             },
             Spec = new V1JobSpec
             {

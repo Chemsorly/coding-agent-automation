@@ -1,5 +1,5 @@
-using System.Text.Json;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Orchestration.Health;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Models;
@@ -9,13 +9,10 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
 /// Fetches the available Kiro CLI model list in Kubernetes mode by dispatching a one-shot
-/// k8s Job that runs <c>kiro-cli chat --list-models --format json</c>, reading stdout from
-/// pod logs once the Job completes, then cleaning up.
-/// <para>
-/// This is the k8s-mode replacement for <c>ModelFetchService</c> (SignalR hub-based).
-/// The Job needs the kiro-cli-data PVC mounted so the CLI can authenticate against
-/// the Kiro service to retrieve subscription-specific model availability.
-/// </para>
+/// k8s Job that runs the agent binary normally. The agent pod connects to the orchestrator
+/// hub, receives a <c>RequestFetchModels</c> message, runs <c>kiro-cli --list-models</c>,
+/// and reports the result back via <c>ReportFetchModelsResult</c>. The orchestrator reads
+/// the response via <see cref="ModelFetchService"/> — no pod log reads or extra RBAC needed.
 /// </summary>
 public sealed class ModelFetchJobService
 {
@@ -34,17 +31,11 @@ public sealed class ModelFetchJobService
     /// </summary>
     public bool IsPvcPoolConfigured => _options.KiroPvcPool.Count > 0;
 
-    private static readonly JsonSerializerOptions JsonOpts = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-        AllowTrailingCommas = true
-    };
-
     private readonly IKubernetesJobClient _kubeClient;
     private readonly JobTemplateStore _templateStore;
     private readonly DispatchServiceOptions _options;
     private readonly IPipelineConfigStore _configStore;
+    private readonly IModelFetchReceiver _modelFetchReceiver;
     private readonly int? _pollTimeoutSecondsOverride; // non-null only in tests
     private readonly int _pollIntervalMs;
 
@@ -53,6 +44,7 @@ public sealed class ModelFetchJobService
         JobTemplateStore templateStore,
         DispatchServiceOptions options,
         IPipelineConfigStore configStore,
+        IModelFetchReceiver modelFetchReceiver,
         int? pollTimeoutSecondsOverride = null,
         int pollIntervalMs = 2000,
         ILogger? logger = null)
@@ -61,31 +53,22 @@ public sealed class ModelFetchJobService
         _templateStore = templateStore;
         _options = options;
         _configStore = configStore;
+        _modelFetchReceiver = modelFetchReceiver;
         _pollTimeoutSecondsOverride = pollTimeoutSecondsOverride;
         _pollIntervalMs = pollIntervalMs;
         _ = logger; // consumed via static Log; parameter kept for test injection
     }
 
     /// <summary>
-    /// Dispatches a one-shot k8s Job to run <c>kiro-cli chat --list-models --format json</c>,
-    /// waits for completion, parses the JSON output, and returns the model list.
-    /// The Job is always deleted after the operation, whether successful or not.
+    /// Dispatches a one-shot k8s Job running the agent binary. The agent pod connects to
+    /// the orchestrator hub and handles a <c>RequestFetchModels</c> request via the normal
+    /// SignalR protocol. Results are returned through <see cref="ModelFetchService"/> —
+    /// no pod log reads or <c>pods/log</c> RBAC required.
     /// </summary>
-    /// <param name="providerType">Provider type to select a matching job template (e.g. "kiro").</param>
-    /// <param name="ct">Cancellation token. On cancellation, best-effort Job cleanup is attempted.</param>
-    /// <param name="progress">
-    /// Optional progress sink that receives phase labels ("Creating job…", "Waiting for pod…", etc.)
-    /// for display in the UI during the operation.
-    /// </param>
-    /// <returns>
-    /// Tuple of (models, error). On success, error is null. On failure, models is empty and error
-    /// contains a human-readable message suitable for display in the Settings UI.
-    /// </returns>
     public async Task<(IReadOnlyList<AgentModelInfo> Models, string? Error)> FetchModelsAsync(
         string providerType, CancellationToken ct, IProgress<string>? progress = null)
     {
         // Read timeout from config each call so UI changes take effect without restart.
-        // Test injection via _pollTimeoutSecondsOverride skips the config store.
         var config = await _configStore.LoadPipelineConfigAsync(ct);
         var pollTimeoutSeconds = _pollTimeoutSecondsOverride ?? config.ModelFetchTimeoutSeconds;
 
@@ -102,10 +85,8 @@ public sealed class ModelFetchJobService
         }
 
         // ── 2. Claim PVC (required for kiro provider auth) ───────────────
-        var isKiro = string.Equals(providerType, "kiro", StringComparison.OrdinalIgnoreCase);
         string? claimedPvc = null;
-
-        if (isKiro)
+        if (string.Equals(providerType, "kiro", StringComparison.OrdinalIgnoreCase))
         {
             if (_options.KiroPvcPool.Count == 0)
             {
@@ -114,14 +95,12 @@ public sealed class ModelFetchJobService
                 Log.Warning("ModelFetchJobService: {Message}", msg);
                 return ([], msg);
             }
-
-            // Select a PVC that is not already mounted by another running caa-* Job.
-            // This avoids ReadWriteOnce volume conflicts when work-item jobs are running
-            // concurrently and holding PVCs exclusively.
             claimedPvc = await SelectAvailablePvcAsync(ct) ?? _options.KiroPvcPool[0];
         }
 
         // ── 3. Build job spec ────────────────────────────────────────────
+        // The job runs the normal agent binary (no command override). The agent connects
+        // to the hub, registers, receives RequestFetchModels, and reports results back.
         var jobName = $"{JobNamePrefix}{Guid.NewGuid().ToString("N")[..8]}";
         var job = BuildFetchModelsJob(template, jobName, claimedPvc, pollTimeoutSeconds);
 
@@ -143,95 +122,33 @@ public sealed class ModelFetchJobService
             return ([], $"Failed to create fetch-models job: {ex.Message}");
         }
 
-        // ── 5. Poll until complete ───────────────────────────────────────
-        progress?.Report("Waiting for pod to start…");
-        string? pollError = null;
-        bool succeeded = false;
+        // ── 5. Wait for agent to connect and report results via SignalR ──
+        // The agent pod's AGENT_ID is set from metadata.name = "{jobName}-{k8s-suffix}".
+        // ModelFetchService.WaitAndFetchAsync polls the registry until that agent appears,
+        // then sends RequestFetchModels and awaits ReportFetchModelsResult — all over the
+        // existing hub connection. No pod log reads, no pods/log RBAC required.
+        progress?.Report("Waiting for agent to connect…");
+        IReadOnlyList<AgentModelInfo> models = [];
+        string? fetchError = null;
 
         try
         {
-            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(pollTimeoutSeconds));
-            var timeoutToken = timeoutCts.Token;
+            (models, fetchError) = await _modelFetchReceiver.WaitAndFetchAsync(
+                agentIdPrefix: jobName,
+                timeoutSeconds: pollTimeoutSeconds,
+                pollIntervalMs: _pollIntervalMs,
+                ct: ct);
 
-            while (!timeoutToken.IsCancellationRequested)
-            {
-                await Task.Delay(_pollIntervalMs, timeoutToken);
-
-                V1Job status;
-                try { status = await _kubeClient.ReadJobAsync(jobName, _options.Namespace, timeoutToken); }
-                catch (OperationCanceledException) { break; }
-
-                if (status.Status?.Active >= 1)
-                    progress?.Report("Pod is running…");
-
-                if (status.Status?.Succeeded >= 1)
-                {
-                    succeeded = true;
-                    break;
-                }
-
-                if (status.Status?.Failed >= 1)
-                {
-                    pollError = $"Fetch models job {jobName} failed (exit code non-zero). " +
-                                $"Run: kubectl logs -l job-name={jobName} -n {_options.Namespace}";
-                    break;
-                }
-            }
-
-            if (!succeeded && pollError is null)
-            {
-                // Distinguish user cancellation vs timeout
-                if (ct.IsCancellationRequested)
-                    pollError = "Fetch models was cancelled.";
-                else
-                    pollError = $"Fetch models job {jobName} timed out after {pollTimeoutSeconds}s. " +
-                                $"The agent pod may be slow to start or failing to schedule. " +
-                                $"Run: kubectl describe job {jobName} -n {_options.Namespace}";
-            }
+            if (fetchError is null)
+                progress?.Report("Received results…");
         }
-        catch (OperationCanceledException)
+        catch (Exception ex)
         {
-            pollError = ct.IsCancellationRequested
-                ? "Fetch models was cancelled."
-                : $"Fetch models job {jobName} timed out after {pollTimeoutSeconds}s. " +
-                  $"Run: kubectl describe job {jobName} -n {_options.Namespace}";
+            fetchError = $"Unexpected error waiting for fetch-models agent: {ex.Message}";
+            Log.Warning(ex, "ModelFetchJobService: unexpected error for job {JobName}", jobName);
         }
 
-        // ── 6. Read pod logs (success path) — with backoff retry ─────────
-        IReadOnlyList<AgentModelInfo> models = [];
-        string? parseError = null;
-
-        if (succeeded)
-        {
-            progress?.Report("Reading results…");
-            try
-            {
-                var podList = await _kubeClient.ListPodsAsync(
-                    _options.Namespace,
-                    $"job-name={jobName}",
-                    CancellationToken.None);
-
-                var pod = podList.Items.FirstOrDefault();
-                if (pod?.Metadata?.Name is null)
-                {
-                    parseError = "Fetch models job succeeded but no pod was found to read logs from.";
-                }
-                else
-                {
-                    // Kubelet log flushing is async with the Job status transition; retry with
-                    // exponential backoff to avoid "no output" errors on fast completions.
-                    (models, parseError) = await ReadLogsWithRetryAsync(pod.Metadata.Name, jobName);
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Warning(ex, "ModelFetchJobService: failed to read logs for job {JobName}", jobName);
-                parseError = $"Fetch models job completed but logs could not be retrieved: {ex.Message}";
-            }
-        }
-
-        // ── 7. Cleanup (best-effort) ─────────────────────────────────────
+        // ── 6. Cleanup (best-effort) ─────────────────────────────────────
         try
         {
             await _kubeClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
@@ -239,34 +156,24 @@ public sealed class ModelFetchJobService
         }
         catch (Exception ex)
         {
-            Log.Warning(ex, "ModelFetchJobService: cleanup failed for job {JobName} — will be GC'd by KubernetesJobCleanup",
+            // Don't propagate — a cleanup failure must not hide a successful result.
+            Log.Warning(ex, "ModelFetchJobService: cleanup failed for job {JobName} — will be GC'd by TTL",
                 jobName);
-            // Do NOT propagate — a cleanup failure must not hide a successful result.
         }
 
-        var finalError = pollError ?? parseError;
-        if (finalError is not null)
-            Log.Warning("ModelFetchJobService: fetch failed — {Error}", finalError);
+        if (fetchError is not null)
+            Log.Warning("ModelFetchJobService: fetch failed — {Error}", fetchError);
         else
             Log.Information("ModelFetchJobService: fetched {Count} model(s) via job {JobName}",
                 models.Count, jobName);
 
-        return (models, finalError);
+        return (models, fetchError);
     }
 
-    // ── Private helpers ──────────────────────────────────────────────────
-
-    /// <summary>
-    /// Attempts to find a PVC from the pool that is not currently mounted by another running
-    /// caa-* Job. Falls back to <c>null</c> (caller uses pool[0]) if the k8s query fails
-    /// or all PVCs appear busy.
-    /// </summary>
     private async Task<string?> SelectAvailablePvcAsync(CancellationToken ct)
     {
         try
         {
-            // List running/pending work-item jobs to find claimed PVCs.
-            // Model-fetch jobs (caa-models-*) are excluded by label.
             var runningJobs = await _kubeClient.ListJobsAsync(
                 _options.Namespace,
                 "app.kubernetes.io/component=agent-job",
@@ -275,9 +182,7 @@ public sealed class ModelFetchJobService
             var claimedPvcs = new HashSet<string>(StringComparer.Ordinal);
             foreach (var j in runningJobs.Items)
             {
-                // Only consider active (not completed/failed) jobs
                 if (j.Status?.Active is null or 0) continue;
-
                 foreach (var vol in j.Spec?.Template?.Spec?.Volumes ?? [])
                 {
                     if (vol.PersistentVolumeClaim?.ClaimName is { } pvcName)
@@ -287,7 +192,7 @@ public sealed class ModelFetchJobService
 
             var available = _options.KiroPvcPool.FirstOrDefault(pvc => !claimedPvcs.Contains(pvc));
             if (available is null)
-                Log.Warning("ModelFetchJobService: all {Count} PVCs are in use by running jobs; " +
+                Log.Warning("ModelFetchJobService: all {Count} PVCs are in use; " +
                             "using {Pvc} anyway — RWX volumes required for concurrent access",
                     _options.KiroPvcPool.Count, _options.KiroPvcPool[0]);
 
@@ -300,71 +205,24 @@ public sealed class ModelFetchJobService
         }
     }
 
-    /// <summary>
-    /// Reads pod logs with exponential backoff retries to handle kubelet log flush lag.
-    /// Retries 3 times (delays: 1s, 2s, 4s) before returning empty-output error.
-    /// </summary>
-    private async Task<(IReadOnlyList<AgentModelInfo> Models, string? Error)> ReadLogsWithRetryAsync(
-        string podName, string jobName)
-    {
-        var delays = new[] { 1000, 2000, 4000 };
-
-        for (var attempt = 0; attempt <= delays.Length; attempt++)
-        {
-            if (attempt > 0)
-            {
-                Log.Debug("ModelFetchJobService: pod log retry {Attempt}/{Max} for {PodName}",
-                    attempt, delays.Length, podName);
-                await Task.Delay(delays[attempt - 1]);
-            }
-
-            var logs = await _kubeClient.ReadPodLogsAsync(podName, _options.Namespace, CancellationToken.None);
-            var (models, error) = ParseModelList(logs);
-
-            // If we got a non-empty result or it's not the "no output" transient error, return immediately
-            if (models.Count > 0 || (error is not null && !error.Contains("no output", StringComparison.OrdinalIgnoreCase)))
-                return (models, error);
-
-            // "no output" on last attempt — surface it
-            if (attempt == delays.Length)
-            {
-                Log.Warning("ModelFetchJobService: pod {PodName} returned empty logs after {Attempts} attempts",
-                    podName, attempt + 1);
-                return (models, error);
-            }
-        }
-
-        return ([], "Fetch models pod completed but returned no output.");
-    }
-
     private V1Job BuildFetchModelsJob(JobTemplate template, string jobName, string? pvcName, int pollTimeoutSeconds)
     {
-        // Build a full job spec from the template exactly as a work-item job would be built.
-        // This ensures the fetch-models pod inherits every template-configured field:
-        // security context, node selector, tolerations, init containers, resources, image,
-        // env vars, volumes, etc. — without any divergence that would require maintenance.
+        // Build a full job spec from the template — the agent pod runs the standard agent
+        // binary, connects to the hub, and handles RequestFetchModels normally.
         var job = JobSpecBuilder.Build(template, new JobSpecBuilder.BuildContext
         {
-            WorkItemId = Guid.Empty,           // no work item — placeholder only
+            WorkItemId = null,           // no work item — agent enters SignalR mode
             AgentSelector = string.Empty,
             TimeoutSeconds = pollTimeoutSeconds,
             JobName = jobName,
-            ClaimedPvc = pvcName,              // PVC mounted same as a normal agent job
+            ClaimedPvc = pvcName,
             OrchestratorUrl = _options.OrchestratorUrl,
             AgentApiKeySecretName = _options.AgentApiKeySecretName,
             AgentServiceAccountName = _options.AgentServiceAccountName,
             Namespace = _options.Namespace
         });
 
-        // ── Override: command and args ────────────────────────────────────────
-        // Replace the default worker entrypoint (--work-item-id=...) with a direct
-        // CLI invocation that lists models and exits. Everything else stays as-is.
-        var container = job.Spec.Template.Spec.Containers[0];
-        container.Command = ["/bin/sh", "-c"];
-        container.Args = [$"{AgentDefaults.KiroCliPath} chat --list-models --format json"];
-
-        // ── Override: job metadata ────────────────────────────────────────────
-        // Replace work-item labels with model-fetch labels.
+        // Override job metadata only — no command/args override, the agent binary runs as-is.
         job.Metadata.Labels = new Dictionary<string, string>
         {
             ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
@@ -372,52 +230,11 @@ public sealed class ModelFetchJobService
             ["caa/job-type"] = JobTypeLabel
         };
 
-        // ── Override: job policy ─────────────────────────────────────────────
-        // Model-fetch is a one-shot diagnostic: no retries, short TTL, tighter deadline.
+        // One-shot diagnostic: no retries, short TTL, tighter deadline.
         job.Spec.BackoffLimit = 0;
         job.Spec.TtlSecondsAfterFinished = 300;
         job.Spec.ActiveDeadlineSeconds = pollTimeoutSeconds + 30;
 
         return job;
-    }
-
-    private static (IReadOnlyList<AgentModelInfo> Models, string? Error) ParseModelList(string logs)
-    {
-        if (string.IsNullOrWhiteSpace(logs))
-            return ([], "Fetch models pod completed but returned no output.");
-
-        try
-        {
-            using var doc = JsonDocument.Parse(logs, new JsonDocumentOptions
-            {
-                AllowTrailingCommas = true,
-                CommentHandling = JsonCommentHandling.Skip
-            });
-
-            if (!doc.RootElement.TryGetProperty("models", out var modelsArray))
-                return ([], "Fetch models output is missing the 'models' array.");
-
-            var result = new List<AgentModelInfo>();
-            foreach (var m in modelsArray.EnumerateArray())
-            {
-                var modelId = m.TryGetProperty("model_id", out var id) ? id.GetString() ?? "" : "";
-                if (string.IsNullOrEmpty(modelId)) continue;
-
-                result.Add(new AgentModelInfo
-                {
-                    ModelId = modelId,
-                    Description = m.TryGetProperty("description", out var d) ? d.GetString() ?? "" : "",
-                    RateMultiplier = m.TryGetProperty("rate_multiplier", out var r) ? r.GetDouble() : 1.0
-                });
-            }
-
-            return result.Count == 0
-                ? ([], "Fetch models returned an empty model list.")
-                : (result, null);
-        }
-        catch (JsonException ex)
-        {
-            return ([], $"Fetch models output could not be parsed as JSON: {ex.Message}");
-        }
     }
 }
