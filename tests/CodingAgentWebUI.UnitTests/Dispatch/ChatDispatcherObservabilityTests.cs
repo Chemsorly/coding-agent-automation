@@ -27,6 +27,7 @@ namespace CodingAgentWebUI.UnitTests.Dispatch;
 /// global Log.Logger mutations (same pattern as JobSpecBuilderLoggingTests).
 /// Metric and tracing tests run in parallel without logger mutation.
 /// </remarks>
+[Collection("ActivityListenerTests")]
 public class ChatDispatcherObservabilityTests : IDisposable
 {
     private const string TestNamespace = "coding-agent";

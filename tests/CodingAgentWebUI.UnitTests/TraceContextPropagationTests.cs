@@ -9,6 +9,7 @@ namespace CodingAgentWebUI.UnitTests;
 /// Verifies trace context injection produces valid W3C traceparent headers
 /// and that the inject/extract round-trip preserves trace identity.
 /// </summary>
+[Collection("ActivityListenerTests")]
 public class TraceContextPropagationTests : IDisposable
 {
     private readonly ActivityListener _listener;
