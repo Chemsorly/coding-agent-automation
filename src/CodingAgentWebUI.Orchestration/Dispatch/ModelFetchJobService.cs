@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CodingAgentWebUI.Agent;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Models;
 using Serilog;
@@ -43,21 +44,24 @@ public sealed class ModelFetchJobService
     private readonly IKubernetesJobClient _kubeClient;
     private readonly JobTemplateStore _templateStore;
     private readonly DispatchServiceOptions _options;
-    private readonly int _pollTimeoutSeconds;
+    private readonly IPipelineConfigStore _configStore;
+    private readonly int? _pollTimeoutSecondsOverride; // non-null only in tests
     private readonly int _pollIntervalMs;
 
     public ModelFetchJobService(
         IKubernetesJobClient kubeClient,
         JobTemplateStore templateStore,
         DispatchServiceOptions options,
-        int pollTimeoutSeconds = 60,
+        IPipelineConfigStore configStore,
+        int? pollTimeoutSecondsOverride = null,
         int pollIntervalMs = 2000,
         ILogger? logger = null)
     {
         _kubeClient = kubeClient;
         _templateStore = templateStore;
         _options = options;
-        _pollTimeoutSeconds = pollTimeoutSeconds;
+        _configStore = configStore;
+        _pollTimeoutSecondsOverride = pollTimeoutSecondsOverride;
         _pollIntervalMs = pollIntervalMs;
         _ = logger; // consumed via static Log; parameter kept for test injection
     }
@@ -80,6 +84,11 @@ public sealed class ModelFetchJobService
     public async Task<(IReadOnlyList<AgentModelInfo> Models, string? Error)> FetchModelsAsync(
         string providerType, CancellationToken ct, IProgress<string>? progress = null)
     {
+        // Read timeout from config each call so UI changes take effect without restart.
+        // Test injection via _pollTimeoutSecondsOverride skips the config store.
+        var config = await _configStore.LoadPipelineConfigAsync(ct);
+        var pollTimeoutSeconds = _pollTimeoutSecondsOverride ?? config.ModelFetchTimeoutSeconds;
+
         // ── 1. Resolve job template ──────────────────────────────────────
         var template = _templateStore.GetAllTemplates()
             .FirstOrDefault(t => string.Equals(t.ProviderType, providerType, StringComparison.OrdinalIgnoreCase));
@@ -114,7 +123,7 @@ public sealed class ModelFetchJobService
 
         // ── 3. Build job spec ────────────────────────────────────────────
         var jobName = $"{JobNamePrefix}{Guid.NewGuid().ToString("N")[..8]}";
-        var job = BuildFetchModelsJob(template, jobName, claimedPvc);
+        var job = BuildFetchModelsJob(template, jobName, claimedPvc, pollTimeoutSeconds);
 
         // ── 4. Create job ────────────────────────────────────────────────
         progress?.Report("Creating job…");
@@ -142,7 +151,7 @@ public sealed class ModelFetchJobService
         try
         {
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(_pollTimeoutSeconds));
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(pollTimeoutSeconds));
             var timeoutToken = timeoutCts.Token;
 
             while (!timeoutToken.IsCancellationRequested)
@@ -176,7 +185,7 @@ public sealed class ModelFetchJobService
                 if (ct.IsCancellationRequested)
                     pollError = "Fetch models was cancelled.";
                 else
-                    pollError = $"Fetch models job {jobName} timed out after {_pollTimeoutSeconds}s. " +
+                    pollError = $"Fetch models job {jobName} timed out after {pollTimeoutSeconds}s. " +
                                 $"The agent pod may be slow to start or failing to schedule. " +
                                 $"Run: kubectl describe job {jobName} -n {_options.Namespace}";
             }
@@ -185,7 +194,7 @@ public sealed class ModelFetchJobService
         {
             pollError = ct.IsCancellationRequested
                 ? "Fetch models was cancelled."
-                : $"Fetch models job {jobName} timed out after {_pollTimeoutSeconds}s. " +
+                : $"Fetch models job {jobName} timed out after {pollTimeoutSeconds}s. " +
                   $"Run: kubectl describe job {jobName} -n {_options.Namespace}";
         }
 
@@ -328,110 +337,48 @@ public sealed class ModelFetchJobService
         return ([], "Fetch models pod completed but returned no output.");
     }
 
-    private V1Job BuildFetchModelsJob(JobTemplate template, string jobName, string? pvcName)
+    private V1Job BuildFetchModelsJob(JobTemplate template, string jobName, string? pvcName, int pollTimeoutSeconds)
     {
-        var isKiro = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-
-        // ── Env vars (minimal — no AGENT_ID needed, just orchestrator URL for connectivity) ──
-        var envVars = new List<V1EnvVar>
+        // Build a full job spec from the template exactly as a work-item job would be built.
+        // This ensures the fetch-models pod inherits every template-configured field:
+        // security context, node selector, tolerations, init containers, resources, image,
+        // env vars, volumes, etc. — without any divergence that would require maintenance.
+        var job = JobSpecBuilder.Build(template, new JobSpecBuilder.BuildContext
         {
-            new() { Name = AgentDefaults.EnvOrchestratorUrl, Value = _options.OrchestratorUrl },
+            WorkItemId = Guid.Empty,           // no work item — placeholder only
+            AgentSelector = string.Empty,
+            TimeoutSeconds = pollTimeoutSeconds,
+            JobName = jobName,
+            ClaimedPvc = pvcName,              // PVC mounted same as a normal agent job
+            OrchestratorUrl = _options.OrchestratorUrl,
+            AgentApiKeySecretName = _options.AgentApiKeySecretName,
+            AgentServiceAccountName = _options.AgentServiceAccountName,
+            Namespace = _options.Namespace
+        });
+
+        // ── Override: command and args ────────────────────────────────────────
+        // Replace the default worker entrypoint (--work-item-id=...) with a direct
+        // CLI invocation that lists models and exits. Everything else stays as-is.
+        var container = job.Spec.Template.Spec.Containers[0];
+        container.Command = ["/bin/sh", "-c"];
+        container.Args = [$"{AgentDefaults.KiroCliPath} chat --list-models --format json"];
+
+        // ── Override: job metadata ────────────────────────────────────────────
+        // Replace work-item labels with model-fetch labels.
+        job.Metadata.Labels = new Dictionary<string, string>
+        {
+            ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
+            ["app.kubernetes.io/component"] = "model-fetch",
+            ["caa/job-type"] = JobTypeLabel
         };
 
-        var logLevel = Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel);
-        if (!string.IsNullOrEmpty(logLevel))
-            envVars.Add(new V1EnvVar { Name = AgentDefaults.EnvLogLevel, Value = logLevel });
+        // ── Override: job policy ─────────────────────────────────────────────
+        // Model-fetch is a one-shot diagnostic: no retries, short TTL, tighter deadline.
+        job.Spec.BackoffLimit = 0;
+        job.Spec.TtlSecondsAfterFinished = 300;
+        job.Spec.ActiveDeadlineSeconds = pollTimeoutSeconds + 30;
 
-        // ── Volumes & mounts ─────────────────────────────────────────────
-        var volumeMounts = new List<V1VolumeMount>();
-        var volumes = new List<V1Volume>();
-
-        if (isKiro && pvcName is not null)
-        {
-            volumeMounts.Add(new V1VolumeMount
-            {
-                Name = "kiro-cli-data",
-                MountPath = "/home/ubuntu/.local/share/kiro-cli"
-            });
-            volumes.Add(new V1Volume
-            {
-                Name = "kiro-cli-data",
-                PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource { ClaimName = pvcName }
-            });
-        }
-
-        // ── Container ────────────────────────────────────────────────────
-        var container = new V1Container
-        {
-            Name = "agent",
-            Image = template.Image,
-            ImagePullPolicy = template.ImagePullPolicy,
-            // Override the normal worker entrypoint with a direct CLI command.
-            // The worker image's default entrypoint is the agent binary; we bypass it
-            // by providing explicit command/args that invoke kiro-cli directly.
-            Command = ["/bin/sh", "-c"],
-            Args = [
-                $"{AgentDefaults.KiroCliPath} chat --list-models --format json"
-            ],
-            Env = envVars,
-            VolumeMounts = volumeMounts,
-            SecurityContext = new V1SecurityContext
-            {
-                Capabilities = new V1Capabilities { Drop = ["ALL"] }
-            }
-        };
-
-        if (template.Resources is not null)
-        {
-            // Use lighter resources for model fetch (CPU-light, short-lived)
-            container.Resources = new V1ResourceRequirements
-            {
-                Requests = template.Resources.Requests?
-                    .ToDictionary(kv => kv.Key, kv => new ResourceQuantity(kv.Value)),
-                Limits = template.Resources.Limits?
-                    .ToDictionary(kv => kv.Key, kv => new ResourceQuantity(kv.Value))
-            };
-        }
-
-        return new V1Job
-        {
-            Metadata = new V1ObjectMeta
-            {
-                Name = jobName,
-                NamespaceProperty = _options.Namespace,
-                Labels = new Dictionary<string, string>
-                {
-                    ["app.kubernetes.io/managed-by"] = "caa-orchestrator",
-                    ["app.kubernetes.io/component"] = "model-fetch",
-                    ["caa/job-type"] = JobTypeLabel
-                }
-            },
-            Spec = new V1JobSpec
-            {
-                Parallelism = 1,
-                Completions = 1,
-                BackoffLimit = 0,            // don't retry on failure — surface error immediately
-                ActiveDeadlineSeconds = _pollTimeoutSeconds + 30,
-                TtlSecondsAfterFinished = 300, // 5-minute safety TTL if cleanup fails
-                Template = new V1PodTemplateSpec
-                {
-                    Spec = new V1PodSpec
-                    {
-                        ServiceAccountName = _options.AgentServiceAccountName,
-                        RestartPolicy = "Never",
-                        TerminationGracePeriodSeconds = 10,
-                        SecurityContext = new V1PodSecurityContext
-                        {
-                            RunAsNonRoot = true,
-                            SeccompProfile = new V1SeccompProfile { Type = "RuntimeDefault" }
-                        },
-                        Containers = [container],
-                        Volumes = volumes,
-                        NodeSelector = template.NodeSelector
-                    }
-                }
-            }
-        };
+        return job;
     }
 
     private static (IReadOnlyList<AgentModelInfo> Models, string? Error) ParseModelList(string logs)

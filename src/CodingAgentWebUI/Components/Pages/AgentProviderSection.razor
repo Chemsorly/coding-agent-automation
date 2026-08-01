@@ -147,7 +147,7 @@
                             }
                             else if (IsKubernetesMode)
                             {
-                                @:Click "Fetch Models" to dispatch a short-lived Kubernetes Job (~60s) that queries available models from the Kiro service. Requires a credential PVC in <code>WorkDistribution:KiroPvcPool</code>. Or enter a model name manually.
+                                @:Click "Fetch Models" to dispatch a short-lived Kubernetes Job (~@(_modelFetchTimeoutSeconds)s) that queries available models from the Kiro service. Requires a credential PVC in <code>WorkDistribution:KiroPvcPool</code>. Or enter a model name manually.
                             }
                             else
                             {
@@ -169,6 +169,14 @@
                             <option value="max">max — Maximum depth</option>
                         </select>
                         <span class="form-hint">Controls how much reasoning the model applies. Higher effort = deeper analysis but slower and more expensive.</span>
+                    </div>
+                }
+                @if (IsKubernetesMode && _form.ProviderType == "KiroCli")
+                {
+                    <div class="form-group">
+                        <label>Fetch Models Timeout (seconds)</label>
+                        <input type="number" @bind="_modelFetchTimeoutSeconds" min="30" max="600" />
+                        <span class="form-hint">How long to wait for the model-fetch job to complete. Increase on slow setups where image pulls or pod scheduling take longer. Default: 120s.</span>
                     </div>
                 }
                 <div class="form-buttons">
@@ -248,6 +256,18 @@
     private int _fetchElapsedSeconds;
     private System.Threading.Timer? _elapsedTimer;
 
+    // k8s model-fetch timeout (seconds) — configurable in UI, stored in PipelineConfiguration
+    private int _modelFetchTimeoutSeconds = 120;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (IsKubernetesMode)
+        {
+            var config = await ConfigStore.LoadPipelineConfigAsync(CancellationToken.None);
+            _modelFetchTimeoutSeconds = config.ModelFetchTimeoutSeconds;
+        }
+    }
+
     private void ShowAddForm()
     {
         _editingProvider = null;
@@ -320,6 +340,15 @@
         try
         {
             await ConfigStore.SaveProviderConfigAsync(config, _cts.Token);
+
+            // Save k8s model-fetch timeout when in k8s mode (global setting, not per-provider)
+            if (IsKubernetesMode)
+            {
+                await ConfigStore.UpdatePipelineConfigAsync(
+                    current => current with { ModelFetchTimeoutSeconds = _modelFetchTimeoutSeconds },
+                    _cts.Token);
+            }
+
             _showForm = false;
             await OnSaved.InvokeAsync();
         }

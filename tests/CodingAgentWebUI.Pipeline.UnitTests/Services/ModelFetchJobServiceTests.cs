@@ -1,5 +1,6 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Orchestration.Dispatch;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using k8s.Models;
 using Moq;
@@ -205,7 +206,7 @@ public sealed class ModelFetchJobServiceTests
     public async Task FetchModelsAsync_JobTimesOut_ReturnsError_AndCleansUpJob()
     {
         // Arrange: job never completes within timeout
-        var service = CreateService(pollTimeoutSeconds: 2, pollIntervalMs: 100);
+        var service = CreateService(pollTimeoutSecondsOverride: 2, pollIntervalMs: 100);
         _fakeClient.ConfigureJobNeverCompletes();
 
         // Act
@@ -295,14 +296,19 @@ public sealed class ModelFetchJobServiceTests
     private ModelFetchJobService CreateService(
         DispatchServiceOptions? options = null,
         JobTemplateStore? templateStore = null,
-        int pollTimeoutSeconds = 10,
+        int pollTimeoutSecondsOverride = 10,
         int pollIntervalMs = 50)
     {
+        var mockConfigStore = new Mock<IPipelineConfigStore>();
+        mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+                       .ReturnsAsync(new PipelineConfiguration());
+
         return new ModelFetchJobService(
             _fakeClient,
             templateStore ?? _templateStore,
             options ?? _options,
-            pollTimeoutSeconds,
+            mockConfigStore.Object,
+            pollTimeoutSecondsOverride,
             pollIntervalMs,
             _mockLogger.Object);
     }

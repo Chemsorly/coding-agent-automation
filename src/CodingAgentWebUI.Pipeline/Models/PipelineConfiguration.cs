@@ -528,4 +528,23 @@ public sealed record PipelineConfiguration
         }
     } = 12;
 
+    // ── Kubernetes model-fetch settings ─────────────────────────────────
+
+    /// <summary>
+    /// Timeout in seconds for the model-fetch k8s Job (caa-models-*).
+    /// Increase on slow setups where image pull or pod scheduling takes longer than the default.
+    /// Default: 120s. Range: 30–600.
+    /// </summary>
+    [Key(71)]
+    public int ModelFetchTimeoutSeconds
+    {
+        get => field;
+        init
+        {
+            ArgumentOutOfRangeException.ThrowIfLessThan(value, 30, nameof(ModelFetchTimeoutSeconds));
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(value, 600, nameof(ModelFetchTimeoutSeconds));
+            field = value;
+        }
+    } = 120;
+
 }
