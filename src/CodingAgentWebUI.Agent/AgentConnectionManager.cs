@@ -55,7 +55,6 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         _hubManagerFactory = hubManagerFactory;
         // TODO: Validate that agentId is not default(AgentId) (Value == null). Since AgentId is a value type
         // it cannot be null, but default(AgentId) silently propagates null strings to SignalR hub invocations.
-        // Consider: if (string.IsNullOrEmpty(agentId.Value)) throw new ArgumentException(...);
         _agentId = agentId;
         _logger = logger;
         _signalRPipeline = ResiliencePipelineFactory.CreateSignalRPipeline(logger);
@@ -219,7 +218,9 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
         {
             await _signalRPipeline.ExecuteAsync(async token =>
                 await _hubManager.Connection.InvokeAsync(
-                    HubMethodNames.RegisterAgent, _currentRegistration, token), CancellationToken.None);
+                    HubMethodNames.RegisterAgent, _currentRegistration, token),
+                // Fire-and-forget: reconnect event handler has no ambient token; reconnection must proceed
+                CancellationToken.None);
             _logger.Information("Agent {AgentId} re-registered after reconnection", _agentId.Value);
         }
         catch (Exception ex)
@@ -254,7 +255,8 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
             HubConnectionManager? newManager = null;
             try
             {
-                await Task.Delay(delay);
+                // Fire-and-forget: reconnection delay has no ambient cancellation token in this event handler
+                await Task.Delay(delay, CancellationToken.None);
 
                 var oldManager = _hubManager;
                 newManager = _hubManagerFactory.Create();
@@ -266,7 +268,9 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
                 {
                     await _signalRPipeline.ExecuteAsync(async token =>
                         await newManager.Connection.InvokeAsync(
-                            HubMethodNames.RegisterAgent, _currentRegistration, token), CancellationToken.None);
+                            HubMethodNames.RegisterAgent, _currentRegistration, token),
+                        // Fire-and-forget: terminal-close reconnect has no ambient token; must complete registration
+                        CancellationToken.None);
                 }
 
                 _hubManager = newManager;

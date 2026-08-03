@@ -86,14 +86,14 @@ public sealed class ConsolidationServiceTests : IDisposable
         }
     }
 
-    private ConsolidationService CreateSut() => new(
+    private ConsolidationService CreateSut() => new(new ConsolidationServiceDependencies(
         _logger,
         _config,
         _mockProjectStore.Object,
         _mockRunHistory.Object,
         new FileSystemConsolidationRunStore(_runsDir),
         new FileSystemHarnessSuggestionStore(_suggestionsPath),
-        workspaceManager: new ConsolidationWorkspaceManager(_logger, _config));
+        WorkspaceManager: new ConsolidationWorkspaceManager(_logger, _config)));
 
     #region TriggerAsync — creates run and persists
 
@@ -585,12 +585,13 @@ public sealed class ConsolidationServiceTests : IDisposable
         File.WriteAllText(blockerDir, "I am a file, not a directory");
 
         var sut = new ConsolidationService(
-            _logger,
-            _config,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            new FileSystemConsolidationRunStore(blockerDir),
-            new FileSystemHarnessSuggestionStore(_suggestionsPath));
+            new ConsolidationServiceDependencies(
+                _logger,
+                _config,
+                _mockProjectStore.Object,
+                _mockRunHistory.Object,
+                new FileSystemConsolidationRunStore(blockerDir),
+                new FileSystemHarnessSuggestionStore(_suggestionsPath)));
 
         var run = await sut.TriggerAsync(
             ConsolidationRunType.BrainConsolidation, "tmpl-1", CancellationToken.None);
@@ -617,13 +618,14 @@ public sealed class ConsolidationServiceTests : IDisposable
             .ReturnsAsync(ConsolidationDispatchResult.Failed);
 
         var sut = new ConsolidationService(
-            _logger,
-            _config,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            new FileSystemConsolidationRunStore(_runsDir),
-            new FileSystemHarnessSuggestionStore(_suggestionsPath),
-            mockDispatcher.Object);
+            new ConsolidationServiceDependencies(
+                _logger,
+                _config,
+                _mockProjectStore.Object,
+                _mockRunHistory.Object,
+                new FileSystemConsolidationRunStore(_runsDir),
+                new FileSystemHarnessSuggestionStore(_suggestionsPath),
+                Dispatcher: mockDispatcher.Object));
 
         // First trigger — dispatch fails → rollback removes from _runningRuns
         var first = await sut.TriggerAsync(
@@ -664,13 +666,14 @@ public sealed class ConsolidationServiceTests : IDisposable
             .ThrowsAsync(new InvalidOperationException("Simulated dispatch failure"));
 
         var sut = new ConsolidationService(
-            _logger,
-            _config,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            new FileSystemConsolidationRunStore(_runsDir),
-            new FileSystemHarnessSuggestionStore(_suggestionsPath),
-            mockDispatcher.Object);
+            new ConsolidationServiceDependencies(
+                _logger,
+                _config,
+                _mockProjectStore.Object,
+                _mockRunHistory.Object,
+                new FileSystemConsolidationRunStore(_runsDir),
+                new FileSystemHarnessSuggestionStore(_suggestionsPath),
+                Dispatcher: mockDispatcher.Object));
 
         // TriggerAsync cleans up state and re-throws the dispatch exception
         var act = () => sut.TriggerAsync(
@@ -715,13 +718,14 @@ public sealed class ConsolidationServiceTests : IDisposable
             .ReturnsAsync(ConsolidationDispatchResult.Queued);
 
         var sut = new ConsolidationService(
-            _logger,
-            _config,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            new FileSystemConsolidationRunStore(_runsDir),
-            new FileSystemHarnessSuggestionStore(_suggestionsPath),
-            mockDispatcher.Object);
+            new ConsolidationServiceDependencies(
+                _logger,
+                _config,
+                _mockProjectStore.Object,
+                _mockRunHistory.Object,
+                new FileSystemConsolidationRunStore(_runsDir),
+                new FileSystemHarnessSuggestionStore(_suggestionsPath),
+                Dispatcher: mockDispatcher.Object));
 
         // Trigger a run that gets queued — this adds it to _runningRuns with Queued status
         var run = await sut.TriggerAsync(

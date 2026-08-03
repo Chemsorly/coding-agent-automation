@@ -40,37 +40,26 @@ public sealed class DispatchService : BackgroundService
     private volatile bool _startupValidationRun;
 
     internal DispatchService(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        ILeaderElectionService leaderElection,
-        DispatchLifecycleService lifecycle,
-        IConfiguration configuration,
-        ILabelService? labelService = null,
-        IAgentProfileStore? agentProfileStore = null,
-        IOrchestratorRunService? runService = null)
-        : this(dbFactory, leaderElection, lifecycle, configuration,
-               LoadTemplateProvider(configuration), labelService,
-               agentProfileStore, runService)
+        DispatchServiceCoreDependencies coreDeps,
+        IConfiguration configuration)
+        : this(coreDeps, configuration,
+               LoadTemplateProvider(configuration))
     { }
 
     /// <summary>
     /// Constructor overload accepting a pre-built JobTemplateStore (for testing).
     /// </summary>
     internal DispatchService(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        ILeaderElectionService leaderElection,
-        DispatchLifecycleService lifecycle,
+        DispatchServiceCoreDependencies coreDeps,
         IConfiguration configuration,
-        JobTemplateStore templateProvider,
-        ILabelService? labelService = null,
-        IAgentProfileStore? agentProfileStore = null,
-        IOrchestratorRunService? runService = null)
+        JobTemplateStore templateProvider)
     {
-        _dbFactory = dbFactory;
-        _leaderElection = leaderElection;
-        _lifecycle = lifecycle;
-        _labelService = labelService;
-        _agentProfileStore = agentProfileStore;
-        _runService = runService;
+        _dbFactory = coreDeps.DbFactory;
+        _leaderElection = coreDeps.LeaderElection;
+        _lifecycle = coreDeps.Lifecycle;
+        _labelService = coreDeps.LabelService;
+        _agentProfileStore = coreDeps.AgentProfileStore;
+        _runService = coreDeps.RunService;
         _templateProvider = templateProvider;
         _options = DispatchServiceOptionsFactory.Create(configuration);
         _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
@@ -246,7 +235,7 @@ public sealed class DispatchService : BackgroundService
             .ToListAsync(ct);
         var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
 
-        var pvcResult = await _lifecycle.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
+        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
         WorkDistributionTelemetry.UpdateCredentialPoolMetrics(pvcResult.AvailablePvcs.Count, pvcResult.ClaimedCount);
         var availablePvcs = pvcResult.AvailablePvcs;
 
@@ -262,14 +251,15 @@ public sealed class DispatchService : BackgroundService
         Dictionary<string, int> concurrencyBySelector,
         CancellationToken ct)
     {
-        await _lifecycle.ExecuteDispatchLifecycleAsync(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, "",
+        await _lifecycle.ExecuteDispatchLifecycleAsync(
+            new DispatchLifecycleContext(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, ""),
             async _ =>
             {
                 // Load project secrets if project has them
                 Dictionary<string, string>? projectSecrets = null;
                 if (!string.IsNullOrEmpty(item.ProjectId))
                 {
-                    projectSecrets = await _lifecycle.LoadProjectSecretsAsync(db, item.ProjectId, ct);
+                    projectSecrets = await DispatchLifecycleService.LoadProjectSecretsAsync(db, item.ProjectId, ct);
                 }
                 return (true, projectSecrets);
             },
@@ -359,8 +349,9 @@ public sealed class DispatchService : BackgroundService
                 logger.Warning(
                     "DispatchService: AgentProfile '{ProfileName}' (labels=[{Labels}]) has no matching JobTemplate. " +
                     "Work items requiring this profile will fail with 'No job template for selector'. " +
-                    "Add a job template with labels matching [{Labels}] to the job-templates ConfigMap.",
+                    "Add a job template with labels matching [{MatchLabels}] to the job-templates ConfigMap.",
                     profile.DisplayName,
+                    selector,
                     selector);
             }
         }

@@ -125,9 +125,7 @@ public class DrawerStateService<TItem> : IDisposable
 
     public void ToggleLabel(string label)
     {
-        if (SelectedLabels.Contains(label))
-            SelectedLabels.Remove(label);
-        else
+        if (!SelectedLabels.Remove(label))
             SelectedLabels.Add(label);
     }
 
@@ -151,10 +149,21 @@ public class DrawerStateService<TItem> : IDisposable
         _cts = null;
     }
 
+    private bool _disposed;
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        if (disposing)
+        {
+            CancelCts();
+        }
+        _disposed = true;
+    }
+
     public void Dispose()
     {
-        _cts?.Cancel();
-        _cts?.Dispose();
-        _cts = null;
+        Dispose(true);
+        GC.SuppressFinalize(this);
     }
 }

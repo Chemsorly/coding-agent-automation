@@ -17,6 +17,24 @@ public static class LabelServiceExtensions
     /// </summary>
     public static async Task TrySwapLabelAsync(
         this ILabelService labelService,
+        LabelSwapContext ctx)
+    {
+        try
+        {
+            await labelService.SwapLabelAsync(ctx.ProviderConfigId, ctx.Identifier, ctx.NewLabel, ctx.TargetKind, ctx.Ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            ctx.Logger.Warning(ex, "{Context}: label swap to {Label} failed for {Identifier} (non-fatal)",
+                ctx.Context, ctx.NewLabel, ctx.Identifier);
+        }
+    }
+
+    /// <summary>
+    /// Best-effort label swap overload accepting individual parameters (backward-compatible).
+    /// </summary>
+    public static Task TrySwapLabelAsync(
+        this ILabelService labelService,
         ProviderConfigId providerConfigId,
         IssueIdentifier identifier,
         string newLabel,
@@ -24,17 +42,7 @@ public static class LabelServiceExtensions
         ILogger logger,
         string context,
         CancellationToken ct)
-    {
-        try
-        {
-            await labelService.SwapLabelAsync(providerConfigId, identifier, newLabel, targetKind, ct);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            logger.Warning(ex, "{Context}: label swap to {Label} failed for {Identifier} (non-fatal)",
-                context, newLabel, identifier);
-        }
-    }
+        => labelService.TrySwapLabelAsync(new LabelSwapContext(providerConfigId, identifier, newLabel, targetKind, logger, context, ct));
 
     /// <summary>
     /// Convenience overload accepting a <see cref="PipelineRun"/> — uses
@@ -49,11 +57,24 @@ public static class LabelServiceExtensions
         string context,
         CancellationToken ct)
     {
-        return labelService.TrySwapLabelAsync(
+        return labelService.TrySwapLabelAsync(new LabelSwapContext(
             run.ProviderConfigIdForLabel,
             run.IssueIdentifier,
             newLabel,
             run.LabelTargetKind,
-            logger, context, ct);
+            logger, context, ct));
     }
 }
+
+/// <summary>
+/// Groups the parameters for <see cref="LabelServiceExtensions.TrySwapLabelAsync"/>
+/// to reduce method parameter count (S107).
+/// </summary>
+public sealed record LabelSwapContext(
+    ProviderConfigId ProviderConfigId,
+    IssueIdentifier Identifier,
+    string NewLabel,
+    LabelTargetKind TargetKind,
+    ILogger Logger,
+    string Context,
+    CancellationToken Ct);

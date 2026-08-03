@@ -37,7 +37,7 @@ if (args.Length >= 1 && args[0] == "export-config")
 
     if (string.IsNullOrWhiteSpace(outputDir))
     {
-        Console.Error.WriteLine("Usage: dotnet run -- export-config --output /path/to/dir");
+        await Console.Error.WriteLineAsync("Usage: dotnet run -- export-config --output /path/to/dir");
         return;
     }
 
@@ -184,12 +184,10 @@ builder.Services.AddAuthentication(options =>
     .AddScheme<AgentApiKeyAuthOptions, AgentApiKeyAuthHandler>(
         AgentApiKeyDefaults.AuthenticationScheme,
         options => options.ApiKey = agentApiKey);
-builder.Services.AddAuthorization(options =>
-{
-    options.AddPolicy("AgentApiKey", policy =>
+builder.Services.AddAuthorizationBuilder()
+    .AddPolicy("AgentApiKey", policy =>
         policy.AddAuthenticationSchemes(AgentApiKeyDefaults.AuthenticationScheme)
               .RequireAuthenticatedUser());
-});
 
 // Configure Serilog
 var orchestratorLogLevel = LogLevelParser.Parse(

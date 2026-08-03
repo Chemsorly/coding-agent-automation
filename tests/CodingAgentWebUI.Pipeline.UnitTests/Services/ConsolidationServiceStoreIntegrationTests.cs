@@ -21,7 +21,7 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly Mock<IPipelineRunHistoryService> _mockRunHistory;
     private readonly PipelineConfiguration _config;
-    private readonly IConsolidationRunStore _store;
+    private readonly FileSystemConsolidationRunStore _store;
     private readonly IHarnessSuggestionStore _harnessStore;
     private readonly ConsolidationService _sut;
 
@@ -55,14 +55,15 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         _harnessStore = new FileSystemHarnessSuggestionStore(Path.Combine(_tempDir, "harness.json"));
 
         _sut = new ConsolidationService(
-            new LoggerConfiguration().CreateLogger(),
-            _config,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            _store,
-            _harnessStore,
-            workspaceManager: new ConsolidationWorkspaceManager(
-                new LoggerConfiguration().CreateLogger(), _config));
+            new ConsolidationServiceDependencies(
+                new LoggerConfiguration().CreateLogger(),
+                _config,
+                _mockProjectStore.Object,
+                _mockRunHistory.Object,
+                _store,
+                _harnessStore,
+                WorkspaceManager: new ConsolidationWorkspaceManager(
+                    new LoggerConfiguration().CreateLogger(), _config)));
     }
 
     public void Dispose()
@@ -263,14 +264,15 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
         _sut.Reset();
 
         var sut2 = new ConsolidationService(
-            new LoggerConfiguration().CreateLogger(),
-            _config,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            _store,
-            _harnessStore,
-            workspaceManager: new ConsolidationWorkspaceManager(
-                new LoggerConfiguration().CreateLogger(), _config));
+            new ConsolidationServiceDependencies(
+                new LoggerConfiguration().CreateLogger(),
+                _config,
+                _mockProjectStore.Object,
+                _mockRunHistory.Object,
+                _store,
+                _harnessStore,
+                WorkspaceManager: new ConsolidationWorkspaceManager(
+                    new LoggerConfiguration().CreateLogger(), _config)));
 
         var history = await sut2.GetRunHistoryAsync(CancellationToken.None);
         history.Should().ContainSingle();
@@ -289,14 +291,15 @@ public sealed class ConsolidationServiceStoreIntegrationTests : IDisposable
 
         // Act: simulate restart — new service instance calls cleanup
         var sut2 = new ConsolidationService(
-            new LoggerConfiguration().CreateLogger(),
-            _config,
-            _mockProjectStore.Object,
-            _mockRunHistory.Object,
-            _store,
-            _harnessStore,
-            workspaceManager: new ConsolidationWorkspaceManager(
-                new LoggerConfiguration().CreateLogger(), _config));
+            new ConsolidationServiceDependencies(
+                new LoggerConfiguration().CreateLogger(),
+                _config,
+                _mockProjectStore.Object,
+                _mockRunHistory.Object,
+                _store,
+                _harnessStore,
+                WorkspaceManager: new ConsolidationWorkspaceManager(
+                    new LoggerConfiguration().CreateLogger(), _config)));
         await sut2.CleanupOrphanedRunsAsync(CancellationToken.None);
 
         // Assert

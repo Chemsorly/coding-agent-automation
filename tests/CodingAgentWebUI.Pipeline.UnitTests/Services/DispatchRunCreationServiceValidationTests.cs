@@ -40,10 +40,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var defaultId = default(ProviderConfigId);
 
         var act = () => _service.CreateDispatchedRunAsync(
-            defaultId, "repo-1", "42", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = defaultId, RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "issueProviderId");
+            .Where(e => e.ParamName == "IssueProviderId");
     }
 
     [Fact]
@@ -52,10 +53,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var defaultId = default(ProviderConfigId);
 
         var act = () => _service.CreateDispatchedRunAsync(
-            "issue-1", defaultId, "42", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = defaultId, IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "repoProviderId");
+            .Where(e => e.ParamName == "RepoProviderId");
     }
 
     [Fact]
@@ -64,10 +66,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var defaultId = default(ProviderConfigId);
 
         var act = () => _service.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "42", defaultId, "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = defaultId, AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "agentProviderId");
+            .Where(e => e.ParamName == "AgentProviderId");
     }
 
     [Fact]
@@ -76,10 +79,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var emptyId = new ProviderConfigId(string.Empty);
 
         var act = () => _service.CreateDispatchedRunAsync(
-            emptyId, "repo-1", "42", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = emptyId, RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "issueProviderId");
+            .Where(e => e.ParamName == "IssueProviderId");
     }
 
     [Fact]
@@ -88,10 +92,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var emptyId = new ProviderConfigId(string.Empty);
 
         var act = () => _service.CreateDispatchedRunAsync(
-            "issue-1", emptyId, "42", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = emptyId, IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "repoProviderId");
+            .Where(e => e.ParamName == "RepoProviderId");
     }
 
     [Fact]
@@ -100,10 +105,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var emptyId = new ProviderConfigId(string.Empty);
 
         var act = () => _service.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "42", emptyId, "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = emptyId, AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "agentProviderId");
+            .Where(e => e.ParamName == "AgentProviderId");
     }
 
     // ── ReserveRunIdAsync validation ──
@@ -114,10 +120,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var defaultId = default(ProviderConfigId);
 
         var act = () => _service.ReserveRunIdAsync(
-            defaultId, "repo-1", "42", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = defaultId, RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "issueProviderId");
+            .Where(e => e.ParamName == "IssueProviderId");
     }
 
     [Fact]
@@ -126,10 +133,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var defaultId = default(ProviderConfigId);
 
         var act = () => _service.ReserveRunIdAsync(
-            "issue-1", defaultId, "42", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = defaultId, IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "repoProviderId");
+            .Where(e => e.ParamName == "RepoProviderId");
     }
 
     [Fact]
@@ -138,10 +146,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var defaultId = default(ProviderConfigId);
 
         var act = () => _service.ReserveRunIdAsync(
-            "issue-1", "repo-1", "42", defaultId, "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = defaultId, AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "agentProviderId");
+            .Where(e => e.ParamName == "AgentProviderId");
     }
 
     [Fact]
@@ -150,10 +159,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var emptyId = new ProviderConfigId(string.Empty);
 
         var act = () => _service.ReserveRunIdAsync(
-            emptyId, "repo-1", "42", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = emptyId, RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "issueProviderId");
+            .Where(e => e.ParamName == "IssueProviderId");
     }
 
     [Fact]
@@ -162,10 +172,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var emptyId = new ProviderConfigId(string.Empty);
 
         var act = () => _service.ReserveRunIdAsync(
-            "issue-1", emptyId, "42", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = emptyId, IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "repoProviderId");
+            .Where(e => e.ParamName == "RepoProviderId");
     }
 
     [Fact]
@@ -174,10 +185,11 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
         var emptyId = new ProviderConfigId(string.Empty);
 
         var act = () => _service.ReserveRunIdAsync(
-            "issue-1", "repo-1", "42", emptyId, "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = emptyId, AgentId = "agent-x" },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "agentProviderId");
+            .Where(e => e.ParamName == "AgentProviderId");
     }
 
     public async ValueTask DisposeAsync()

@@ -89,7 +89,7 @@
         {
             var completed = Runs
                 .Where(r => r.CompletedAtOffset.HasValue)
-                .Select(r => (r.CompletedAtOffset!.Value - r.StartedAtOffset).TotalMinutes)
+                .Select(r => (r.CompletedAtOffset.GetValueOrDefault() - r.StartedAtOffset).TotalMinutes)
                 .ToList();
             if (completed.Count == 0) return "-";
             var avg = completed.Average();

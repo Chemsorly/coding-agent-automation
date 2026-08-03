@@ -114,5 +114,6 @@ public sealed class PipelineRunInstrumentation : IDisposable
             PipelineTelemetry.JobsFailed.Add(1, _tags);
 
         Activity?.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

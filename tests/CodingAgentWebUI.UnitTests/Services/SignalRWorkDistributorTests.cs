@@ -56,7 +56,6 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _mockResolver.Object,
             new Mock<IOrchestratorRunService>().Object,
             new Mock<IProjectStore>().Object,
-            _mockLabelService.Object,
             NullLogger<SignalRWorkDistributor>.Instance);
     }
 
@@ -523,7 +522,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         // Arrange: mock OrchestratorRunService with a run that has AgentId="pending"
         var runId = Guid.NewGuid().ToString();
         var mockRunService = new Mock<IOrchestratorRunService>();
-        var pipelineRun = PipelineRun.Create(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "pending");
+        var pipelineRun = PipelineRun.CreateImplementation(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "pending");
         mockRunService.Setup(r => r.GetRun(runId)).Returns(pipelineRun);
 
         var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
@@ -531,7 +530,6 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, mockRunService.Object,
             new Mock<IProjectStore>().Object,
-            new Mock<ILabelService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance);
 
         var request = CreateMinimalRequest() with { RunId = runId };
@@ -652,7 +650,6 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
             mockProjectStore.Object,
-            new Mock<ILabelService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance);
 
         var request = CreateMinimalRequest() with { ProjectId = projectId };
@@ -685,7 +682,6 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
             mockProjectStore.Object,
-            new Mock<ILabelService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance);
 
         var request = CreateMinimalRequest(); // no ProjectId
@@ -752,7 +748,6 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _mockResolver.Object,
             new Mock<IOrchestratorRunService>().Object,
             new Mock<IProjectStore>().Object,
-            _mockLabelService.Object,
             NullLogger<SignalRWorkDistributor>.Instance,
             mockLifecycle.Object);
 
@@ -790,7 +785,6 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             _mockResolver.Object,
             new Mock<IOrchestratorRunService>().Object,
             new Mock<IProjectStore>().Object,
-            _mockLabelService.Object,
             NullLogger<SignalRWorkDistributor>.Instance,
             mockLifecycle.Object);
 
@@ -818,7 +812,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         var mockLifecycle = new Mock<IRunLifecycleManager>();
         var mockCancellation = new Mock<IAgentCancellationSender>();
         var runId = Guid.NewGuid().ToString();
-        var cancelledRun = PipelineRun.Create(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "agent-1");
+        var cancelledRun = PipelineRun.CreateImplementation(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "agent-1");
 
         mockLifecycle
             .Setup(l => l.CancelRunAsync(runId, It.IsAny<CancellationToken>()))
@@ -828,7 +822,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         var sut = new SignalRWorkDistributor(
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
-            new Mock<IProjectStore>().Object, new Mock<ILabelService>().Object,
+            new Mock<IProjectStore>().Object,
             NullLogger<SignalRWorkDistributor>.Instance,
             mockLifecycle.Object, mockCancellation.Object);
 
@@ -847,7 +841,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         var mockLifecycle = new Mock<IRunLifecycleManager>();
         var mockCancellation = new Mock<IAgentCancellationSender>();
         var runId = Guid.NewGuid().ToString();
-        var cancelledRun = PipelineRun.Create(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "agent-42");
+        var cancelledRun = PipelineRun.CreateImplementation(runId, "owner/repo#1", "", "ip-1", "rp-1", agentId: "agent-42");
 
         mockLifecycle
             .Setup(l => l.CancelRunAsync(runId, It.IsAny<CancellationToken>()))
@@ -857,7 +851,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         var sut = new SignalRWorkDistributor(
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
-            new Mock<IProjectStore>().Object, new Mock<ILabelService>().Object,
+            new Mock<IProjectStore>().Object,
             NullLogger<SignalRWorkDistributor>.Instance,
             mockLifecycle.Object, mockCancellation.Object);
 
@@ -899,7 +893,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         var sut = new SignalRWorkDistributor(
             _dbFactory, _mockAgentComm.Object, transitionService,
             _mockResolver.Object, new Mock<IOrchestratorRunService>().Object,
-            new Mock<IProjectStore>().Object, new Mock<ILabelService>().Object,
+            new Mock<IProjectStore>().Object,
             NullLogger<SignalRWorkDistributor>.Instance,
             mockLifecycle.Object, null);
 

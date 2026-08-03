@@ -63,12 +63,12 @@ public class PvcPoolArbitraries
                select $"pvc-kiro-{suffix}";
     }
 
-    private static Gen<IReadOnlyList<string>> GenSubset(IReadOnlyList<string> source)
+    private static Gen<List<string>> GenSubset(List<string> source)
     {
         if (source.Count == 0)
-            return Gen.Constant<IReadOnlyList<string>>(Array.Empty<string>());
+            return Gen.Constant<List<string>>([]);
 
         return from flags in Gen.Elements(true, false).ArrayOf(source.Count)
-               select (IReadOnlyList<string>)source.Where((_, i) => flags[i]).ToList();
+               select source.Where((_, i) => flags[i]).ToList();
     }
 }

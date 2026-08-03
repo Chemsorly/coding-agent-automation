@@ -86,23 +86,19 @@ public sealed class ActiveRunRehydrationIntegrationTests : IDisposable
         rehydratedRun.AgentId.Should().BeNull();
 
         // Create HeartbeatMonitor with real services
-        var dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        var mockLabelService = new Mock<ILabelService>();
         var mockConfigStore = new Mock<IConfigurationStore>();
         mockConfigStore
             .Setup(c => c.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PipelineConfiguration());
 
-        var monitor = new HeartbeatMonitorService(
+        var monitor = new HeartbeatMonitorService(new HeartbeatMonitorDependencies(
             _registry,
             _runService,
             mockHistoryService.Object,
-            dispatcher,
-            mockLabelService.Object,
             mockConfigStore.Object,
             _mockLogger.Object,
-            lifecycleManager: new Mock<IRunLifecycleManager>().Object);
+            LifecycleManager: new Mock<IRunLifecycleManager>().Object));
 
         // Act — run a sweep (Phase 3 checks for orphaned runs)
         await monitor.SweepAsync(CancellationToken.None);

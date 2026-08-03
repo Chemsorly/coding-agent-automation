@@ -22,7 +22,6 @@ namespace CodingAgentWebUI.Pipeline.Services;
 public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrchestrationShutdownAction
 {
     private readonly PipelineRunLifecycleService _lifecycle;
-    private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly ILabelService _labelSwapper;
     private readonly IssueDescriptionParser _issueParser;
     private readonly IPipelineCancellationFacade _cancellationFacade;
@@ -31,7 +30,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
     protected readonly PipelineProviderManager _providerManager;
 
     public PipelineOrchestrationService(
-        IPipelineConfigStore pipelineConfigStore,
         IConfigurationStore configurationStore,
         IProviderFactory providerFactory,
         IssueDescriptionParser issueParser,
@@ -40,7 +38,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         ILabelService labelSwapper,
         Serilog.ILogger logger)
     {
-        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
         ArgumentNullException.ThrowIfNull(configurationStore);
         ArgumentNullException.ThrowIfNull(providerFactory);
         ArgumentNullException.ThrowIfNull(issueParser);
@@ -49,7 +46,6 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         ArgumentNullException.ThrowIfNull(labelSwapper);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _pipelineConfigStore = pipelineConfigStore;
         _labelSwapper = labelSwapper;
         _issueParser = issueParser;
         _logger = logger;
@@ -132,16 +128,33 @@ public class PipelineOrchestrationService : IDisposable, IAsyncDisposable, IOrch
         }
     }
 
-    public async ValueTask DisposeAsync()
+    private bool _disposed;
+
+    protected virtual void Dispose(bool disposing)
     {
-        await _providerManager.DisposeAsync();
-        GC.SuppressFinalize(this);
+        if (_disposed) return;
+        if (disposing)
+        {
+            // Sync-only managed resources: none currently (provider manager is async-disposed).
+            // DisposeAsync() handles _providerManager disposal.
+        }
+        _disposed = true;
     }
+
     public void Dispose()
     {
-        // Do not call DisposePreviousProvidersAsync synchronously — .GetAwaiter().GetResult()
+        Dispose(true);
+        // Do not call DisposeAsync synchronously — .GetAwaiter().GetResult()
         // deadlocks in Blazor Server's SynchronizationContext (review finding #13).
-        // DisposeAsync() is the correct disposal path; sync Dispose handles only sync resources.
+        // DisposeAsync() is the correct disposal path for async resources.
+        GC.SuppressFinalize(this);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        await _providerManager.DisposeAsync();
         GC.SuppressFinalize(this);
     }
 

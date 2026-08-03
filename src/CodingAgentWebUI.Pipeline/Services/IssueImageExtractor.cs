@@ -104,7 +104,7 @@ public sealed partial class IssueImageExtractor
         return $"{kindPrefix}-{sourceIdentifier}-image-{(index + 1):D3}{extension}";
     }
 
-    private void ExtractFromMarkdown(
+    private static void ExtractFromMarkdown(
         string markdown,
         ImageSourceType sourceType,
         int sourceIndex,
@@ -122,23 +122,15 @@ public sealed partial class IssueImageExtractor
         var extractedUrls = new List<(string Url, string AltText)>();
 
         // Clickable thumbnails first (they contain inline images — extract inner only)
-        foreach (Match match in ClickableThumbnailPattern().Matches(nonCodeText))
-        {
-            var alt = match.Groups[1].Value;
-            var url = match.Groups[2].Value;
-            extractedUrls.Add((url, alt));
-        }
+        extractedUrls.AddRange(ClickableThumbnailPattern().Matches(nonCodeText)
+            .Select(match => (match.Groups[2].Value, match.Groups[1].Value)));
 
         // Remove clickable thumbnails from text to avoid double-extracting the inner image
         var textWithoutThumbnails = ClickableThumbnailPattern().Replace(nonCodeText, "");
 
         // Inline images
-        foreach (Match match in InlineImagePattern().Matches(textWithoutThumbnails))
-        {
-            var alt = match.Groups[1].Value;
-            var url = match.Groups[2].Value;
-            extractedUrls.Add((url, alt));
-        }
+        extractedUrls.AddRange(InlineImagePattern().Matches(textWithoutThumbnails)
+            .Select(match => (match.Groups[2].Value, match.Groups[1].Value)));
 
         // Reference images
         foreach (Match match in ReferenceImagePattern().Matches(textWithoutThumbnails))
@@ -152,11 +144,8 @@ public sealed partial class IssueImageExtractor
         }
 
         // HTML img tags
-        foreach (Match match in HtmlImgPattern().Matches(textWithoutThumbnails))
-        {
-            var url = match.Groups[1].Value;
-            extractedUrls.Add((url, ""));
-        }
+        extractedUrls.AddRange(HtmlImgPattern().Matches(textWithoutThumbnails)
+            .Select(match => (match.Groups[1].Value, "")));
 
         // Filter and deduplicate
         foreach (var (url, alt) in extractedUrls)

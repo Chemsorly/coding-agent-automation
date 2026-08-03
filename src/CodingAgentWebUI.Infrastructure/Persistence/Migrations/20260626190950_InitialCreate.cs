@@ -10,6 +10,10 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
     /// <inheritdoc />
     public partial class InitialCreate : Migration
     {
+        private static readonly string[] FinalStepCompletedAtColumns = ["FinalStep", "CompletedAt"];
+        private static readonly string[] IssueIdentifierProviderColumns = ["IssueIdentifier", "IssueProviderConfigId"];
+        private static readonly string[] IssueIdentifierProviderStatusColumns = ["IssueIdentifier", "IssueProviderConfigId", "Status"];
+
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
@@ -195,24 +199,24 @@ namespace CodingAgentWebUI.Infrastructure.Persistence.Migrations
                 name: "IX_PipelineRuns_StartedAt",
                 table: "PipelineRuns",
                 column: "StartedAt",
-                descending: new bool[0]);
+                descending: Array.Empty<bool>());
 
             migrationBuilder.CreateIndex(
                 name: "IX_PipelineRuns_FinalStep_CompletedAt",
                 table: "PipelineRuns",
-                columns: new[] { "FinalStep", "CompletedAt" });
+                columns: FinalStepCompletedAtColumns);
 
             migrationBuilder.CreateIndex(
                 name: "IX_WorkItems_IssueIdentifier_IssueProviderConfigId",
                 table: "WorkItems",
-                columns: new[] { "IssueIdentifier", "IssueProviderConfigId" },
+                columns: IssueIdentifierProviderColumns,
                 unique: true,
                 filter: "\"Status\" NOT IN (3, 4, 5)");
 
             migrationBuilder.CreateIndex(
                 name: "IX_WorkItems_IssueIdentifier_IssueProviderConfigId_Status",
                 table: "WorkItems",
-                columns: new[] { "IssueIdentifier", "IssueProviderConfigId", "Status" });
+                columns: IssueIdentifierProviderStatusColumns);
 
             migrationBuilder.CreateIndex(
                 name: "IX_WorkItems_Status",

@@ -33,16 +33,16 @@ public sealed class ConsolidationServiceStoreDelegationTests
             });
     }
 
-    private ConsolidationService CreateSut() => new(
+    private ConsolidationService CreateSut() => new(new ConsolidationServiceDependencies(
         new LoggerConfiguration().CreateLogger(),
         new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() },
         _mockProjectStore.Object,
         _mockRunHistory.Object,
         _mockRunStore.Object,
         _mockHarnessStore.Object,
-        workspaceManager: new ConsolidationWorkspaceManager(
+        WorkspaceManager: new ConsolidationWorkspaceManager(
             new LoggerConfiguration().CreateLogger(),
-            new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() }));
+            new PipelineConfiguration { WorkspaceBaseDirectory = Path.GetTempPath() })));
 
     [Fact]
     public async Task UpdateRunAsync_Calls_GetByIdAsync_OnStore()

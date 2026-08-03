@@ -53,7 +53,7 @@ public class AgentJobRunnerTests
 
         var result = await AgentJobRunner.ExecuteAsync(
             _mockExecutor.Object, _assignment, null!,
-            _ => { }, CancellationToken.None);
+            _ => { }, ct: CancellationToken.None);
 
         result.FinalStep.Should().Be(PipelineStep.Completed);
     }
@@ -69,7 +69,7 @@ public class AgentJobRunnerTests
 
         var result = await AgentJobRunner.ExecuteAsync(
             _mockExecutor.Object, _assignment, null!,
-            _ => { }, CancellationToken.None);
+            _ => { }, ct: CancellationToken.None);
 
         result.FinalStep.Should().Be(PipelineStep.Cancelled);
         result.CompletedAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(2));
@@ -86,7 +86,7 @@ public class AgentJobRunnerTests
 
         var result = await AgentJobRunner.ExecuteAsync(
             _mockExecutor.Object, _assignment, null!,
-            _ => { }, CancellationToken.None);
+            _ => { }, ct: CancellationToken.None);
 
         result.IsRework.Should().BeTrue(); // LinkedPullRequest is set
     }
@@ -102,7 +102,7 @@ public class AgentJobRunnerTests
 
         var result = await AgentJobRunner.ExecuteAsync(
             _mockExecutor.Object, _assignment, null!,
-            _ => { }, CancellationToken.None);
+            _ => { }, ct: CancellationToken.None);
 
         result.FinalStep.Should().Be(PipelineStep.Failed);
         result.FailureReason.Should().Be("Something broke");
@@ -120,7 +120,7 @@ public class AgentJobRunnerTests
 
         var result = await AgentJobRunner.ExecuteAsync(
             _mockExecutor.Object, _assignment, null!,
-            _ => { }, CancellationToken.None);
+            _ => { }, ct: CancellationToken.None);
 
         result.IsRework.Should().BeTrue();
     }

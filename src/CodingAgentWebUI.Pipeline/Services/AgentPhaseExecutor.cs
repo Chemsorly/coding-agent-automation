@@ -79,41 +79,35 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     /// </remarks>
     /// <returns>The <see cref="AgentResult"/> on success, or <c>null</c> if a non-cancellation exception was caught and absorbed.</returns>
     internal static async Task<AgentResult?> ExecuteAgentAndRecordAsync(
-        IAgentProvider agentProvider,
-        string prompt,
-        PipelineRun run,
-        PipelineConfiguration config,
-        string description,
+        AgentExecutionRequest request,
         IPipelineCallbacks callbacks,
-        Serilog.ILogger logger,
         CancellationToken ct,
         bool recordOutputToHistory = true,
-        string? resumeSessionId = null,
-        string? phase = null)
+        string? resumeSessionId = null)
     {
         try
         {
             var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-                agentProvider,
+                request.AgentProvider,
                 new AgentRequest
                 {
-                    Prompt = prompt,
-                    WorkspacePath = run.WorkspacePath!,
-                    Timeout = config.AgentTimeout,
+                    Prompt = request.Prompt,
+                    WorkspacePath = request.Run.WorkspacePath!,
+                    Timeout = request.Config.AgentTimeout,
                     UseResume = resumeSessionId is null,
                     ResumeSessionId = resumeSessionId
                 },
-                run, config, description, callbacks.NotifyChange, logger, ct,
+                request.Run, request.Config, request.Description, callbacks.NotifyChange, request.Logger, ct,
                 line => callbacks.EmitOutputLine(line));
 
-            run.AccumulateTokenUsage(agentResult, phase: phase);
+            request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase);
 
             if (recordOutputToHistory)
             {
                 var outputSummary = agentResult.OutputLines.Count > 0
                     ? string.Join(Environment.NewLine, agentResult.OutputLines.TakeLast(PipelineConstants.OutputTailLineCount))
                     : PipelineConstants.NoOutputFallback;
-                run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
+                request.Run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.Agent, Content = outputSummary });
             }
 
             return agentResult;
@@ -124,11 +118,11 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
         }
         catch (Exception ex)
         {
-            logger.Warning(ex, "Pipeline {RunId} {Description} failed", run.RunId, description);
-            run.ChatHistory.Enqueue(new ChatEntry
+            request.Logger.Warning(ex, "Pipeline {RunId} {Description} failed", request.Run.RunId, request.Description);
+            request.Run.ChatHistory.Enqueue(new ChatEntry
             {
                 Role = ChatRole.System,
-                Content = $"Agent error during {description}: {ex.Message}"
+                Content = $"Agent error during {request.Description}: {ex.Message}"
             });
             return null;
         }
@@ -149,29 +143,22 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     /// Used by <c>ExecuteFollowUpAsync</c> and <c>GenerateReviewSummarySafeAsync</c> in the CodeReview partial.
     /// </remarks>
     internal static async Task<AgentResult> ExecuteAgentRawAsync(
-        IAgentProvider agentProvider,
-        string prompt,
-        PipelineRun run,
-        PipelineConfiguration config,
-        string description,
-        Action? onChange,
-        Serilog.ILogger logger,
-        CancellationToken ct,
-        Action<string>? onOutputLine = null,
-        string? phase = null)
+        AgentExecutionRequest request,
+        CancellationToken ct)
     {
         var agentResult = await AgentStallMonitor.ExecuteWithMonitoringAsync(
-            agentProvider,
+            request.AgentProvider,
             new AgentRequest
             {
-                Prompt = prompt,
-                WorkspacePath = run.WorkspacePath!,
-                Timeout = config.AgentTimeout,
+                Prompt = request.Prompt,
+                WorkspacePath = request.Run.WorkspacePath!,
+                Timeout = request.Config.AgentTimeout,
                 UseResume = false
             },
-            run, config, description, onChange, logger, ct, onOutputLine);
+            request.Run, request.Config, request.Description, request.OnChange, request.Logger, ct,
+            request.OnOutputLine);
 
-        run.AccumulateTokenUsage(agentResult, phase: phase);
+        request.Run.AccumulateTokenUsage(agentResult, phase: request.Phase);
         return agentResult;
     }
 
@@ -179,21 +166,15 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     /// Unified failure helper that encapsulates the standard fail-phase pattern:
     /// set FailureReason → set CompletedAt → swap label → transition step → add to history → return false.
     /// </summary>
-    private async Task<bool> FailPhaseAsync(
-        PipelineRun run,
-        string failureReason,
-        string label,
-        PipelineStep step,
-        IAgentIssueOperations issueOps,
-        IPipelineCallbacks callbacks,
-        CancellationToken ct)
+    private static async Task<bool> FailPhaseAsync(FailPhaseRequest request)
     {
-        run.FailureReason = failureReason;
-        run.FinalLabel = label;
+        var run = request.Run;
+        run.FailureReason = request.FailureReason;
+        run.FinalLabel = request.Label;
         run.MarkCompleted();
-        await issueOps.SwapLabelAsync(run.IssueIdentifier, label, ct);
-        callbacks.TransitionTo(step);
-        await callbacks.AddRunToHistoryAsync(run);
+        await request.IssueOps.SwapLabelAsync(run.IssueIdentifier, request.Label, request.Ct);
+        request.Callbacks.TransitionTo(request.Step);
+        await request.Callbacks.AddRunToHistoryAsync(run);
         return false;
     }
 

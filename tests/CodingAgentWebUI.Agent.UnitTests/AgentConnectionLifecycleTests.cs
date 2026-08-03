@@ -12,7 +12,7 @@ namespace CodingAgentWebUI.Agent.UnitTests;
 /// - Race-freedom between DisposeAsync and ShutdownAsync
 /// - Idempotent disposal
 /// </summary>
-public class AgentConnectionLifecycleTests
+public partial class AgentConnectionLifecycleTests
 {
     // ── Interface compliance ─────────────────────────────────────────────
 
@@ -167,7 +167,7 @@ public class AgentConnectionLifecycleTests
             Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "AgentConnectionLifecycle.cs"));
 
         // Find all bare _hubManager = assignments (not inside Interlocked calls)
-        var matches = Regex.Matches(sourceCode, @"(?<!Interlocked\.\w+\(ref\s)_hubManager\s*=\s*");
+        var matches = HubManagerAssignmentRegex().Matches(sourceCode);
 
         // Extract the constructor body to identify which matches are in the constructor
         var constructorStart = sourceCode.IndexOf("public AgentConnectionLifecycle(", StringComparison.Ordinal);
@@ -194,6 +194,9 @@ public class AgentConnectionLifecycleTests
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
+
+    [GeneratedRegex(@"(?<!Interlocked\.\w+\(ref\s)_hubManager\s*=\s*")]
+    private static partial Regex HubManagerAssignmentRegex();
 
     private static string GetSourceDirectory()
     {

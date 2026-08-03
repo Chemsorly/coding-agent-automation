@@ -232,8 +232,9 @@ public sealed partial class AgentJobDispatcher
         PipelineProject? project = null)
     {
         var preparation = new ImplementationDispatchPreparation(
-            _infra, _orchestration, _logger, agent, issueIdentifier, issueProviderId,
-            repoProviderId, brainProviderId, pipelineProviderId, initiatedBy, requiredLabels);
+            new ImplementationDispatchRequest(
+                _infra, _orchestration, _logger, agent, issueIdentifier, issueProviderId,
+                repoProviderId, brainProviderId, pipelineProviderId, initiatedBy, requiredLabels));
 
         return await ExecuteDispatchPipelineAsync(
             agent, issueIdentifier, "issue",
@@ -310,9 +311,10 @@ public sealed partial class AgentJobDispatcher
                 // the strategy instance, or restructuring the delegate to accept a pre-built
                 // strategy.
                 var preparation = new DecompositionDispatchPreparation(
-                    _infra, _orchestration, _logger, agent, epicIdentifier, epicTitle, phaseType,
-                    issueProviderId, repoProviderId, brainProviderId, initiatedBy,
-                    decompositionSource);
+                    new DecompositionDispatchRequest(
+                        _infra, _orchestration, _logger, agent, epicIdentifier, epicTitle, phaseType,
+                        issueProviderId, repoProviderId, brainProviderId, initiatedBy,
+                        decompositionSource));
                 return preparation.PrepareAsync(proj, profile, agentProviderId, token);
             },
             ct);

@@ -60,31 +60,25 @@ public sealed class JobQueueDrainService : BackgroundService
     internal const int MaxConsolidationDispatchRetries = 5;
 
     internal JobQueueDrainService(
-        JobDeduplicationGuardService dispatcher,
-        IAgentRegistryService registry,
-        IJobDispatcher jobDispatcher,
-        IConfigurationStore configStore,
-        IConsolidationDispatchService consolidationDispatcher,
-        IShutdownSignal shutdownSignal,
-        ILogger logger,
-        IConsolidationRunStore? consolidationRunStore = null)
+        JobQueueDrainDependencies deps)
     {
-        ArgumentNullException.ThrowIfNull(dispatcher);
-        ArgumentNullException.ThrowIfNull(registry);
-        ArgumentNullException.ThrowIfNull(jobDispatcher);
-        ArgumentNullException.ThrowIfNull(configStore);
-        ArgumentNullException.ThrowIfNull(consolidationDispatcher);
-        ArgumentNullException.ThrowIfNull(shutdownSignal);
-        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.Dispatcher);
+        ArgumentNullException.ThrowIfNull(deps.Registry);
+        ArgumentNullException.ThrowIfNull(deps.JobDispatcher);
+        ArgumentNullException.ThrowIfNull(deps.ConfigStore);
+        ArgumentNullException.ThrowIfNull(deps.ConsolidationDispatcher);
+        ArgumentNullException.ThrowIfNull(deps.ShutdownSignal);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
 
-        _dispatcher = dispatcher;
-        _registry = registry;
-        _jobDispatcher = jobDispatcher;
-        _configStore = configStore;
-        _consolidationDispatcher = consolidationDispatcher;
-        _consolidationRunStore = consolidationRunStore;
-        _shutdownSignal = shutdownSignal;
-        _logger = logger;
+        _dispatcher = deps.Dispatcher;
+        _registry = deps.Registry;
+        _jobDispatcher = deps.JobDispatcher;
+        _configStore = deps.ConfigStore;
+        _consolidationDispatcher = deps.ConsolidationDispatcher;
+        _consolidationRunStore = deps.ConsolidationRunStore;
+        _shutdownSignal = deps.ShutdownSignal;
+        _logger = deps.Logger;
     }
 
     /// <summary>

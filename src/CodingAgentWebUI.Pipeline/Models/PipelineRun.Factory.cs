@@ -3,59 +3,6 @@ namespace CodingAgentWebUI.Pipeline.Models;
 public sealed partial class PipelineRun
 {
     /// <summary>
-    /// Creates a new <see cref="PipelineRun"/> with invariant defaults and all init-only properties.
-    /// Mutable properties (RepositoryName, ModelName, ProjectId, etc.) should be set after construction.
-    /// </summary>
-    /// <remarks>
-    /// Prefer the variant-specific factory methods (<see cref="CreateImplementation"/>, <see cref="CreateReview"/>,
-    /// <see cref="CreateDecomposition"/>) when the run type is known at compile time. This method remains
-    /// available for call sites that determine run type at runtime.
-    /// </remarks>
-    [Obsolete("Use CreateImplementation, CreateReview, or CreateDecomposition when the run type is known at compile time.")]
-    public static PipelineRun Create(
-        string runId,
-        string issueIdentifier,
-        string issueTitle,
-        string issueProviderConfigId,
-        string repoProviderConfigId,
-        PipelineRunType runType = PipelineRunType.Implementation,
-        DateTimeOffset? startedAt = null,
-        string initiatedBy = "manual",
-        string? agentId = null,
-        string? agentProviderConfigId = null,
-        string? brainProviderConfigId = null,
-        string? reviewPrBranchName = null,
-        string? reviewPrTargetBranch = null,
-        string? reviewPrUrl = null,
-        string? reviewPrDescription = null,
-        string? reviewPrAuthor = null,
-        IReadOnlyList<LinkedIssueContext>? linkedIssueContexts = null,
-        string? decompositionSource = null)
-    {
-        return CreateCore(new PipelineRunCreationParams
-        {
-            RunId = runId,
-            IssueIdentifier = issueIdentifier,
-            IssueTitle = issueTitle,
-            IssueProviderConfigId = issueProviderConfigId,
-            RepoProviderConfigId = repoProviderConfigId,
-            RunType = runType,
-            StartedAt = startedAt,
-            InitiatedBy = initiatedBy,
-            AgentId = agentId,
-            AgentProviderConfigId = agentProviderConfigId,
-            BrainProviderConfigId = brainProviderConfigId,
-            ReviewPrBranchName = reviewPrBranchName,
-            ReviewPrTargetBranch = reviewPrTargetBranch,
-            ReviewPrUrl = reviewPrUrl,
-            ReviewPrDescription = reviewPrDescription,
-            ReviewPrAuthor = reviewPrAuthor,
-            LinkedIssueContexts = linkedIssueContexts,
-            DecompositionSource = decompositionSource
-        });
-    }
-
-    /// <summary>
     /// Creates a new <see cref="PipelineRun"/> for an implementation (issue → code → PR) workflow.
     /// </summary>
     public static PipelineRun CreateImplementation(

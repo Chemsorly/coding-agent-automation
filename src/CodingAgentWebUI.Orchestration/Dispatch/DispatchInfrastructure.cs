@@ -311,17 +311,18 @@ public sealed class DispatchInfrastructure
         bool ForceRefresh,
         string? StalenessSignal,
         int RefreshCount)?> PrepareDispatchCoreAsync(
-        IReadOnlyList<string> requiredLabels,
-        string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
-        string agentProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        PipelineProject project,
-        ILogger logger,
+        DispatchCoreRequest request,
         CancellationToken ct)
     {
+        var requiredLabels = request.RequiredLabels;
+        var issueIdentifier = request.IssueIdentifier;
+        var issueProviderId = request.IssueProviderId;
+        var repoProviderId = request.RepoProviderId;
+        var agentProviderId = request.AgentProviderId;
+        var brainProviderId = request.BrainProviderId;
+        var pipelineProviderId = request.PipelineProviderId;
+        var project = request.Project;
+        var logger = request.Logger;
         // ── Step 1: Resolve quality gate and reviewer configurations ──
         var resolvedQgcs = await Resolution.ResolveQualityGatesAsync(requiredLabels, ct);
         var resolvedReviewerConfigs = await Resolution.ResolveReviewersAsync(requiredLabels, ct);
@@ -371,11 +372,13 @@ public sealed class DispatchInfrastructure
                 }
 
                 var result = await StalenessDetector.EvaluateAsync(
-                    analysisComment, issueContext.IssueComments,
-                    issueContext.IssueDetail.Description,
-                    issueIdentifier, issueProviderId,
-                    config.AnalysisCommitThreshold,
-                    getCommitCount, ct);
+                    new StalenessEvaluationRequest(
+                        analysisComment, issueContext.IssueComments,
+                        issueContext.IssueDetail.Description,
+                        issueIdentifier, issueProviderId,
+                        config.AnalysisCommitThreshold,
+                        getCommitCount),
+                    ct);
 
                 if (result.ForceRefresh)
                 {

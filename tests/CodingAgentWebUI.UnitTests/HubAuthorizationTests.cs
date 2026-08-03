@@ -31,15 +31,13 @@ public class HubAuthorizationTests
         AgentRegistryService registry,
         OrchestratorRunService runService,
         Mock<IConfigurationStore> mockConfigStore) =>
-        new(
+        new(new HeartbeatMonitorDependencies(
             registry,
             runService,
             new Mock<IPipelineRunHistoryService>().Object,
-            new JobDeduplicationGuardService(registry, new Mock<ILogger>().Object),
-            new Mock<ILabelService>().Object,
             mockConfigStore.Object,
             new Mock<ILogger>().Object,
-            lifecycleManager: new Mock<IRunLifecycleManager>().Object);
+            LifecycleManager: new Mock<IRunLifecycleManager>().Object));
 
     private static AgentEntry RegisterAgent(
         AgentRegistryService registry,

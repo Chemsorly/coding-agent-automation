@@ -47,7 +47,7 @@ internal static class TestAgentWorkerServiceFactory
             new AgentId("test-agent"),
             lifetime, mockLogger);
 
-        var service = new AgentWorkerService(
+        var service = new AgentWorkerService(new AgentWorkerServiceDependencies(
             lifecycle, slotManager,
             new AgentId("test-agent"),
             CreateMockExecutor(mockOrchestrator),
@@ -56,7 +56,7 @@ internal static class TestAgentWorkerServiceFactory
             mockOrchestrator,
             Mock.Of<IHttpClientFactory>(),
             lifetime,
-            mockLogger);
+            mockLogger));
 
         return (service, slotManager, lifecycle);
     }

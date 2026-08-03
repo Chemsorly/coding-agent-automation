@@ -47,9 +47,18 @@ public class AgentCodingPageServiceTests
             providerFactory: _mockProviderFactory.Object,
             historyService: mockHistoryService.Object);
 
-        _loopService = new PipelineLoopService(
-            runCreator, _mockProviderFactory.Object, _mockConfigStore.Object,
-            _mockConfigStore.Object, _mockConfigStore.Object, mockLogger.Object);
+        _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = runCreator,
+            ProviderFactory = _mockProviderFactory.Object,
+            PipelineConfigStore = _mockConfigStore.Object,
+            ProviderConfigStore = _mockConfigStore.Object,
+            ProjectStore = _mockConfigStore.Object,
+            Logger = mockLogger.Object,
+            WorkDistributor = null,
+            DispatchOrchestration = null,
+            DependencyChecker = null
+        });
 
         var mockAgentRegistry = new AgentRegistryService(mockLogger.Object);
         _mockDispatchOrchestration = new Mock<IDispatchOrchestrationService>();
@@ -232,9 +241,12 @@ public class AgentCodingPageServiceTests
             }
         };
         _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
-            "42", "ip-1", "rp-1", null, null, "manual",
-            It.IsAny<PipelineProject>(),
-            It.IsAny<WorkItemTaskType>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
+            It.Is<ImplementationDispatchOrchestrationRequest>(r =>
+                r.IssueIdentifier == "42" &&
+                r.IssueProviderId == "ip-1" &&
+                r.RepoProviderId == "rp-1" &&
+                r.InitiatedBy == "manual"),
+            It.IsAny<CancellationToken>()))
             .ReturnsAsync(fullRequest);
 
         _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
@@ -264,10 +276,8 @@ public class AgentCodingPageServiceTests
 
         // Orchestration returns null (config not found, etc.)
         _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
-            It.IsAny<PipelineProject>(),
-            It.IsAny<WorkItemTaskType>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
+            It.IsAny<ImplementationDispatchOrchestrationRequest>(),
+            It.IsAny<CancellationToken>()))
             .ReturnsAsync((JobDistributionRequest?)null);
 
         var (success, error, _) = await _service.DispatchIssueAsync(MakeIssue(), template);
@@ -518,9 +528,8 @@ public class AgentCodingPageServiceTests
         };
 
         _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(),
-            It.IsAny<PipelineProject>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+            It.IsAny<CancellationToken>()))
             .ReturnsAsync(fullRequest);
 
         _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
@@ -533,9 +542,8 @@ public class AgentCodingPageServiceTests
 
         // Verify orchestration was used
         _mockDispatchOrchestration.Verify(d => d.PrepareDecompositionDistributionRequestAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(),
-            It.IsAny<PipelineProject>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+            It.IsAny<CancellationToken>()), Times.Once);
 
         // Verify DistributeAndFinalizeAsync received the orchestrated request with ProviderConfigs
         _mockDispatchOrchestration.Verify(d => d.DistributeAndFinalizeAsync(
@@ -867,8 +875,8 @@ public class AgentCodingPageServiceTests
         _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
         _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
-            It.IsAny<PipelineProject>(), It.IsAny<WorkItemTaskType>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
+            It.IsAny<ImplementationDispatchOrchestrationRequest>(),
+            It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateMinimalDistributionRequest());
         _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DispatchOutcome(true, false, null));
@@ -940,8 +948,8 @@ public class AgentCodingPageServiceTests
         _mockDependencyChecker.Setup(d => d.CheckAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<IIssueProvider>(), It.IsAny<Dictionary<int, bool>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
         _mockDispatchOrchestration.Setup(d => d.PrepareDecompositionDistributionRequestAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(),
-            It.IsAny<PipelineProject>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+            It.IsAny<CancellationToken>()))
             .ReturnsAsync(CreateMinimalDistributionRequest());
         _mockDispatchOrchestration.Setup(d => d.DistributeAndFinalizeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DispatchOutcome(true, false, null));
@@ -1288,10 +1296,8 @@ public class AgentCodingPageServiceTests
             .ReturnsAsync(DependencyCheckResult.NoDependencies);
 
         _mockDispatchOrchestration.Setup(d => d.PrepareDistributionRequestAsync(
-            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
-            It.IsAny<PipelineProject>(),
-            It.IsAny<WorkItemTaskType>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
+            It.IsAny<ImplementationDispatchOrchestrationRequest>(),
+            It.IsAny<CancellationToken>()))
             .ReturnsAsync(new JobDistributionRequest
             {
                 IssueIdentifier = "42",

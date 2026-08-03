@@ -228,6 +228,7 @@ public class PostgresLeaderElectionServiceTests
         await Task.Delay(100);
         await sut.StopAsync(CancellationToken.None);
 
+        sut.IsLeader.Should().BeFalse("service should not hold leadership after stop with unreachable DB");
         sut.Dispose();
     }
 
@@ -922,6 +923,7 @@ internal sealed class FakeAdvisoryLockConnection : IAdvisoryLockConnection
     public void Dispose()
     {
         _state = ConnectionState.Closed;
+        GC.SuppressFinalize(this);
     }
 
     /// <summary>
@@ -1065,6 +1067,7 @@ internal sealed class DelayedFakeAdvisoryLockConnection : IAdvisoryLockConnectio
     public void Dispose()
     {
         _state = ConnectionState.Closed;
+        GC.SuppressFinalize(this);
     }
 }
 

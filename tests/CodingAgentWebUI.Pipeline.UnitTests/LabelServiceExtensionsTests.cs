@@ -82,13 +82,14 @@ public class LabelServiceExtensionsTests
             .Returns(Task.CompletedTask);
 
         // Review run should use RepoProviderConfigId (not IssueProviderConfigId)
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateReview(
             runId: "run-ext-review",
             issueIdentifier: "org/repo#10",
             issueTitle: "Test PR",
             issueProviderConfigId: "ip-1",
             repoProviderConfigId: "rp-1",
-            runType: PipelineRunType.Review);
+            reviewPrBranchName: "feature/x",
+            reviewPrTargetBranch: "main");
 
         await _mockLabelService.Object.TrySwapLabelAsync(
             run, AgentLabels.Cancelled, _logger, "TestContext", CancellationToken.None);
@@ -109,13 +110,12 @@ public class LabelServiceExtensionsTests
             .Returns(Task.CompletedTask);
 
         // Implementation run should use IssueProviderConfigId and LabelTargetKind.Issue
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: "run-ext-impl",
             issueIdentifier: "org/repo#20",
             issueTitle: "Test Issue",
             issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            runType: PipelineRunType.Implementation);
+            repoProviderConfigId: "rp-1");
 
         await _mockLabelService.Object.TrySwapLabelAsync(
             run, AgentLabels.InProgress, _logger, "TestContext", CancellationToken.None);

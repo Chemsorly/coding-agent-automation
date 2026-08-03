@@ -272,7 +272,7 @@ try
             sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
-        builder.Services.AddSingleton(sp => new AgentWorkerService(
+        builder.Services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
             sp.GetRequiredService<AgentId>(),
@@ -282,7 +282,7 @@ try
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
-            Log.Logger));
+            Log.Logger)));
         builder.Services.AddHostedService(sp => sp.GetRequiredService<AgentWorkerService>());
         builder.Services.AddSingleton<IAgentService>(sp => sp.GetRequiredService<AgentWorkerService>());
     }

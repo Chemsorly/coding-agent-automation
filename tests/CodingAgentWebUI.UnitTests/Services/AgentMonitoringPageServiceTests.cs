@@ -82,12 +82,11 @@ public sealed class AgentMonitoringPageServiceTests
             _mockPendingWorkQuery.Object,
             _mockWorkDistributor.Object,
             _mockHubContext.Object,
-            _mockLabelService.Object,
             _mockHistoryService.Object,
             _mockLifecycleManager.Object);
     }
 
-    private PipelineRun CreateRun(string runId, string agentId = "agent-1")
+    private static PipelineRun CreateRun(string runId, string agentId = "agent-1")
     {
         return new PipelineRun
         {

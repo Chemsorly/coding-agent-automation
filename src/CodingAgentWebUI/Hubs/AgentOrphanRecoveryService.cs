@@ -46,7 +46,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         var entry = _facade.GetByAgentId(agentId);
         if (entry is { ActiveJobId: null })
         {
-            DetectAndRestoreOrphans(message, agentId, entry);
+            DetectAndRestoreOrphans(agentId, entry);
         }
         else if (entry is { ActiveJobId: not null })
         {
@@ -103,18 +103,45 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             }
             else
             {
-                var restoredRun = PipelineRun.Create(
-                    runId: activeJob.RunId,
-                    issueIdentifier: activeJob.IssueIdentifier,
-                    issueTitle: activeJob.IssueTitle,
-                    issueProviderConfigId: activeJob.IssueProviderConfigId,
-                    repoProviderConfigId: activeJob.RepoProviderConfigId,
-                    runType: activeJob.RunType,
-                    startedAt: activeJob.StartedAt,
-                    initiatedBy: activeJob.InitiatedBy,
-                    agentId: agentId,
-                    agentProviderConfigId: activeJob.AgentProviderConfigId,
-                    brainProviderConfigId: activeJob.BrainProviderConfigId);
+                var restoredRun = activeJob.RunType switch
+                {
+                    PipelineRunType.Review => PipelineRun.CreateReview(
+                        runId: activeJob.RunId,
+                        issueIdentifier: activeJob.IssueIdentifier,
+                        issueTitle: activeJob.IssueTitle,
+                        issueProviderConfigId: activeJob.IssueProviderConfigId,
+                        repoProviderConfigId: activeJob.RepoProviderConfigId,
+                        reviewPrBranchName: string.Empty,
+                        reviewPrTargetBranch: string.Empty,
+                        startedAt: activeJob.StartedAt,
+                        initiatedBy: activeJob.InitiatedBy,
+                        agentId: agentId,
+                        agentProviderConfigId: activeJob.AgentProviderConfigId,
+                        brainProviderConfigId: activeJob.BrainProviderConfigId),
+                    PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
+                        runId: activeJob.RunId,
+                        issueIdentifier: activeJob.IssueIdentifier,
+                        issueTitle: activeJob.IssueTitle,
+                        issueProviderConfigId: activeJob.IssueProviderConfigId,
+                        repoProviderConfigId: activeJob.RepoProviderConfigId,
+                        phaseType: activeJob.RunType,
+                        startedAt: activeJob.StartedAt,
+                        initiatedBy: activeJob.InitiatedBy,
+                        agentId: agentId,
+                        agentProviderConfigId: activeJob.AgentProviderConfigId,
+                        brainProviderConfigId: activeJob.BrainProviderConfigId),
+                    _ => PipelineRun.CreateImplementation(
+                        runId: activeJob.RunId,
+                        issueIdentifier: activeJob.IssueIdentifier,
+                        issueTitle: activeJob.IssueTitle,
+                        issueProviderConfigId: activeJob.IssueProviderConfigId,
+                        repoProviderConfigId: activeJob.RepoProviderConfigId,
+                        startedAt: activeJob.StartedAt,
+                        initiatedBy: activeJob.InitiatedBy,
+                        agentId: agentId,
+                        agentProviderConfigId: activeJob.AgentProviderConfigId,
+                        brainProviderConfigId: activeJob.BrainProviderConfigId)
+                };
                 restoredRun.CurrentStep = activeJob.CurrentStep;
                 restoredRun.PipelineProviderConfigId = activeJob.PipelineProviderConfigId;
                 restoredRun.ResolvedProfileId = activeJob.ResolvedProfileId;
@@ -178,7 +205,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             agentId, activeJob.RunId);
     }
 
-    private void DetectAndRestoreOrphans(AgentRegistrationMessage message, string agentId, AgentEntry entry)
+    private void DetectAndRestoreOrphans(string agentId, AgentEntry entry)
     {
         var orphanedRuns = _facade.GetActiveRunsByAgent(agentId);
         if (orphanedRuns.Count > 0)

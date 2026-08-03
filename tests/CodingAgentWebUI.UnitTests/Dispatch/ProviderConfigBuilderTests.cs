@@ -43,7 +43,7 @@ public class ProviderConfigBuilderTests
             resolution);
     }
 
-    private ProviderConfig CreateConfig(string id, ProviderKind kind) => new()
+    private static ProviderConfig CreateConfig(string id, ProviderKind kind) => new()
     {
         Id = id,
         Kind = kind,

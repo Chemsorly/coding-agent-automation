@@ -149,7 +149,7 @@
     [Parameter] public EventCallback<string> OnToggleLabel { get; set; }
     [Parameter] public EventCallback OnClearLabels { get; set; }
 
-    private bool ShouldPreventDefault => false;
+    private static bool ShouldPreventDefault => false;
 
     protected override void OnParametersSet()
     {

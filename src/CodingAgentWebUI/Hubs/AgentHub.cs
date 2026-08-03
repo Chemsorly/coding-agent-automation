@@ -33,6 +33,11 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly IAgentOrphanRecoveryService _orphanRecoveryService;
     private readonly ILogger _logger;
 
+    /// <summary>
+    /// Primary constructor used by SignalR's hub activator (ActivatorUtilities).
+    /// A single constructor is required — multiple constructors cause
+    /// <see cref="InvalidOperationException"/> at connection time.
+    /// </summary>
     public AgentHub(
         IAgentHubFacade facade,
         IChatNotifier chatNotifier,

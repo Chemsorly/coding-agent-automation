@@ -72,66 +72,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         if (run is not null)
         {
             _facade.RemoveRun(jobId.Value);
-
-            // Check retry count to decide: re-queue or permanently fail
-            const int maxRejectionRetries = 3;
-            var retryCount = await _facade.GetWorkItemRetryCountAsync(jobId.Value, ct);
-            var shouldRequeue = retryCount < maxRejectionRetries;
-
-            if (shouldRequeue)
-            {
-                // Re-queue: transition back to Pending with incremented RetryCount.
-                // The drain service will pick it up again on the next cycle.
-                // Clear the dedup tracker so the drain/loop doesn't consider it "already processing".
-                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-                try
-                {
-                    await _facade.RequeueWorkItemAsync(jobId.Value, ct);
-                    _logger.Information(
-                        "JobRejected: re-queued job {JobId} for issue {IssueIdentifier} (retry {RetryCount}/{MaxRetries})",
-                        jobId.Value, run.IssueIdentifier, retryCount + 1, maxRejectionRetries);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to re-queue WorkItem {JobId}, falling back to permanent failure", jobId.Value);
-                    shouldRequeue = false; // fall through to permanent failure
-                }
-            }
-
-            if (!shouldRequeue)
-            {
-                // Max retries exhausted (or re-queue failed) — permanent failure. Human intervention needed.
-                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-
-                try
-                {
-                    var rejectionError = $"Job rejected by agent after {maxRejectionRetries} attempts: {reason}";
-                    await _facade.TransitionWorkItemAsync(jobId.Value, WorkItemStatus.Failed, ct,
-                        rejectionError, FailureReason.InfrastructureFailure);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to transition WorkItem {JobId} to Failed on JobRejected", jobId.Value);
-                }
-
-                try
-                {
-                    _logger.Warning("JobRejected: swapping label to agent:error for issue {IssueIdentifier} (jobId={JobId}, retries exhausted)",
-                        run.IssueIdentifier, jobId.Value);
-                    await _issueOps.SwapLabelAsync(run, AgentLabels.Error, GetLabelTargetKind(run));
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to revert label for rejected run {JobId} (issue {IssueIdentifier})",
-                        jobId.Value, run.IssueIdentifier);
-                }
-            }
-
-            _logger.Warning("Cleaned up rejected run {JobId} for issue {IssueIdentifier} (step={Step}, agent={AgentId}, retryCount={RetryCount}). " +
-                "This indicates a dispatch race condition — investigate if recurring.",
-                jobId.Value, run.IssueIdentifier, run.CurrentStep, run.AgentId, retryCount);
-
-            _changeNotifier.NotifyChange();
+            await HandleRejectedRunCleanupAsync(jobId, run, reason, ct);
         }
         else
         {
@@ -150,6 +91,80 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         }
     }
 
+    private async Task HandleRejectedRunCleanupAsync(JobId jobId, PipelineRun run, string reason, CancellationToken ct)
+    {
+        // Check retry count to decide: re-queue or permanently fail
+        const int maxRejectionRetries = 3;
+        var retryCount = await _facade.GetWorkItemRetryCountAsync(jobId.Value, ct);
+        var shouldRequeue = retryCount < maxRejectionRetries;
+
+        if (shouldRequeue)
+        {
+            shouldRequeue = await TryRequeueRejectedRunAsync(jobId, run, retryCount, maxRejectionRetries, ct);
+        }
+
+        if (!shouldRequeue)
+        {
+            await PermanentlyFailRejectedRunAsync(jobId, run, reason, maxRejectionRetries, ct);
+        }
+
+        _logger.Warning("Cleaned up rejected run {JobId} for issue {IssueIdentifier} (step={Step}, agent={AgentId}, retryCount={RetryCount}). " +
+            "This indicates a dispatch race condition — investigate if recurring.",
+            jobId.Value, run.IssueIdentifier, run.CurrentStep, run.AgentId, retryCount);
+
+        _changeNotifier.NotifyChange();
+    }
+
+    private async Task<bool> TryRequeueRejectedRunAsync(JobId jobId, PipelineRun run, int retryCount, int maxRejectionRetries, CancellationToken ct)
+    {
+        // Re-queue: transition back to Pending with incremented RetryCount.
+        // The drain service will pick it up again on the next cycle.
+        // Clear the dedup tracker so the drain/loop doesn't consider it "already processing".
+        _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+        try
+        {
+            await _facade.RequeueWorkItemAsync(jobId.Value, ct);
+            _logger.Information(
+                "JobRejected: re-queued job {JobId} for issue {IssueIdentifier} (retry {RetryCount}/{MaxRetries})",
+                jobId.Value, run.IssueIdentifier, retryCount + 1, maxRejectionRetries);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to re-queue WorkItem {JobId}, falling back to permanent failure", jobId.Value);
+            return false;
+        }
+    }
+
+    private async Task PermanentlyFailRejectedRunAsync(JobId jobId, PipelineRun run, string reason, int maxRejectionRetries, CancellationToken ct)
+    {
+        // Max retries exhausted (or re-queue failed) — permanent failure. Human intervention needed.
+        _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+        try
+        {
+            var rejectionError = $"Job rejected by agent after {maxRejectionRetries} attempts: {reason}";
+            await _facade.TransitionWorkItemAsync(jobId.Value, WorkItemStatus.Failed, ct,
+                rejectionError, FailureReason.InfrastructureFailure);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to transition WorkItem {JobId} to Failed on JobRejected", jobId.Value);
+        }
+
+        try
+        {
+            _logger.Warning("JobRejected: swapping label to agent:error for issue {IssueIdentifier} (jobId={JobId}, retries exhausted)",
+                run.IssueIdentifier, jobId.Value);
+            await _issueOps.SwapLabelAsync(run, AgentLabels.Error, GetLabelTargetKind(run));
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to revert label for rejected run {JobId} (issue {IssueIdentifier})",
+                jobId.Value, run.IssueIdentifier);
+        }
+    }
+
     /// <inheritdoc />
     public async Task HandleJobCompletedAsync(JobId jobId, AgentEntry? agent, JobCompletionPayload payload, CancellationToken ct)
     {
@@ -160,173 +175,17 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         if (run is not null)
         {
-            // Skip pipeline history persistence for consolidation runs.
-            // Consolidation runs have their own completion path (ReportConsolidationComplete)
-            // and their own history on the Consolidation page. They enter the PipelineRun
-            // tracking only as ghost entries during orchestrator restart rehydration.
             if (run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
             {
-                _logger.Information(
-                    "ReportJobCompleted: skipping pipeline persistence for consolidation run {JobId} (IssueIdentifier={IssueIdentifier})",
-                    jobId.Value, run.IssueIdentifier);
-
-                // Clean up the in-memory run and transition WorkItem (still needed for DB state).
-                // Wrapped in try/catch to ensure agent idle transition always happens.
-                var consolidationWorkItemStatus = payload.FinalStep switch
-                {
-                    PipelineStep.Completed => WorkItemStatus.Succeeded,
-                    PipelineStep.Cancelled => WorkItemStatus.Cancelled,
-                    _ => WorkItemStatus.Failed
-                };
-
-                _facade.RemoveRun(jobId.Value);
-                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-
-                try
-                {
-                    var consolidationError = consolidationWorkItemStatus == WorkItemStatus.Failed
-                        ? payload.FailureReason ?? "Consolidation run failed"
-                        : null;
-                    var consolidationFailureEnum = consolidationWorkItemStatus == WorkItemStatus.Failed
-                        ? payload.FailureCategory ?? FailureReason.AgentError
-                        : (FailureReason?)null;
-                    await _facade.TransitionWorkItemAsync(jobId.Value, consolidationWorkItemStatus, ct,
-                        consolidationError, consolidationFailureEnum);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "ReportJobCompleted: failed to transition consolidation WorkItem {JobId} (non-fatal)", jobId.Value);
-                }
-
-                // Transition agent to Idle and signal drain service for next dispatch
-                if (agent is not null)
-                {
-                    agent.ActiveJobId = null;
-                    agent.OrphanRestoredAt = null;
-                    agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
-                    _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-                }
-
-                _changeNotifier.NotifyChange();
+                await HandleConsolidationRunCompletedAsync(jobId, run, payload, agent, ct);
                 return;
             }
 
-            // Update run with completion data
-            JobCompletionMapper.Apply(run, payload);
-
-            activity?.SetTag("success", payload.FinalStep == PipelineStep.Completed);
-
-            // Determine terminal WorkItem status
-            var workItemStatus = payload.FinalStep switch
-            {
-                PipelineStep.Completed => WorkItemStatus.Succeeded,
-                PipelineStep.Cancelled => WorkItemStatus.Cancelled,
-                _ => WorkItemStatus.Failed
-            };
-
-            // Use lifecycle manager to atomically: remove run, transition DB WorkItem,
-            // persist history, and mark issue complete in dedup tracker.
-            try
-            {
-                var errorMsg = workItemStatus == WorkItemStatus.Failed
-                    ? run.FailureReason ?? "Agent reported failure"
-                    : null;
-                var failureEnum = workItemStatus == WorkItemStatus.Failed
-                    ? payload.FailureCategory ?? FailureReason.AgentError
-                    : (FailureReason?)null;
-                var completedRun = await _lifecycleManager.CompleteRunAsync(jobId.Value, workItemStatus, ct,
-                    errorMsg, failureEnum);
-                if (completedRun is null)
-                {
-                    // Race: run was removed by RevertFailedDistributionAsync between GetRun and CompleteRunAsync.
-                    // The DB WorkItem transition inside CompleteRunAsync was skipped (it returns early on null RemoveRun).
-                    // Attempt direct DB transition — will use infrastructure-failure recovery fallback if needed.
-                    _logger.Warning(
-                        "CompleteRunAsync returned null for job {JobId} (race with RevertFailedDistributionAsync), attempting direct DB transition",
-                        jobId.Value);
-                    await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, errorMsg, failureEnum);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "CompleteRunAsync failed for job {JobId} (status={Status}), performing defensive cleanup", jobId.Value, workItemStatus);
-
-                // Defensive cleanup: if CompleteRunAsync threw (e.g., DB failure mid-operation),
-                // the dedup guard and active runs list may not have been cleaned up.
-                // Without this, the issue becomes permanently blocked from re-dispatch.
-                _facade.RemoveRun(jobId.Value);
-                _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-
-                // Attempt to transition WorkItem to terminal state so it doesn't stay stuck in Running.
-                try
-                {
-                    var errorMsg = workItemStatus == WorkItemStatus.Failed
-                        ? run.FailureReason ?? "Agent reported failure (defensive cleanup after exception)"
-                        : null;
-                    var failureEnum = workItemStatus == WorkItemStatus.Failed
-                        ? payload.FailureCategory ?? FailureReason.AgentError
-                        : (FailureReason?)null;
-                    await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, errorMsg, failureEnum);
-                }
-                catch (Exception innerEx)
-                {
-                    _logger.Warning(innerEx, "Failed to transition WorkItem {JobId} to {Status} during defensive cleanup", jobId.Value, workItemStatus);
-                }
-            }
-
-            _logger.Information(
-                "Job {JobId} completed: step={FinalStep}, PR={PullRequestUrl}",
-                jobId.Value, payload.FinalStep, payload.PullRequestUrl ?? "none");
-
-            _changeNotifier.NotifyChange();
+            await HandleRegularRunCompletedAsync(jobId, run, payload, activity, ct);
         }
         else
         {
-            // Run not in memory — this happens when RevertFailedDistributionAsync already cleaned up
-            // after a delivery timeout, but the agent actually received and completed the job.
-            // Attempt direct DB recovery: if the WorkItem is in Failed with InfrastructureFailure reason,
-            // transition it to the appropriate terminal status.
-            var workItemStatus = payload.FinalStep switch
-            {
-                PipelineStep.Completed => WorkItemStatus.Succeeded,
-                PipelineStep.Cancelled => WorkItemStatus.Cancelled,
-                _ => WorkItemStatus.Failed
-            };
-
-            _logger.Warning(
-                "ReportJobCompleted for job {JobId} — run not found, attempting DB recovery (finalStep={FinalStep})",
-                jobId.Value, payload.FinalStep);
-
-            var recoveryErrorMsg = workItemStatus == WorkItemStatus.Failed
-                ? payload.FailureReason ?? "Agent reported failure (run not in memory)"
-                : null;
-            var recoveryFailureEnum = workItemStatus == WorkItemStatus.Failed
-                ? payload.FailureCategory ?? FailureReason.AgentError
-                : (FailureReason?)null;
-            await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, recoveryErrorMsg, recoveryFailureEnum);
-
-            // TODO: Call _facade.MarkIssueComplete() after successful recovery to update the in-memory dedup tracker.
-            // Without it, the closed-loop poll could re-dispatch this issue if the label swap below fails.
-
-            // Best-effort label correction after recovery (label is currently agent:next from RevertFailedDistributionAsync)
-            if (workItemStatus == WorkItemStatus.Succeeded)
-            {
-                try
-                {
-                    var metadata = await _facade.GetWorkItemIssueMetadataAsync(jobId.Value, ct);
-                    if (metadata.HasValue)
-                    {
-                        await _labelService.SwapLabelAsync(
-                            metadata.Value.IssueProviderConfigId,
-                            metadata.Value.IssueIdentifier,
-                            AgentLabels.Done, LabelTargetKind.Issue, ct);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to swap label after recovery for job {JobId} (cosmetic)", jobId.Value);
-                }
-            }
+            await HandleOrphanedRunCompletedAsync(jobId, payload, ct);
         }
 
         // Transition agent to Idle BEFORE slow I/O operations (label swap, comment posting).
@@ -352,37 +211,221 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // in the registry, so the dispatcher can assign it work via the periodic drain sweep.
         if (run is not null)
         {
-            // Swap label based on final outcome (non-fatal).
-            // The agent may also attempt a label swap via RequestLabelChange during its own
-            // error handling, but that call can race with this handler (run already removed).
-            // This is the authoritative swap that guarantees correctness.
-            // Only accept FinalLabel if it is a known agent label; ignore arbitrary values.
-            var finalLabel = payload.FinalLabel is not null && AgentLabels.All.Contains(payload.FinalLabel)
-                ? payload.FinalLabel
-                : null;
-            var label = finalLabel ?? payload.FinalStep switch
-            {
-                PipelineStep.Failed => AgentLabels.Error,
-                PipelineStep.Completed => AgentLabels.Done,
-                PipelineStep.Cancelled => AgentLabels.Cancelled,
-                _ => null
-            };
-
-            if (label is not null)
-            {
-                _logger.Information(
-                    "Job {JobId} ReportJobCompleted swapping label to {Label} for issue {IssueIdentifier} (finalStep={FinalStep}, finalLabel={FinalLabel})",
-                    jobId.Value, label, run.IssueIdentifier, payload.FinalStep, payload.FinalLabel ?? "null");
-                var swLabel = Stopwatch.StartNew();
-                await _issueOps.SwapLabelAsync(run, label, GetLabelTargetKind(run));
-                _logger.Information("Job {JobId} SwapLabelAsync completed in {ElapsedMs}ms", jobId.Value, swLabel.ElapsedMilliseconds);
-            }
-
-            // Post issue feedback comment if present (non-fatal)
-            var swComment = Stopwatch.StartNew();
-            await _issueOps.PostIssueFeedbackCommentAsync(run);
-            _logger.Information("Job {JobId} PostIssueFeedbackCommentAsync completed in {ElapsedMs}ms", jobId.Value, swComment.ElapsedMilliseconds);
+            await PostCompletionBookkeepingAsync(jobId, run, payload);
         }
+    }
+
+    private async Task HandleConsolidationRunCompletedAsync(
+        JobId jobId, PipelineRun run, JobCompletionPayload payload, AgentEntry? agent, CancellationToken ct)
+    {
+        // Skip pipeline history persistence for consolidation runs.
+        // Consolidation runs have their own completion path (ReportConsolidationComplete)
+        // and their own history on the Consolidation page. They enter the PipelineRun
+        // tracking only as ghost entries during orchestrator restart rehydration.
+        _logger.Information(
+            "ReportJobCompleted: skipping pipeline persistence for consolidation run {JobId} (IssueIdentifier={IssueIdentifier})",
+            jobId.Value, run.IssueIdentifier);
+
+        var workItemStatus = payload.FinalStep switch
+        {
+            PipelineStep.Completed => WorkItemStatus.Succeeded,
+            PipelineStep.Cancelled => WorkItemStatus.Cancelled,
+            _ => WorkItemStatus.Failed
+        };
+
+        _facade.RemoveRun(jobId.Value);
+        _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+        try
+        {
+            var consolidationError = workItemStatus == WorkItemStatus.Failed
+                ? payload.FailureReason ?? "Consolidation run failed"
+                : null;
+            var consolidationFailureEnum = workItemStatus == WorkItemStatus.Failed
+                ? payload.FailureCategory ?? FailureReason.AgentError
+                : (FailureReason?)null;
+            await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct,
+                consolidationError, consolidationFailureEnum);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "ReportJobCompleted: failed to transition consolidation WorkItem {JobId} (non-fatal)", jobId.Value);
+        }
+
+        if (agent is not null)
+        {
+            agent.ActiveJobId = null;
+            agent.OrphanRestoredAt = null;
+            agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
+            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+        }
+
+        _changeNotifier.NotifyChange();
+    }
+
+    private async Task HandleRegularRunCompletedAsync(
+        JobId jobId, PipelineRun run, JobCompletionPayload payload, Activity? activity, CancellationToken ct)
+    {
+        // Update run with completion data
+        JobCompletionMapper.Apply(run, payload);
+
+        activity?.SetTag("success", payload.FinalStep == PipelineStep.Completed);
+
+        var workItemStatus = payload.FinalStep switch
+        {
+            PipelineStep.Completed => WorkItemStatus.Succeeded,
+            PipelineStep.Cancelled => WorkItemStatus.Cancelled,
+            _ => WorkItemStatus.Failed
+        };
+
+        // Use lifecycle manager to atomically: remove run, transition DB WorkItem,
+        // persist history, and mark issue complete in dedup tracker.
+        try
+        {
+            var errorMsg = workItemStatus == WorkItemStatus.Failed
+                ? run.FailureReason ?? "Agent reported failure"
+                : null;
+            var failureEnum = workItemStatus == WorkItemStatus.Failed
+                ? payload.FailureCategory ?? FailureReason.AgentError
+                : (FailureReason?)null;
+            var completedRun = await _lifecycleManager.CompleteRunAsync(jobId.Value, workItemStatus, ct,
+                errorMsg, failureEnum);
+            if (completedRun is null)
+            {
+                // Race: run was removed by RevertFailedDistributionAsync between GetRun and CompleteRunAsync.
+                // The DB WorkItem transition inside CompleteRunAsync was skipped (it returns early on null RemoveRun).
+                // Attempt direct DB transition — will use infrastructure-failure recovery fallback if needed.
+                _logger.Warning(
+                    "CompleteRunAsync returned null for job {JobId} (race with RevertFailedDistributionAsync), attempting direct DB transition",
+                    jobId.Value);
+                await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, errorMsg, failureEnum);
+            }
+        }
+        catch (Exception ex)
+        {
+            await DefensiveRunCleanupAsync(jobId, run, payload, workItemStatus, ex, ct);
+        }
+
+        _logger.Information(
+            "Job {JobId} completed: step={FinalStep}, PR={PullRequestUrl}",
+            jobId.Value, payload.FinalStep, payload.PullRequestUrl ?? "none");
+
+        _changeNotifier.NotifyChange();
+    }
+
+    private async Task DefensiveRunCleanupAsync(
+        JobId jobId, PipelineRun run, JobCompletionPayload payload, WorkItemStatus workItemStatus, Exception outerEx, CancellationToken ct)
+    {
+        _logger.Warning(outerEx, "CompleteRunAsync failed for job {JobId} (status={Status}), performing defensive cleanup", jobId.Value, workItemStatus);
+
+        // Defensive cleanup: if CompleteRunAsync threw (e.g., DB failure mid-operation),
+        // the dedup guard and active runs list may not have been cleaned up.
+        // Without this, the issue becomes permanently blocked from re-dispatch.
+        _facade.RemoveRun(jobId.Value);
+        _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
+
+        try
+        {
+            var errorMsg = workItemStatus == WorkItemStatus.Failed
+                ? run.FailureReason ?? "Agent reported failure (defensive cleanup after exception)"
+                : null;
+            var failureEnum = workItemStatus == WorkItemStatus.Failed
+                ? payload.FailureCategory ?? FailureReason.AgentError
+                : (FailureReason?)null;
+            await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, errorMsg, failureEnum);
+        }
+        catch (Exception innerEx)
+        {
+            _logger.Warning(innerEx, "Failed to transition WorkItem {JobId} to {Status} during defensive cleanup", jobId.Value, workItemStatus);
+        }
+    }
+
+    private async Task HandleOrphanedRunCompletedAsync(JobId jobId, JobCompletionPayload payload, CancellationToken ct)
+    {
+        // Run not in memory — this happens when RevertFailedDistributionAsync already cleaned up
+        // after a delivery timeout, but the agent actually received and completed the job.
+        // Attempt direct DB recovery: if the WorkItem is in Failed with InfrastructureFailure reason,
+        // transition it to the appropriate terminal status.
+        var workItemStatus = payload.FinalStep switch
+        {
+            PipelineStep.Completed => WorkItemStatus.Succeeded,
+            PipelineStep.Cancelled => WorkItemStatus.Cancelled,
+            _ => WorkItemStatus.Failed
+        };
+
+        _logger.Warning(
+            "ReportJobCompleted for job {JobId} — run not found, attempting DB recovery (finalStep={FinalStep})",
+            jobId.Value, payload.FinalStep);
+
+        var recoveryErrorMsg = workItemStatus == WorkItemStatus.Failed
+            ? payload.FailureReason ?? "Agent reported failure (run not in memory)"
+            : null;
+        var recoveryFailureEnum = workItemStatus == WorkItemStatus.Failed
+            ? payload.FailureCategory ?? FailureReason.AgentError
+            : (FailureReason?)null;
+        await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, recoveryErrorMsg, recoveryFailureEnum);
+
+        // TODO: Call _facade.MarkIssueComplete() after successful recovery to update the in-memory dedup tracker.
+        // Without it, the closed-loop poll could re-dispatch this issue if the label swap below fails.
+
+        // Best-effort label correction after recovery (label is currently agent:next from RevertFailedDistributionAsync)
+        if (workItemStatus == WorkItemStatus.Succeeded)
+        {
+            await TrySwapLabelAfterOrphanedRecoveryAsync(jobId, ct);
+        }
+    }
+
+    private async Task TrySwapLabelAfterOrphanedRecoveryAsync(JobId jobId, CancellationToken ct)
+    {
+        try
+        {
+            var metadata = await _facade.GetWorkItemIssueMetadataAsync(jobId.Value, ct);
+            if (metadata.HasValue)
+            {
+                await _labelService.SwapLabelAsync(
+                    metadata.Value.IssueProviderConfigId,
+                    metadata.Value.IssueIdentifier,
+                    AgentLabels.Done, LabelTargetKind.Issue, ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to swap label after recovery for job {JobId} (cosmetic)", jobId.Value);
+        }
+    }
+
+    private async Task PostCompletionBookkeepingAsync(JobId jobId, PipelineRun run, JobCompletionPayload payload)
+    {
+        // Swap label based on final outcome (non-fatal).
+        // The agent may also attempt a label swap via RequestLabelChange during its own
+        // error handling, but that call can race with this handler (run already removed).
+        // This is the authoritative swap that guarantees correctness.
+        // Only accept FinalLabel if it is a known agent label; ignore arbitrary values.
+        var finalLabel = payload.FinalLabel is not null && AgentLabels.All.Contains(payload.FinalLabel)
+            ? payload.FinalLabel
+            : null;
+        var label = finalLabel ?? payload.FinalStep switch
+        {
+            PipelineStep.Failed => AgentLabels.Error,
+            PipelineStep.Completed => AgentLabels.Done,
+            PipelineStep.Cancelled => AgentLabels.Cancelled,
+            _ => null
+        };
+
+        if (label is not null)
+        {
+            _logger.Information(
+                "Job {JobId} ReportJobCompleted swapping label to {Label} for issue {IssueIdentifier} (finalStep={FinalStep}, finalLabel={FinalLabel})",
+                jobId.Value, label, run.IssueIdentifier, payload.FinalStep, payload.FinalLabel ?? "null");
+            var swLabel = Stopwatch.StartNew();
+            await _issueOps.SwapLabelAsync(run, label, GetLabelTargetKind(run));
+            _logger.Information("Job {JobId} SwapLabelAsync completed in {ElapsedMs}ms", jobId.Value, swLabel.ElapsedMilliseconds);
+        }
+
+        // Post issue feedback comment if present (non-fatal)
+        var swComment = Stopwatch.StartNew();
+        await _issueOps.PostIssueFeedbackCommentAsync(run);
+        _logger.Information("Job {JobId} PostIssueFeedbackCommentAsync completed in {ElapsedMs}ms", jobId.Value, swComment.ElapsedMilliseconds);
     }
 
     /// <inheritdoc />

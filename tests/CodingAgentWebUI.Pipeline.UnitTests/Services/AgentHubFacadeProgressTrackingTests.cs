@@ -50,8 +50,8 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
         var registry = new AgentRegistryService(mockSerilogLogger.Object);
         var runService = new OrchestratorRunService(mockSerilogLogger.Object);
         var dispatcher = new JobDeduplicationGuardService(registry, mockSerilogLogger.Object);
-        var drainService = new JobQueueDrainService(dispatcher, registry, Mock.Of<IJobDispatcher>(),
-            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(), new ShutdownSignal(), mockSerilogLogger.Object);
+        var drainService = new JobQueueDrainService(new JobQueueDrainDependencies(dispatcher, registry, Mock.Of<IJobDispatcher>(),
+            Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(), new ShutdownSignal(), mockSerilogLogger.Object));
 
         _facade = new AgentHubFacade(
             registry,
@@ -121,15 +121,31 @@ public sealed class AgentHubFacadeProgressTrackingTests : IDisposable
     [Fact]
     public async Task TouchLastProgressAsync_InvalidJobId_NoOp()
     {
-        // Should not throw
-        await _facade.TouchLastProgressAsync("not-a-guid", DateTimeOffset.UtcNow, CancellationToken.None);
+        var exception = await Record.ExceptionAsync(async () =>
+            await _facade.TouchLastProgressAsync("not-a-guid", DateTimeOffset.UtcNow, CancellationToken.None));
+
+        exception.Should().BeNull();
+
+        // DB remains empty — no work item was created or modified
+        await using var db = _dbFactory.CreateDbContext();
+        var count = await db.WorkItems.CountAsync();
+        count.Should().Be(0);
     }
 
     [Fact]
     public async Task TouchLastProgressAsync_NonexistentWorkItem_NoOp()
     {
         var nonexistent = Guid.NewGuid().ToString();
-        await _facade.TouchLastProgressAsync(nonexistent, DateTimeOffset.UtcNow, CancellationToken.None);
+
+        var exception = await Record.ExceptionAsync(async () =>
+            await _facade.TouchLastProgressAsync(nonexistent, DateTimeOffset.UtcNow, CancellationToken.None));
+
+        exception.Should().BeNull();
+
+        // DB remains empty — no phantom row was inserted
+        await using var db = _dbFactory.CreateDbContext();
+        var count = await db.WorkItems.CountAsync();
+        count.Should().Be(0);
     }
 
     [Fact]

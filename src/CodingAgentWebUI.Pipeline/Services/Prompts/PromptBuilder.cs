@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Pipeline.Services.Prompts;
 /// Builds prompts for the agent from issue details and parsed issue data.
 /// This is used by the orchestrator — the agent provider receives pre-built prompts.
 /// </summary>
-public static class PromptBuilder
+public static partial class PromptBuilder
 {
     /// <summary>
     /// Standardized thoroughness instruction appended to all review and analysis prompts.
@@ -435,16 +435,14 @@ public static class PromptBuilder
     /// <summary>
     /// Regex matching inline markdown images: ![alt](url) or ![alt](url "title")
     /// </summary>
-    private static readonly Regex InlineImageRegex = new(
-        @"!\[([^\]]*)\]\(([^)\s]+)(?:\s+""[^""]*"")?\)",
-        RegexOptions.Compiled);
+    [GeneratedRegex(@"!\[([^\]]*)\]\(([^)\s]+)(?:\s+""[^""]*"")?\)", RegexOptions.None)]
+    private static partial Regex InlineImageRegex();
 
     /// <summary>
     /// Regex matching HTML img tags with src attribute (any attribute order).
     /// </summary>
-    private static readonly Regex HtmlImgSrcRegex = new(
-        @"<img\s[^>]*\bsrc\s*=\s*[""']([^""']+)[""'][^>]*>",
-        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    [GeneratedRegex(@"<img\s[^>]*\bsrc\s*=\s*[""']([^""']+)[""'][^>]*>", RegexOptions.IgnoreCase)]
+    private static partial Regex HtmlImgSrcRegex();
 
     /// <summary>
     /// Processes text line-by-line with fence-tracking state machine.
@@ -480,7 +478,7 @@ public static class PromptBuilder
                 var processedLine = ReplaceInlineImages(line, urlToLocalPath);
 
                 // Check for HTML <img> tags and add comment below if URL matched
-                var imgMatch = HtmlImgSrcRegex.Match(processedLine);
+                var imgMatch = HtmlImgSrcRegex().Match(processedLine);
                 if (imgMatch.Success && urlToLocalPath.TryGetValue(imgMatch.Groups[1].Value, out var localPath))
                 {
                     sb.AppendLine(processedLine);
@@ -508,7 +506,7 @@ public static class PromptBuilder
     /// </summary>
     private static string ReplaceInlineImages(string line, Dictionary<string, string> urlToLocalPath)
     {
-        return InlineImageRegex.Replace(line, match =>
+        return InlineImageRegex().Replace(line, match =>
         {
             var altText = match.Groups[1].Value;
             var url = match.Groups[2].Value;

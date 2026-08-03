@@ -37,6 +37,10 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     private readonly ILeaderElectionService _leaderElection;
     private readonly ILogger _logger;
 
+    private const string TagAgentSelector = "agent_selector";
+    private const string LabelChatSessionId = "caa/chat-session-id";
+    private const string TagOutcome = "outcome";
+
     private readonly ConcurrentDictionary<string, ChatSession> _sessions = new();
     private readonly ConcurrentDictionary<string, string> _agentIdToJobName = new();
 
@@ -80,7 +84,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     // ─── DispatchChatPodAsync ──────────────────────────────────────────────────
 
     public async Task<string> DispatchChatPodAsync(
-        string agentSelector, string? model, string? effort, CancellationToken ct)
+        string agentSelector, string? model, string? effort, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(agentSelector);
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Chat.Dispatch");
@@ -97,13 +101,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 $"Agent selector '{agentSelector}' produces an invalid k8s label value '{selectorLabelValue}'. " +
                 "Label values must match [a-zA-Z0-9._-] and be ≤63 characters.");
 
-        activity?.SetTag("agent_selector", normalized);
+        activity?.SetTag(TagAgentSelector, normalized);
 
         // Query all active chat jobs — used for both double-dispatch guard and PVC availability.
         // Using a single broad query (label key presence, no value filter) is replica-safe:
         // each orchestrator replica sees the full cluster state rather than its own in-memory sessions.
         var allChatJobs = await _jobClient.ListJobsAsync(
-            _options.Namespace, "caa/chat-session-id", ct);
+            _options.Namespace, LabelChatSessionId, cancellationToken);
 
         var activeChatJobs = allChatJobs.Items?
             .Where(j => !IsTerminal(j))
@@ -188,7 +192,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
 
         // Post-build: set labels
-        job.Metadata.Labels["caa/chat-session-id"] = dispatchId.ToString();
+        job.Metadata.Labels[LabelChatSessionId] = dispatchId.ToString();
         job.Metadata.Labels["caa/chat-selector"] = selectorLabelValue;
         if (claimedPvc is not null)
             job.Metadata.Labels["caa/claimed-pvc"] = claimedPvc;
@@ -199,7 +203,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         job.Spec.Template.Spec.TerminationGracePeriodSeconds = _options.ChatTerminationGracePeriodSeconds;
 
         // Step 8: create job
-        await _jobClient.CreateJobAsync(job, _options.Namespace, ct);
+        await _jobClient.CreateJobAsync(job, _options.Namespace, cancellationToken);
 
         _logger.Information(
             "ChatJobDispatcher: dispatched chat pod {JobName} for selector {AgentSelector} (dispatchId={DispatchId}, pvc={Pvc})",
@@ -212,7 +216,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         activity?.SetTag("provider_type", template.ProviderType);
 
         // Step 9: poll for agent connection
-        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.ChatPodConnectTimeoutSeconds));
 
         try
@@ -231,7 +235,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                     RegisterSession(dispatchId, jobName, connected.AgentId, claimedPvc, normalized);
 
                     // Record dispatch latency metric
-                    var tag = new KeyValuePair<string, object?>("agent_selector", selectorLabelValue);
+                    var tag = new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue);
                     ChatTelemetry.DispatchLatency.Record(elapsed, tag);
 
                     return connected.AgentId;
@@ -240,19 +244,19 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 await Task.Delay(2000, timeoutCts.Token);
             }
         }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             // Our internal timeout — not outer cancellation
             _logger.Warning(
                 "ChatJobDispatcher: chat pod for {AgentSelector} did not connect within {TimeoutSeconds}s — cleaning up {JobName}",
                 normalized, _options.ChatPodConnectTimeoutSeconds, jobName);
 
-            var tag = new KeyValuePair<string, object?>("agent_selector", selectorLabelValue);
+            var tag = new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue);
             ChatTelemetry.PodConnectTimeouts.Add(1, tag);
 
             activity?.SetStatus(ActivityStatusCode.Error, "Connect timeout");
 
-            await TryCleanupFailedDispatch(jobName, ct);
+            await TryCleanupFailedDispatch(jobName, cancellationToken);
             throw new ChatPodTimeoutException(_options.ChatPodConnectTimeoutSeconds);
         }
         catch (OperationCanceledException)
@@ -291,7 +295,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             _agentIdToJobName[agentId] = jobName;
 
         // Metrics
-        var selectorTag = new KeyValuePair<string, object?>("agent_selector", selector.Replace(',', '_'));
+        var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selector.Replace(',', '_'));
         ChatTelemetry.SessionsActive.Add(1, selectorTag);
         if (claimedPvc is not null)
             ChatTelemetry.PvcUtilization.Add(1, new KeyValuePair<string, object?>("pool", "kiro"));
@@ -316,7 +320,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             }
             catch (OperationCanceledException)
             {
-                // Cancelled (StopAsync) — caller handles PVC release
+                // Intentional: StopAsync cancelled the watcher CTS during graceful shutdown; caller handles PVC release.
                 return;
             }
 
@@ -358,7 +362,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
                 // Release PVC + update metrics — gated inside TryRemove to prevent
                 // double-decrement if TerminateChatSessionAsync already did cleanup.
-                var selectorTag = new KeyValuePair<string, object?>("agent_selector", selectorEncoded);
+                var selectorTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorEncoded);
 
                 if (_sessions.TryRemove(jobName, out var removed))
                 {
@@ -371,12 +375,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                     ChatTelemetry.SessionDuration.Record(
                         duration,
                         selectorTag,
-                        new KeyValuePair<string, object?>("outcome", "completed"));
+                        new KeyValuePair<string, object?>(TagOutcome, "completed"));
 
                     if (!string.IsNullOrEmpty(removed.AgentId))
                         _agentIdToJobName.TryRemove(removed.AgentId, out _);
 
-                    try { removed.WatcherCts.Dispose(); } catch { }
+                    try { removed.WatcherCts.Dispose(); } catch { /* Intentional: CTS may already be disposed if watcher exited concurrently. */ }
                 }
 
                 return;
@@ -413,13 +417,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         try
         {
-            var jobs = await _jobClient.ListJobsAsync(_options.Namespace, "caa/chat-session-id", ct);
+            var jobs = await _jobClient.ListJobsAsync(_options.Namespace, LabelChatSessionId, ct);
             foreach (var job in (jobs.Items ?? []).Where(j => !IsTerminal(j)))
             {
                 try
                 {
                     var labels = job.Metadata?.Labels ?? new Dictionary<string, string>();
-                    labels.TryGetValue("caa/chat-session-id", out var sessionIdStr);
+                    labels.TryGetValue(LabelChatSessionId, out var sessionIdStr);
                     if (!Guid.TryParse(sessionIdStr, out var sessionId))
                     {
                         _logger.Warning(
@@ -458,7 +462,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         _logger.Information("ChatJobDispatcher: stopping — releasing {Count} active session(s)", sessions.Count);
 
         foreach (var session in sessions)
-            session.WatcherCts.Cancel();
+            await session.WatcherCts.CancelAsync();
 
         // Await watchers with 5s timeout — swallow any exception/timeout
         try
@@ -468,7 +472,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
         catch
         {
-            // Timeout or aggregate — fall through to manual cleanup
+            // Intentional: timeout (TimeoutException) or aggregate watcher failure on shutdown; manual cleanup follows.
         }
 
         // Clean up sessions whose watchers didn't complete
@@ -481,7 +485,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
                 // Decrement metrics for sessions the watcher didn't clean up
                 var selectorTag = new KeyValuePair<string, object?>(
-                    "agent_selector", removed.NormalizedSelector.Replace(',', '_'));
+                    TagAgentSelector, removed.NormalizedSelector.Replace(',', '_'));
                 ChatTelemetry.SessionsActive.Add(-1, selectorTag);
                 if (removed.ClaimedPvc is not null)
                     ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
@@ -493,7 +497,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
     // ─── TerminateChatSessionAsync ────────────────────────────────────────────
 
-    public async Task TerminateChatSessionAsync(string agentId, CancellationToken ct)
+    public async Task TerminateChatSessionAsync(string agentId, CancellationToken cancellationToken)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Chat.Terminate");
         activity?.SetTag("agent_id", agentId);
@@ -508,13 +512,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
         if (!_agentIdToJobName.TryGetValue(agentId, out var jobName))
         {
-            activity?.SetTag("outcome", "not_found");
+            activity?.SetTag(TagOutcome, "not_found");
             return;
         }
 
         if (!_sessions.TryGetValue(jobName, out var session))
         {
-            activity?.SetTag("outcome", "not_found");
+            activity?.SetTag(TagOutcome, "not_found");
             return;
         }
 
@@ -542,24 +546,24 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
 
         // 2. Wait up to 10s for the watcher to confirm terminal
-        using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         graceCts.CancelAfter(TimeSpan.FromSeconds(10));
 
         try
         {
             await session.WatcherTask.WaitAsync(graceCts.Token);
-            activity?.SetTag("outcome", "clean");
+            activity?.SetTag(TagOutcome, "clean");
         }
         catch (OperationCanceledException)
         {
             // Cancel watcher first so it exits without running its own cleanup
-            try { session.WatcherCts.Cancel(); } catch { }
+            try { await session.WatcherCts.CancelAsync(); } catch (OperationCanceledException) { }
 
             _logger.Warning(
                 "ChatJobDispatcher: grace period expired for {JobName} — force deleting job",
                 jobName);
 
-            activity?.SetTag("outcome", "force_delete");
+            activity?.SetTag(TagOutcome, "force_delete");
 
             try
             {
@@ -579,7 +583,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 _agentIdToJobName.TryRemove(agentId, out _);
 
                 var selectorTag = new KeyValuePair<string, object?>(
-                    "agent_selector", removed.NormalizedSelector.Replace(',', '_'));
+                    TagAgentSelector, removed.NormalizedSelector.Replace(',', '_'));
                 ChatTelemetry.PodForceTerminations.Add(1, selectorTag);
                 ChatTelemetry.SessionsActive.Add(-1, selectorTag);
                 if (removed.ClaimedPvc is not null)
@@ -589,9 +593,9 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 ChatTelemetry.SessionDuration.Record(
                     duration,
                     selectorTag,
-                    new KeyValuePair<string, object?>("outcome", "force_deleted"));
+                    new KeyValuePair<string, object?>(TagOutcome, "force_deleted"));
 
-                try { removed.WatcherCts.Dispose(); } catch { }
+                try { removed.WatcherCts.Dispose(); } catch { /* Intentional: CTS may already be disposed if watcher fired concurrently during force-delete path. */ }
             }
         }
     }

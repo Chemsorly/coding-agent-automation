@@ -58,7 +58,18 @@ public class DispatchFeedbackComponentTests : BunitContext
         Services.AddSingleton(pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(runCreator, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, mockLogger.Object));
+        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = runCreator,
+            ProviderFactory = _mockFactory.Object,
+            PipelineConfigStore = _mockStore.Object,
+            ProviderConfigStore = _mockStore.Object,
+            ProjectStore = _mockStore.Object,
+            Logger = mockLogger.Object,
+            WorkDistributor = null,
+            DispatchOrchestration = null,
+            DependencyChecker = null
+        }));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 
         Services.AddSingleton<IProjectStore>(_mockStore.Object);
@@ -168,7 +179,7 @@ public class DispatchFeedbackComponentTests : BunitContext
 
         // The manual dispatch dropdown should only show enabled templates
         var selects = component.FindAll("select");
-        var dispatchSelect = selects.Last(); // The manual dispatch dropdown is the last select
+        var dispatchSelect = selects[^1]; // The manual dispatch dropdown is the last select
         Assert.Contains("DotNet Repo", dispatchSelect.InnerHtml);
         // Python Repo is disabled, should not appear in manual dispatch dropdown
         Assert.DoesNotContain("Python Repo", dispatchSelect.InnerHtml);
@@ -190,7 +201,7 @@ public class DispatchFeedbackComponentTests : BunitContext
 
         // Select a template in the manual dispatch dropdown
         var selects = component.FindAll("select");
-        var dispatchSelect = selects.Last();
+        var dispatchSelect = selects[^1];
         await component.InvokeAsync(() => dispatchSelect.Change("t-1"));
 
         // Click Browse Issues
@@ -209,7 +220,7 @@ public class DispatchFeedbackComponentTests : BunitContext
         var component = Render<AgentCoding>();
 
         var selects = component.FindAll("select");
-        var dispatchSelect = selects.Last();
+        var dispatchSelect = selects[^1];
         await component.InvokeAsync(() => dispatchSelect.Change("t-1"));
 
         var browseBtn = component.FindAll("button").First(b => b.TextContent.Contains("Browse Issues"));
@@ -228,7 +239,7 @@ public class DispatchFeedbackComponentTests : BunitContext
         var component = Render<AgentCoding>();
 
         var selects = component.FindAll("select");
-        var dispatchSelect = selects.Last();
+        var dispatchSelect = selects[^1];
         await component.InvokeAsync(() => dispatchSelect.Change("t-1"));
 
         var browseBtn = component.FindAll("button").First(b => b.TextContent.Contains("Browse Issues"));

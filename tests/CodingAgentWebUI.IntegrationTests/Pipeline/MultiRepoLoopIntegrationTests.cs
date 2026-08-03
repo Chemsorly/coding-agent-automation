@@ -116,8 +116,18 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             providerFactory: MockFactory.Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
-        var loopService = new PipelineLoopService(
-            runCreator, MockFactory.Object, ConfigStore, ConfigStore, ConfigStore, MockLogger.Object, mockDistributor.Object);
+        var loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = runCreator,
+            ProviderFactory = MockFactory.Object,
+            PipelineConfigStore = ConfigStore,
+            ProviderConfigStore = ConfigStore,
+            ProjectStore = ConfigStore,
+            Logger = MockLogger.Object,
+            WorkDistributor = mockDistributor.Object,
+            DispatchOrchestration = null,
+            DependencyChecker = null
+        });
 
         using var cts = new CancellationTokenSource();
         await loopService.StartAsync(cts.Token);
@@ -197,8 +207,18 @@ public class MultiRepoLoopIntegrationTests : IntegrationTestBase
             providerFactory: MockFactory.Object,
             historyService: new Mock<IPipelineRunHistoryService>().Object);
 
-        var loopService = new PipelineLoopService(
-            runCreator, MockFactory.Object, ConfigStore, ConfigStore, ConfigStore, MockLogger.Object);
+        var loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = runCreator,
+            ProviderFactory = MockFactory.Object,
+            PipelineConfigStore = ConfigStore,
+            ProviderConfigStore = ConfigStore,
+            ProjectStore = ConfigStore,
+            Logger = MockLogger.Object,
+            WorkDistributor = null,
+            DispatchOrchestration = null,
+            DependencyChecker = null
+        });
 
         // Act
         var started = await loopService.StartLoopAsync();
