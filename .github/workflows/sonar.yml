@@ -53,8 +53,44 @@ jobs:
             /d:sonar.token="$env:SONAR_TOKEN" `
             "/d:sonar.cs.cobertura.reportsPaths=**/TestResults/**/coverage.cobertura.xml"
           dotnet build --no-incremental
-          dotnet test `
+          dotnet test tests/CodingAgentWebUI.Pipeline.UnitTests/ `
             --no-build `
             --collect:"XPlat Code Coverage" `
+            --settings tests/CodingAgentWebUI.Pipeline.UnitTests/coverlet.runsettings `
+            --results-directory TestResults
+          dotnet test tests/CodingAgentWebUI.Agent.UnitTests/ `
+            --no-build `
+            --collect:"XPlat Code Coverage" `
+            --settings tests/CodingAgentWebUI.Agent.UnitTests/coverlet.runsettings `
+            --results-directory TestResults
+          dotnet test tests/CodingAgentWebUI.Infrastructure.UnitTests/ `
+            --no-build `
+            --collect:"XPlat Code Coverage" `
+            --settings tests/CodingAgentWebUI.Infrastructure.UnitTests/coverlet.runsettings `
+            --results-directory TestResults
+          dotnet test tests/CodingAgentWebUI.UnitTests/ `
+            --no-build `
+            --collect:"XPlat Code Coverage" `
+            --settings tests/CodingAgentWebUI.UnitTests/coverlet.runsettings `
+            --results-directory TestResults
+          dotnet test tests/CodingAgentWebUI.Orchestration.UnitTests/ `
+            --no-build `
+            --collect:"XPlat Code Coverage" `
+            --settings tests/CodingAgentWebUI.Orchestration.UnitTests/coverlet.runsettings `
+            --results-directory TestResults
+          dotnet test tests/KiroCliLib.UnitTests/ `
+            --no-build `
+            --collect:"XPlat Code Coverage" `
+            --settings tests/KiroCliLib.UnitTests/coverlet.runsettings `
+            --results-directory TestResults
+          dotnet test tests/CodingAgentWebUI.IntegrationTests/ `
+            --no-build `
+            --collect:"XPlat Code Coverage" `
+            --settings tests/CodingAgentWebUI.IntegrationTests/coverlet.runsettings `
+            --results-directory TestResults
+          dotnet test tests/CodingAgentWebUI.Infrastructure.IntegrationTests/ `
+            --no-build `
+            --collect:"XPlat Code Coverage" `
+            --settings tests/CodingAgentWebUI.Infrastructure.IntegrationTests/coverlet.runsettings `
             --results-directory TestResults
           ${{ runner.temp }}\scanner\dotnet-sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
