@@ -33,23 +33,11 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     private readonly IAgentOrphanRecoveryService _orphanRecoveryService;
     private readonly ILogger _logger;
 
-    public AgentHub(AgentHubDependencies deps)
-    {
-        _facade = deps.Facade;
-        _chatNotifier = deps.ChatNotifier;
-        _changeNotifier = deps.ChangeNotifier;
-        _modelFetchService = deps.ModelFetchService;
-        _consolidationService = deps.ConsolidationService;
-        _badgeService = deps.BadgeService;
-        _issueOps = deps.IssueOps;
-        _lifecycleService = deps.LifecycleService;
-        _tokenRefreshService = deps.TokenRefreshService;
-        _gateCommentFormatter = deps.GateCommentFormatter;
-        _orphanRecoveryService = deps.OrphanRecoveryService;
-        _logger = deps.Logger;
-    }
-
-    // Backward-compatible constructor used by DI and existing callers
+    /// <summary>
+    /// Primary constructor used by SignalR's hub activator (ActivatorUtilities).
+    /// A single constructor is required — multiple constructors cause
+    /// <see cref="InvalidOperationException"/> at connection time.
+    /// </summary>
     public AgentHub(
         IAgentHubFacade facade,
         IChatNotifier chatNotifier,
@@ -63,11 +51,19 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         IGateCommentFormatter gateCommentFormatter,
         ILogger logger,
         IAgentOrphanRecoveryService orphanRecoveryService)
-        : this(new AgentHubDependencies(
-            facade, chatNotifier, changeNotifier, modelFetchService, consolidationService,
-            badgeService, issueOps, lifecycleService, tokenRefreshService, gateCommentFormatter,
-            logger, orphanRecoveryService))
     {
+        _facade = facade;
+        _chatNotifier = chatNotifier;
+        _changeNotifier = changeNotifier;
+        _modelFetchService = modelFetchService;
+        _consolidationService = consolidationService;
+        _badgeService = badgeService;
+        _issueOps = issueOps;
+        _lifecycleService = lifecycleService;
+        _tokenRefreshService = tokenRefreshService;
+        _gateCommentFormatter = gateCommentFormatter;
+        _orphanRecoveryService = orphanRecoveryService;
+        _logger = logger;
     }
 
     /// <summary>
