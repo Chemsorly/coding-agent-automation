@@ -54,12 +54,7 @@ jobs:
             "/d:sonar.cs.cobertura.reportsPaths=**/TestResults/**/coverage.cobertura.xml"
           dotnet build --no-incremental
           dotnet test `
-            tests/CodingAgentWebUI.Pipeline.UnitTests/ `
-            tests/CodingAgentWebUI.Agent.UnitTests/ `
-            tests/CodingAgentWebUI.Orchestration.UnitTests/ `
-            tests/CodingAgentWebUI.Infrastructure.UnitTests/ `
-            tests/CodingAgentWebUI.UnitTests/ `
-            tests/KiroCliLib.UnitTests/ `
-            --collect:"XPlat Code Coverage" `
-            --results-directory TestResults
+            --no-build `
+            --filter "Category!=E2E" `
+            --collect:"XPlat Code Coverage"
           ${{ runner.temp }}\scanner\dotnet-sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
