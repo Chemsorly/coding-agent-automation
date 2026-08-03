@@ -51,8 +51,7 @@ jobs:
             /k:"Chemsorly_coding-agent-automation" `
             /o:"chemsorly" `
             /d:sonar.token="$env:SONAR_TOKEN" `
-            "/d:sonar.cs.cobertura.reportsPaths=**/TestResults/**/coverage.cobertura.xml" `
-            "/d:sonar.coverage.exclusions=tests/CodingAgentWebUI.TestUtilities/**"
+            "/d:sonar.cs.cobertura.reportsPaths=**/TestResults/**/coverage.cobertura.xml"
           dotnet build --no-incremental
           dotnet test tests/CodingAgentWebUI.Pipeline.UnitTests/ `
             --no-build `
