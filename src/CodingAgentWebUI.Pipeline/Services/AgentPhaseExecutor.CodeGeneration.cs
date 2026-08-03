@@ -86,9 +86,10 @@ public partial class AgentPhaseExecutor
 
                 if (agentResult.ExitCode == ExitCodes.Timeout)
                 {
-                    return await FailPhaseAsync(run,
+                    return await FailPhaseAsync(new FailPhaseRequest(
+                        run,
                         $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.",
-                        AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
+                        AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct));
                 }
             }
         }
@@ -104,9 +105,10 @@ public partial class AgentPhaseExecutor
                 Role = ChatRole.System,
                 Content = $"Agent timed out after {config.AgentTimeout}"
             });
-            return await FailPhaseAsync(run,
+            return await FailPhaseAsync(new FailPhaseRequest(
+                run,
                 $"Agent timed out after {config.AgentTimeout}. Implementation is incomplete.",
-                AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
+                AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct));
         }
         catch (Exception ex)
         {
@@ -121,9 +123,10 @@ public partial class AgentPhaseExecutor
             await context.Callbacks.UpdateFileChangeStats(run);
             if (run.FilesChangedCount == 0)
             {
-                return await FailPhaseAsync(run,
+                return await FailPhaseAsync(new FailPhaseRequest(
+                    run,
                     $"Code generation failed with no file changes: {ex.Message}",
-                    AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct);
+                    AgentLabels.Error, PipelineStep.Failed, context.IssueOps, context.Callbacks, ct));
             }
         }
 

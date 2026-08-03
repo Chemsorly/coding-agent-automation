@@ -63,15 +63,18 @@ public class ExecuteAgentRawAsyncTests
 
         // Act
         var result = await AgentPhaseExecutor.ExecuteAgentRawAsync(
-            _mockAgent.Object,
-            "test prompt",
-            _run,
-            _config,
-            "Test description",
-            null,
-            _mockLogger.Object,
-            CancellationToken.None,
-            phase: "test_phase");
+            new AgentExecutionRequest
+            {
+                AgentProvider = _mockAgent.Object,
+                Prompt = "test prompt",
+                Run = _run,
+                Config = _config,
+                Description = "Test description",
+                OnChange = null,
+                Logger = _mockLogger.Object,
+                Phase = "test_phase"
+            },
+            CancellationToken.None);
 
         // Assert
         result.Should().BeSameAs(agentResult);
@@ -88,13 +91,16 @@ public class ExecuteAgentRawAsyncTests
         // Act & Assert
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
             AgentPhaseExecutor.ExecuteAgentRawAsync(
-                _mockAgent.Object,
-                "test prompt",
-                _run,
-                _config,
-                "Cancelled operation",
-                null,
-                _mockLogger.Object,
+                new AgentExecutionRequest
+                {
+                    AgentProvider = _mockAgent.Object,
+                    Prompt = "test prompt",
+                    Run = _run,
+                    Config = _config,
+                    Description = "Cancelled operation",
+                    OnChange = null,
+                    Logger = _mockLogger.Object
+                },
                 CancellationToken.None));
 
         // ChatHistory should NOT contain any entries (exceptions are not absorbed)
@@ -112,13 +118,16 @@ public class ExecuteAgentRawAsyncTests
         // Act & Assert
         var thrown = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             AgentPhaseExecutor.ExecuteAgentRawAsync(
-                _mockAgent.Object,
-                "test prompt",
-                _run,
-                _config,
-                "Failing operation",
-                null,
-                _mockLogger.Object,
+                new AgentExecutionRequest
+                {
+                    AgentProvider = _mockAgent.Object,
+                    Prompt = "test prompt",
+                    Run = _run,
+                    Config = _config,
+                    Description = "Failing operation",
+                    OnChange = null,
+                    Logger = _mockLogger.Object
+                },
                 CancellationToken.None));
 
         thrown.Should().BeSameAs(exception);
@@ -145,15 +154,18 @@ public class ExecuteAgentRawAsyncTests
 
         // Act
         await AgentPhaseExecutor.ExecuteAgentRawAsync(
-            _mockAgent.Object,
-            "test prompt",
-            _run,
-            _config,
-            "Test description",
-            null,
-            _mockLogger.Object,
-            CancellationToken.None,
-            onOutputLine: line => receivedLines.Add(line));
+            new AgentExecutionRequest
+            {
+                AgentProvider = _mockAgent.Object,
+                Prompt = "test prompt",
+                Run = _run,
+                Config = _config,
+                Description = "Test description",
+                OnChange = null,
+                Logger = _mockLogger.Object,
+                OnOutputLine = line => receivedLines.Add(line)
+            },
+            CancellationToken.None);
 
         // Assert
         receivedLines.Should().BeEquivalentTo(outputLines);
@@ -172,13 +184,16 @@ public class ExecuteAgentRawAsyncTests
 
         // Act
         await AgentPhaseExecutor.ExecuteAgentRawAsync(
-            _mockAgent.Object,
-            "test prompt",
-            _run,
-            _config,
-            "Test description",
-            null,
-            _mockLogger.Object,
+            new AgentExecutionRequest
+            {
+                AgentProvider = _mockAgent.Object,
+                Prompt = "test prompt",
+                Run = _run,
+                Config = _config,
+                Description = "Test description",
+                OnChange = null,
+                Logger = _mockLogger.Object
+            },
             CancellationToken.None);
 
         // Assert
@@ -206,13 +221,16 @@ public class ExecuteAgentRawAsyncTests
 
         // Act
         await AgentPhaseExecutor.ExecuteAgentRawAsync(
-            _mockAgent.Object,
-            "test prompt",
-            _run,
-            config,
-            "Test description",
-            null,
-            _mockLogger.Object,
+            new AgentExecutionRequest
+            {
+                AgentProvider = _mockAgent.Object,
+                Prompt = "test prompt",
+                Run = _run,
+                Config = config,
+                Description = "Test description",
+                OnChange = null,
+                Logger = _mockLogger.Object
+            },
             CancellationToken.None);
 
         // Assert

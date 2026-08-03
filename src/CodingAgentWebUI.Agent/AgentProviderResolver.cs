@@ -100,7 +100,7 @@ internal sealed class AgentProviderResolver
         }
     }
 
-    private async Task<IPipelineProvider?> ResolvePipelineProviderAsync(
+    private static async Task<IPipelineProvider?> ResolvePipelineProviderAsync(
         JobAssignmentMessage job, IProviderFactory providerFactory, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(job.PipelineProviderConfigId))

@@ -9,7 +9,7 @@ namespace CodingAgentWebUI.Components.Pages;
 
 public partial class TemplateTableSection
 {
-    // TODO: These mutable collection parameter types (List<T>, HashSet<T>) should be IReadOnlyList<T>
+    // TODO(#1775): These mutable collection parameter types (List<T>, HashSet<T>) should be IReadOnlyList<T>
     // and IReadOnlySet<T> to prevent child components from accidentally mutating parent state.
     [Parameter, EditorRequired] public List<PipelineJobTemplate> Templates { get; set; } = [];
     [Parameter, EditorRequired] public IReadOnlyList<PipelineProject> Projects { get; set; } = [];

@@ -84,8 +84,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         ArgumentOutOfRangeException.ThrowIfLessThan(pageSize, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(pageSize, MaxHistorySize);
         // TODO: Add upper bound for 'page' parameter to prevent integer overflow in (page - 1) * pageSize.
-        // With page=2_147_485 and pageSize=1000, unchecked multiplication wraps negative. Consider:
-        // ArgumentOutOfRangeException.ThrowIfGreaterThan(page, MaxHistorySize / pageSize + 1);
+        // With page=2_147_485 and pageSize=1000, unchecked multiplication wraps negative.
 
         return await GetRunHistoryPagedInternalAsync(page, pageSize, ct).ConfigureAwait(false);
     }
@@ -181,7 +180,8 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         return entities
             .Select(DeserializeSummary)
             .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
-            .ToList()!;
+            .Select(s => s!)
+            .ToList();
     }
 
     private async Task<PagedResult<PipelineRunSummary>> GetRunHistoryPagedInternalAsync(int page, int pageSize, CancellationToken ct)
@@ -213,9 +213,10 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
             var batch = entities
                 .Select(DeserializeSummary)
                 .Where(s => s is not null && s.InitiatedBy != ConsolidationConstants.InitiatedBy)
+                .Select(s => s!)
                 .ToList();
 
-            items.AddRange(batch!);
+            items.AddRange(batch);
             dbOffset += entities.Count;
 
             // If we fetched fewer rows than requested, we've exhausted the table
@@ -229,7 +230,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
 
         return new PagedResult<PipelineRunSummary>
         {
-            Items = items!,
+            Items = items,
             Page = page,
             PageSize = pageSize,
             HasMore = hasMore
@@ -273,7 +274,7 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         {
             // Concurrent insert race: another thread inserted the same RunId between
             // FindAsync (miss) and SaveChangesAsync. Retry as update.
-            _logger.Warning("Upsert race for run {RunId}, retrying as update", entity.RunId);
+            _logger.Warning(ex, "Upsert race for run {RunId}, retrying as update", entity.RunId);
             db.ChangeTracker.Clear();
             var retry = await db.PipelineRuns.FindAsync([entity.RunId], ct).ConfigureAwait(false);
             if (retry is not null)

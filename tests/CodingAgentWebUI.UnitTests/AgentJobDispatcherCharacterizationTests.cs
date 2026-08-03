@@ -72,7 +72,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
             historyService: _mockHistoryService.Object,
             runService: _runService);
 
-        return new AgentJobDispatcher(
+        return new AgentJobDispatcher(new AgentJobDispatcherDependencies(
             _dispatcher,
             _registry,
             _runService,
@@ -89,7 +89,7 @@ public class AgentJobDispatcherCharacterizationTests : IDisposable
                     _mockLogger.Object)),
             _mockAgentComm.Object,
             new ShutdownSignal(),
-            _mockLogger.Object);
+            _mockLogger.Object));
     }
 
     private void SetupHappyPathMocks(string agentProviderId, string? steeringContent = null)

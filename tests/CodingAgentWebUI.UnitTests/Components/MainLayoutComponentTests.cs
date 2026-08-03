@@ -43,7 +43,18 @@ public class MainLayoutComponentTests : BunitContext
             providerFactory: mockFactory.Object,
             historyService: mockHistory.Object);
 
-        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(runCreator, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object));
+        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = runCreator,
+            ProviderFactory = mockFactory.Object,
+            PipelineConfigStore = mockStore.Object,
+            ProviderConfigStore = mockStore.Object,
+            ProjectStore = mockStore.Object,
+            Logger = mockLogger.Object,
+            WorkDistributor = null,
+            DispatchOrchestration = null,
+            DependencyChecker = null
+        }));
         Services.AddSingleton(new ConsolidationBadgeService());
         Services.AddSingleton(_jsMock.Object);
 

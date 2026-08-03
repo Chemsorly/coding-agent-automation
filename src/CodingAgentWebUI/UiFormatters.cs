@@ -84,11 +84,11 @@ public static class UiFormatters
 
     public static string FormatTimestamp(DateTime timestamp)
     {
-        var local = timestamp.Kind == DateTimeKind.Utc ? timestamp.ToLocalTime() : timestamp;
-        var ago = DateTime.Now - local;
+        var utc = timestamp.Kind == DateTimeKind.Utc ? timestamp : timestamp.ToUniversalTime();
+        var ago = DateTime.UtcNow - utc;
         if (ago.TotalMinutes < 60) return $"{(int)ago.TotalMinutes}m ago";
         if (ago.TotalHours < 24) return $"{(int)ago.TotalHours}h ago";
         if (ago.TotalDays < 7) return $"{(int)ago.TotalDays}d ago";
-        return local.ToString("yyyy-MM-dd HH:mm");
+        return utc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
     }
 }

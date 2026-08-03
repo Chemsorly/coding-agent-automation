@@ -13,13 +13,11 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 public sealed partial class PipelineLoopService : BackgroundService, IPipelineLoopService
 {
-    private readonly IDispatchRunCreator _orchestration;
     private readonly IProviderFactory _providerFactory;
     private readonly IPipelineConfigStore _pipelineConfigStore;
     private readonly IProviderConfigStore _providerConfigStore;
     private readonly IProjectStore _projectStore;
     private readonly IWorkDistributor? _workDistributor;
-    private readonly IDispatchOrchestrationService? _dispatchOrchestration;
     private readonly IDependencyChecker? _dependencyChecker;
     private readonly Serilog.ILogger _logger;
 
@@ -83,37 +81,27 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     /// <summary>Validation errors from the last failed StartLoop() call.</summary>
     public IReadOnlyList<string> ValidationErrors => _validationErrors;
 
-    public PipelineLoopService(
-        IDispatchRunCreator orchestration,
-        IProviderFactory providerFactory,
-        IPipelineConfigStore pipelineConfigStore,
-        IProviderConfigStore providerConfigStore,
-        IProjectStore projectStore,
-        Serilog.ILogger logger,
-        IWorkDistributor? workDistributor = null,
-        IDispatchOrchestrationService? dispatchOrchestration = null,
-        IDependencyChecker? dependencyChecker = null)
+    public PipelineLoopService(PipelineLoopServiceDependencies deps)
     {
-        ArgumentNullException.ThrowIfNull(orchestration);
-        ArgumentNullException.ThrowIfNull(providerFactory);
-        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
-        ArgumentNullException.ThrowIfNull(providerConfigStore);
-        ArgumentNullException.ThrowIfNull(projectStore);
-        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.Orchestration);
+        ArgumentNullException.ThrowIfNull(deps.ProviderFactory);
+        ArgumentNullException.ThrowIfNull(deps.PipelineConfigStore);
+        ArgumentNullException.ThrowIfNull(deps.ProviderConfigStore);
+        ArgumentNullException.ThrowIfNull(deps.ProjectStore);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
 
-        _orchestration = orchestration;
-        _providerFactory = providerFactory;
-        _pipelineConfigStore = pipelineConfigStore;
-        _providerConfigStore = providerConfigStore;
-        _projectStore = projectStore;
-        _logger = logger;
-        _workDistributor = workDistributor;
-        _dispatchOrchestration = dispatchOrchestration;
-        _dependencyChecker = dependencyChecker;
+        _providerFactory = deps.ProviderFactory;
+        _pipelineConfigStore = deps.PipelineConfigStore;
+        _providerConfigStore = deps.ProviderConfigStore;
+        _projectStore = deps.ProjectStore;
+        _logger = deps.Logger;
+        _workDistributor = deps.WorkDistributor;
+        _dependencyChecker = deps.DependencyChecker;
 
-        _cacheManager = new ProviderCacheManager(providerFactory, logger);
-        _poller = new TemplatePoller(_cacheManager, logger);
-        _dispatcher = new DispatchScheduler(orchestration, dispatchOrchestration, workDistributor, dependencyChecker, _cacheManager, logger);
+        _cacheManager = new ProviderCacheManager(deps.ProviderFactory, deps.Logger);
+        _poller = new TemplatePoller(_cacheManager, deps.Logger);
+        _dispatcher = new DispatchScheduler(deps.Orchestration, deps.DispatchOrchestration, deps.WorkDistributor, deps.DependencyChecker, _cacheManager, deps.Logger);
     }
 
     /// <summary>
@@ -160,14 +148,13 @@ public sealed partial class PipelineLoopService : BackgroundService, IPipelineLo
     {
         // Load config outside the lock to avoid sync-over-async deadlocks
         // (Blazor Server's RendererSynchronizationContext would deadlock on .GetAwaiter().GetResult())
-        PipelineConfiguration config;
         IReadOnlyList<ProviderConfig> issueProviders;
         IReadOnlyList<ProviderConfig> repoProviders;
         IReadOnlyList<PipelineJobTemplate> templates;
 
         try
         {
-            config = await _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).ConfigureAwait(false);
+            _ = await _pipelineConfigStore.LoadPipelineConfigAsync(CancellationToken.None).ConfigureAwait(false);
             issueProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, CancellationToken.None).ConfigureAwait(false);
             repoProviders = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, CancellationToken.None).ConfigureAwait(false);
             templates = await _projectStore.LoadAllTemplatesAsync(CancellationToken.None).ConfigureAwait(false);

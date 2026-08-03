@@ -24,12 +24,10 @@ internal static class AuthenticationRegistration
             .AddScheme<AgentApiKeyAuthOptions, AgentApiKeyAuthHandler>(
                 AgentApiKeyDefaults.AuthenticationScheme,
                 options => options.ApiKey = agentApiKey);
-        services.AddAuthorization(options =>
-        {
-            options.AddPolicy("AgentApiKey", policy =>
+        services.AddAuthorizationBuilder()
+            .AddPolicy("AgentApiKey", policy =>
                 policy.AddAuthenticationSchemes(AgentApiKeyDefaults.AuthenticationScheme)
                       .RequireAuthenticatedUser());
-        });
 
         return services;
     }

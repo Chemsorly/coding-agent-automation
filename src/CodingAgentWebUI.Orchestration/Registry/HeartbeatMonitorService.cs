@@ -1,4 +1,3 @@
-using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.Extensions.Hosting;
@@ -25,42 +24,29 @@ public sealed class HeartbeatMonitorService : BackgroundService
     private readonly IAgentRegistryService _registry;
     private readonly IOrchestratorRunService _runService;
     private readonly IPipelineRunHistoryService _historyService;
-    private readonly JobDeduplicationGuardService _dispatcher;
-    private readonly ILabelService _labelService;
     private readonly IConfigurationStore _configStore;
     private readonly IConsolidationService? _consolidationService;
     private readonly IRunLifecycleManager _lifecycleManager;
     private readonly ILogger _logger;
 
     public HeartbeatMonitorService(
-        IAgentRegistryService registry,
-        IOrchestratorRunService runService,
-        IPipelineRunHistoryService historyService,
-        JobDeduplicationGuardService dispatcher,
-        ILabelService labelService,
-        IConfigurationStore configStore,
-        ILogger logger,
-        IRunLifecycleManager lifecycleManager,
-        IConsolidationService? consolidationService = null)
+        HeartbeatMonitorDependencies deps)
     {
-        ArgumentNullException.ThrowIfNull(registry);
-        ArgumentNullException.ThrowIfNull(runService);
-        ArgumentNullException.ThrowIfNull(historyService);
-        ArgumentNullException.ThrowIfNull(dispatcher);
-        ArgumentNullException.ThrowIfNull(labelService);
-        ArgumentNullException.ThrowIfNull(configStore);
-        ArgumentNullException.ThrowIfNull(logger);
-        ArgumentNullException.ThrowIfNull(lifecycleManager);
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.Registry);
+        ArgumentNullException.ThrowIfNull(deps.RunService);
+        ArgumentNullException.ThrowIfNull(deps.HistoryService);
+        ArgumentNullException.ThrowIfNull(deps.ConfigStore);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
+        ArgumentNullException.ThrowIfNull(deps.LifecycleManager);
 
-        _registry = registry;
-        _runService = runService;
-        _historyService = historyService;
-        _dispatcher = dispatcher;
-        _labelService = labelService;
-        _configStore = configStore;
-        _consolidationService = consolidationService;
-        _lifecycleManager = lifecycleManager;
-        _logger = logger;
+        _registry = deps.Registry;
+        _runService = deps.RunService;
+        _historyService = deps.HistoryService;
+        _configStore = deps.ConfigStore;
+        _consolidationService = deps.ConsolidationService;
+        _lifecycleManager = deps.LifecycleManager;
+        _logger = deps.Logger;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -247,11 +233,13 @@ public sealed class HeartbeatMonitorService : BackgroundService
         var run = _runService.GetRun(agent.ActiveJobId!);
         if (run is not null)
         {
-            var referenceTime = run.LastStepChangeAt != default
-                ? run.LastStepChangeAt
-                : run.StartedAtOffset != default
-                    ? run.StartedAtOffset
-                    : default;
+            DateTimeOffset referenceTime;
+            if (run.LastStepChangeAt != default)
+                referenceTime = run.LastStepChangeAt;
+            else if (run.StartedAtOffset != default)
+                referenceTime = run.StartedAtOffset;
+            else
+                referenceTime = default;
 
             if (referenceTime == default)
             {

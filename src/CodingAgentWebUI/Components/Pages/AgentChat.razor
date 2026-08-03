@@ -278,69 +278,70 @@
 
         try
         {
-            // Resolve model/effort from ProviderConfig for dispatch injection
-            string? model = null, effort = null;
-
-            var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
-            var labelParts = _selectedTemplateLabels.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            var resolver = new ProfileResolver();
-            _resolvedProfile = resolver.Resolve(profiles, labelParts);
-
-            if (_resolvedProfile is not null)
-            {
-                var agentConfig = await ConfigStore.GetProviderConfigByIdAsync(
-                    _resolvedProfile.AgentProviderConfigId, ProviderKind.Agent, CancellationToken.None);
-
-                model = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
-                effort = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Effort);
-                _resolvedModel = model ?? "auto";
-
-                if (agentConfig?.Settings.TryGetValue(ProviderSettingKeys.McpConfigPath, out var path) == true
-                    && !string.IsNullOrWhiteSpace(path))
-                {
-                    _resolvedMcpConfigPath = path;
-                }
-            }
+            await ResolvePodLaunchProfileAsync();
 
             var agentId = await ChatDispatcher.DispatchChatPodAsync(
-                _selectedTemplateLabels, model, effort, _cts.Token);
+                _selectedTemplateLabels, _resolvedPodModel, _resolvedPodEffort, _cts.Token);
 
             _selectedAgentId = agentId;
             await StartChat();
         }
-        catch (OperationCanceledException) when (_cts?.IsCancellationRequested == true)
-        {
-            _launchError = "Launch cancelled.";
-        }
-        catch (ChatAlreadyActiveException)
-        {
-            _launchError = "A chat pod is already running for this agent type.";
-        }
-        catch (NoPvcAvailableException)
-        {
-            _launchError = "No agent credentials available. Try again later.";
-        }
-        catch (ChatPodTimeoutException ex)
-        {
-            _launchError = $"Pod did not connect within {ex.TimeoutSeconds}s. Check cluster logs.";
-        }
-        catch (InvalidOperationException ex) when (ex.Message.Contains("not the leader"))
-        {
-            _launchError = "The server is currently unavailable for chat dispatch. Please try again.";
-        }
         catch (Exception ex)
         {
-            _launchError = $"Launch failed: {ex.Message}";
-            Log.Warning(ex, "AgentChat: unexpected error launching chat pod");
+            var classified = ClassifyLaunchError(ex);
+            _launchError = classified ?? $"Launch failed: {ex.Message}";
+            if (classified is null)
+                Log.Warning(ex, "AgentChat: unexpected error launching chat pod");
         }
         finally
         {
             _launching = false;
-            _elapsedTimer?.Dispose();
-            _elapsedTimer = null;
+            if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
             StateHasChanged();
         }
     }
+
+    // Transient fields set by ResolvePodLaunchProfileAsync for use in LaunchChatPod
+    private string? _resolvedPodModel;
+    private string? _resolvedPodEffort;
+
+    private async Task ResolvePodLaunchProfileAsync()
+    {
+        _resolvedPodModel = null;
+        _resolvedPodEffort = null;
+
+        var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
+        var labelParts = _selectedTemplateLabels.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var resolver = new ProfileResolver();
+        _resolvedProfile = resolver.Resolve(profiles, labelParts);
+
+        if (_resolvedProfile is not null)
+        {
+            var agentConfig = await ConfigStore.GetProviderConfigByIdAsync(
+                _resolvedProfile.AgentProviderConfigId, ProviderKind.Agent, CancellationToken.None);
+
+            _resolvedPodModel = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Model);
+            _resolvedPodEffort = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Effort);
+            _resolvedModel = _resolvedPodModel ?? "auto";
+
+            if (agentConfig?.Settings.TryGetValue(ProviderSettingKeys.McpConfigPath, out var path) == true
+                && !string.IsNullOrWhiteSpace(path))
+            {
+                _resolvedMcpConfigPath = path;
+            }
+        }
+    }
+
+    private string? ClassifyLaunchError(Exception ex) => ex switch
+    {
+        OperationCanceledException when _cts?.IsCancellationRequested == true => "Launch cancelled.",
+        ChatAlreadyActiveException => "A chat pod is already running for this agent type.",
+        NoPvcAvailableException => "No agent credentials available. Try again later.",
+        ChatPodTimeoutException tEx => $"Pod did not connect within {tEx.TimeoutSeconds}s. Check cluster logs.",
+        InvalidOperationException iEx when iEx.Message.Contains("not the leader")
+            => "The server is currently unavailable for chat dispatch. Please try again.",
+        _ => null // caller logs unexpected
+    };
 
     // ── StartChat (shared) ────────────────────────────────────────────────────
 
@@ -350,39 +351,7 @@
 
         if (!Features.IsKubernetesMode)
         {
-            // SignalR mode: resolve profile from agent labels
-            var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
-            var agent = Registry.GetByAgentId(_selectedAgentId);
-            if (agent is null) return;
-
-            var resolver = new ProfileResolver();
-            _resolvedProfile = resolver.Resolve(profiles, agent.Labels);
-
-            if (_resolvedProfile is not null)
-            {
-                var agentConfig = await ConfigStore.GetProviderConfigByIdAsync(
-                    _resolvedProfile.AgentProviderConfigId, ProviderKind.Agent, CancellationToken.None);
-
-                _resolvedModel = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto") ?? "auto";
-
-                if (agentConfig?.Settings.TryGetValue(ProviderSettingKeys.McpConfigPath, out var path) == true
-                    && !string.IsNullOrWhiteSpace(path))
-                {
-                    _resolvedMcpConfigPath = path;
-                }
-                else
-                {
-                    _resolvedMcpConfigPath = agentConfig?.ProviderType switch
-                    {
-                        "KiroCli" => "/home/ubuntu/.kiro/settings/mcp.json",
-                        _ => "/home/ubuntu/.kiro/settings/mcp.json"
-                    };
-                }
-            }
-
-            // Mark agent as busy for chat
-            agent.ActiveJobId = ChatSessionJobId;
-            Registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
+            await ResolveSignalRModeProfileAsync();
         }
 
         // Generate a stable chat window ID for this session
@@ -392,6 +361,43 @@
         _isFirstPrompt = true;
         _messages.Clear();
         _streamingContent.Clear();
+    }
+
+    private async Task ResolveSignalRModeProfileAsync()
+    {
+        // SignalR mode: resolve profile from agent labels
+        var profiles = await ConfigStore.LoadAgentProfilesAsync(CancellationToken.None);
+        var agent = Registry.GetByAgentId(_selectedAgentId);
+        if (agent is null) return;
+
+        var resolver = new ProfileResolver();
+        _resolvedProfile = resolver.Resolve(profiles, agent.Labels);
+
+        if (_resolvedProfile is not null)
+        {
+            var agentConfig = await ConfigStore.GetProviderConfigByIdAsync(
+                _resolvedProfile.AgentProviderConfigId, ProviderKind.Agent, CancellationToken.None);
+
+            _resolvedModel = agentConfig?.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto") ?? "auto";
+
+            if (agentConfig?.Settings.TryGetValue(ProviderSettingKeys.McpConfigPath, out var path) == true
+                && !string.IsNullOrWhiteSpace(path))
+            {
+                _resolvedMcpConfigPath = path;
+            }
+            else
+            {
+                _resolvedMcpConfigPath = agentConfig?.ProviderType switch
+                {
+                    "KiroCli" => "/home/ubuntu/.kiro/settings/mcp.json",
+                    _ => "/home/ubuntu/.kiro/settings/mcp.json"
+                };
+            }
+        }
+
+        // Mark agent as busy for chat
+        agent.ActiveJobId = ChatSessionJobId;
+        Registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
     }
 
     // ── SendPrompt ────────────────────────────────────────────────────────────
@@ -526,42 +532,11 @@
 
         if (!Features.IsKubernetesMode)
         {
-            // SignalR mode: cancel active prompt and return agent to idle
-            if (_isWaitingForResponse && _activeSessionId is not null)
-            {
-                var agent = Registry.GetByAgentId(_selectedAgentId);
-                if (agent is not null)
-                {
-                    try
-                    {
-                        await HubContext.Clients.Client(agent.ConnectionId).CancelChat(_activeSessionId);
-                    }
-                    catch (Exception ex) { Log.Warning(ex, "Failed to send cancel to agent {AgentId}", _selectedAgentId); }
-                }
-            }
-
-            var agentEntry = Registry.GetByAgentId(_selectedAgentId);
-            if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == ChatSessionJobId)
-            {
-                agentEntry.ActiveJobId = null;
-                agentEntry.ActiveChatSessionId = null;
-                Registry.TransitionStatus(agentEntry.AgentId, AgentStatus.Idle);
-            }
+            await EndChatSignalRModeAsync();
         }
         else
         {
-            // K8s mode: terminate the chat pod
-            if (!string.IsNullOrEmpty(_selectedAgentId))
-            {
-                try
-                {
-                    await ChatDispatcher.TerminateChatSessionAsync(_selectedAgentId, CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning(ex, "AgentChat: TerminateChatSessionAsync failed for agent {AgentId}", _selectedAgentId);
-                }
-            }
+            await EndChatK8sModeAsync();
         }
 
         _isWaitingForResponse = false;
@@ -572,6 +547,47 @@
 
         if (!Features.IsKubernetesMode)
             RefreshIdleAgents();
+    }
+
+    private async Task EndChatSignalRModeAsync()
+    {
+        // Cancel active prompt and return agent to idle
+        if (_isWaitingForResponse && _activeSessionId is not null)
+        {
+            var agent = Registry.GetByAgentId(_selectedAgentId);
+            if (agent is not null)
+            {
+                try
+                {
+                    await HubContext.Clients.Client(agent.ConnectionId).CancelChat(_activeSessionId);
+                }
+                catch (Exception ex) { Log.Warning(ex, "Failed to send cancel to agent {AgentId}", _selectedAgentId); }
+            }
+        }
+
+        var agentEntry = Registry.GetByAgentId(_selectedAgentId);
+        if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == ChatSessionJobId)
+        {
+            agentEntry.ActiveJobId = null;
+            agentEntry.ActiveChatSessionId = null;
+            Registry.TransitionStatus(agentEntry.AgentId, AgentStatus.Idle);
+        }
+    }
+
+    private async Task EndChatK8sModeAsync()
+    {
+        // Terminate the chat pod
+        if (!string.IsNullOrEmpty(_selectedAgentId))
+        {
+            try
+            {
+                await ChatDispatcher.TerminateChatSessionAsync(_selectedAgentId, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "AgentChat: TerminateChatSessionAsync failed for agent {AgentId}", _selectedAgentId);
+            }
+        }
     }
 
     // ── Keyboard + scroll helpers ─────────────────────────────────────────────
@@ -609,49 +625,60 @@
         PipelineLifecycle.OnChatCompleted -= HandleChatCompleted;
         PipelineLifecycle.OnChange -= HandleStateChange;
 
-        _refreshTimer?.Dispose();
-        _elapsedTimer?.Dispose();
-        _cts?.Cancel();
+        if (_refreshTimer is not null) { await _refreshTimer.DisposeAsync(); _refreshTimer = null; }
+        if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
+        if (_cts is not null)
+            await _cts.CancelAsync();
         _cts?.Dispose();
 
         if (_isChatActive && !string.IsNullOrEmpty(_selectedAgentId))
         {
             if (Features.IsKubernetesMode)
             {
-                // K8s mode: terminate the pod regardless of _isWaitingForResponse
-                try
-                {
-                    await ChatDispatcher.TerminateChatSessionAsync(_selectedAgentId, CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    Log.Warning(ex, "AgentChat: TerminateChatSessionAsync failed on dispose for agent {AgentId}", _selectedAgentId);
-                }
+                await DisposeK8sChatAsync();
             }
             else
             {
-                // SignalR mode: cancel and return agent to idle
-                if (_isWaitingForResponse && _activeSessionId is not null)
-                {
-                    var agent = Registry.GetByAgentId(_selectedAgentId);
-                    if (agent is not null)
-                    {
-                        try
-                        {
-                            await HubContext.Clients.Client(agent.ConnectionId).CancelChat(_activeSessionId);
-                        }
-                        catch (Exception ex) { Log.Warning(ex, "Failed to cancel chat on dispose for agent {AgentId}", _selectedAgentId); }
-                    }
-                }
-
-                var agentEntry = Registry.GetByAgentId(_selectedAgentId);
-                if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == ChatSessionJobId)
-                {
-                    agentEntry.ActiveJobId = null;
-                    agentEntry.ActiveChatSessionId = null;
-                    Registry.TransitionStatus(agentEntry.AgentId, AgentStatus.Idle);
-                }
+                await DisposeSignalRChatAsync();
             }
+        }
+    }
+
+    private async Task DisposeK8sChatAsync()
+    {
+        // K8s mode: terminate the pod regardless of _isWaitingForResponse
+        try
+        {
+            await ChatDispatcher.TerminateChatSessionAsync(_selectedAgentId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "AgentChat: TerminateChatSessionAsync failed on dispose for agent {AgentId}", _selectedAgentId);
+        }
+    }
+
+    private async Task DisposeSignalRChatAsync()
+    {
+        // SignalR mode: cancel and return agent to idle
+        if (_isWaitingForResponse && _activeSessionId is not null)
+        {
+            var agent = Registry.GetByAgentId(_selectedAgentId);
+            if (agent is not null)
+            {
+                try
+                {
+                    await HubContext.Clients.Client(agent.ConnectionId).CancelChat(_activeSessionId);
+                }
+                catch (Exception ex) { Log.Warning(ex, "Failed to cancel chat on dispose for agent {AgentId}", _selectedAgentId); }
+            }
+        }
+
+        var agentEntry = Registry.GetByAgentId(_selectedAgentId);
+        if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == ChatSessionJobId)
+        {
+            agentEntry.ActiveJobId = null;
+            agentEntry.ActiveChatSessionId = null;
+            Registry.TransitionStatus(agentEntry.AgentId, AgentStatus.Idle);
         }
     }
 

@@ -29,6 +29,17 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 [Trait("Feature", "035a-kubernetes-edge-cases")]
 public class K8sEdgeCaseTests : IDisposable
 {
+    private static readonly string[] PvcPool2 = ["pvc-test-1", "pvc-test-2"];
+    private static readonly string[] PvcPoolSingle = ["pvc-single"];
+    private static readonly string[] PvcPoolLeakTest = ["pvc-leak-test"];
+    private static readonly string[] PvcPoolFindLeak = ["pvc-find-leak"];
+    private static readonly string[] PvcPoolSaveLeak = ["pvc-save-leak"];
+    private static readonly string[] PvcPoolOceLeak = ["pvc-oce-leak"];
+    private static readonly string[] PvcPoolRaceTest = ["pvc-race-test"];
+    private static readonly string[] PvcPoolNullTest = ["pvc-null-test"];
+    private static readonly string[] PvcPoolFailTest = ["pvc-fail-test"];
+    private static readonly WorkItemStatus[] TerminalStatuses = [WorkItemStatus.Succeeded, WorkItemStatus.Failed];
+
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly TestDbContextFactory _dbFactory;
     private readonly WorkItemTransitionService _transitionService;
@@ -80,7 +91,7 @@ public class K8sEdgeCaseTests : IDisposable
         var pendingId = Guid.NewGuid();
         await InsertWorkItem(pendingId, "owner/repo#needs-pvc", "kiro,dotnet", WorkItemStatus.Pending);
 
-        var service = CreateDispatchService(pvcPool: new[] { "pvc-test-1", "pvc-test-2" });
+        var service = CreateDispatchService(pvcPool: PvcPool2);
 
         // Act
         await InvokePollAndDispatch(service);
@@ -109,7 +120,7 @@ public class K8sEdgeCaseTests : IDisposable
         var pendingId = Guid.NewGuid();
         await InsertWorkItem(pendingId, "owner/repo#waiting", "kiro,dotnet", WorkItemStatus.Pending);
 
-        var service = CreateDispatchService(pvcPool: new[] { "pvc-single" });
+        var service = CreateDispatchService(pvcPool: PvcPoolSingle);
 
         // First poll: PVC claimed → stays Pending
         await InvokePollAndDispatch(service);
@@ -174,7 +185,7 @@ public class K8sEdgeCaseTests : IDisposable
                 w.CompletedAt = DateTimeOffset.UtcNow;
                 w.FailureReason = FailureReason.Timeout;
                 w.ErrorMessage = "Timeout exceeded: agent never reported status (possible OOM/SIGKILL)";
-            }, CancellationToken.None);
+            }, ct: CancellationToken.None);
 
         // Assert
         transitioned.Should().BeTrue();
@@ -206,7 +217,7 @@ public class K8sEdgeCaseTests : IDisposable
                 w.CompletedAt = DateTimeOffset.UtcNow;
                 w.FailureReason = FailureReason.Timeout;
                 w.ErrorMessage = "Timeout exceeded: agent Running but no completion within deadline";
-            }, CancellationToken.None);
+            }, ct: CancellationToken.None);
 
         transitioned.Should().BeTrue();
         await using var db = await _dbFactory.CreateDbContextAsync();
@@ -288,13 +299,13 @@ public class K8sEdgeCaseTests : IDisposable
             k8sJobName: "caa-race-test");
 
         var agentTask = _transitionService.TransitionAsync(workItemId, WorkItemStatus.Succeeded,
-            w => w.CompletedAt = DateTimeOffset.UtcNow, CancellationToken.None);
+            w => w.CompletedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         var reconciliationTask = _transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
             w =>
             {
                 w.CompletedAt = DateTimeOffset.UtcNow;
                 w.FailureReason = FailureReason.Timeout;
-            }, CancellationToken.None);
+            }, ct: CancellationToken.None);
 
         await Task.WhenAll(agentTask, reconciliationTask);
 
@@ -302,7 +313,7 @@ public class K8sEdgeCaseTests : IDisposable
         await using var db = await _dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().BeOneOf(
-            new[] { WorkItemStatus.Succeeded, WorkItemStatus.Failed },
+            TerminalStatuses,
             because: "Item must reach a terminal state regardless of race outcome");
         item.CompletedAt.Should().NotBeNull();
     }
@@ -626,12 +637,13 @@ public class K8sEdgeCaseTests : IDisposable
         var templateProvider = JobTemplateStore.LoadFromJson(json);
 
         var service = new DispatchService(
-            _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
-            {
-                PollIntervalSeconds = 10, RateLimitPerSecond = 100, Namespace = "default",
-                OrchestratorUrl = "http://orchestrator:8080", AgentApiKeySecretName = "agent-api-key",
-                KiroPvcPool = new List<string> { "pvc-kiro-1", "pvc-kiro-2" }
-            }),
+            new DispatchServiceCoreDependencies(
+                _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+                {
+                    PollIntervalSeconds = 10, RateLimitPerSecond = 100, Namespace = "default",
+                    OrchestratorUrl = "http://orchestrator:8080", AgentApiKeySecretName = "agent-api-key",
+                    KiroPvcPool = new List<string> { "pvc-kiro-1", "pvc-kiro-2" }
+                })),
             config, templateProvider);
 
         _mockKubeClient
@@ -669,7 +681,7 @@ public class K8sEdgeCaseTests : IDisposable
                     new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError), "")
             });
 
-        var service = CreateDispatchService(pvcPool: new[] { "pvc-leak-test" });
+        var service = CreateDispatchService(pvcPool: PvcPoolLeakTest);
 
         // Act
         await InvokePollAndDispatch(service);
@@ -695,7 +707,7 @@ public class K8sEdgeCaseTests : IDisposable
         var pendingId = Guid.NewGuid();
         await InsertWorkItem(pendingId, "owner/repo#prepare-fail", "kiro,dotnet", WorkItemStatus.Pending);
 
-        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-leak-test" });
+        var lifecycle = CreateDispatchLifecycleService(pvcPool: PvcPoolLeakTest);
         await using var db = await _dbFactory.CreateDbContextAsync();
 
         var projection = new PendingWorkItemProjection
@@ -719,11 +731,8 @@ public class K8sEdgeCaseTests : IDisposable
 
         // Act: prepareVariant throws — PVC must still be returned to pool
         Func<Task> act = () => lifecycle.ExecuteDispatchLifecycleAsync(
-            db, projection, template,
-            isKiroAgent: true,
-            availablePvcs,
-            concurrency,
-            logPrefix: "",
+            new DispatchLifecycleContext(db, projection, template, IsKiroAgent: true,
+                availablePvcs, concurrency, LogPrefix: ""),
             prepareVariant: _ => throw new InvalidOperationException("simulated prepareVariant failure"),
             onDispatchSuccess: null,
             ct: CancellationToken.None);
@@ -750,7 +759,7 @@ public class K8sEdgeCaseTests : IDisposable
     public async Task ExecuteDispatchLifecycle_FindAsyncThrowsTransientException_PvcReturnedToPool()
     {
         // Arrange: create a lifecycle service with a PVC pool
-        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-find-leak" });
+        var lifecycle = CreateDispatchLifecycleService(pvcPool: PvcPoolFindLeak);
 
         // Use a disposed DbContext to simulate a transient DB failure on FindAsync.
         // When FindAsync is called on a disposed context, it throws ObjectDisposedException,
@@ -779,11 +788,8 @@ public class K8sEdgeCaseTests : IDisposable
 
         // Act: FindAsync throws on disposed context — PVC must still be returned to pool
         Func<Task> act = () => lifecycle.ExecuteDispatchLifecycleAsync(
-            disposedDb, projection, template,
-            isKiroAgent: true,
-            availablePvcs,
-            concurrency,
-            logPrefix: "",
+            new DispatchLifecycleContext(disposedDb, projection, template, IsKiroAgent: true,
+                availablePvcs, concurrency, LogPrefix: ""),
             prepareVariant: _ => Task.FromResult<(bool, Dictionary<string, string>?)>((true, null)),
             onDispatchSuccess: null,
             ct: CancellationToken.None);
@@ -835,7 +841,7 @@ public class K8sEdgeCaseTests : IDisposable
         // Arm the interceptor — next SaveChangesAsync will throw
         interceptor.Armed = true;
 
-        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-save-leak" });
+        var lifecycle = CreateDispatchLifecycleService(pvcPool: PvcPoolSaveLeak);
         await using var db = new TestPipelineDbContext(interceptorOptions);
 
         var projection = new PendingWorkItemProjection
@@ -859,11 +865,8 @@ public class K8sEdgeCaseTests : IDisposable
 
         // Act: first SaveChangesAsync throws — PVC must still be returned to pool
         Func<Task> act = () => lifecycle.ExecuteDispatchLifecycleAsync(
-            db, projection, template,
-            isKiroAgent: true,
-            availablePvcs,
-            concurrency,
-            logPrefix: "",
+            new DispatchLifecycleContext(db, projection, template, IsKiroAgent: true,
+                availablePvcs, concurrency, LogPrefix: ""),
             prepareVariant: _ => Task.FromResult<(bool, Dictionary<string, string>?)>((true, null)),
             onDispatchSuccess: null,
             ct: CancellationToken.None);
@@ -888,7 +891,7 @@ public class K8sEdgeCaseTests : IDisposable
     public async Task ExecuteDispatchLifecycle_FindAsyncThrowsOperationCanceledException_PvcReturnedToPool()
     {
         // Arrange: create a lifecycle service with a PVC pool
-        var lifecycle = CreateDispatchLifecycleService(pvcPool: new[] { "pvc-oce-leak" });
+        var lifecycle = CreateDispatchLifecycleService(pvcPool: PvcPoolOceLeak);
 
         // Use a pre-cancelled CancellationToken so that FindAsync throws OperationCanceledException.
         // This simulates the scenario where a transient shutdown or timeout cancels the token
@@ -921,11 +924,8 @@ public class K8sEdgeCaseTests : IDisposable
 
         // Act: FindAsync throws OperationCanceledException — PVC must be returned to pool
         Func<Task> act = () => lifecycle.ExecuteDispatchLifecycleAsync(
-            db, projection, template,
-            isKiroAgent: true,
-            availablePvcs,
-            concurrency,
-            logPrefix: "",
+            new DispatchLifecycleContext(db, projection, template, IsKiroAgent: true,
+                availablePvcs, concurrency, LogPrefix: ""),
             prepareVariant: _ => Task.FromResult<(bool, Dictionary<string, string>?)>((true, null)),
             onDispatchSuccess: null,
             ct: cts.Token);
@@ -1000,11 +1000,11 @@ public class K8sEdgeCaseTests : IDisposable
                 {
                     // Simulate race: another process transitions the first work item to Dispatched
                     // during the K8s API call window. Use a separate DbContext to avoid tracking conflicts.
-                    await using var raceDb = await _dbFactory.CreateDbContextAsync();
-                    var item = await raceDb.WorkItems.FindAsync(racedId);
+                    await using var raceDb = await _dbFactory.CreateDbContextAsync(ct);
+                    var item = await raceDb.WorkItems.FindAsync([racedId], ct);
                     item!.Status = WorkItemStatus.Dispatched;
                     item.DispatchedAt = DateTimeOffset.UtcNow;
-                    await raceDb.SaveChangesAsync();
+                    await raceDb.SaveChangesAsync(ct);
                 }
             })
             .Returns(Task.CompletedTask);
@@ -1013,7 +1013,7 @@ public class K8sEdgeCaseTests : IDisposable
             .Setup(k => k.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var service = CreateDispatchService(pvcPool: new[] { "pvc-race-test" });
+        var service = CreateDispatchService(pvcPool: PvcPoolRaceTest);
 
         // Act
         await InvokePollAndDispatch(service);
@@ -1052,12 +1052,12 @@ public class K8sEdgeCaseTests : IDisposable
             .Callback<V1Job, string, CancellationToken>(async (job, ns, ct) =>
             {
                 // Simulate race: hard-delete the work item during K8s API call
-                await using var raceDb = await _dbFactory.CreateDbContextAsync();
-                var item = await raceDb.WorkItems.FindAsync(deletedId);
+                await using var raceDb = await _dbFactory.CreateDbContextAsync(ct);
+                var item = await raceDb.WorkItems.FindAsync([deletedId], ct);
                 if (item is not null)
                 {
                     raceDb.WorkItems.Remove(item);
-                    await raceDb.SaveChangesAsync();
+                    await raceDb.SaveChangesAsync(ct);
                 }
             })
             .Returns(Task.CompletedTask);
@@ -1066,7 +1066,7 @@ public class K8sEdgeCaseTests : IDisposable
             .Setup(k => k.DeleteJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
-        var service = CreateDispatchService(pvcPool: new[] { "pvc-null-test" });
+        var service = CreateDispatchService(pvcPool: PvcPoolNullTest);
 
         // Act
         await InvokePollAndDispatch(service);
@@ -1102,11 +1102,11 @@ public class K8sEdgeCaseTests : IDisposable
                 if (createCallCount == 1)
                 {
                     // Simulate race on first item
-                    await using var raceDb = await _dbFactory.CreateDbContextAsync();
-                    var item = await raceDb.WorkItems.FindAsync(racedId);
+                    await using var raceDb = await _dbFactory.CreateDbContextAsync(ct);
+                    var item = await raceDb.WorkItems.FindAsync([racedId], ct);
                     item!.Status = WorkItemStatus.Dispatched;
                     item.DispatchedAt = DateTimeOffset.UtcNow;
-                    await raceDb.SaveChangesAsync();
+                    await raceDb.SaveChangesAsync(ct);
                 }
             })
             .Returns(Task.CompletedTask);
@@ -1120,7 +1120,7 @@ public class K8sEdgeCaseTests : IDisposable
                     new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.NotFound), "")
             });
 
-        var service = CreateDispatchService(pvcPool: new[] { "pvc-fail-test" });
+        var service = CreateDispatchService(pvcPool: PvcPoolFailTest);
 
         // Act
         await InvokePollAndDispatch(service);
@@ -1148,8 +1148,9 @@ public class K8sEdgeCaseTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
 
         return new ReconciliationService(
-            _dbFactory, CreateAlwaysLeaderElection(), _mockKube.Object,
-            _transitionService, config);
+            new ReconciliationServiceDependencies(
+                _dbFactory, CreateAlwaysLeaderElection(), _mockKube.Object,
+                _transitionService, config));
     }
 
     private static V1Job CreateCompleteJob(string jobName, Guid workItemId, DateTime completionTime)
@@ -1181,7 +1182,7 @@ public class K8sEdgeCaseTests : IDisposable
         };
     }
 
-    private async Task InvokeHandleJobEventAsync(ReconciliationService service, WatchEventType type, V1Job job)
+    private static async Task InvokeHandleJobEventAsync(ReconciliationService service, WatchEventType type, V1Job job)
     {
         var method = typeof(ReconciliationService).GetMethod("HandleJobEventAsync",
             BindingFlags.NonPublic | BindingFlags.Instance);
@@ -1190,7 +1191,7 @@ public class K8sEdgeCaseTests : IDisposable
     }
 
     // TODO: DetectCompletedJobsWithStuckWorkItemsAsync is internal (InternalsVisibleTo is configured) — call it directly instead of via reflection for compile-time safety and rename resilience.
-    private async Task InvokeDetectCompletedJobsWithStuckWorkItemsAsync(ReconciliationService service)
+    private static async Task InvokeDetectCompletedJobsWithStuckWorkItemsAsync(ReconciliationService service)
     {
         var method = typeof(ReconciliationService).GetMethod("DetectCompletedJobsWithStuckWorkItemsAsync",
             BindingFlags.NonPublic | BindingFlags.Instance);
@@ -1224,7 +1225,7 @@ public class K8sEdgeCaseTests : IDisposable
 
     private DispatchLifecycleService CreateDispatchLifecycleService(string[]? pvcPool = null)
     {
-        pvcPool ??= new[] { "pvc-test-1", "pvc-test-2" };
+        pvcPool ??= PvcPool2;
 
         var options = new DispatchServiceOptions
         {
@@ -1242,7 +1243,7 @@ public class K8sEdgeCaseTests : IDisposable
 
     private DispatchService CreateDispatchService(string[]? pvcPool = null)
     {
-        pvcPool ??= new[] { "pvc-test-1", "pvc-test-2" };
+        pvcPool ??= PvcPool2;
 
         var configData = new Dictionary<string, string?>
         {
@@ -1273,7 +1274,8 @@ public class K8sEdgeCaseTests : IDisposable
         };
 
         return new DispatchService(
-            _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options),
+            new DispatchServiceCoreDependencies(
+                _dbFactory, CreateAlwaysLeaderElection(), new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options)),
             config, templateProvider);
     }
 
@@ -1291,7 +1293,7 @@ public class K8sEdgeCaseTests : IDisposable
         return JobTemplateStore.LoadFromJson(json);
     }
 
-    private async Task InvokePollAndDispatch(DispatchService service)
+    private static async Task InvokePollAndDispatch(DispatchService service)
     {
         var method = typeof(DispatchService).GetMethod("PollAndDispatchAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);

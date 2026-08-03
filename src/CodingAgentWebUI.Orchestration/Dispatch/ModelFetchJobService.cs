@@ -40,23 +40,16 @@ public sealed class ModelFetchJobService
     private readonly int _pollIntervalMs;
 
     public ModelFetchJobService(
-        IKubernetesJobClient kubeClient,
-        JobTemplateStore templateStore,
-        DispatchServiceOptions options,
-        IPipelineConfigStore configStore,
-        IModelFetchReceiver modelFetchReceiver,
-        int? pollTimeoutSecondsOverride = null,
-        int pollIntervalMs = 2000,
-        ILogger? logger = null)
+        ModelFetchJobDependencies deps)
     {
-        _kubeClient = kubeClient;
-        _templateStore = templateStore;
-        _options = options;
-        _configStore = configStore;
-        _modelFetchReceiver = modelFetchReceiver;
-        _pollTimeoutSecondsOverride = pollTimeoutSecondsOverride;
-        _pollIntervalMs = pollIntervalMs;
-        _ = logger; // consumed via static Log; parameter kept for test injection
+        _kubeClient = deps.KubeClient;
+        _templateStore = deps.TemplateStore;
+        _options = deps.Options;
+        _configStore = deps.ConfigStore;
+        _modelFetchReceiver = deps.ModelFetchReceiver;
+        _pollTimeoutSecondsOverride = deps.PollTimeoutSecondsOverride;
+        _pollIntervalMs = deps.PollIntervalMs;
+        _ = deps.Logger; // consumed via static Log; parameter kept for test injection
     }
 
     /// <summary>

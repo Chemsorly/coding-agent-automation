@@ -10,6 +10,8 @@ namespace CodingAgentWebUI.Infrastructure.Persistence;
 
 public class JsonConfigurationStore : IConfigurationStore
 {
+    private const string JsonFilePattern = "*.json";
+
     private readonly string _baseDirectory;
     private readonly SemaphoreSlim _pipelineConfigLock = new(1, 1);
     private readonly SemaphoreSlim _projectLock = new(1, 1);
@@ -45,8 +47,7 @@ public class JsonConfigurationStore : IConfigurationStore
 
         try
         {
-            var tmpFiles = Directory.GetFiles(_baseDirectory, "*.tmp", SearchOption.AllDirectories);
-            foreach (var tmpFile in tmpFiles)
+            var tmpFiles = Directory.GetFiles(_baseDirectory, "*.tmp", SearchOption.AllDirectories);            foreach (var tmpFile in tmpFiles)
             {
                 try
                 {
@@ -55,13 +56,13 @@ public class JsonConfigurationStore : IConfigurationStore
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    _logger.Warning("Failed to clean up orphaned temp file: {FilePath}: {Error}", tmpFile, ex.Message);
+                    _logger.Warning(ex, "Failed to clean up orphaned temp file: {FilePath}: {Error}", tmpFile, ex.Message);
                 }
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _logger.Warning("Failed to enumerate temp files in config directory: {Error}", ex.Message);
+            _logger.Warning(ex, "Failed to enumerate temp files in config directory: {Error}", ex.Message);
         }
     }
 
@@ -119,7 +120,7 @@ public class JsonConfigurationStore : IConfigurationStore
         try
         {
             // Collect all project files and their TemplateIds
-            var projectFiles = Directory.GetFiles(projectsDir, "*.json");
+            var projectFiles = Directory.GetFiles(projectsDir, JsonFilePattern);
             var projects = new List<(string Path, PipelineProject Project)>();
             var allReferencedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -138,7 +139,7 @@ public class JsonConfigurationStore : IConfigurationStore
                 }
                 catch (Exception ex) when (ex is IOException or JsonException)
                 {
-                    _logger.Warning("Failed to read project file during orphan check: {Path}: {Error}", file, ex.Message);
+                    _logger.Warning(ex, "Failed to read project file during orphan check: {Path}: {Error}", file, ex.Message);
                 }
             }
 
@@ -149,7 +150,7 @@ public class JsonConfigurationStore : IConfigurationStore
                 var templatesDir = Path.Combine(projDir, "templates");
                 if (!Directory.Exists(templatesDir))
                     continue;
-                foreach (var templateFile in Directory.GetFiles(templatesDir, "*.json"))
+                foreach (var templateFile in Directory.GetFiles(templatesDir, JsonFilePattern))
                 {
                     var templateId = Path.GetFileNameWithoutExtension(templateFile);
                     if (IsValidGuidFormat(templateId))
@@ -188,7 +189,7 @@ public class JsonConfigurationStore : IConfigurationStore
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            _logger.Warning("Failed to claim orphaned templates: {Error}", ex.Message);
+            _logger.Warning(ex, "Failed to claim orphaned templates: {Error}", ex.Message);
         }
     }
 
@@ -374,12 +375,12 @@ public class JsonConfigurationStore : IConfigurationStore
         var dir = Path.Combine(_baseDirectory, "reviewers");
         if (Directory.Exists(dir))
         {
-            foreach (var file in Directory.GetFiles(dir, "*.json"))
+            foreach (var file in Directory.GetFiles(dir, JsonFilePattern))
             {
                 try { File.Delete(file); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
-                    _logger.Warning("Failed to delete reviewer config file '{FilePath}': {ErrorMessage}", file, ex.Message);
+                    _logger.Warning(ex, "Failed to delete reviewer config file '{FilePath}': {ErrorMessage}", file, ex.Message);
                 }
             }
         }
@@ -495,7 +496,7 @@ public class JsonConfigurationStore : IConfigurationStore
             return [];
 
         var templates = new Dictionary<string, PipelineJobTemplate>();
-        foreach (var file in Directory.GetFiles(templatesDir, "*.json"))
+        foreach (var file in Directory.GetFiles(templatesDir, JsonFilePattern))
         {
             var template = await LoadJsonAsync<PipelineJobTemplate>(file, ct);
             if (template is not null)
@@ -527,7 +528,7 @@ public class JsonConfigurationStore : IConfigurationStore
             var templatesDir = Path.Combine(projDir, "templates");
             if (!Directory.Exists(templatesDir))
                 continue;
-            foreach (var file in Directory.GetFiles(templatesDir, "*.json"))
+            foreach (var file in Directory.GetFiles(templatesDir, JsonFilePattern))
             {
                 var template = await LoadJsonAsync<PipelineJobTemplate>(file, ct);
                 if (template is not null)
@@ -718,7 +719,7 @@ public class JsonConfigurationStore : IConfigurationStore
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                _logger.Warning("Failed to delete configuration file '{FilePath}': {ErrorMessage}", path, ex.Message);
+                _logger.Warning(ex, "Failed to delete configuration file '{FilePath}': {ErrorMessage}", path, ex.Message);
                 throw new InvalidOperationException(
                     $"Unable to delete configuration file '{path}': {ex.Message}", ex);
             }
@@ -764,7 +765,7 @@ public class JsonConfigurationStore : IConfigurationStore
             return Array.Empty<T>();
 
         var items = new List<T>();
-        foreach (var file in Directory.GetFiles(directory, "*.json"))
+        foreach (var file in Directory.GetFiles(directory, JsonFilePattern))
         {
             var item = await LoadJsonAsync<T>(file, ct);
             if (item is not null)

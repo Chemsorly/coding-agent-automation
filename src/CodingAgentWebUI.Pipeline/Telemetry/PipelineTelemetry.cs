@@ -151,19 +151,19 @@ public static class PipelineTelemetry
 
     /// <summary>Creates a pipeline.project_id tag.</summary>
     public static KeyValuePair<string, object?> ProjectIdTag(string? projectId) =>
-        new("pipeline.project_id", projectId ?? "unknown");
+        new("pipeline.project_id", projectId ?? ActivityTags.Unknown);
 
     /// <summary>Creates a pipeline.project_name tag.</summary>
     public static KeyValuePair<string, object?> ProjectNameTag(string? projectName) =>
-        new("pipeline.project_name", projectName ?? "unknown");
+        new("pipeline.project_name", projectName ?? ActivityTags.Unknown);
 
     /// <summary>
     /// Sets project-related tags on an <see cref="Activity"/>.
     /// </summary>
     public static void SetProjectTags(Activity? activity, string? projectId, string? projectName)
     {
-        activity?.SetTag("pipeline.project_id", projectId ?? "unknown");
-        activity?.SetTag("pipeline.project_name", projectName ?? "unknown");
+        activity?.SetTag("pipeline.project_id", projectId ?? ActivityTags.Unknown);
+        activity?.SetTag("pipeline.project_name", projectName ?? ActivityTags.Unknown);
     }
 
     public static readonly Counter<long> AnalysisGateOutcomes = Meter.CreateCounter<long>(
@@ -203,12 +203,12 @@ public static class PipelineTelemetry
             AnalysisGateResult.Ready => "ready",
             AnalysisGateResult.NotReady => "not_ready",
             AnalysisGateResult.WontDo => "wont_do",
-            _ => "unknown"
+            _ => ActivityTags.Unknown
         };
 
         AnalysisGateOutcomes.Add(1, new TagList
         {
-            new("outcome", outcomeTag),
+            new(ActivityTags.Outcome, outcomeTag),
             RunTypeTag(run.RunType),
             ProjectIdTag(run.ProjectId),
             ProjectNameTag(run.ProjectName)

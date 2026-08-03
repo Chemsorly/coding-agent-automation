@@ -148,8 +148,15 @@ public sealed class DbModeAgentLifecycleTests : DbModeE2ETestBase, IClassFixture
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, CancellationToken.None);
 
         var request = await orchService.PrepareDistributionRequestAsync(
-            "3000", "issue-e2e", "repo-label-routing", null, null, "label-test",
-            project!, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "3000",
+                IssueProviderId = "issue-e2e",
+                RepoProviderId = "repo-label-routing",
+                InitiatedBy = "label-test",
+                Project = project!
+            },
+            ct: CancellationToken.None);
         Assert.NotNull(request);
         await distributor.DistributeAsync(request, CancellationToken.None);
 
@@ -224,15 +231,29 @@ public sealed class DbModeAgentLifecycleTests : DbModeE2ETestBase, IClassFixture
 
         // Dispatch frontend issue
         var reqFrontend = await orchService.PrepareDistributionRequestAsync(
-            "3010", "issue-e2e", "repo-frontend", null, null, "routing-test",
-            project!, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "3010",
+                IssueProviderId = "issue-e2e",
+                RepoProviderId = "repo-frontend",
+                InitiatedBy = "routing-test",
+                Project = project!
+            },
+            ct: CancellationToken.None);
         Assert.NotNull(reqFrontend);
         await distributor.DistributeAsync(reqFrontend, CancellationToken.None);
 
         // Dispatch backend issue
         var reqBackend = await orchService.PrepareDistributionRequestAsync(
-            "3011", "issue-e2e", "repo-backend", null, null, "routing-test",
-            project!, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "3011",
+                IssueProviderId = "issue-e2e",
+                RepoProviderId = "repo-backend",
+                InitiatedBy = "routing-test",
+                Project = project!
+            },
+            ct: CancellationToken.None);
         Assert.NotNull(reqBackend);
         await distributor.DistributeAsync(reqBackend, CancellationToken.None);
 

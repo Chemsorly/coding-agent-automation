@@ -52,8 +52,8 @@ public class InProcessDistributedLockProviderTests
         // Second acquire should succeed immediately (not block)
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
         var handle2 = await _provider.AcquireAsync(lockName, cts.Token);
+        handle2.Should().NotBeNull("lock should have been released and second acquire should succeed without timeout");
         await handle2.DisposeAsync();
-        // If we reach here without timeout, the lock was released properly
     }
 
     [Fact]
@@ -96,7 +96,8 @@ public class InProcessDistributedLockProviderTests
         var handle = await _provider.AcquireAsync(lockName);
 
         await handle.DisposeAsync();
-        await handle.DisposeAsync(); // should not throw or double-release
+        var exception = await Record.ExceptionAsync(async () => { await handle.DisposeAsync(); });
+        exception.Should().BeNull("second dispose should not throw");
     }
 
     [Fact]

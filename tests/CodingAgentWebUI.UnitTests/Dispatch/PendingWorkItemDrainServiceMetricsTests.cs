@@ -183,28 +183,30 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
     private PendingWorkItemDrainService CreateService()
     {
         return new PendingWorkItemDrainService(
-            _dbFactory,
-            _mockResolver.Object,
-            _mockAgentComm.Object,
-            _runService,
-            _transitionService,
-            _mockPendingWork.Object,
-            _mockLabelService.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance,
+            new DrainServiceDependencies(
+                _dbFactory,
+                _mockResolver.Object,
+                _mockAgentComm.Object,
+                _runService,
+                _transitionService,
+                _mockPendingWork.Object,
+                _mockLabelService.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance),
             _mockProjectStore.Object);
     }
 
     private PendingWorkItemDrainService CreateServiceWithConsolidation()
     {
         return new PendingWorkItemDrainService(
-            _dbFactory,
-            _mockResolver.Object,
-            _mockAgentComm.Object,
-            _runService,
-            _transitionService,
-            _mockPendingWork.Object,
-            _mockLabelService.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance,
+            new DrainServiceDependencies(
+                _dbFactory,
+                _mockResolver.Object,
+                _mockAgentComm.Object,
+                _runService,
+                _transitionService,
+                _mockPendingWork.Object,
+                _mockLabelService.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance),
             _mockProjectStore.Object,
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);

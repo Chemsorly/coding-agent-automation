@@ -501,7 +501,15 @@ public sealed class DbModeEdgeCaseTests : DbModeE2ETestBase, IClassFixture<DbMod
         var project = await Fixture.ConfigStore.GetProjectByIdAsync(WellKnownIds.DefaultProjectId, CancellationToken.None);
 
         var request = await orchService.PrepareDistributionRequestAsync(
-            "700", "issue-e2e", "repo-special", null, null, "label-routing-test", project!, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "700",
+                IssueProviderId = "issue-e2e",
+                RepoProviderId = "repo-special",
+                InitiatedBy = "label-routing-test",
+                Project = project!
+            },
+            ct: CancellationToken.None);
         Assert.NotNull(request);
 
         var distResult = await distributor.DistributeAsync(request, CancellationToken.None);

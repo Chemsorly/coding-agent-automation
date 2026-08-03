@@ -186,10 +186,9 @@ public class DispatchServiceMetricsTests : IDisposable
             options);
 
         return new DispatchService(
-            _dbFactory, _leaderElection, lifecycle, config, templateProvider,
-            null,
-            _mockAgentProfileStore.Object,
-            runService: null);
+            new DispatchServiceCoreDependencies(_dbFactory, _leaderElection, lifecycle,
+                RunService: null, AgentProfileStore: _mockAgentProfileStore.Object),
+            config, templateProvider);
     }
 
     private static JobTemplateStore BuildTemplateProvider()

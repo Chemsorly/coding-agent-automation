@@ -15,6 +15,9 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// <summary>Unit tests for <see cref="ConsolidationDispatchService"/>.</summary>
 public sealed class ConsolidationDispatchServiceTests : IDisposable
 {
+    private static readonly string[] KiroDotnetDotnet10Labels = ["kiro", "dotnet", "dotnet10"];
+    private static readonly string[] TemplateTIds = ["t1"];
+
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly AgentRegistryService _registry;
     private readonly JobDeduplicationGuardService _dispatcher;
@@ -75,17 +78,47 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     {
         config ??= new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" };
         return new ConsolidationDispatchService(
-            _registry,
-            _dispatcher,
-            _mockAgentComm.Object,
-            _mockConfigStore.Object,
-            _mockProjectStore.Object,
-            _mockTokenVending.Object,
-            config,
-            _mockWorkDistributor.Object,
-            Mock.Of<IPipelineRunHistoryService>(),
-            _mockLogger.Object,
-            new FileSystemConsolidationRunStore(runsDir ?? _tempDir));
+            new ConsolidationDispatchDependencies(
+                _registry,
+                _dispatcher,
+                _mockAgentComm.Object,
+                _mockConfigStore.Object,
+                _mockProjectStore.Object,
+                _mockTokenVending.Object,
+                config,
+                _mockWorkDistributor.Object,
+                Mock.Of<IPipelineRunHistoryService>(),
+                _mockLogger.Object,
+                new FileSystemConsolidationRunStore(runsDir ?? _tempDir)));
+    }
+
+    private static ConsolidationDispatchDependencies MakeDeps(
+        IAgentRegistryService? registry = null,
+        JobDeduplicationGuardService? dispatcher = null,
+        IAgentCommunication? agentComm = null,
+        IConfigurationStore? configStore = null,
+        IProjectStore? projectStore = null,
+        ITokenVendingService? tokenVending = null,
+        PipelineConfiguration? config = null,
+        IWorkDistributor? workDistributor = null,
+        IPipelineRunHistoryService? runHistoryService = null,
+        ILogger? logger = null,
+        IConsolidationRunStore? runStore = null)
+    {
+        var defaultRegistry = new AgentRegistryService(Mock.Of<ILogger>());
+        var defaultDispatcher = new JobDeduplicationGuardService(defaultRegistry, Mock.Of<ILogger>());
+        return new ConsolidationDispatchDependencies(
+            registry ?? defaultRegistry,
+            dispatcher ?? defaultDispatcher,
+            agentComm ?? Mock.Of<IAgentCommunication>(),
+            configStore ?? Mock.Of<IConfigurationStore>(),
+            projectStore ?? Mock.Of<IProjectStore>(),
+            tokenVending ?? Mock.Of<ITokenVendingService>(),
+            config ?? new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" },
+            workDistributor ?? Mock.Of<IWorkDistributor>(),
+            runHistoryService ?? Mock.Of<IPipelineRunHistoryService>(),
+            logger ?? Mock.Of<ILogger>(),
+            runStore ?? Mock.Of<IConsolidationRunStore>());
     }
 
     private void RegisterIdleAgent(string agentId = "agent-1", string connectionId = "conn-1", string[]? labels = null)
@@ -104,56 +137,64 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     [Fact]
     public void Ctor_NullRegistry_Throws()
     {
-        var act = () => new ConsolidationDispatchService(null!, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, Mock.Of<IWorkDistributor>(), Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
+        var act = () => new ConsolidationDispatchService(
+            MakeDeps() with { Registry = null! });
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullDispatcher_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, null!, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, Mock.Of<IWorkDistributor>(), Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
+        var act = () => new ConsolidationDispatchService(
+            MakeDeps() with { JobDispatcher = null! });
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullAgentComm_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, _dispatcher, null!, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, Mock.Of<IWorkDistributor>(), Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
+        var act = () => new ConsolidationDispatchService(
+            MakeDeps() with { AgentComm = null! });
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullConfigStore_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, _dispatcher, _mockAgentComm.Object, null!, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, Mock.Of<IWorkDistributor>(), Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
+        var act = () => new ConsolidationDispatchService(
+            MakeDeps() with { ConfigStore = null! });
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullProjectStore_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, null!, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, Mock.Of<IWorkDistributor>(), Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
+        var act = () => new ConsolidationDispatchService(
+            MakeDeps() with { ProjectStore = null! });
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullTokenVending_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, null!, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, Mock.Of<IWorkDistributor>(), Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
+        var act = () => new ConsolidationDispatchService(
+            MakeDeps() with { TokenVending = null! });
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullConfig_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, null!, Mock.Of<IWorkDistributor>(), Mock.Of<IPipelineRunHistoryService>(), _mockLogger.Object, Mock.Of<IConsolidationRunStore>());
+        var act = () => new ConsolidationDispatchService(
+            MakeDeps() with { Config = null! });
         act.Should().Throw<ArgumentNullException>();
     }
 
     [Fact]
     public void Ctor_NullLogger_Throws()
     {
-        var act = () => new ConsolidationDispatchService(_registry, _dispatcher, _mockAgentComm.Object, _mockConfigStore.Object, _mockProjectStore.Object, _mockTokenVending.Object, new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" }, Mock.Of<IWorkDistributor>(), Mock.Of<IPipelineRunHistoryService>(), null!, Mock.Of<IConsolidationRunStore>());
+        var act = () => new ConsolidationDispatchService(
+            MakeDeps() with { Logger = null! });
         act.Should().Throw<ArgumentNullException>();
     }
 
@@ -208,7 +249,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
                     Id = "profile-kiro-dotnet10",
                     DisplayName = "Kiro Dotnet10",
                     Enabled = true,
-                    MatchLabels = new[] { "kiro", "dotnet", "dotnet10" },
+                    MatchLabels = KiroDotnetDotnet10Labels,
                     AgentProviderConfigId = "agent-cfg",
                     Priority = 1
                 }
@@ -295,7 +336,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>
             {
-                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = new[] { "t1" } }
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = TemplateTIds }
             });
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { template });
@@ -353,7 +394,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineProject>
             {
-                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = new[] { "t1" } }
+                new() { Id = WellKnownIds.DefaultProjectId, Name = "Default", TemplateIds = TemplateTIds }
             });
         _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<PipelineJobTemplate> { template });
@@ -389,13 +430,13 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     public async Task TryDispatchAsync_ProfileResolution_SelectsCorrectProviderFromProfile()
     {
         // Agent has kiro labels → profile should resolve to KiroCli provider
-        RegisterIdleAgent(labels: new[] { "kiro", "dotnet", "dotnet10" });
+        RegisterIdleAgent(labels: KiroDotnetDotnet10Labels);
 
         var kiroProfile = new AgentProfile
         {
             Id = "prof-kiro-dotnet",
             DisplayName = "Kiro DotNet",
-            MatchLabels = new[] { "kiro", "dotnet", "dotnet10" },
+            MatchLabels = KiroDotnetDotnet10Labels,
             AgentProviderConfigId = "kiro-agent-cfg"
         };
         _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
@@ -429,7 +470,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     [Fact]
     public async Task TryDispatchAsync_NoProfiles_FallsBackToFirstAvailable()
     {
-        RegisterIdleAgent(labels: new[] { "kiro", "dotnet", "dotnet10" });
+        RegisterIdleAgent(labels: KiroDotnetDotnet10Labels);
 
         // No profiles configured — empty list (default mock)
         var kiroConfig = new ProviderConfig { Id = "kiro-agent-cfg", Kind = ProviderKind.Agent, ProviderType = "KiroCli", DisplayName = "KiroCli", RequiredLabels = new List<string> { "kiro" } };
@@ -459,7 +500,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         // Agent has kiro labels but no profiles → fallback checks RequiredLabels
         // on agent configs for compatibility. OpenCode requires "opencode" label
         // which the agent doesn't have — config is skipped.
-        RegisterIdleAgent(labels: new[] { "kiro", "dotnet", "dotnet10" });
+        RegisterIdleAgent(labels: KiroDotnetDotnet10Labels);
 
         // Only OpenCode provider available — incompatible with agent's labels
         var openCodeConfig = new ProviderConfig
@@ -763,17 +804,18 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     {
         config ??= new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" };
         return new ConsolidationDispatchService(
-            _registry,
-            _dispatcher,
-            _mockAgentComm.Object,
-            _mockConfigStore.Object,
-            _mockProjectStore.Object,
-            _mockTokenVending.Object,
-            config,
-            _mockWorkDistributor.Object,
-            Mock.Of<IPipelineRunHistoryService>(),
-            _mockLogger.Object,
-            runStore,
+            new ConsolidationDispatchDependencies(
+                _registry,
+                _dispatcher,
+                _mockAgentComm.Object,
+                _mockConfigStore.Object,
+                _mockProjectStore.Object,
+                _mockTokenVending.Object,
+                config,
+                _mockWorkDistributor.Object,
+                Mock.Of<IPipelineRunHistoryService>(),
+                _mockLogger.Object,
+                runStore),
             runTracker: new Lazy<IConsolidationRunTracker>(() => tracker));
     }
 

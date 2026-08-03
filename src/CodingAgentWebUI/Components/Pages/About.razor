@@ -7,7 +7,7 @@
 @inject IPipelineRunHistoryService HistoryService
 @inject BuildInfo BuildInfo
 
-@* TODO: Add E2E tests verifying <PageTitle> on all pages (About, AgentChat, AgentCoding, AgentMonitoring, AgentRefinement, Settings) — only Consolidation has title coverage (ConsolidationPageTests.cs:35) *@
+@* TODO(#1772): Add E2E tests verifying <PageTitle> on all pages (About, AgentChat, AgentCoding, AgentMonitoring, AgentRefinement, Settings) — only Consolidation has title coverage (ConsolidationPageTests.cs:35) *@
 <PageTitle>About - Coding Agent</PageTitle>
 
 <div class="about-page">
@@ -152,7 +152,7 @@
                 : avg.Value.ToString(@"hh\:mm\:ss"))
             : "—";
 
-        // TODO: Add fallback for legacy records where StartedAtOffset may be default(DateTimeOffset)
+        // TODO(#1775): Add fallback for legacy records where StartedAtOffset may be default(DateTimeOffset)
         _lastRun = history.Count > 0
             ? history[0].StartedAtOffset.ToLocalTime().ToString("g")
             : "—";

@@ -12,6 +12,14 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// </summary>
 public static class JobSpecBuilder
 {
+    private const string AgentApiKeyVolumeName = "agent-api-key";
+
+    private static readonly JsonSerializerOptions K8sDeserializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
+
     /// <summary>
     /// Per-dispatch context that varies per work item (not from the template).
     /// </summary>
@@ -48,8 +56,7 @@ public static class JobSpecBuilder
         var envVars = new List<V1EnvVar>
         {
             new() { Name = "ORCHESTRATOR_URL", Value = ctx.OrchestratorUrl },
-            new() { Name = "AGENT_API_KEY_FILE", Value = "/var/run/secrets/agent-api-key/agent-api-key" },
-            new()
+            new() { Name = "AGENT_API_KEY_FILE", Value = "/var/run/secrets/agent-api-key/agent-api-key" },            new()
             {
                 Name = "AGENT_ID",
                 ValueFrom = new V1EnvVarSource
@@ -103,7 +110,7 @@ public static class JobSpecBuilder
         {
             new()
             {
-                Name = "agent-api-key",
+                Name = AgentApiKeyVolumeName,
                 MountPath = "/var/run/secrets/agent-api-key",
                 ReadOnlyProperty = true
             }
@@ -113,11 +120,11 @@ public static class JobSpecBuilder
         {
             new()
             {
-                Name = "agent-api-key",
+                Name = AgentApiKeyVolumeName,
                 Secret = new V1SecretVolumeSource
                 {
                     SecretName = ctx.AgentApiKeySecretName,
-                    Items = [new V1KeyToPath { Key = "agent-api-key", Path = "agent-api-key" }]
+                    Items = [new V1KeyToPath { Key = AgentApiKeyVolumeName, Path = AgentApiKeyVolumeName }]
                 }
             }
         };
@@ -273,12 +280,7 @@ public static class JobSpecBuilder
     private static T DeserializeK8s<T>(JsonElement element)
     {
         // k8s client models use System.Text.Json with camelCase property names
-        var options = new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            PropertyNameCaseInsensitive = true
-        };
-        var result = element.Deserialize<T>(options);
+        var result = element.Deserialize<T>(K8sDeserializerOptions);
         if (result is null)
         {
             Log.Error("Failed to deserialize JsonElement to {TypeName}", typeof(T).Name);

@@ -116,14 +116,14 @@ public static partial class WorkDistributionRegistration
             infra.StalenessDetector = new Orchestration.Dispatch.AnalysisStalenessDetector(workItemQuery, Log.Logger);
 
             return new DispatchOrchestrationService(
-                infra,
-                sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
-                sp.GetRequiredService<IOrchestratorRunService>(),
-                sp.GetRequiredService<Pipeline.Interfaces.IWorkDistributor>(),
-                sp.GetRequiredService<Pipeline.Interfaces.IAgentProfileStore>(),
-                sp.GetRequiredService<Pipeline.Interfaces.IConfigurationStore>(),
-                sp.GetRequiredService<Pipeline.Interfaces.IPipelineConfigStore>(),
-                sp.GetRequiredService<Pipeline.Interfaces.IProjectStore>(),
+                new Orchestration.Dispatch.DispatchOrchestrationServiceDependencies(
+                    infra,
+                    sp.GetRequiredService<Pipeline.Interfaces.IDispatchRunCreator>(),
+                    sp.GetRequiredService<IOrchestratorRunService>(),
+                    sp.GetRequiredService<Pipeline.Interfaces.IWorkDistributor>(),
+                    sp.GetRequiredService<Pipeline.Interfaces.IAgentProfileStore>(),
+                    sp.GetRequiredService<Pipeline.Interfaces.IConfigurationStore>(),
+                    sp.GetRequiredService<Pipeline.Interfaces.IPipelineConfigStore>()),
                 Log.Logger);
         });
 
@@ -131,14 +131,15 @@ public static partial class WorkDistributionRegistration
         // TODO: Use GetRequiredService<IJobCleanupStrategy>() instead of GetService to fail fast on
         // misconfiguration (both K8s and SignalR modes always register an implementation).
         services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<JobDeduplicationGuardService>(),
-            Log.Logger,
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetService<IJobCleanupStrategy>()));
+            new Orchestration.RunLifecycleManagerDependencies(
+                sp.GetRequiredService<IOrchestratorRunService>(),
+                sp.GetRequiredService<IPipelineRunHistoryService>(),
+                sp.GetRequiredService<AgentRegistryService>(),
+                sp.GetRequiredService<ILabelService>(),
+                sp.GetRequiredService<JobDeduplicationGuardService>(),
+                Log.Logger,
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                sp.GetService<IJobCleanupStrategy>())));
 
         // ── PostgresConfigurationStore (replaces JsonConfigurationStore) ─────
         // Singleton: consumed by singleton services (LabelService, DispatchResolutionService,

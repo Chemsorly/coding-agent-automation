@@ -56,7 +56,18 @@ public class DrawerMultiPanelTests : BunitContext
         Services.AddSingleton(pipelineService);
         Services.AddSingleton(_mockStore.Object);
         Services.AddSingleton(_mockFactory.Object);
-        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(runCreator, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, mockLogger.Object));
+        Services.AddSingleton<IPipelineLoopService>(new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = runCreator,
+            ProviderFactory = _mockFactory.Object,
+            PipelineConfigStore = _mockStore.Object,
+            ProviderConfigStore = _mockStore.Object,
+            ProjectStore = _mockStore.Object,
+            Logger = mockLogger.Object,
+            WorkDistributor = null,
+            DispatchOrchestration = null,
+            DependencyChecker = null
+        }));
         Services.AddSingleton(new Mock<IJSRuntime>().Object);
 
         Services.AddSingleton<IProjectStore>(_mockStore.Object);
@@ -156,7 +167,7 @@ public class DrawerMultiPanelTests : BunitContext
         return component;
     }
 
-    private async Task OpenIssueDrawer(IRenderedComponent<AgentCoding> component)
+    private static async Task OpenIssueDrawer(IRenderedComponent<AgentCoding> component)
     {
         var browseBtn = component.FindAll("button").First(b => b.TextContent.Contains("Browse Issues"));
         await component.InvokeAsync(() => browseBtn.Click());
@@ -164,7 +175,7 @@ public class DrawerMultiPanelTests : BunitContext
             timeout: TimeSpan.FromSeconds(5));
     }
 
-    private async Task OpenPrDrawer(IRenderedComponent<AgentCoding> component)
+    private static async Task OpenPrDrawer(IRenderedComponent<AgentCoding> component)
     {
         var browseBtn = component.FindAll("button").First(b => b.TextContent.Contains("Browse Pull Requests"));
         await component.InvokeAsync(() => browseBtn.Click());
@@ -172,7 +183,7 @@ public class DrawerMultiPanelTests : BunitContext
             timeout: TimeSpan.FromSeconds(5));
     }
 
-    private async Task OpenEpicDrawer(IRenderedComponent<AgentCoding> component)
+    private static async Task OpenEpicDrawer(IRenderedComponent<AgentCoding> component)
     {
         var browseBtn = component.FindAll("button").First(b => b.TextContent.Contains("Browse Epics"));
         await component.InvokeAsync(() => browseBtn.Click());

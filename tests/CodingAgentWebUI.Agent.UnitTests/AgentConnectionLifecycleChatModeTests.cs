@@ -29,7 +29,7 @@ public class AgentConnectionLifecycleChatModeTests : IDisposable
     /// </summary>
     private readonly List<string> _setEnvVars = [];
 
-    private AgentConnectionLifecycle CreateLifecycle(
+    private static AgentConnectionLifecycle CreateLifecycle(
         IHostApplicationLifetime? hostLifetime = null,
         Serilog.ILogger? logger = null)
     {
@@ -55,6 +55,7 @@ public class AgentConnectionLifecycleChatModeTests : IDisposable
     {
         foreach (var key in _setEnvVars.ToList())
             Environment.SetEnvironmentVariable(key, null);
+        GC.SuppressFinalize(this);
     }
 
     // ── Test 1: AGENT_CHAT_MODE=true → labels include "chat=true" and "chat-session-id=<id>" ──

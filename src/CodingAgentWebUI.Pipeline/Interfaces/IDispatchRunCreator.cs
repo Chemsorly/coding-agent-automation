@@ -35,12 +35,7 @@ public interface IDispatchRunCreator
     /// Does NOT execute the pipeline locally — the agent handles execution.
     /// </summary>
     /// <returns>The created <see cref="PipelineRun"/> ready for dispatch, or <c>null</c> if the issue is already being processed.</returns>
-    Task<PipelineRun?> CreateDispatchedRunAsync(
-        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
-        ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
-        string? brainProviderId = null, string? pipelineProviderId = null,
-        string initiatedBy = "dispatch",
-        PipelineRunType runType = PipelineRunType.Implementation);
+    Task<PipelineRun?> CreateDispatchedRunAsync(DispatchRunRequest request, CancellationToken ct);
 
     /// <summary>
     /// Reserves a run ID and registers a dedup guard (sentinel) without constructing a full
@@ -49,11 +44,7 @@ public interface IDispatchRunCreator
     /// </summary>
     /// <returns>A <see cref="RunReservation"/> with the allocated RunId and resolved metadata,
     /// or <c>null</c> if the issue is already being processed.</returns>
-    Task<RunReservation?> ReserveRunIdAsync(
-        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
-        ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
-        string? brainProviderId = null, string? pipelineProviderId = null,
-        string initiatedBy = "dispatch");
+    Task<RunReservation?> ReserveRunIdAsync(DispatchRunRequest request, CancellationToken ct);
 
     /// <summary>
     /// Registers a fully-constructed <see cref="PipelineRun"/> by atomically replacing the

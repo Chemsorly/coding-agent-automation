@@ -339,7 +339,7 @@ public class DiResolutionSmokeTests
             sp.GetRequiredService<AgentId>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
             Log.Logger));
-        services.AddSingleton(sp => new AgentWorkerService(
+        services.AddSingleton(sp => new AgentWorkerService(new AgentWorkerServiceDependencies(
             sp.GetRequiredService<AgentConnectionLifecycle>(),
             sp.GetRequiredService<AgentJobSlotManager>(),
             sp.GetRequiredService<AgentId>(),
@@ -349,7 +349,7 @@ public class DiResolutionSmokeTests
             sp.GetRequiredService<IKiroCliOrchestrator>(),
             sp.GetRequiredService<IHttpClientFactory>(),
             sp.GetRequiredService<IHostApplicationLifetime>(),
-            Log.Logger));
+            Log.Logger)));
 
         return services.BuildServiceProvider(new ServiceProviderOptions
         {

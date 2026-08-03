@@ -28,7 +28,6 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
-    private readonly JobTemplateStore _templateProvider;
     private readonly DispatchServiceOptions _options;
     private readonly WorkItemTransitionService _transitionService;
     private readonly IConsolidationRunStore? _consolidationRunStore;
@@ -36,7 +35,6 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private readonly IConsolidationJobPreparationService? _consolidationJobPreparer;
     private readonly IPipelineConfigStore? _pipelineConfigStore;
     private readonly IProjectStore? _projectStore;
-    private readonly IAgentProfileStore? _agentProfileStore;
     private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly TokenBucketRateLimiter _rateLimiter;
 
@@ -57,16 +55,14 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
         _lifecycle = lifecycle;
-        _templateProvider = templateProvider;
         _transitionService = transitionService;
         _consolidationRunStore = consolidationRunStore;
         _consolidationService = consolidationService;
         _consolidationJobPreparer = consolidationJobPreparer;
         _pipelineConfigStore = pipelineConfigStore;
         _projectStore = projectStore;
-        _agentProfileStore = agentProfileStore;
         _options = DispatchServiceOptionsFactory.Create(configuration);
-        _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
+        _eligibilityChecker = new DispatchEligibilityChecker(templateProvider, agentProfileStore);
         _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
     }
 
@@ -90,16 +86,14 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _dbFactory = dbFactory;
         _leaderElection = leaderElection;
         _lifecycle = lifecycle;
-        _templateProvider = templateProvider;
         _transitionService = transitionService;
         _consolidationRunStore = consolidationRunStore;
         _consolidationService = consolidationService;
         _consolidationJobPreparer = consolidationJobPreparer;
         _pipelineConfigStore = pipelineConfigStore;
         _projectStore = projectStore;
-        _agentProfileStore = agentProfileStore;
         _options = options;
-        _eligibilityChecker = new DispatchEligibilityChecker(_templateProvider, _agentProfileStore);
+        _eligibilityChecker = new DispatchEligibilityChecker(templateProvider, agentProfileStore);
         _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
     }
 
@@ -234,7 +228,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
             .ToListAsync(ct);
         var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
 
-        var pvcResult = await _lifecycle.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
+        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
         WorkDistributionTelemetry.UpdateCredentialPoolMetrics(pvcResult.AvailablePvcs.Count, pvcResult.ClaimedCount);
         var availablePvcs = pvcResult.AvailablePvcs;
 
@@ -266,7 +260,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
                     runId, consolidationRun.Status, item.Id);
                 await _transitionService.TransitionAsync(
                     item.Id, WorkItemStatus.Cancelled,
-                    entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct);
+                    entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct: ct);
                 return;
             }
         }
@@ -274,7 +268,8 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         // Capture updatedRequest outside the delegate so onDispatchSuccess can reference it
         JobDistributionRequest? updatedRequest = null;
 
-        await _lifecycle.ExecuteDispatchLifecycleAsync(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, "consolidation ",
+        await _lifecycle.ExecuteDispatchLifecycleAsync(
+            new DispatchLifecycleContext(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, "consolidation "),
             async workItem =>
             {
                 // Deserialize payload to extract consolidation fields
@@ -365,7 +360,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
                 if (!string.IsNullOrEmpty(resolvedProjectId))
                 {
-                    projectSecrets = await _lifecycle.LoadProjectSecretsAsync(db, resolvedProjectId, ct);
+                    projectSecrets = await DispatchLifecycleService.LoadProjectSecretsAsync(db, resolvedProjectId, ct);
                 }
 
                 return (true, projectSecrets);

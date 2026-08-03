@@ -64,17 +64,34 @@ public static class WorkDistributionTelemetry
     /// Gauge: epoch seconds of the last DispatchService poll cycle.
     /// Used for alerting on silent dispatch failures (stale poll = dispatch starvation).
     /// </summary>
-    public static readonly ObservableGauge<double> DispatcherLastPollEpoch;
+    public static readonly ObservableGauge<double> DispatcherLastPollEpoch =
+        Meter.CreateObservableGauge(
+            "workdistribution.dispatcher_last_poll_epoch_seconds",
+            observeValue: () => _lastPollEpochSeconds,
+            unit: "s",
+            description: "Epoch seconds of the last DispatchService poll cycle");
 
     /// <summary>
     /// Gauge: number of available credential PVCs in the kiro pool.
     /// </summary>
-    public static readonly ObservableGauge<int> CredentialPoolAvailable;
+    public static readonly ObservableGauge<int> CredentialPoolAvailable =
+        Meter.CreateObservableGauge(
+            "workdistribution.credential_pool_available",
+            observeValue: () => new Measurement<int>(_credentialPoolAvailable,
+                new KeyValuePair<string, object?>("pool", "kiro")),
+            unit: "{pvc}",
+            description: "Number of available credential PVCs");
 
     /// <summary>
     /// Gauge: number of claimed credential PVCs in the kiro pool.
     /// </summary>
-    public static readonly ObservableGauge<int> CredentialPoolClaimed;
+    public static readonly ObservableGauge<int> CredentialPoolClaimed =
+        Meter.CreateObservableGauge(
+            "workdistribution.credential_pool_claimed",
+            observeValue: () => new Measurement<int>(_credentialPoolClaimed,
+                new KeyValuePair<string, object?>("pool", "kiro")),
+            unit: "{pvc}",
+            description: "Number of claimed credential PVCs");
 
     /// <summary>
     /// Counter: work items transitioned to terminal states.
@@ -100,26 +117,6 @@ public static class WorkDistributionTelemetry
 
     static WorkDistributionTelemetry()
     {
-        DispatcherLastPollEpoch = Meter.CreateObservableGauge(
-            "workdistribution.dispatcher_last_poll_epoch_seconds",
-            observeValue: () => _lastPollEpochSeconds,
-            unit: "s",
-            description: "Epoch seconds of the last DispatchService poll cycle");
-
-        CredentialPoolAvailable = Meter.CreateObservableGauge(
-            "workdistribution.credential_pool_available",
-            observeValue: () => new Measurement<int>(_credentialPoolAvailable,
-                new KeyValuePair<string, object?>("pool", "kiro")),
-            unit: "{pvc}",
-            description: "Number of available credential PVCs");
-
-        CredentialPoolClaimed = Meter.CreateObservableGauge(
-            "workdistribution.credential_pool_claimed",
-            observeValue: () => new Measurement<int>(_credentialPoolClaimed,
-                new KeyValuePair<string, object?>("pool", "kiro")),
-            unit: "{pvc}",
-            description: "Number of claimed credential PVCs");
-
         Meter.CreateObservableGauge(
             "workdistribution.workitems_by_status",
             observeValues: () => _workItemsByStatusCallback?.Invoke()

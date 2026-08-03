@@ -128,13 +128,13 @@ public sealed class PersistenceEdgeCaseTests : IDisposable
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
 
-        var sut = new ConsolidationService(
+        var sut = new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir },
             mockProjectStore.Object,
             mockHistory.Object,
             store,
-            harnessStore);
+            harnessStore));
 
         var first = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);
         var second = await sut.TriggerAsync(ConsolidationRunType.BrainConsolidation, "t1", CancellationToken.None);

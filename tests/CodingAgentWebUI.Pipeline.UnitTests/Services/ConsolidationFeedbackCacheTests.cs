@@ -192,6 +192,12 @@ public sealed class ConsolidationFeedbackCacheTests : IDisposable
         result.Should().Be(DateTimeOffset.MinValue);
     }
 
+    private static readonly JsonSerializerOptions RunFileJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    };
+
     private void WriteRunFile(string runId, ConsolidationRunType type, ConsolidationRunStatus status, DateTimeOffset? completedAtUtc)
     {
         Directory.CreateDirectory(_runsDir);
@@ -202,11 +208,7 @@ public sealed class ConsolidationFeedbackCacheTests : IDisposable
             status = status.ToString(),
             startedAtUtc = DateTimeOffset.UtcNow.AddHours(-1),
             completedAtUtc
-        }, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-            WriteIndented = true
-        });
+        }, RunFileJsonOptions);
         File.WriteAllText(Path.Combine(_runsDir, $"{runId}.json"), json);
     }
 }

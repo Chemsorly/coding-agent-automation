@@ -83,7 +83,7 @@ public sealed class DownloadIssueImagesStep : IPipelineStep
         return StepResult.Continue;
     }
 
-    private List<ImageReference> CollectImageReferences(PipelineStepContext context)
+    private static List<ImageReference> CollectImageReferences(PipelineStepContext context)
     {
         var images = new List<ImageReference>();
         var extractor = new IssueImageExtractor();

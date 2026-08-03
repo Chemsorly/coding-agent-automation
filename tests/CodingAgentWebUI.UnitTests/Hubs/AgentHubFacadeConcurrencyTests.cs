@@ -20,6 +20,9 @@ namespace CodingAgentWebUI.UnitTests.Hubs;
 /// </summary>
 public class AgentHubFacadeConcurrencyTests
 {
+    private static readonly string[] DotnetLabels = ["dotnet"];
+    private static readonly string[] TestLabels = ["test"];
+
     private readonly AgentHubFacade _facade;
     private readonly AgentRegistryService _registry;
     private readonly OrchestratorRunService _runService;
@@ -31,9 +34,9 @@ public class AgentHubFacadeConcurrencyTests
         _runService = new OrchestratorRunService(mockLogger.Object);
         var dispatcher = new JobDeduplicationGuardService(_registry, mockLogger.Object);
         var drainService = new JobQueueDrainService(
-            dispatcher, _registry, Mock.Of<IJobDispatcher>(),
+            new JobQueueDrainDependencies(dispatcher, _registry, Mock.Of<IJobDispatcher>(),
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
-            new ShutdownSignal(), mockLogger.Object);
+            new ShutdownSignal(), mockLogger.Object));
 
         _facade = new AgentHubFacade(
             _registry,
@@ -59,7 +62,7 @@ public class AgentHubFacadeConcurrencyTests
             {
                 AgentId = $"agent-{i}",
                 Hostname = $"host-{i}",
-                Labels = new[] { "dotnet" }
+                Labels = DotnetLabels
             };
             return _facade.Register(msg, $"conn-{i}");
         })).ToArray();
@@ -83,13 +86,12 @@ public class AgentHubFacadeConcurrencyTests
     public async Task ConcurrentAddAndGetRun_NoCorruption()
     {
         const int runCount = 30;
-        var runs = Enumerable.Range(0, runCount).Select(i => PipelineRun.Create(
+        var runs = Enumerable.Range(0, runCount).Select(i => PipelineRun.CreateImplementation(
             runId: $"run-{i}",
             issueIdentifier: $"org/repo#{i}",
             issueTitle: $"Issue {i}",
             issueProviderConfigId: "ip-1",
             repoProviderConfigId: "rp-1",
-            runType: PipelineRunType.Implementation,
             initiatedBy: "test",
             agentId: $"agent-{i % 5}")).ToArray();
 
@@ -127,7 +129,7 @@ public class AgentHubFacadeConcurrencyTests
                 {
                     AgentId = agentId,
                     Hostname = $"host-{i}",
-                    Labels = new[] { "test" }
+                    Labels = TestLabels
                 };
 
                 _facade.Register(msg, $"conn-{i}");
@@ -164,13 +166,12 @@ public class AgentHubFacadeConcurrencyTests
             try
             {
                 var runId = $"run-{i % 10}"; // Contention on same IDs
-                var run = PipelineRun.Create(
+                var run = PipelineRun.CreateImplementation(
                     runId: runId,
                     issueIdentifier: $"org/repo#{i}",
                     issueTitle: $"Issue {i}",
                     issueProviderConfigId: "ip-1",
                     repoProviderConfigId: "rp-1",
-                    runType: PipelineRunType.Implementation,
                     initiatedBy: "test",
                     agentId: $"agent-{i % 5}");
 
@@ -211,7 +212,7 @@ public class AgentHubFacadeConcurrencyTests
         for (int i = 0; i < 5; i++)
         {
             _facade.Register(
-                new AgentRegistrationMessage { AgentId = $"agent-{i}", Hostname = $"h-{i}", Labels = new[] { "test" } },
+                new AgentRegistrationMessage { AgentId = $"agent-{i}", Hostname = $"h-{i}", Labels = TestLabels },
                 $"conn-{i}");
         }
 
@@ -259,7 +260,7 @@ public class AgentHubFacadeConcurrencyTests
         for (int i = 0; i < agentCount; i++)
         {
             _facade.Register(
-                new AgentRegistrationMessage { AgentId = $"agent-{i}", Hostname = $"h-{i}", Labels = new[] { "test" } },
+                new AgentRegistrationMessage { AgentId = $"agent-{i}", Hostname = $"h-{i}", Labels = TestLabels },
                 $"conn-{i}");
         }
 
@@ -271,13 +272,12 @@ public class AgentHubFacadeConcurrencyTests
                 var runId = $"mixed-run-{i}";
 
                 // Simulate lifecycle: add run, heartbeat, complete run, remove
-                var run = PipelineRun.Create(
+                var run = PipelineRun.CreateImplementation(
                     runId: runId,
                     issueIdentifier: $"org/repo#{i}",
                     issueTitle: $"Issue {i}",
                     issueProviderConfigId: "ip-1",
                     repoProviderConfigId: "rp-1",
-                    runType: PipelineRunType.Implementation,
                     initiatedBy: "test",
                     agentId: agentId);
 

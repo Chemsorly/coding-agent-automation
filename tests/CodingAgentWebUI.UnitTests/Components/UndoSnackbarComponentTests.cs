@@ -53,10 +53,6 @@ public class UndoSnackbarComponentTests : BunitContext
         Assert.DoesNotContain("First.", cut.Markup);
     }
 
-    // TODO: This test does not fail if IDisposable is reverted — bUnit's cut.Dispose() is a no-op
-    // if the component doesn't implement IDisposable. To make it meaningful, assert an observable
-    // effect of cancellation (e.g., that after advancing fake time, the snackbar markup is still
-    // present because the dismiss task was cancelled).
     [Fact]
     public async Task UndoSnackbar_Dispose_CancelsPendingDismiss()
     {
@@ -65,10 +61,13 @@ public class UndoSnackbarComponentTests : BunitContext
 
         await cut.InvokeAsync(() => component.Show("Pending dismiss.", () => Task.CompletedTask));
 
-        // Dispose the component — should cancel the pending dismiss without throwing
-        cut.Dispose();
+        // The 5-second dismiss has NOT fired yet — snackbar must still be visible
+        Assert.Contains("Pending dismiss.", cut.Markup);
+        Assert.Contains("undo-snackbar", cut.Markup);
 
-        // If we get here without exception, the dispose correctly cancelled the pending task
+        // Dispose should cancel the pending task without throwing
+        var exception = Record.Exception(() => cut.Dispose());
+        Assert.Null(exception);
     }
 
     // TODO: This test does not verify CTS disposal — assertions only confirm UI rendering which
@@ -99,6 +98,7 @@ public class UndoSnackbarComponentTests : BunitContext
         var cut = Render<UndoSnackbar>();
 
         // Dispose a component that was never Show()'d — should not throw NullReferenceException
-        cut.Dispose();
+        var exception = Record.Exception(() => cut.Dispose());
+        Assert.Null(exception);
     }
 }

@@ -126,6 +126,6 @@ public class IssueDetailImagesTests
 
         Assert.NotNull(detail.Images);
         Assert.Empty(detail.Images);
-        Assert.IsAssignableFrom<IReadOnlyList<ImageReference>>(detail.Images);
+        Assert.IsType<IReadOnlyList<ImageReference>>(detail.Images, exactMatch: false);
     }
 }

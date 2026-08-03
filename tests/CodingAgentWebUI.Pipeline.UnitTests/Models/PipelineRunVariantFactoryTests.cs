@@ -117,13 +117,12 @@ public class PipelineRunVariantFactoryTests
             agentProviderConfigId: "ap-2",
             brainProviderConfigId: "bp-2");
 
-        var viaCreate = PipelineRun.Create(
+        var viaCreate = PipelineRun.CreateImplementation(
             runId: "r1",
             issueIdentifier: "org/repo#5",
             issueTitle: "Add feature",
             issueProviderConfigId: "ip-1",
             repoProviderConfigId: "rp-1",
-            runType: PipelineRunType.Implementation,
             startedAt: timestamp,
             initiatedBy: "loop",
             agentId: "agent-2",
@@ -243,20 +242,19 @@ public class PipelineRunVariantFactoryTests
             reviewPrAuthor: "author1",
             linkedIssueContexts: contexts);
 
-        var viaCreate = PipelineRun.Create(
+        var viaCreate = PipelineRun.CreateReview(
             runId: "r1",
             issueIdentifier: "org/repo#10",
             issueTitle: "PR title",
             issueProviderConfigId: "ip-1",
             repoProviderConfigId: "rp-1",
-            runType: PipelineRunType.Review,
+            reviewPrBranchName: "feature/y",
+            reviewPrTargetBranch: "develop",
             startedAt: timestamp,
             initiatedBy: "loop",
             agentId: "agent-3",
             agentProviderConfigId: "ap-3",
             brainProviderConfigId: "bp-3",
-            reviewPrBranchName: "feature/y",
-            reviewPrTargetBranch: "develop",
             reviewPrUrl: "https://github.com/org/repo/pull/10",
             reviewPrDescription: "desc",
             reviewPrAuthor: "author1",
@@ -368,13 +366,13 @@ public class PipelineRunVariantFactoryTests
             brainProviderConfigId: "bp-4",
             decompositionSource: "template-level");
 
-        var viaCreate = PipelineRun.Create(
+        var viaCreate = PipelineRun.CreateDecomposition(
             runId: "r1",
             issueIdentifier: "org/repo#20",
             issueTitle: "Epic title",
             issueProviderConfigId: "ip-1",
             repoProviderConfigId: "rp-1",
-            runType: PipelineRunType.DecompositionAnalysis,
+            phaseType: PipelineRunType.DecompositionAnalysis,
             startedAt: timestamp,
             initiatedBy: "loop",
             agentId: "agent-4",

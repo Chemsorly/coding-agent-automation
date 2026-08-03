@@ -35,13 +35,12 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
     public async Task GetActiveRunsAsync_InMemoryRunWithoutWorkItem_IncludedInResults()
     {
         // Arrange — a run exists in-memory but has no matching WorkItem in DB
-        var restoredRun = PipelineRun.Create(
+        var restoredRun = PipelineRun.CreateImplementation(
             runId: "ae3d6ae3-b243-4e45-ba90-788a88737134",
             issueIdentifier: "992",
             issueTitle: "Extract duplicated JobDistributionRequest",
             issueProviderConfigId: "issue-cfg-1",
             repoProviderConfigId: "repo-cfg-1",
-            runType: PipelineRunType.Implementation,
             startedAt: DateTimeOffset.UtcNow.AddMinutes(-10),
             initiatedBy: "loop",
             agentId: "agent-dotnet-2");
@@ -88,25 +87,23 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        var dbRun = PipelineRun.Create(
+        var dbRun = PipelineRun.CreateImplementation(
             runId: workItemId.ToString(),
             issueIdentifier: "988",
             issueTitle: "Apply Facade Service pattern",
             issueProviderConfigId: "issue-cfg-1",
             repoProviderConfigId: "repo-cfg-1",
-            runType: PipelineRunType.Implementation,
             startedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
             initiatedBy: "loop",
             agentId: "agent-dotnet-1");
         dbRun.CurrentStep = PipelineStep.GeneratingCode;
 
-        var restoredRun = PipelineRun.Create(
+        var restoredRun = PipelineRun.CreateImplementation(
             runId: "ae3d6ae3-b243-4e45-ba90-788a88737134",
             issueIdentifier: "992",
             issueTitle: "Extract duplicated construction",
             issueProviderConfigId: "issue-cfg-1",
             repoProviderConfigId: "repo-cfg-1",
-            runType: PipelineRunType.Implementation,
             startedAt: DateTimeOffset.UtcNow.AddMinutes(-3),
             initiatedBy: "loop",
             agentId: "agent-dotnet-2");
@@ -151,13 +148,12 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        var liveRun = PipelineRun.Create(
+        var liveRun = PipelineRun.CreateImplementation(
             runId: workItemId.ToString(),
             issueIdentifier: "988",
             issueTitle: "Apply Facade Service pattern",
             issueProviderConfigId: "issue-cfg-1",
             repoProviderConfigId: "repo-cfg-1",
-            runType: PipelineRunType.Implementation,
             startedAt: DateTimeOffset.UtcNow.AddMinutes(-5),
             initiatedBy: "loop",
             agentId: "agent-dotnet-1");
@@ -206,13 +202,12 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
         }
 
         // In-memory PipelineRun has ProjectName set from dispatch
-        var liveRun = PipelineRun.Create(
+        var liveRun = PipelineRun.CreateImplementation(
             runId: workItemId.ToString(),
             issueIdentifier: "1572",
             issueTitle: "Extract step-pipeline builders",
             issueProviderConfigId: "issue-cfg-1",
             repoProviderConfigId: "repo-cfg-1",
-            runType: PipelineRunType.Implementation,
             startedAt: DateTimeOffset.UtcNow.AddMinutes(-10),
             initiatedBy: "loop",
             agentId: "caa-test-agent");
@@ -237,7 +232,10 @@ public sealed class PostgresActiveRunQueryServiceTests : IDisposable
         result.CurrentStep.Should().Be(PipelineStep.VerifyingBaseline);
     }
 
-    public void Dispose() { }
+    public void Dispose()
+    {
+        GC.SuppressFinalize(this);
+    }
 
     private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
     {

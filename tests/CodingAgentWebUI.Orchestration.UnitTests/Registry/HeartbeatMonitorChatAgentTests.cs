@@ -86,17 +86,14 @@ public class HeartbeatMonitorChatAgentTests : IDisposable
                 });
             });
 
-        var dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
-
         _monitor = new HeartbeatMonitorService(
-            _registry,
-            _runService,
-            _mockHistoryService.Object,
-            dispatcher,
-            _mockLabelService.Object,
-            _mockConfigStore.Object,
-            _mockLogger.Object,
-            lifecycleManager: _mockLifecycleManager.Object);
+            new HeartbeatMonitorDependencies(
+                _registry,
+                _runService,
+                _mockHistoryService.Object,
+                _mockConfigStore.Object,
+                _mockLogger.Object,
+                LifecycleManager: _mockLifecycleManager.Object));
     }
 
     // ── Test 1: "chat=true" + stale heartbeat → NOT swept to Disconnected ────────

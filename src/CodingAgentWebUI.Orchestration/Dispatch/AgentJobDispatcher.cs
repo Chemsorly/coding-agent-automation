@@ -32,34 +32,27 @@ public sealed partial class AgentJobDispatcher : IJobDispatcher
     private readonly ILogger _logger;
 
     public AgentJobDispatcher(
-        JobDeduplicationGuardService dispatcher,
-        IAgentRegistryService registry,
-        IOrchestratorRunService runService,
-        IDispatchRunCreator orchestration,
-        DispatchInfrastructure infra,
-        IAgentCommunication agentComm,
-        IShutdownSignal shutdownSignal,
-        ILogger logger,
-        IRunLifecycleManager? lifecycleManager = null)
+        AgentJobDispatcherDependencies deps)
     {
-        ArgumentNullException.ThrowIfNull(dispatcher);
-        ArgumentNullException.ThrowIfNull(registry);
-        ArgumentNullException.ThrowIfNull(runService);
-        ArgumentNullException.ThrowIfNull(orchestration);
-        ArgumentNullException.ThrowIfNull(infra);
-        ArgumentNullException.ThrowIfNull(agentComm);
-        ArgumentNullException.ThrowIfNull(shutdownSignal);
-        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.Dispatcher);
+        ArgumentNullException.ThrowIfNull(deps.Registry);
+        ArgumentNullException.ThrowIfNull(deps.RunService);
+        ArgumentNullException.ThrowIfNull(deps.Orchestration);
+        ArgumentNullException.ThrowIfNull(deps.Infra);
+        ArgumentNullException.ThrowIfNull(deps.AgentComm);
+        ArgumentNullException.ThrowIfNull(deps.ShutdownSignal);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
 
-        _dispatcher = dispatcher;
-        _registry = registry;
-        _runService = runService;
-        _orchestration = orchestration;
-        _infra = infra;
-        _agentComm = agentComm;
-        _shutdownSignal = shutdownSignal;
-        _lifecycleManager = lifecycleManager;
-        _logger = logger;
+        _dispatcher = deps.Dispatcher;
+        _registry = deps.Registry;
+        _runService = deps.RunService;
+        _orchestration = deps.Orchestration;
+        _infra = deps.Infra;
+        _agentComm = deps.AgentComm;
+        _shutdownSignal = deps.ShutdownSignal;
+        _lifecycleManager = deps.LifecycleManager;
+        _logger = deps.Logger;
     }
 
     /// <inheritdoc />

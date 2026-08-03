@@ -35,7 +35,9 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         ILabelService labelService,
         IPipelineConfigStore configStore,
         ILogger logger)
-        : this(runService, projectStore, providerConfigStore, providerFactory, labelService, configStore, logger, DefaultGracePeriod)
+        : this(new OrphanedLabelRecoveryServiceDependencies(
+            runService, projectStore, providerConfigStore, providerFactory,
+            labelService, configStore, logger, DefaultGracePeriod))
     {
     }
 
@@ -51,15 +53,22 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         IPipelineConfigStore configStore,
         ILogger logger,
         TimeSpan gracePeriod)
+        : this(new OrphanedLabelRecoveryServiceDependencies(
+            runService, projectStore, providerConfigStore, providerFactory,
+            labelService, configStore, logger, gracePeriod))
     {
-        _runService = runService;
-        _projectStore = projectStore;
-        _providerConfigStore = providerConfigStore;
-        _providerFactory = providerFactory;
-        _labelService = labelService;
-        _configStore = configStore;
-        _logger = logger.ForContext<OrphanedLabelRecoveryService>();
-        _gracePeriod = gracePeriod;
+    }
+
+    private OrphanedLabelRecoveryService(OrphanedLabelRecoveryServiceDependencies deps)
+    {
+        _runService = deps.RunService;
+        _projectStore = deps.ProjectStore;
+        _providerConfigStore = deps.ProviderConfigStore;
+        _providerFactory = deps.ProviderFactory;
+        _labelService = deps.LabelService;
+        _configStore = deps.ConfigStore;
+        _logger = deps.Logger.ForContext<OrphanedLabelRecoveryService>();
+        _gracePeriod = deps.GracePeriod == default ? DefaultGracePeriod : deps.GracePeriod;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -69,35 +78,9 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
             _logger.Information("Orphaned label recovery: waiting {GracePeriod} for agents to reconnect", _gracePeriod);
             await Task.Delay(_gracePeriod, stoppingToken);
 
-            // First sweep immediately after grace period — wrapped in try-catch so transient
-            // failures (DB timeout, provider unavailable) don't kill the service permanently.
-            try
-            {
-                await RecoverOrphanedLabelsAsync(stoppingToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Orphaned label recovery: initial sweep failed — will continue to periodic loop");
-            }
+            await RunInitialSweepAsync(stoppingToken);
 
-            // Load config for interval — also wrapped so a transient config load failure
-            // falls back to the default interval rather than killing the service.
-            int intervalMinutes;
-            try
-            {
-                var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
-                intervalMinutes = Math.Max(config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
-                if (intervalMinutes != config.OrphanedLabelSweepIntervalMinutes)
-                {
-                    _logger.Warning("OrphanedLabelSweepIntervalMinutes ({Configured}) is below minimum, clamping to {Min} min",
-                        config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                _logger.Warning(ex, "Orphaned label recovery: failed to load config — using default interval");
-                intervalMinutes = 30; // DefaultOrphanedLabelSweepIntervalMinutes
-            }
+            var intervalMinutes = await LoadSweepIntervalAsync(stoppingToken);
             _logger.Information("Orphaned label recovery: sweep interval set to {Interval} min", intervalMinutes);
 
             using var timer = new PeriodicTimer(TimeSpan.FromMinutes(intervalMinutes));
@@ -116,6 +99,46 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
             _logger.Information("Orphaned label recovery service stopping");
+        }
+    }
+
+    /// <summary>
+    /// Runs the first sweep immediately after the grace period.
+    /// Wrapped in try-catch so transient failures do not kill the service permanently.
+    /// </summary>
+    private async Task RunInitialSweepAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            await RecoverOrphanedLabelsAsync(stoppingToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Orphaned label recovery: initial sweep failed — will continue to periodic loop");
+        }
+    }
+
+    /// <summary>
+    /// Loads the sweep interval from the pipeline config, clamping to the minimum.
+    /// Falls back to 30 minutes on transient config load failure.
+    /// </summary>
+    private async Task<int> LoadSweepIntervalAsync(CancellationToken stoppingToken)
+    {
+        try
+        {
+            var config = await _configStore.LoadPipelineConfigAsync(stoppingToken);
+            var intervalMinutes = Math.Max(config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
+            if (intervalMinutes != config.OrphanedLabelSweepIntervalMinutes)
+            {
+                _logger.Warning("OrphanedLabelSweepIntervalMinutes ({Configured}) is below minimum, clamping to {Min} min",
+                    config.OrphanedLabelSweepIntervalMinutes, MinimumSweepIntervalMinutes);
+            }
+            return intervalMinutes;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Orphaned label recovery: failed to load config — using default interval");
+            return 30; // DefaultOrphanedLabelSweepIntervalMinutes
         }
     }
 
