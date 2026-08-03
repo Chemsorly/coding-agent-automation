@@ -55,6 +55,6 @@ jobs:
           dotnet build --no-incremental
           dotnet test `
             --no-build `
-            --filter "Category!=E2E" `
-            --collect:"XPlat Code Coverage"
+            --collect:"XPlat Code Coverage" `
+            --results-directory TestResults
           ${{ runner.temp }}\scanner\dotnet-sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
