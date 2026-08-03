@@ -175,9 +175,21 @@ public class PullRequestFinalizationServiceTests
         historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
 
         await _sut.RunPostPrSequenceAsync(
-            run, isDraft: false, agentProvider.Object, repoProvider.Object, config,
-            brainSync.Object, brainProvider.Object, feedbackService, historyService.Object,
-            _ => { }, step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = false,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = config,
+                BrainSync = brainSync.Object,
+                BrainProvider = brainProvider.Object,
+                FeedbackService = feedbackService,
+                HistoryService = historyService.Object,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => { transitions.Add(step); return Task.CompletedTask; }
+            },
+            CancellationToken.None);
 
         transitions.Should().ContainInOrder(
             PipelineStep.GeneratingPrDescription,
@@ -202,10 +214,21 @@ public class PullRequestFinalizationServiceTests
         var transitions = new List<PipelineStep>();
 
         await _sut.RunPostPrSequenceAsync(
-            run, isDraft: true, agentProvider.Object, repoProvider.Object,
-            new PipelineConfiguration(), brainSync.Object, brainProvider.Object,
-            feedbackService, null, _ => { },
-            step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = true,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = new PipelineConfiguration(),
+                BrainSync = brainSync.Object,
+                BrainProvider = brainProvider.Object,
+                FeedbackService = feedbackService,
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => { transitions.Add(step); return Task.CompletedTask; }
+            },
+            CancellationToken.None);
 
         transitions.Should().BeEmpty();
         agentProvider.Verify(a => a.ExecuteAsync(It.IsAny<AgentRequest>(), It.IsAny<CancellationToken>(), It.IsAny<Action<string>>()), Times.Never);
@@ -228,9 +251,21 @@ public class PullRequestFinalizationServiceTests
         historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
 
         await _sut.RunPostPrSequenceAsync(
-            run, isDraft: false, agentProvider.Object, repoProvider.Object, config,
-            brainSync: null, brainProvider: null, feedbackService, historyService.Object,
-            _ => { }, step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = false,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = config,
+                BrainSync = null,
+                BrainProvider = null,
+                FeedbackService = feedbackService,
+                HistoryService = historyService.Object,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => { transitions.Add(step); return Task.CompletedTask; }
+            },
+            CancellationToken.None);
 
         transitions.Should().ContainInOrder(PipelineStep.GeneratingPrDescription);
         transitions.Should().NotContain(PipelineStep.ReflectingOnRun);
@@ -256,9 +291,21 @@ public class PullRequestFinalizationServiceTests
         historyService.Setup(h => h.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync((IReadOnlyList<PipelineRunSummary>)[]);
 
         await _sut.RunPostPrSequenceAsync(
-            run, isDraft: false, agentProvider.Object, repoProvider.Object, config,
-            brainSync.Object, brainProvider.Object, feedbackService, historyService.Object,
-            _ => { }, step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+            new PostPrSequenceRequest
+            {
+                Run = run,
+                IsDraft = false,
+                AgentProvider = agentProvider.Object,
+                RepoProvider = repoProvider.Object,
+                Config = config,
+                BrainSync = brainSync.Object,
+                BrainProvider = brainProvider.Object,
+                FeedbackService = feedbackService,
+                HistoryService = historyService.Object,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => { transitions.Add(step); return Task.CompletedTask; }
+            },
+            CancellationToken.None);
 
         transitions.Should().ContainInOrder(PipelineStep.GeneratingPrDescription);
         transitions.Should().NotContain(PipelineStep.ReflectingOnRun);
@@ -452,9 +499,25 @@ public class PullRequestFinalizationServiceTests
         var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
 
         await _sut.RunFullPrCreationAsync(
-            run, report, isDraft: false, prOrchestrator, repoProvider.Object, agentProvider.Object,
-            null, null, config, null, null, feedbackService, historyService.Object,
-            _ => { }, step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+            new PrCreationRequest
+            {
+                Run = run,
+                Report = report,
+                IsDraft = false,
+                PrOrchestrator = prOrchestrator,
+                RepoProvider = repoProvider.Object,
+                AgentProvider = agentProvider.Object,
+                BrainProvider = null,
+                BrainSync = null,
+                Config = config,
+                Issue = null,
+                IssueComments = null,
+                FeedbackService = feedbackService,
+                HistoryService = historyService.Object,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => { transitions.Add(step); return Task.CompletedTask; }
+            },
+            CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Completed);
         run.CompletedAtOffset.Should().NotBeNull();
@@ -488,9 +551,25 @@ public class PullRequestFinalizationServiceTests
         var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
 
         await _sut.RunFullPrCreationAsync(
-            run, report, isDraft: false, prOrchestrator, repoProvider.Object, Mock.Of<IAgentProvider>(),
-            null, null, config, null, null, new FeedbackService(_logger.Object), null,
-            _ => { }, step => { transitions.Add(step); return Task.CompletedTask; }, CancellationToken.None);
+            new PrCreationRequest
+            {
+                Run = run,
+                Report = report,
+                IsDraft = false,
+                PrOrchestrator = prOrchestrator,
+                RepoProvider = repoProvider.Object,
+                AgentProvider = Mock.Of<IAgentProvider>(),
+                BrainProvider = null,
+                BrainSync = null,
+                Config = config,
+                Issue = null,
+                IssueComments = null,
+                FeedbackService = new FeedbackService(_logger.Object),
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => { transitions.Add(step); return Task.CompletedTask; }
+            },
+            CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Be("Agent did not produce any changes. No commits ahead of base branch.");
@@ -532,9 +611,25 @@ public class PullRequestFinalizationServiceTests
         var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
 
         await _sut.RunFullPrCreationAsync(
-            run, report, isDraft: true, prOrchestrator, repoProvider.Object, agentProvider.Object,
-            null, null, config, null, null, feedbackService, null,
-            _ => { }, step => Task.CompletedTask, CancellationToken.None);
+            new PrCreationRequest
+            {
+                Run = run,
+                Report = report,
+                IsDraft = true,
+                PrOrchestrator = prOrchestrator,
+                RepoProvider = repoProvider.Object,
+                AgentProvider = agentProvider.Object,
+                BrainProvider = null,
+                BrainSync = null,
+                Config = config,
+                Issue = null,
+                IssueComments = null,
+                FeedbackService = feedbackService,
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => Task.CompletedTask
+            },
+            CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.FailureReason.Should().Be("Quality gates failed after max retries; draft PR created.");
@@ -582,9 +677,25 @@ public class PullRequestFinalizationServiceTests
         var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
 
         await _sut.RunFullPrCreationAsync(
-            run, report, isDraft: false, prOrchestrator, repoProvider.Object, agentProvider.Object,
-            null, null, config, null, null, feedbackService, null,
-            _ => { }, step => Task.CompletedTask, CancellationToken.None);
+            new PrCreationRequest
+            {
+                Run = run,
+                Report = report,
+                IsDraft = false,
+                PrOrchestrator = prOrchestrator,
+                RepoProvider = repoProvider.Object,
+                AgentProvider = agentProvider.Object,
+                BrainProvider = null,
+                BrainSync = null,
+                Config = config,
+                Issue = null,
+                IssueComments = null,
+                FeedbackService = feedbackService,
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => Task.CompletedTask
+            },
+            CancellationToken.None);
 
         run.PullRequestUrl.Should().Be("https://github.com/org/repo/pull/41");
         run.PullRequestNumber.Should().Be("41");
@@ -615,9 +726,25 @@ public class PullRequestFinalizationServiceTests
         var prOrchestrator = new PullRequestOrchestrator(_logger.Object);
 
         var act = () => _sut.RunFullPrCreationAsync(
-            run, report, isDraft: false, prOrchestrator, repoProvider.Object, Mock.Of<IAgentProvider>(),
-            null, null, config, null, null, new FeedbackService(_logger.Object), null,
-            _ => { }, step => Task.CompletedTask, CancellationToken.None);
+            new PrCreationRequest
+            {
+                Run = run,
+                Report = report,
+                IsDraft = false,
+                PrOrchestrator = prOrchestrator,
+                RepoProvider = repoProvider.Object,
+                AgentProvider = Mock.Of<IAgentProvider>(),
+                BrainProvider = null,
+                BrainSync = null,
+                Config = config,
+                Issue = null,
+                IssueComments = null,
+                FeedbackService = new FeedbackService(_logger.Object),
+                HistoryService = null,
+                EmitOutputLine = _ => { },
+                TransitionCallback = step => Task.CompletedTask
+            },
+            CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("permission denied");
     }

@@ -16,6 +16,12 @@ public interface ILabelService
         LabelTargetKind targetKind, CancellationToken ct);
 
     /// <summary>
+    /// Backward-compatible overload for existing call sites (routes to Issue).
+    /// </summary>
+    Task SwapLabelAsync(ProviderConfigId providerConfigId, IssueIdentifier identifier, string newLabel, CancellationToken ct)
+        => SwapLabelAsync(providerConfigId, identifier, newLabel, LabelTargetKind.Issue, ct);
+
+    /// <summary>
     /// Swaps the agent label on an entity with transition validation.
     /// If <paramref name="expectedCurrentLabel"/> is provided, validates the transition via
     /// <see cref="LabelStateMachine"/> and logs a warning on invalid transitions (fail-open).
@@ -40,10 +46,4 @@ public interface ILabelService
     /// </summary>
     Task<bool> EnsureAgentLabelsAsync(ProviderConfigId providerConfigId,
         LabelTargetKind targetKind, CancellationToken ct);
-
-    /// <summary>
-    /// Backward-compatible overload for existing call sites (routes to Issue).
-    /// </summary>
-    Task SwapLabelAsync(ProviderConfigId providerConfigId, IssueIdentifier identifier, string newLabel, CancellationToken ct)
-        => SwapLabelAsync(providerConfigId, identifier, newLabel, LabelTargetKind.Issue, ct);
 }

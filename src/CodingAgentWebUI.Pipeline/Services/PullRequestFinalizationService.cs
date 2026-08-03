@@ -15,6 +15,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 public sealed class PullRequestFinalizationService
 {
     private readonly Serilog.ILogger _logger;
+    private const string PipelineRunIdTag = "pipeline.run_id";
 
     public PullRequestFinalizationService(Serilog.ILogger logger)
     {
@@ -29,25 +30,27 @@ public sealed class PullRequestFinalizationService
     /// </summary>
     // TODO: Validate non-nullable parameters (run, report, prOrchestrator, repoProvider, agentProvider, config, feedbackService, emitOutputLine, transitionCallback) with ArgumentNullException.ThrowIfNull for fail-fast behavior on public API surface.
     public async Task RunFullPrCreationAsync(
-        PipelineRun run,
-        QualityGateReport report,
-        bool isDraft,
-        PullRequestOrchestrator prOrchestrator,
-        IRepositoryProvider repoProvider,
-        IAgentProvider agentProvider,
-        IRepositoryProvider? brainProvider,
-        IBrainSyncService? brainSync,
-        PipelineConfiguration config,
-        IssueDetail? issue,
-        IReadOnlyList<IssueComment>? issueComments,
-        FeedbackService feedbackService,
-        IPipelineRunHistoryService? historyService,
-        Action<string> emitOutputLine,
-        Func<PipelineStep, Task> transitionCallback,
+        PrCreationRequest request,
         CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var run = request.Run;
+        var report = request.Report;
+        var isDraft = request.IsDraft;
+        var prOrchestrator = request.PrOrchestrator;
+        var repoProvider = request.RepoProvider;
+        var agentProvider = request.AgentProvider;
+        var brainProvider = request.BrainProvider;
+        var brainSync = request.BrainSync;
+        var config = request.Config;
+        var issue = request.Issue;
+        var issueComments = request.IssueComments;
+        var feedbackService = request.FeedbackService;
+        var historyService = request.HistoryService;
+        var emitOutputLine = request.EmitOutputLine;
+        var transitionCallback = request.TransitionCallback;
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("CreatePullRequest");
-        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag(PipelineRunIdTag, run.RunId);
         activity?.SetTag("pipeline.issue", run.IssueIdentifier);
         activity?.SetTag("pipeline.pr.is_draft", isDraft);
         PipelineTelemetry.SetProjectTags(activity, run.ProjectId, run.ProjectName);
@@ -85,9 +88,21 @@ public sealed class PullRequestFinalizationService
             // Label swap (agent:done / agent:error) is handled by the orchestrator in ReportJobCompleted.
 
             await RunPostPrSequenceAsync(
-                run, isDraft, agentProvider, repoProvider, config,
-                brainSync, brainProvider, feedbackService, historyService,
-                emitOutputLine, transitionCallback, ct);
+                new PostPrSequenceRequest
+                {
+                    Run = run,
+                    IsDraft = isDraft,
+                    AgentProvider = agentProvider,
+                    RepoProvider = repoProvider,
+                    Config = config,
+                    BrainSync = brainSync,
+                    BrainProvider = brainProvider,
+                    FeedbackService = feedbackService,
+                    HistoryService = historyService,
+                    EmitOutputLine = emitOutputLine,
+                    TransitionCallback = transitionCallback
+                },
+                ct);
 
             run.MarkCompleted();
             run.CurrentStep = finalStep;
@@ -108,15 +123,22 @@ public sealed class PullRequestFinalizationService
     /// </summary>
     // TODO: Validate non-nullable parameters (run, agentProvider, repoProvider, config, feedbackService, emitOutputLine, transitionCallback) with ArgumentNullException.ThrowIfNull for fail-fast consistency.
     public async Task RunPostPrSequenceAsync(
-        PipelineRun run, bool isDraft,
-        IAgentProvider agentProvider, IRepositoryProvider repoProvider,
-        PipelineConfiguration config,
-        IBrainSyncService? brainSync, IRepositoryProvider? brainProvider,
-        FeedbackService feedbackService, IPipelineRunHistoryService? historyService,
-        Action<string> emitOutputLine,
-        Func<PipelineStep, Task> transitionCallback,
+        PostPrSequenceRequest request,
         CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var run = request.Run;
+        var isDraft = request.IsDraft;
+        var agentProvider = request.AgentProvider;
+        var repoProvider = request.RepoProvider;
+        var config = request.Config;
+        var brainSync = request.BrainSync;
+        var brainProvider = request.BrainProvider;
+        var feedbackService = request.FeedbackService;
+        var historyService = request.HistoryService;
+        var emitOutputLine = request.EmitOutputLine;
+        var transitionCallback = request.TransitionCallback;
+
         if (!isDraft && !string.IsNullOrEmpty(run.PullRequestNumber))
         {
             await transitionCallback(PipelineStep.GeneratingPrDescription);
@@ -148,7 +170,7 @@ public sealed class PullRequestFinalizationService
         PipelineConfiguration config, Action<string> emitOutputLine, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("GeneratePrDescription");
-        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag(PipelineRunIdTag, run.RunId);
 
         emitOutputLine("📝 Generating PR description...");
         try
@@ -207,7 +229,7 @@ public sealed class PullRequestFinalizationService
         Action<string> emitOutputLine, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Reflection");
-        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag(PipelineRunIdTag, run.RunId);
 
         emitOutputLine("🧠 Reflecting on run and updating brain knowledge...");
         try
@@ -247,7 +269,7 @@ public sealed class PullRequestFinalizationService
         PipelineConfiguration config, Action<string> emitOutputLine, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("BrainSyncPostRun");
-        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag(PipelineRunIdTag, run.RunId);
 
         try
         {
@@ -271,7 +293,7 @@ public sealed class PullRequestFinalizationService
         IPipelineRunHistoryService? historyService, Action<string> emitOutputLine, CancellationToken ct)
     {
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("FeedbackCollection");
-        activity?.SetTag("pipeline.run_id", run.RunId);
+        activity?.SetTag(PipelineRunIdTag, run.RunId);
 
         emitOutputLine("📋 Collecting run feedback...");
         try
@@ -316,9 +338,11 @@ public sealed class PullRequestFinalizationService
     {
         var lines = text.ReplaceLineEndings("\n").Split('\n');
         var stripped = lines.Select(line =>
-            line.StartsWith("> ") ? line[2..] :
-            line == ">" ? "" :
-            line);
+        {
+            if (line.StartsWith("> ")) return line[2..];
+            if (line == ">") return "";
+            return line;
+        });
         return string.Join("\n", stripped).Trim();
     }
 }

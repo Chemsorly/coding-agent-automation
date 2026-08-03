@@ -48,9 +48,9 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         var runService = new OrchestratorRunService(mockLogger.Object);
         var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
         var drainService = new JobQueueDrainService(
-            dispatcher, registry, Mock.Of<IJobDispatcher>(),
+            new JobQueueDrainDependencies(dispatcher, registry, Mock.Of<IJobDispatcher>(),
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
-            new ShutdownSignal(), mockLogger.Object);
+            new ShutdownSignal(), mockLogger.Object));
 
         _facade = new AgentHubFacade(
             registry, runService, dispatcher, drainService,
@@ -92,8 +92,10 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
     [Fact]
     public async Task TransitionWorkItemAsync_InvalidGuid_ReturnsWithoutAction()
     {
-        await _facade.TransitionWorkItemAsync("not-a-guid", WorkItemStatus.Succeeded, CancellationToken.None);
-        // No exception thrown — method completed silently
+        var exception = await Record.ExceptionAsync(() =>
+            _facade.TransitionWorkItemAsync("not-a-guid", WorkItemStatus.Succeeded, CancellationToken.None));
+
+        exception.Should().BeNull();
     }
 
     [Fact]
@@ -104,9 +106,9 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
         var runService = new OrchestratorRunService(mockLogger.Object);
         var dispatcher = new JobDeduplicationGuardService(registry, mockLogger.Object);
         var drainService = new JobQueueDrainService(
-            dispatcher, registry, Mock.Of<IJobDispatcher>(),
+            new JobQueueDrainDependencies(dispatcher, registry, Mock.Of<IJobDispatcher>(),
             Mock.Of<IConfigurationStore>(), Mock.Of<IConsolidationDispatchService>(),
-            new ShutdownSignal(), mockLogger.Object);
+            new ShutdownSignal(), mockLogger.Object));
 
         var facadeWithoutTransition = new AgentHubFacade(
             registry, runService, dispatcher, drainService,
@@ -116,8 +118,16 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
             NullLogger<AgentHubFacade>.Instance);
 
         var id = Guid.NewGuid();
-        await facadeWithoutTransition.TransitionWorkItemAsync(
-            id.ToString(), WorkItemStatus.Succeeded, CancellationToken.None);
+        var exception = await Record.ExceptionAsync(() =>
+            facadeWithoutTransition.TransitionWorkItemAsync(
+                id.ToString(), WorkItemStatus.Succeeded, CancellationToken.None));
+
+        exception.Should().BeNull();
+
+        // Verify no side effect: DB contains no work item for this id
+        await using var db = _dbFactory.CreateDbContext();
+        var item = await db.WorkItems.FindAsync(id);
+        item.Should().BeNull();
     }
 
     // ── Direct transition success ────────────────────────────────────────

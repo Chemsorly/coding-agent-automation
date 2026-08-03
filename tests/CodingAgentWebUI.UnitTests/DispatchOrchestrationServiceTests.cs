@@ -91,20 +91,20 @@ public class DispatchOrchestrationServiceTests
             runService: _runService);
 
         return new DispatchOrchestrationService(
-            new DispatchInfrastructure(
-                _mockTokenVending.Object,
-                _mockProviderFactory.Object,
-                _mockLabelService.Object,
-                _resolution),
-            runCreator,
-            _runService,
-            _mockWorkDistributor.Object,
-            // TODO: Use separate typed mocks for each sub-interface (IAgentProfileStore, IProviderConfigStore,
-            // IPipelineConfigStore, IProjectStore) to detect parameter wiring errors and verify correct routing.
-            _mockConfigStore.Object,
-            _mockConfigStore.Object,
-            _mockConfigStore.Object,
-            _mockConfigStore.Object,
+            new DispatchOrchestrationServiceDependencies(
+                new DispatchInfrastructure(
+                    _mockTokenVending.Object,
+                    _mockProviderFactory.Object,
+                    _mockLabelService.Object,
+                    _resolution),
+                runCreator,
+                _runService,
+                _mockWorkDistributor.Object,
+                // TODO: Use separate typed mocks for each sub-interface (IAgentProfileStore, IProviderConfigStore,
+                // IPipelineConfigStore, IProjectStore) to detect parameter wiring errors and verify correct routing.
+                _mockConfigStore.Object,
+                _mockConfigStore.Object,
+                _mockConfigStore.Object),
             _mockLogger.Object);
     }
 
@@ -194,15 +194,16 @@ public class DispatchOrchestrationServiceTests
         var service = CreateService();
 
         var result = await service.PrepareAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            requiredLabels: ["dotnet"],
-            project: TestProject,
-            ct: CancellationToken.None);
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: null,
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject),
+            CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.ResolvedProfile.Id.Should().Be("profile-1");
@@ -220,15 +221,16 @@ public class DispatchOrchestrationServiceTests
         var service = CreateService();
 
         await service.PrepareAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            requiredLabels: ["dotnet"],
-            project: TestProject,
-            ct: CancellationToken.None);
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: null,
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject),
+            CancellationToken.None);
 
         // Label swap is deferred to ConfirmDistributionLabelAsync (#997)
         _mockLabelService.Verify(
@@ -272,15 +274,16 @@ public class DispatchOrchestrationServiceTests
         var service = CreateService();
 
         var result = await service.PrepareAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            requiredLabels: ["dotnet"],
-            project: TestProject,
-            ct: CancellationToken.None);
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: null,
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject),
+            CancellationToken.None);
 
         result.Should().BeNull();
     }
@@ -297,15 +300,16 @@ public class DispatchOrchestrationServiceTests
         var service = CreateService();
 
         var result = await service.PrepareAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            requiredLabels: ["dotnet"],
-            project: TestProject,
-            ct: CancellationToken.None);
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: null,
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject),
+            CancellationToken.None);
 
         result.Should().BeNull();
     }
@@ -317,15 +321,16 @@ public class DispatchOrchestrationServiceTests
         var service = CreateService();
 
         var result = await service.PrepareAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            requiredLabels: ["dotnet"],
-            project: TestProject,
-            ct: CancellationToken.None);
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: null,
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject),
+            CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.CreatedRun.IssueIdentifier.Value.Should().Be("issue-42");
@@ -347,15 +352,16 @@ public class DispatchOrchestrationServiceTests
         var service = CreateService();
 
         var result = await service.PrepareAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            requiredLabels: ["dotnet"],
-            project: TestProject,
-            ct: CancellationToken.None);
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: null,
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject),
+            CancellationToken.None);
 
         result.Should().BeNull();
     }
@@ -367,15 +373,16 @@ public class DispatchOrchestrationServiceTests
         var service = CreateService();
 
         var result = await service.PrepareAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            requiredLabels: ["dotnet"],
-            project: TestProject,
-            ct: CancellationToken.None);
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: null,
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject),
+            CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.ProviderConfigs.Should().NotBeEmpty();
@@ -403,19 +410,22 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(repoConfigWithLabels);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var request = await iface.PrepareDistributionRequestAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "test-user",
-            project: TestProject,
-            taskType: WorkItemTaskType.Implementation,
-            runType: PipelineRunType.Implementation,
-            ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "test-user",
+                Project = TestProject,
+                TaskType = WorkItemTaskType.Implementation,
+                RunType = PipelineRunType.Implementation
+            },
+            CancellationToken.None);
 
         request.Should().NotBeNull();
         request!.IssueIdentifier.Value.Should().Be("issue-42");
@@ -463,17 +473,20 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(repoConfigWithLabels);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var request = await iface.PrepareDistributionRequestAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            project: TestProject,
-            ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
 
         request.Should().NotBeNull();
         // Labels sorted alphabetically: aws, dotnet, python
@@ -502,17 +515,20 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(repoConfigWithLabels);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDistributionRequestAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            project: TestProject,
-            ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
 
         result.Should().BeNull();
     }
@@ -547,19 +563,22 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(new[] { repoConfigWithSteering });
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var request = await iface.PrepareDistributionRequestAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "test-user",
-            project: projectWithSteering,
-            taskType: WorkItemTaskType.Implementation,
-            runType: PipelineRunType.Implementation,
-            ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "test-user",
+                Project = projectWithSteering,
+                TaskType = WorkItemTaskType.Implementation,
+                RunType = PipelineRunType.Implementation
+            },
+            CancellationToken.None);
 
         request.Should().NotBeNull();
         request!.ProjectSteeringContent.Should().Be("## Project Instructions\nAlways use structured logging.");
@@ -584,19 +603,22 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(repoConfigWithLabels);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var request = await iface.PrepareDistributionRequestAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "test-user",
-            project: TestProject,
-            taskType: WorkItemTaskType.Implementation,
-            runType: PipelineRunType.Implementation,
-            ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "test-user",
+                Project = TestProject,
+                TaskType = WorkItemTaskType.Implementation,
+                RunType = PipelineRunType.Implementation
+            },
+            CancellationToken.None);
 
         request.Should().NotBeNull();
         request!.ProjectSteeringContent.Should().BeNull();
@@ -620,7 +642,7 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(repoConfigWithLabels);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var reviewRequest = new ReviewDispatchRequest
         {
@@ -671,7 +693,7 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(repoConfigWithLabels);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var reviewRequest = new ReviewDispatchRequest
         {
@@ -722,7 +744,7 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(repoConfigWithLabels);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var reviewRequest = new ReviewDispatchRequest
         {
@@ -777,19 +799,22 @@ public class DispatchOrchestrationServiceTests
             .Returns(mockIssueProvider.Object);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDecompositionDistributionRequestAsync(
-            epicIdentifier: "epic-1",
-            epicTitle: "Epic: Build the thing",
-            phaseType: PipelineRunType.Decomposition,
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            initiatedBy: "decomp-loop",
-            project: TestProject,
-            decompositionSource: "https://github.com/org/repo/issues/100",
-            ct: CancellationToken.None);
+            new DecompositionDispatchOrchestrationRequest
+            {
+                EpicIdentifier = "epic-1",
+                EpicTitle = "Epic: Build the thing",
+                PhaseType = PipelineRunType.Decomposition,
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                InitiatedBy = "decomp-loop",
+                Project = TestProject,
+                DecompositionSource = "https://github.com/org/repo/issues/100"
+            },
+            CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.TaskType.Should().Be(WorkItemTaskType.Decomposition);
@@ -834,18 +859,21 @@ public class DispatchOrchestrationServiceTests
             .Returns(mockIssueProvider.Object);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDecompositionDistributionRequestAsync(
-            epicIdentifier: "epic-2",
-            epicTitle: "Epic: Decompose",
-            phaseType: PipelineRunType.DecompositionAnalysis,
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            initiatedBy: "decomp-loop",
-            project: TestProject,
-            ct: CancellationToken.None);
+            new DecompositionDispatchOrchestrationRequest
+            {
+                EpicIdentifier = "epic-2",
+                EpicTitle = "Epic: Decompose",
+                PhaseType = PipelineRunType.DecompositionAnalysis,
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                InitiatedBy = "decomp-loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
 
         result.Should().NotBeNull();
 
@@ -877,18 +905,21 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(repoConfigWithLabels);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDecompositionDistributionRequestAsync(
-            epicIdentifier: "epic-1",
-            epicTitle: "Epic Title",
-            phaseType: PipelineRunType.Decomposition,
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            initiatedBy: "loop",
-            project: TestProject,
-            ct: CancellationToken.None);
+            new DecompositionDispatchOrchestrationRequest
+            {
+                EpicIdentifier = "epic-1",
+                EpicTitle = "Epic Title",
+                PhaseType = PipelineRunType.Decomposition,
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
 
         result.Should().BeNull();
     }
@@ -911,17 +942,20 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(repoConfigWithLabels);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDistributionRequestAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            project: TestProject,
-            ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
 
         // Profile with ["dotnet"] matches the resolved labels
         result.Should().NotBeNull();
@@ -946,17 +980,20 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(repoConfigWithLabels);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDistributionRequestAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            project: TestProject,
-            ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
 
         result.Should().NotBeNull();
         // The run should be registered in OrchestratorRunService
@@ -983,19 +1020,22 @@ public class DispatchOrchestrationServiceTests
             .ReturnsAsync(repoConfigWithLabels);
 
         var service = CreateService();
-        IDispatchOrchestrationService iface = service;
+        DispatchOrchestrationService iface = service;
 
         var result = await iface.PrepareDistributionRequestAsync(
-            issueIdentifier: "issue-42",
-            issueProviderId: "issue-1",
-            repoProviderId: "repo-1",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "loop",
-            project: TestProject,
-            taskType: WorkItemTaskType.Implementation,
-            runType: PipelineRunType.Review, // non-default to exercise the threading
-            ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "issue-42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "loop",
+                Project = TestProject,
+                TaskType = WorkItemTaskType.Implementation,
+                RunType = PipelineRunType.Review // non-default to exercise the threading
+            },
+            CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.RunType.Should().Be(PipelineRunType.Review);
@@ -1045,17 +1085,17 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
             runService: _runService);
 
         _service = new DispatchOrchestrationService(
-            new DispatchInfrastructure(
-                mockTokenVending.Object, mockProviderFactory.Object,
-                _mockLabelService.Object, resolution),
-            runCreator,
-            _runService,
-            new Mock<IWorkDistributor>().Object,
-            // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
-            mockConfigStore.Object,
-            mockConfigStore.Object,
-            mockConfigStore.Object,
-            mockConfigStore.Object,
+            new DispatchOrchestrationServiceDependencies(
+                new DispatchInfrastructure(
+                    mockTokenVending.Object, mockProviderFactory.Object,
+                    _mockLabelService.Object, resolution),
+                runCreator,
+                _runService,
+                new Mock<IWorkDistributor>().Object,
+                // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
+                mockConfigStore.Object,
+                mockConfigStore.Object,
+                mockConfigStore.Object),
             _mockLogger.Object);
     }
 
@@ -1131,7 +1171,12 @@ public class DispatchOrchestrationService_RevertFailedDistributionTests
         };
 
         // Should not throw
-        await _service.RevertFailedDistributionAsync(request, CancellationToken.None);
+        var exception = await Record.ExceptionAsync(() => _service.RevertFailedDistributionAsync(request, CancellationToken.None));
+        exception.Should().BeNull();
+
+        _mockLabelService.Verify(
+            s => s.SwapLabelAsync(It.IsAny<ProviderConfigId>(), It.IsAny<IssueIdentifier>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]
@@ -1206,17 +1251,17 @@ public class DispatchOrchestrationService_DistributeAndFinalizeTests
             runService: _runService);
 
         _service = new DispatchOrchestrationService(
-            new DispatchInfrastructure(
-                mockTokenVending.Object, mockProviderFactory.Object,
-                _mockLabelService.Object, resolution),
-            runCreator,
-            _runService,
-            _mockWorkDistributor.Object,
-            // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
-            mockConfigStore.Object,
-            mockConfigStore.Object,
-            mockConfigStore.Object,
-            mockConfigStore.Object,
+            new DispatchOrchestrationServiceDependencies(
+                new DispatchInfrastructure(
+                    mockTokenVending.Object, mockProviderFactory.Object,
+                    _mockLabelService.Object, resolution),
+                runCreator,
+                _runService,
+                _mockWorkDistributor.Object,
+                // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
+                mockConfigStore.Object,
+                mockConfigStore.Object,
+                mockConfigStore.Object),
             _mockLogger.Object);
     }
 

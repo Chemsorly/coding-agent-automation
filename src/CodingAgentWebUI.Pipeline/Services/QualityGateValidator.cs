@@ -570,16 +570,16 @@ public class QualityGateValidator : IQualityGateValidator
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            try { process.Kill(entireProcessTree: true); } catch { }
+            try { process.Kill(entireProcessTree: true); } catch { /* Intentional: best-effort kill; process may have already exited. */ }
             using var drainCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            try { await Task.WhenAll(stdoutTask.WaitAsync(drainCts.Token), stderrTask.WaitAsync(drainCts.Token)); } catch { }
+            try { await Task.WhenAll(stdoutTask.WaitAsync(drainCts.Token), stderrTask.WaitAsync(drainCts.Token)); } catch { /* Intentional: best-effort pipe drain after timeout kill; partial output is acceptable. */ }
             throw new TimeoutException($"Process '{fileName} {arguments}' timed out after {timeout.TotalSeconds}s");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            try { process.Kill(entireProcessTree: true); } catch { }
+            try { process.Kill(entireProcessTree: true); } catch { /* Intentional: best-effort kill; process may have already exited. */ }
             using var drainCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            try { await Task.WhenAll(stdoutTask.WaitAsync(drainCts.Token), stderrTask.WaitAsync(drainCts.Token)); } catch { }
+            try { await Task.WhenAll(stdoutTask.WaitAsync(drainCts.Token), stderrTask.WaitAsync(drainCts.Token)); } catch { /* Intentional: best-effort pipe drain after cancellation kill; partial output is acceptable. */ }
             throw;
         }
 

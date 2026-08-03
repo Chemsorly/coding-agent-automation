@@ -20,7 +20,7 @@ public sealed class ResettablePipelineOrchestrationService : PipelineOrchestrati
         PipelineRunLifecycleService lifecycle,
         ILabelService labelService,
         ILogger logger)
-        : base(configStore, configStore, providerFactory, issueParser,
+        : base(configStore, providerFactory, issueParser,
                cancellationFacade, lifecycle, labelService, logger)
     {
         _lifecycleForReset = lifecycle;

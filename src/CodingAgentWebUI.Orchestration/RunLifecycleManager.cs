@@ -31,30 +31,24 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     private readonly IJobCleanupStrategy? _jobCleanup;
 
     public RunLifecycleManager(
-        IOrchestratorRunService runService,
-        IPipelineRunHistoryService historyService,
-        IAgentRegistryService registry,
-        ILabelService labelService,
-        JobDeduplicationGuardService dispatcher,
-        ILogger logger,
-        WorkItemTransitionService? workItemTransition = null,
-        IJobCleanupStrategy? jobCleanup = null)
+        RunLifecycleManagerDependencies deps)
     {
-        ArgumentNullException.ThrowIfNull(runService);
-        ArgumentNullException.ThrowIfNull(historyService);
-        ArgumentNullException.ThrowIfNull(registry);
-        ArgumentNullException.ThrowIfNull(labelService);
-        ArgumentNullException.ThrowIfNull(dispatcher);
-        ArgumentNullException.ThrowIfNull(logger);
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.RunService);
+        ArgumentNullException.ThrowIfNull(deps.HistoryService);
+        ArgumentNullException.ThrowIfNull(deps.Registry);
+        ArgumentNullException.ThrowIfNull(deps.LabelService);
+        ArgumentNullException.ThrowIfNull(deps.Dispatcher);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
 
-        _runService = runService;
-        _workItemTransition = workItemTransition;
-        _historyService = historyService;
-        _registry = registry;
-        _labelService = labelService;
-        _dispatcher = dispatcher;
-        _logger = logger;
-        _jobCleanup = jobCleanup;
+        _runService = deps.RunService;
+        _workItemTransition = deps.WorkItemTransition;
+        _historyService = deps.HistoryService;
+        _registry = deps.Registry;
+        _labelService = deps.LabelService;
+        _dispatcher = deps.Dispatcher;
+        _logger = deps.Logger;
+        _jobCleanup = deps.JobCleanup;
     }
 
     /// <inheritdoc />
@@ -281,17 +275,29 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
                     item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
                     item.FailureReason ??= failureReason ?? FailureReason.AgentError;
                 }
-            }, ct);
+            }, ct: ct);
 
-            if (!result)
+            if (!result && status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
             {
                 // Two-step fallback: Dispatched → Running → terminal
-                if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+                var intermediate = await _workItemTransition.TransitionAsync(workItemId, WorkItemStatus.Running, ct: ct);
+                if (intermediate)
                 {
-                    var intermediate = await _workItemTransition.TransitionAsync(workItemId, WorkItemStatus.Running, ct: ct);
-                    if (intermediate)
+                    await _workItemTransition.TransitionAsync(workItemId, status, item =>
                     {
-                        await _workItemTransition.TransitionAsync(workItemId, status, item =>
+                        item.CompletedAt = DateTimeOffset.UtcNow;
+                        if (status == WorkItemStatus.Failed)
+                        {
+                            item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
+                            item.FailureReason ??= failureReason ?? FailureReason.AgentError;
+                        }
+                    }, ct: ct);
+                }
+                else
+                {
+                    // Third fallback: recover from infrastructure-failure-induced Failed state
+                    var recovered = await _workItemTransition.TryRecoverFromInfrastructureFailureAsync(
+                        workItemId, status, item =>
                         {
                             item.CompletedAt = DateTimeOffset.UtcNow;
                             if (status == WorkItemStatus.Failed)
@@ -300,23 +306,8 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
                                 item.FailureReason ??= failureReason ?? FailureReason.AgentError;
                             }
                         }, ct);
-                    }
-                    else
-                    {
-                        // Third fallback: recover from infrastructure-failure-induced Failed state
-                        var recovered = await _workItemTransition.TryRecoverFromInfrastructureFailureAsync(
-                            workItemId, status, item =>
-                            {
-                                item.CompletedAt = DateTimeOffset.UtcNow;
-                                if (status == WorkItemStatus.Failed)
-                                {
-                                    item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
-                                    item.FailureReason ??= failureReason ?? FailureReason.AgentError;
-                                }
-                            }, ct);
-                        if (recovered)
-                            _logger.Warning("Recovered WorkItem {RunId} from delivery-timeout Failed to {Status} via lifecycle manager", runId, status);
-                    }
+                    if (recovered)
+                        _logger.Warning("Recovered WorkItem {RunId} from delivery-timeout Failed to {Status} via lifecycle manager", runId, status);
                 }
             }
         }

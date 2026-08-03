@@ -176,7 +176,7 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         // Old (buggy): completion.FinalStep == PipelineStep.Completed ? 0 : 1
         // Fixed: completion.FinalStep is Completed or Cancelled → 0, else 1
         var hasCancelledExitZero = sourceCode.Contains("PipelineStep.Cancelled")
-            && sourceCode.Contains("0")
+            && sourceCode.Contains('0')
             && !sourceCode.Contains("completion.FinalStep == PipelineStep.Completed ? 0 : 1");
 
         hasCancelledExitZero.Should().BeTrue(
@@ -522,7 +522,7 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             new AgentId("test-agent"), _mockLifetime.Object, _mockLogger.Object);
     }
 
-    private IWorkItemExecutor CreateMinimalWorkItemExecutor()
+    private WorkItemExecutorRouter CreateMinimalWorkItemExecutor()
     {
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
         var mockHttpFactory = new Mock<IHttpClientFactory>();

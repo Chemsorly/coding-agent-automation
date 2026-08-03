@@ -53,7 +53,7 @@ public class PipelineRunTests
     [Fact]
     public void CurrentStep_VolatileReadWrite_MaintainsConsistency()
     {
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: "run-1",
             issueIdentifier: "org/repo#1",
             issueTitle: "Test",
@@ -101,24 +101,22 @@ public class PipelineRunTests
         var startedAt = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.Zero);
         var completedAt = new DateTimeOffset(2026, 6, 1, 10, 15, 0, TimeSpan.Zero);
 
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateReview(
             runId: "run-completeness",
             issueIdentifier: "org/repo#42",
             issueTitle: "Fix critical bug",
             issueProviderConfigId: "ip-1",
             repoProviderConfigId: "rp-1",
-            runType: PipelineRunType.Review,
+            reviewPrBranchName: "feature/fix",
+            reviewPrTargetBranch: "main",
             startedAt: startedAt,
             initiatedBy: "loop",
             agentId: "agent-dotnet-1",
             agentProviderConfigId: "ap-1",
             brainProviderConfigId: "bp-1",
-            reviewPrBranchName: "feature/fix",
-            reviewPrTargetBranch: "main",
             reviewPrUrl: "https://github.com/org/repo/pull/42",
             reviewPrDescription: "Fix the bug",
-            reviewPrAuthor: "dev-user",
-            decompositionSource: "project-level");
+            reviewPrAuthor: "dev-user");
 
         // Set mutable properties
         run.CurrentStep = PipelineStep.Completed;
@@ -201,14 +199,14 @@ public class PipelineRunTests
         summary.DecompositionSubIssuesCreated.Should().Be(5);
         summary.DecompositionSubIssuesAttempted.Should().Be(6);
         summary.ProjectName.Should().Be("MyProject");
-        summary.DecompositionSource.Should().Be("project-level");
+        summary.DecompositionSource.Should().BeNull(); // CreateReview does not set DecompositionSource
     }
 
     [Fact]
     public void ToSummary_NonTerminalCurrentStep_FinalStepReflectsCurrentState()
     {
         // Documents ARC-10 edge case: FinalStep = CurrentStep without terminal state guard
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: "run-arc10",
             issueIdentifier: "org/repo#7",
             issueTitle: "In-progress run",
@@ -229,7 +227,7 @@ public class PipelineRunTests
     [InlineData(false)]
     public void ToSummary_BrainRepoUsed_DerivedFromBrainProviderConfigId(bool hasBrainProvider)
     {
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: "run-brain",
             issueIdentifier: "org/repo#1",
             issueTitle: "Brain test",
@@ -254,7 +252,7 @@ public class PipelineRunTests
     [Fact]
     public void StatusLifecycle_HappyPath_CreatedToCompleted()
     {
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: "run-lifecycle",
             issueIdentifier: "org/repo#10",
             issueTitle: "Lifecycle test",
@@ -303,7 +301,7 @@ public class PipelineRunTests
         var startedAt = new DateTimeOffset(2026, 1, 15, 10, 0, 0, TimeSpan.Zero);
         var completedAt = new DateTimeOffset(2026, 1, 15, 10, 30, 0, TimeSpan.Zero);
 
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: "run-timing",
             issueIdentifier: "org/repo#5",
             issueTitle: "Timing test",
@@ -325,7 +323,7 @@ public class PipelineRunTests
     public void TimingInvariant_RealClock_CompletedAfterStarted()
     {
         // Uses real clock to document real-world behavior
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: "run-timing-real",
             issueIdentifier: "org/repo#6",
             issueTitle: "Real timing test",
@@ -480,13 +478,14 @@ public class PipelineRunTests
     [Fact]
     public void LabelTargetKind_ReviewRun_ReturnsPullRequest()
     {
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateReview(
             runId: "run-ltk-review",
             issueIdentifier: "org/repo#1",
             issueTitle: "Test",
             issueProviderConfigId: "ip-1",
             repoProviderConfigId: "rp-1",
-            runType: PipelineRunType.Review);
+            reviewPrBranchName: "feature/x",
+            reviewPrTargetBranch: "main");
 
         run.LabelTargetKind.Should().Be(LabelTargetKind.PullRequest);
     }
@@ -497,13 +496,22 @@ public class PipelineRunTests
     [InlineData(PipelineRunType.Decomposition)]
     public void LabelTargetKind_NonReviewRun_ReturnsIssue(PipelineRunType runType)
     {
-        var run = PipelineRun.Create(
-            runId: "run-ltk-nonreview",
-            issueIdentifier: "org/repo#1",
-            issueTitle: "Test",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            runType: runType);
+        var run = runType switch
+        {
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
+                runId: "run-ltk-nonreview",
+                issueIdentifier: "org/repo#1",
+                issueTitle: "Test",
+                issueProviderConfigId: "ip-1",
+                repoProviderConfigId: "rp-1",
+                phaseType: runType),
+            _ => PipelineRun.CreateImplementation(
+                runId: "run-ltk-nonreview",
+                issueIdentifier: "org/repo#1",
+                issueTitle: "Test",
+                issueProviderConfigId: "ip-1",
+                repoProviderConfigId: "rp-1")
+        };
 
         run.LabelTargetKind.Should().Be(LabelTargetKind.Issue);
     }
@@ -521,13 +529,14 @@ public class PipelineRunTests
     [Fact]
     public void ProviderConfigIdForLabel_ReviewRun_ReturnsRepoProviderConfigId()
     {
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateReview(
             runId: "run-pcid-review",
             issueIdentifier: "org/repo#1",
             issueTitle: "Test",
             issueProviderConfigId: "ip-1",
             repoProviderConfigId: "rp-1",
-            runType: PipelineRunType.Review);
+            reviewPrBranchName: "feature/x",
+            reviewPrTargetBranch: "main");
 
         run.ProviderConfigIdForLabel.Should().Be("rp-1");
     }
@@ -538,13 +547,22 @@ public class PipelineRunTests
     [InlineData(PipelineRunType.Decomposition)]
     public void ProviderConfigIdForLabel_NonReviewRun_ReturnsIssueProviderConfigId(PipelineRunType runType)
     {
-        var run = PipelineRun.Create(
-            runId: "run-pcid-nonreview",
-            issueIdentifier: "org/repo#1",
-            issueTitle: "Test",
-            issueProviderConfigId: "ip-1",
-            repoProviderConfigId: "rp-1",
-            runType: runType);
+        var run = runType switch
+        {
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
+                runId: "run-pcid-nonreview",
+                issueIdentifier: "org/repo#1",
+                issueTitle: "Test",
+                issueProviderConfigId: "ip-1",
+                repoProviderConfigId: "rp-1",
+                phaseType: runType),
+            _ => PipelineRun.CreateImplementation(
+                runId: "run-pcid-nonreview",
+                issueIdentifier: "org/repo#1",
+                issueTitle: "Test",
+                issueProviderConfigId: "ip-1",
+                repoProviderConfigId: "rp-1")
+        };
 
         run.ProviderConfigIdForLabel.Should().Be("ip-1");
     }

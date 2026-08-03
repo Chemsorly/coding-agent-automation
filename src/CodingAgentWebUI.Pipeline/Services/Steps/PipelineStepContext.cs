@@ -28,28 +28,11 @@ public sealed class PipelineStepContext
     /// Issue data is NOT pre-populated — <c>FetchIssueStep</c> populates it later.
     /// </summary>
     public static PipelineStepContext ForOrchestrator(
-        PipelineRun run,
-        PipelineConfiguration config,
-        IRepositoryProvider repoProvider,
-        IAgentProvider agentProvider,
-        IRepositoryProvider? brainProvider,
-        IPipelineProvider? pipelineProvider,
-        CancellationTokenSource? cts,
-        IConfigurationStore configStore,
-        IPipelineCallbacks callbacks,
-        IAgentIssueOperations issueOps,
-        IAgentPhaseExecutor agentExecution,
-        IQualityGateExecutor qualityGates,
-        IBrainSyncService? brainSync,
-        PullRequestOrchestrator prOrchestrator,
-        Serilog.ILogger logger,
-        IQualityGateValidator? qualityGateValidator,
+        PipelineStepContextServices services,
         IIssueProvider issueProvider)
     {
-        return CreateBase(run, config, repoProvider, agentProvider, brainProvider,
-            pipelineProvider, cts, configStore, callbacks, issueOps, agentExecution,
-            qualityGates, brainSync, prOrchestrator, logger, qualityGateValidator,
-            issueProvider: issueProvider, projectContext: null);
+        ArgumentNullException.ThrowIfNull(services);
+        return CreateBase(services, issueProvider: issueProvider, projectContext: null);
     }
 
     /// <summary>
@@ -57,22 +40,7 @@ public sealed class PipelineStepContext
     /// Issue data is pre-populated from the job assignment (no <c>IssueProvider</c> needed).
     /// </summary>
     public static PipelineStepContext ForAgent(
-        PipelineRun run,
-        PipelineConfiguration config,
-        IRepositoryProvider repoProvider,
-        IAgentProvider agentProvider,
-        IRepositoryProvider? brainProvider,
-        IPipelineProvider? pipelineProvider,
-        CancellationTokenSource? cts,
-        IConfigurationStore configStore,
-        IPipelineCallbacks callbacks,
-        IAgentIssueOperations issueOps,
-        IAgentPhaseExecutor agentExecution,
-        IQualityGateExecutor qualityGates,
-        IBrainSyncService? brainSync,
-        PullRequestOrchestrator prOrchestrator,
-        Serilog.ILogger logger,
-        IQualityGateValidator? qualityGateValidator,
+        PipelineStepContextServices services,
         IssueDetail? issue,
         ParsedIssue? parsedIssue,
         IReadOnlyList<IssueComment>? issueComments,
@@ -80,10 +48,8 @@ public sealed class PipelineStepContext
         IReadOnlyList<QualityGateConfiguration>? preResolvedQualityGateConfigs,
         DecompositionProjectContext? projectContext)
     {
-        var ctx = CreateBase(run, config, repoProvider, agentProvider, brainProvider,
-            pipelineProvider, cts, configStore, callbacks, issueOps, agentExecution,
-            qualityGates, brainSync, prOrchestrator, logger, qualityGateValidator,
-            issueProvider: null, projectContext: projectContext);
+        ArgumentNullException.ThrowIfNull(services);
+        var ctx = CreateBase(services, issueProvider: null, projectContext: projectContext);
         // These are get/set properties — safe to assign after construction
         ctx.Issue = issue;
         ctx.ParsedIssue = parsedIssue;
@@ -94,43 +60,28 @@ public sealed class PipelineStepContext
     }
 
     private static PipelineStepContext CreateBase(
-        PipelineRun run,
-        PipelineConfiguration config,
-        IRepositoryProvider repoProvider,
-        IAgentProvider agentProvider,
-        IRepositoryProvider? brainProvider,
-        IPipelineProvider? pipelineProvider,
-        CancellationTokenSource? cts,
-        IConfigurationStore configStore,
-        IPipelineCallbacks callbacks,
-        IAgentIssueOperations issueOps,
-        IAgentPhaseExecutor agentExecution,
-        IQualityGateExecutor qualityGates,
-        IBrainSyncService? brainSync,
-        PullRequestOrchestrator prOrchestrator,
-        Serilog.ILogger logger,
-        IQualityGateValidator? qualityGateValidator,
+        PipelineStepContextServices services,
         IIssueProvider? issueProvider,
         DecompositionProjectContext? projectContext)
     {
         return new PipelineStepContext
         {
-            Run = run,
-            Config = config,
-            RepoProvider = repoProvider,
-            AgentProvider = agentProvider,
-            BrainProvider = brainProvider,
-            PipelineProvider = pipelineProvider,
-            Cts = cts,
-            ConfigStore = configStore,
-            Callbacks = callbacks,
-            IssueOps = issueOps,
-            AgentExecution = agentExecution,
-            QualityGates = qualityGates,
-            BrainSync = brainSync,
-            PrOrchestrator = prOrchestrator,
-            Logger = logger,
-            QualityGateValidator = qualityGateValidator,
+            Run = services.Run,
+            Config = services.Config,
+            RepoProvider = services.RepoProvider,
+            AgentProvider = services.AgentProvider,
+            BrainProvider = services.BrainProvider,
+            PipelineProvider = services.PipelineProvider,
+            Cts = services.Cts,
+            ConfigStore = services.ConfigStore,
+            Callbacks = services.Callbacks,
+            IssueOps = services.IssueOps,
+            AgentExecution = services.AgentExecution,
+            QualityGates = services.QualityGates,
+            BrainSync = services.BrainSync,
+            PrOrchestrator = services.PrOrchestrator,
+            Logger = services.Logger,
+            QualityGateValidator = services.QualityGateValidator,
             IssueProvider = issueProvider,
             ProjectContext = projectContext
         };

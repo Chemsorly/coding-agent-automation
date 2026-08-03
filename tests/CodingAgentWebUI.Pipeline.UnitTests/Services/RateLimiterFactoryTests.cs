@@ -41,7 +41,18 @@ public class RateLimiterFactoryTests
     [Fact]
     public async Task CreateTokenBucket_ReplenishesAfterInterval()
     {
-        using var limiter = RateLimiterFactory.CreateTokenBucket(2);
+        // Use AutoReplenishment=false and a 1ms replenishment period so we can
+        // call TryReplenish() explicitly after a trivial delay — no timing-dependent
+        // wall-clock sleep required (avoids CI jitter).
+        using var limiter = new TokenBucketRateLimiter(new TokenBucketRateLimiterOptions
+        {
+            TokenLimit = 2,
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0,
+            ReplenishmentPeriod = TimeSpan.FromMilliseconds(1),
+            TokensPerPeriod = 2,
+            AutoReplenishment = false
+        });
 
         // Exhaust all tokens
         for (int i = 0; i < 2; i++)
@@ -53,15 +64,16 @@ public class RateLimiterFactoryTests
         // Verify exhaustion
         {
             using var lease = await limiter.AcquireAsync(1, CancellationToken.None);
-            lease.IsAcquired.Should().BeFalse();
+            lease.IsAcquired.Should().BeFalse("tokens should be exhausted");
         }
 
-        // Wait for replenishment (1 second period)
-        await Task.Delay(TimeSpan.FromSeconds(1.2));
+        // Let the 1ms period expire, then replenish deterministically
+        await Task.Delay(TimeSpan.FromMilliseconds(10));
+        limiter.TryReplenish();
 
         // Should have tokens again
         using var replenishedLease = await limiter.AcquireAsync(1, CancellationToken.None);
-        replenishedLease.IsAcquired.Should().BeTrue("tokens should replenish after 1-second period");
+        replenishedLease.IsAcquired.Should().BeTrue("tokens should replenish after TryReplenish()");
 
         // Second token also available (2 tokens per period)
         using var secondLease = await limiter.AcquireAsync(1, CancellationToken.None);

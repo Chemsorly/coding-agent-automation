@@ -176,7 +176,10 @@ public class OpenCodeHealthMonitorTests
         await monitor.StartAsync(cts.Token);
         await Task.Delay(250); // Let one poll cycle attempt
         await monitor.StopAsync(CancellationToken.None);
-        // Should complete without throwing
+
+        // Poll interval is 5s; within 250ms window no poll fires, so statuses remain null.
+        // This asserts the monitor completed its lifecycle without corrupting state.
+        monitor.LastSessionStatuses.Should().BeNull();
     }
 
     [Fact]

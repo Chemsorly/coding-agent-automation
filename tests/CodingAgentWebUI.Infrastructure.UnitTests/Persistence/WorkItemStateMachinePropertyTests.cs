@@ -142,8 +142,7 @@ public class WorkItemStateMachineReachabilityPropertyTests
             var reachable = ComputeReachableStates(start);
             var canTerminate = reachable.Any(s => TerminalStatuses.Contains(s));
 
-            if (!canTerminate)
-                throw new Exception($"State {start} has no path to any terminal state!");
+            Assert.True(canTerminate, $"State {start} has no path to any terminal state!");
         }
     }
 
@@ -159,9 +158,7 @@ public class WorkItemStateMachineReachabilityPropertyTests
                 .Where(t => WorkItemTransitionService.IsValidTransition(terminal, t))
                 .ToArray();
 
-            if (outgoing.Length > 0)
-                throw new Exception(
-                    $"Terminal state {terminal} has unexpected outgoing transitions to: {string.Join(", ", outgoing)}");
+            Assert.Empty(outgoing);
         }
     }
 
@@ -176,9 +173,8 @@ public class WorkItemStateMachineReachabilityPropertyTests
             .Where(s => s != WorkItemStatus.Pending && WorkItemTransitionService.IsValidTransition(s, WorkItemStatus.Pending))
             .ToArray();
 
-        if (statesThatCanReachPending.Length != 1 || statesThatCanReachPending[0] != WorkItemStatus.Dispatched)
-            throw new Exception(
-                $"Expected only Dispatched→Pending, but found: {string.Join(", ", statesThatCanReachPending)}");
+        Assert.Single(statesThatCanReachPending);
+        Assert.Equal(WorkItemStatus.Dispatched, statesThatCanReachPending[0]);
     }
 
     private static HashSet<WorkItemStatus> ComputeReachableStates(WorkItemStatus start)

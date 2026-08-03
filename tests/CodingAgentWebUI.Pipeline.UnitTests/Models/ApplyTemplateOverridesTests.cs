@@ -12,6 +12,8 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 /// </summary>
 public class ApplyTemplateOverridesTests
 {
+    private static readonly string[] ExpectedBlacklistedPaths = ["vendor", "dist"];
+
     [Fact]
     public void MatchingTemplate_BrainReadOnlyTrue_AppliesOverride()
     {
@@ -144,7 +146,7 @@ public class ApplyTemplateOverridesTests
         var result = PipelineConfigurationResolver.ApplyTemplateOverrides(
             config, "repo-1", "brain-1", providerConfigs, templates);
 
-        result.BlacklistedPaths.Should().BeEquivalentTo(new[] { "vendor", "dist" });
+        result.BlacklistedPaths.Should().BeEquivalentTo(ExpectedBlacklistedPaths);
     }
 
     [Fact]

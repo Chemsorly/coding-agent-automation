@@ -37,7 +37,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         await _connection.DisposeAsync();
     }
 
-    // TODO: Add a test that invokes the PrContext.CreatePullRequest callback and verifies it delegates
+    // TODO(#1776): Add a test that invokes the PrContext.CreatePullRequest callback and verifies it delegates
     // to PullRequestFinalizationService.RunFullPrCreationAsync to cover the fixed null-dereference path.
     private PipelineExecutionContextBuilder CreateBuilder(
         IBrainUpdateService? brainUpdateService = null,
@@ -328,7 +328,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
     [Fact]
     public async Task Build_EmitOutputLine_DelegatesToReporter()
     {
-        // TODO: This test only asserts no-throw. Verify the reporter actually receives the output
+        // TODO(#1776): This test only asserts no-throw. Verify the reporter actually receives the output
         // line (e.g., via mock verification). Also add a test for the mutable StepContext
         // late-binding pattern: verify that setting StepContext post-Build causes EmitOutputLine
         // to use it for secret masking.
@@ -448,7 +448,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         var act = () => result.LocalCts.Token;
         act.Should().NotThrow();
 
-        // TODO: [WARNING] Tautological assertion — `Should().NotBeNull()` only checks that the
+        // TODO(#1776): [WARNING] Tautological assertion — `Should().NotBeNull()` only checks that the
         // required init property is set and will always pass regardless of disposal state.
         // A meaningful assertion should verify the internal semaphore is still usable via
         // reflection (as done in PipelineExecutionBuildResultTests.DisposeAsync_DisposesReporter).
@@ -605,7 +605,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
 
     // ── CreateStepContext ─────────────────────────────────────────────────
 
-    // TODO: CreateBuilder() does not pass a PullRequestFinalizationService, leaving _finalization null.
+    // TODO(#1776): CreateBuilder() does not pass a PullRequestFinalizationService, leaving _finalization null.
     // Add a test that constructs the builder with a mock finalization service and exercises the
     // CreatePullRequest callback path to cover the moved CreatePullRequestAsync logic.
     [Fact]
@@ -701,13 +701,142 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         ctx.Callbacks.TransitionTo(PipelineStep.AnalyzingCode);
 
         // Assert — the TransitionTo delegate fires through the reporter which updates onStepChanged
-        // TODO: Replace Task.Delay(100) with a proper synchronization primitive (e.g., TaskCompletionSource
+        // TODO(#1776): Replace Task.Delay(100) with a proper synchronization primitive (e.g., TaskCompletionSource
         // or ManualResetEventSlim) to avoid flaky failures on loaded CI runners.
         // Allow a small delay for the fire-and-forget to complete
         await Task.Delay(100);
         transitionedStep.Should().Be(PipelineStep.AnalyzingCode);
 
         await buildResult.DisposeAsync();
+    }
+
+    // ── Review run type ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Build_ReviewRunType_CreatesReviewRun()
+    {
+        SetupReporterFactory();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var builder = CreateBuilder();
+        var job = CreateTestJob(PipelineRunType.Review);
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        result.Run.RunType.Should().Be(PipelineRunType.Review);
+        result.Run.RunId.Should().Be("job-123");
+
+        await result.DisposeAsync();
+    }
+
+    // ── Decomposition run type ────────────────────────────────────────────
+
+    [Fact]
+    public async Task Build_DecompositionRunType_CreatesDecompositionRun()
+    {
+        SetupReporterFactory();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var builder = CreateBuilder();
+        var job = CreateTestJob(PipelineRunType.Decomposition);
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        result.Run.RunType.Should().Be(PipelineRunType.Decomposition);
+        result.Run.RunId.Should().Be("job-123");
+
+        await result.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Build_DecompositionAnalysisRunType_CreatesDecompositionRun()
+    {
+        SetupReporterFactory();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var builder = CreateBuilder();
+        var job = CreateTestJob(PipelineRunType.DecompositionAnalysis);
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        result.Run.RunType.Should().Be(PipelineRunType.DecompositionAnalysis);
+
+        await result.DisposeAsync();
+    }
+
+    // ── CreatePullRequest callback / null finalization ────────────────────
+
+    [Fact]
+    public async Task Build_CreatePullRequestCallback_WhenFinalizationNull_ThrowsInvalidOperationException()
+    {
+        // Build without a PullRequestFinalizationService — _finalization is null.
+        // Invoking the CreatePullRequest callback through the step context's Callbacks
+        // must throw InvalidOperationException.
+        var builderWithoutFinalization = new PipelineExecutionContextBuilder(
+            _mockQualityGateValidator.Object,
+            _mockReporterFactory.Object,
+            _feedbackService,
+            _agentId,
+            _mockLogger.Object,
+            brainUpdateService: null,
+            historyService: null,
+            finalization: null);
+
+        SetupReporterFactory();
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var job = CreateTestJob();
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builderWithoutFinalization.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        // CreateStepContext wires up AgentCallbacks which delegates CreatePullRequest
+        // to the private CreatePullRequestAsync (which throws when _finalization is null).
+        var stepCtx = builderWithoutFinalization.CreateStepContext(
+            result.ExecutionContext, (PipelineSignalRReporter)result.Reporter, CancellationToken.None);
+
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true },
+            Tests = new GateResult { GateName = "Tests", Passed = true }
+        };
+        var act = () => stepCtx.Callbacks.CreatePullRequest(
+            result.Run, report, isDraft: false, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*PullRequestFinalizationService*");
+
+        await result.DisposeAsync();
     }
 
     private sealed class NoOpHandler : HttpMessageHandler

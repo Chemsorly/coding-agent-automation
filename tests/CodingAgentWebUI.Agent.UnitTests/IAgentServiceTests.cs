@@ -147,27 +147,24 @@ public class IAgentServiceTests
     public void AgentWorkerService_IsBusy_DefaultsFalse()
     {
         var service = CreateAgentWorkerService();
-        var agentService = (IAgentService)service;
 
-        agentService.IsBusy.Should().BeFalse();
+        ((IAgentService)service).IsBusy.Should().BeFalse();
     }
 
     [Fact]
     public void AgentWorkerService_CurrentStep_DefaultsNull()
     {
         var service = CreateAgentWorkerService();
-        var agentService = (IAgentService)service;
 
-        agentService.CurrentStep.Should().BeNull();
+        ((IAgentService)service).CurrentStep.Should().BeNull();
     }
 
     [Fact]
     public void WorkItemAgentService_IsBusy_DefaultsFalse()
     {
         var service = CreateWorkItemAgentService();
-        var agentService = (IAgentService)service;
 
-        agentService.IsBusy.Should().BeFalse();
+        ((IAgentService)service).IsBusy.Should().BeFalse();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

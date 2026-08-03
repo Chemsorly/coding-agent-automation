@@ -14,6 +14,29 @@ public static class TestOrchestrationFactory
     /// Creates a <see cref="PipelineOrchestrationService"/> with no-op/null defaults for all facade parameters.
     /// Tests should provide specific implementations only for the dependencies they exercise.
     /// </summary>
+    public static PipelineOrchestrationService CreateMinimal(CreateMinimalOptions? options = null)
+    {
+        var o = options ?? new CreateMinimalOptions();
+        var logger = o.Logger ?? Serilog.Log.Logger;
+        var historyService = o.HistoryService ?? new NullHistoryService();
+
+        var store = o.ConfigStore ?? throw new ArgumentNullException(nameof(options), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object");
+        // TODO: Passing the same store object as both IPipelineConfigStore and IProviderConfigStore prevents tests
+        // from verifying that calls are routed to the correct sub-interface. Consider accepting separate parameters.
+        return new PipelineOrchestrationService(
+            store,
+            o.ProviderFactory ?? throw new ArgumentNullException(nameof(options), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
+            o.IssueParser ?? new IssueDescriptionParser(),
+            o.CancellationFacade ?? new PipelineCancellationFacade(null, null),
+            o.Lifecycle ?? new PipelineRunLifecycleService(historyService, o.RunService, logger),
+            o.LabelService ?? NoOpLabelService.Instance,
+            logger);
+    }
+
+    /// <summary>
+    /// Overload that accepts individual named parameters for backward compatibility with existing tests.
+    /// Prefer the <see cref="CreateMinimalOptions"/> overload for new test code.
+    /// </summary>
     public static PipelineOrchestrationService CreateMinimal(
         IConfigurationStore? configStore = null,
         IProviderFactory? providerFactory = null,
@@ -24,23 +47,18 @@ public static class TestOrchestrationFactory
         Serilog.ILogger? logger = null,
         IPipelineRunHistoryService? historyService = null,
         IOrchestratorRunService? runService = null)
-    {
-        logger ??= Serilog.Log.Logger;
-        historyService ??= new NullHistoryService();
-
-        var store = configStore ?? throw new ArgumentNullException(nameof(configStore), "IConfigurationStore is required — use a Mock<IConfigurationStore>().Object");
-        // TODO: Passing the same store object as both IPipelineConfigStore and IProviderConfigStore prevents tests
-        // from verifying that calls are routed to the correct sub-interface. Consider accepting separate parameters.
-        return new PipelineOrchestrationService(
-            store,
-            store,
-            providerFactory ?? throw new ArgumentNullException(nameof(providerFactory), "IProviderFactory is required — use a Mock<IProviderFactory>().Object"),
-            issueParser ?? new IssueDescriptionParser(),
-            cancellationFacade ?? new PipelineCancellationFacade(null, null),
-            lifecycle ?? new PipelineRunLifecycleService(historyService, runService, logger),
-            labelService ?? NoOpLabelService.Instance,
-            logger);
-    }
+        => CreateMinimal(new CreateMinimalOptions
+        {
+            ConfigStore = configStore,
+            ProviderFactory = providerFactory,
+            IssueParser = issueParser,
+            CancellationFacade = cancellationFacade,
+            Lifecycle = lifecycle,
+            LabelService = labelService,
+            Logger = logger,
+            HistoryService = historyService,
+            RunService = runService
+        });
 
     /// <summary>
     /// Creates a <see cref="DispatchRunCreationService"/> with the same lifecycle as a companion

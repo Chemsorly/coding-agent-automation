@@ -219,14 +219,6 @@ internal static class RepositoryGitOperations
     {
         using var repo = new Repository(workspacePath);
         var remote = repo.Network.Remotes["origin"];
-        string? pushError = null;
-        var options = new PushOptions
-        {
-            CredentialsProvider = (_, _, _) =>
-                new UsernamePasswordCredentials { Username = tokenUsername, Password = token },
-            OnPushStatusError = error =>
-                pushError = $"Push failed for ref '{error.Reference}': {error.Message}"
-        };
 
         // Force-push uses '+' prefix on refspec to allow non-fast-forward updates (required after rebase)
         var refSpec = forcePush
@@ -239,7 +231,18 @@ internal static class RepositoryGitOperations
         await pipeline.ExecuteAsync(async _ =>
         {
             await Task.CompletedTask;
-            pushError = null;
+
+            // Declare pushError and PushOptions inside the lambda so each retry attempt
+            // gets a fresh error slot, and so static analysis can track the callback assignment.
+            string? pushError = null;
+            var options = new PushOptions
+            {
+                CredentialsProvider = (_, _, _) =>
+                    new UsernamePasswordCredentials { Username = tokenUsername, Password = token },
+                OnPushStatusError = error =>
+                    pushError = $"Push failed for ref '{error.Reference}': {error.Message}"
+            };
+
             repo.Network.Push(remote, refSpec, options);
 
             if (pushError != null)
@@ -307,11 +310,7 @@ internal static class RepositoryGitOperations
             {
                 var workingDiff = repo.Diff.Compare<TreeChanges>(
                     baseCommit.Tree, DiffTargets.WorkingDirectory);
-                foreach (var entry in workingDiff)
-                {
-                    var status = MapChangeKind(entry.Status);
-                    changes.Add(new FileChangeSummary(status, entry.Path));
-                }
+                changes.AddRange(workingDiff.Select(entry => new FileChangeSummary(MapChangeKind(entry.Status), entry.Path)));
             }
 
             return changes;
@@ -329,20 +328,12 @@ internal static class RepositoryGitOperations
         try
         {
             using var patch = repo.Diff.Compare<Patch>(baseTree, headTree);
-            foreach (var entry in patch)
-            {
-                var status = MapChangeKind(entry.Status);
-                changes.Add(new FileChangeSummary(status, entry.Path, entry.LinesAdded, entry.LinesDeleted));
-            }
+            changes.AddRange(patch.Select(entry => new FileChangeSummary(MapChangeKind(entry.Status), entry.Path, entry.LinesAdded, entry.LinesDeleted)));
         }
         catch
         {
             var diff = repo.Diff.Compare<TreeChanges>(baseTree, headTree);
-            foreach (var entry in diff)
-            {
-                var status = MapChangeKind(entry.Status);
-                changes.Add(new FileChangeSummary(status, entry.Path));
-            }
+            changes.AddRange(diff.Select(entry => new FileChangeSummary(MapChangeKind(entry.Status), entry.Path)));
         }
         return changes;
     }

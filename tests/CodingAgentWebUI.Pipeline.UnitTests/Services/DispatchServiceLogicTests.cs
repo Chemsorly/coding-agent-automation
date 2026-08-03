@@ -13,6 +13,12 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// </summary>
 public class DispatchServiceLogicTests
 {
+    private static readonly string[] PvcPool3 = ["pvc-1", "pvc-2", "pvc-3"];
+    private static readonly string[] PvcPool2 = ["pvc-1", "pvc-2"];
+    private static readonly string[] PvcPart2 = ["pvc-2"];
+    private static readonly string[] PvcPart12 = ["pvc-1", "pvc-2"];
+    private static readonly string[] PvcExpected13 = ["pvc-1", "pvc-3"];
+
     // ── Job Naming ──────────────────────────────────────────────────────
 
     [Fact]

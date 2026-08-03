@@ -40,13 +40,12 @@ public class PipelineCleanupTests : IAsyncDisposable
 
     private static PipelineRun CreateRun(PipelineStep currentStep = PipelineStep.Created)
     {
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: "test-run",
             issueIdentifier: "test/repo#1",
             issueTitle: "Test",
             issueProviderConfigId: "",
             repoProviderConfigId: "repo-1",
-            runType: PipelineRunType.Implementation,
             initiatedBy: "test",
             agentId: "test-agent");
         run.CurrentStep = currentStep;
@@ -195,17 +194,19 @@ public class PipelineCleanupTests : IAsyncDisposable
     [Fact]
     public async Task RunAsync_DisposesReporter()
     {
-        // TODO: This test has zero assertions. Verify reporter.DisposeAsync() was actually called
-        // (e.g., via a mock or by checking that subsequent operations on the reporter fail).
         var run = CreateRun();
         var reporter = CreateReporter(run);
 
         await PipelineCleanup.RunAsync(null, null, run, reporter, _mockLogger.Object);
 
-        // After DisposeAsync, calling TransitionTo should still not throw
-        // (fire-and-forget pattern swallows errors), but the semaphore is disposed.
-        // We verify disposal happened by checking no exception during cleanup.
-        // This is a smoke test — the real verification is that DisposeAsync was awaited.
+        // Verify DisposeAsync() was called: _disposed is set to 1 via Interlocked.Exchange in DisposeAsync().
+        // A second DisposeAsync() call returns early when _disposed == 1, so this round-trip
+        // confirms the first disposal already happened.
+        var disposedField = typeof(PipelineSignalRReporter)
+            .GetField("_disposed", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        disposedField.Should().NotBeNull("_disposed field must exist on PipelineSignalRReporter");
+        var disposedValue = (int)disposedField!.GetValue(reporter)!;
+        disposedValue.Should().Be(1, "DisposeAsync() sets _disposed to 1 via Interlocked.Exchange");
     }
 
     [Fact]

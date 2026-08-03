@@ -425,5 +425,6 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
         Interlocked.Exchange(ref _serviceCts, null)?.Dispose();
         Interlocked.Exchange(ref _leaderCts, null)?.Dispose();
         (_lockConnection as IDisposable)?.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

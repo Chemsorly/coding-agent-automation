@@ -13,15 +13,15 @@ public static class CostFormatter
     public static string FormatCost(decimal? cost)
     {
         if (cost is null or <= 0m) return "—";
-        return FormattableString.Invariant($"${cost.Value:F2}");
+        return string.Create(CultureInfo.InvariantCulture, $"${cost.Value:F2}");
     }
 
     /// <summary>Formats a token count as "12.4K" or "1.2M", or "—" if zero.</summary>
     public static string FormatTokens(long tokens)
     {
         if (tokens <= 0) return "—";
-        if (tokens >= 1_000_000) return FormattableString.Invariant($"{tokens / 1_000_000.0:F1}M");
-        if (tokens >= 1_000) return FormattableString.Invariant($"{tokens / 1_000.0:F1}K");
+        if (tokens >= 1_000_000) return string.Create(CultureInfo.InvariantCulture, $"{tokens / 1_000_000.0:F1}M");
+        if (tokens >= 1_000) return string.Create(CultureInfo.InvariantCulture, $"{tokens / 1_000.0:F1}K");
         return tokens.ToString(CultureInfo.InvariantCulture);
     }
 

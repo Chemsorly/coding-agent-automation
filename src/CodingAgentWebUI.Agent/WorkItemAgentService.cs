@@ -39,6 +39,36 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
     private volatile CancellationTokenSource? _pipelineCts;
     private volatile bool _terminalStatusPosted;
 
+    public WorkItemAgentService(WorkItemAgentServiceDependencies deps)
+    {
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.WorkItemId, nameof(deps.WorkItemId));
+        ArgumentNullException.ThrowIfNull(deps.WorkItemClient, nameof(deps.WorkItemClient));
+        ArgumentNullException.ThrowIfNull(deps.ConnectionManager, nameof(deps.ConnectionManager));
+        ArgumentNullException.ThrowIfNull(deps.WorkItemExecutor, nameof(deps.WorkItemExecutor));
+        ArgumentNullException.ThrowIfNull(deps.CompletionReporter, nameof(deps.CompletionReporter));
+        ArgumentNullException.ThrowIfNull(deps.Lifetime, nameof(deps.Lifetime));
+        ArgumentNullException.ThrowIfNull(deps.Logger, nameof(deps.Logger));
+
+        _workItemId = deps.WorkItemId;
+        _workItemClient = deps.WorkItemClient;
+        _workItemExecutor = deps.WorkItemExecutor;
+        _completionReporter = deps.CompletionReporter;
+        // TODO: Validate agentId.Value is not null/empty — default(AgentId) would propagate null.
+        _agentId = deps.AgentId;
+        _lifetime = deps.Lifetime;
+        _serviceProvider = deps.ServiceProvider;
+        _logger = deps.Logger;
+
+        // Use the injected connection manager
+        _connectionManager = deps.ConnectionManager;
+
+        // Wire CancelJob to cancel the pipeline
+        _connectionManager.OnCancelJobReceived += HandleCancelJobAsync;
+        _connectionManager.OnForceDisconnect += HandleForceDisconnectAsync;
+    }
+
+    // Backward-compatible constructor used by tests and existing DI registrations
     public WorkItemAgentService(
         string workItemId,
         IWorkItemLifecycleClient workItemClient,
@@ -250,7 +280,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         var completion = await AgentJobRunner.ExecuteAsync(
             _workItemExecutor, assignment, _connectionManager.Connection, outputBatcher,
             step => _connectionManager.UpdateCurrentStep(step),
-            pipelineCt, rethrowOnSigterm: ct);
+            rethrowOnSigterm: ct, ct: pipelineCt);
 
         // Step 5: Report completion via unified reporter
         try
@@ -280,7 +310,7 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
     internal void CancelPipeline()
     {
         try { _pipelineCts?.Cancel(); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Intentional: CTS already disposed (pipeline completed); cancellation is a no-op. */ }
     }
 
     private Task HandleCancelJobAsync(string jobId)

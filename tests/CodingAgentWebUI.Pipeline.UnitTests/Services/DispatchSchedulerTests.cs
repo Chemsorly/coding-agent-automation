@@ -39,17 +39,12 @@ public class DispatchSchedulerTests
         // Track dispatches by distinguishing issue vs PR vs decomp via the method called
         _mockDispatchOrchestration
             .Setup(d => d.PrepareDistributionRequestAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
-                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
-                It.IsAny<PipelineProject>(), It.IsAny<WorkItemTaskType>(),
-                It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string id, string issueProvider, string repoProvider,
-                string? brain, string? pipeline, string initiatedBy,
-                PipelineProject proj, WorkItemTaskType taskType,
-                PipelineRunType runType, CancellationToken ct) =>
+                It.IsAny<ImplementationDispatchOrchestrationRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ImplementationDispatchOrchestrationRequest req, CancellationToken ct) =>
             {
                 Interlocked.Increment(ref _issueDispatchCount);
-                return CreateMinimalJobDistributionRequest(id);
+                return CreateMinimalJobDistributionRequest(req.IssueIdentifier);
             });
 
         _mockDispatchOrchestration
@@ -64,17 +59,12 @@ public class DispatchSchedulerTests
 
         _mockDispatchOrchestration
             .Setup(d => d.PrepareDecompositionDistributionRequestAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<PipelineProject>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((string epic, string title, PipelineRunType phase,
-                string issueProvider, string repoProvider, string? brain,
-                string initiatedBy, PipelineProject proj,
-                string? source, CancellationToken ct) =>
+                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DecompositionDispatchOrchestrationRequest req, CancellationToken ct) =>
             {
                 Interlocked.Increment(ref _decompDispatchCount);
-                return CreateMinimalJobDistributionRequest(epic);
+                return CreateMinimalJobDistributionRequest(req.EpicIdentifier);
             });
 
         _mockDispatchOrchestration
@@ -217,13 +207,21 @@ public class DispatchSchedulerTests
 
         // Act
         var result = await _scheduler.DispatchFairRoundRobinAsync(
-            pollable, flattened,
-            new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
-            maxRunsPerCycle: 9,
-            new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-            issueQueues, prQueues, decompQueues,
-            new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
-            _ => { }, _ => { }, () => { },
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 9,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
             CancellationToken.None, CancellationToken.None);
 
         // Assert: exactly 3 per queue type (fairness ±1)
@@ -254,13 +252,21 @@ public class DispatchSchedulerTests
 
         // Act — should NOT throw KeyNotFoundException
         var result = await _scheduler.DispatchFairRoundRobinAsync(
-            pollable, flattened,
-            new PipelineConfiguration(),
-            maxRunsPerCycle: 5,
-            new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-            issueQueues, prQueues, decompQueues,
-            new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
-            _ => { }, _ => { }, () => { },
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration(),
+                MaxRunsPerCycle = 5,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
             CancellationToken.None, CancellationToken.None);
 
         // Assert: issues dispatched successfully
@@ -290,13 +296,21 @@ public class DispatchSchedulerTests
 
         // Act
         var result = await _scheduler.DispatchFairRoundRobinAsync(
-            pollable, flattened,
-            new PipelineConfiguration(),
-            maxRunsPerCycle: 5,
-            new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-            issueQueues, prQueues, decompQueues,
-            new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
-            _ => { }, _ => { }, () => { },
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration(),
+                MaxRunsPerCycle = 5,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
             CancellationToken.None, CancellationToken.None);
 
         // Assert
@@ -331,13 +345,21 @@ public class DispatchSchedulerTests
 
         // Act
         var result = await _scheduler.DispatchFairRoundRobinAsync(
-            pollable, flattened,
-            new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
-            maxRunsPerCycle: 2,
-            new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-            issueQueues, prQueues, decompQueues,
-            new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
-            _ => { }, _ => { }, () => { },
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 2,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
             CancellationToken.None, CancellationToken.None);
 
         // Assert: exactly 2 dispatched, no more
@@ -368,13 +390,21 @@ public class DispatchSchedulerTests
 
         // Act — must terminate (no infinite loop)
         var result = await _scheduler.DispatchFairRoundRobinAsync(
-            pollable, flattened,
-            new PipelineConfiguration(),
-            maxRunsPerCycle: 10,
-            new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-            issueQueues, prQueues, decompQueues,
-            new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
-            _ => { }, _ => { }, () => { },
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration(),
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
             CancellationToken.None, CancellationToken.None);
 
         // Assert
@@ -402,13 +432,21 @@ public class DispatchSchedulerTests
 
         // Act
         var result = await _scheduler.DispatchFairRoundRobinAsync(
-            pollable, flattened,
-            new PipelineConfiguration(),
-            maxRunsPerCycle: 10,
-            new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-            issueQueues, prQueues, decompQueues,
-            new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
-            _ => { }, _ => { }, () => { },
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration(),
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
             CancellationToken.None, CancellationToken.None);
 
         // Assert
@@ -442,13 +480,21 @@ public class DispatchSchedulerTests
 
         // Act
         var result = await _scheduler.DispatchFairRoundRobinAsync(
-            pollable, flattened,
-            new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
-            maxRunsPerCycle: 10,
-            new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-            issueQueues, prQueues, decompQueues,
-            new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
-            _ => { }, _ => { }, () => { },
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
             CancellationToken.None, CancellationToken.None);
 
         // Assert: processedCount == 3+2+1 = 6
@@ -479,13 +525,21 @@ public class DispatchSchedulerTests
 
         // Act
         var result = await _scheduler.DispatchFairRoundRobinAsync(
-            pollable, flattened,
-            new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
-            maxRunsPerCycle: 10,
-            new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-            issueQueues, prQueues, decompQueues,
-            projectLevelDecompQueues,
-            _ => { }, _ => { }, () => { },
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
             CancellationToken.None, CancellationToken.None);
 
         // Assert: 2 issues + 1 project-level decomp = 3
@@ -503,10 +557,8 @@ public class DispatchSchedulerTests
         // Override decomposition prepare to throw
         _mockDispatchOrchestration
             .Setup(d => d.PrepareDecompositionDistributionRequestAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
-                It.IsAny<string>(), It.IsAny<PipelineProject>(),
-                It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+                It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Simulated dispatch failure"));
 
         var issueQueues = new Dictionary<string, List<IssueSummary>>();
@@ -519,13 +571,21 @@ public class DispatchSchedulerTests
 
         // Act
         var result = await _scheduler.DispatchFairRoundRobinAsync(
-            pollable, flattened,
-            new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
-            maxRunsPerCycle: 10,
-            new HashSet<(IssueIdentifier, ProviderConfigId)>(),
-            issueQueues, prQueues, decompQueues,
-            projectLevelDecompQueues,
-            _ => { }, _ => { }, () => { },
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
             CancellationToken.None, CancellationToken.None);
 
         // Assert: failure counts as both processed and failed

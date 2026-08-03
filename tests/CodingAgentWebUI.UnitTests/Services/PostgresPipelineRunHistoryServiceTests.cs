@@ -169,7 +169,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     {
         // Arrange: persist a normal run and a consolidation ghost entry
         var normalRun = CreateCompletedRun(Guid.NewGuid().ToString(), "org/repo#1", "Normal run");
-        var consolidationRun = PipelineRun.Create(
+        var consolidationRun = PipelineRun.CreateImplementation(
             runId: Guid.NewGuid().ToString(),
             issueIdentifier: Guid.NewGuid().ToString(),
             issueTitle: Guid.NewGuid().ToString(),
@@ -217,7 +217,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     public async Task GetRunHistoryAsync_ExcludesConsolidationRuns()
     {
         var normalRun = CreateCompletedRun(Guid.NewGuid().ToString(), "org/repo#2", "Async normal");
-        var consolidationRun = PipelineRun.Create(
+        var consolidationRun = PipelineRun.CreateImplementation(
             runId: Guid.NewGuid().ToString(),
             issueIdentifier: Guid.NewGuid().ToString(),
             issueTitle: Guid.NewGuid().ToString(),
@@ -261,7 +261,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     [Fact]
     public async Task AddRunToHistory_RejectsConsolidationRun_Silently()
     {
-        var consolidationRun = PipelineRun.Create(
+        var consolidationRun = PipelineRun.CreateImplementation(
             runId: Guid.NewGuid().ToString(),
             issueIdentifier: Guid.NewGuid().ToString(),
             issueTitle: "Consolidation",
@@ -282,7 +282,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     [Fact]
     public async Task AddRunToHistoryAsync_RejectsConsolidationRun_Silently()
     {
-        var consolidationRun = PipelineRun.Create(
+        var consolidationRun = PipelineRun.CreateImplementation(
             runId: Guid.NewGuid().ToString(),
             issueIdentifier: Guid.NewGuid().ToString(),
             issueTitle: "Consolidation",
@@ -305,7 +305,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     {
         // Arrange: run with non-terminal step (should never happen, but defense-in-depth catches it)
         var runId = Guid.NewGuid().ToString();
-        var run = PipelineRun.Create(runId, "owner/repo#99", "Bug fix",
+        var run = PipelineRun.CreateImplementation(runId, "owner/repo#99", "Bug fix",
             "ip-1", "rp-1");
         run.CurrentStep = PipelineStep.RunningQualityGates;
         run.MarkCompleted();
@@ -329,7 +329,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     {
         // Arrange: run with non-terminal step
         var runId = Guid.NewGuid().ToString();
-        var run = PipelineRun.Create(runId, "owner/repo#102", "Mutation test",
+        var run = PipelineRun.CreateImplementation(runId, "owner/repo#102", "Mutation test",
             "ip-1", "rp-1");
         run.CurrentStep = PipelineStep.RunningQualityGates;
         run.MarkCompleted();
@@ -352,7 +352,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     {
         // Arrange: run with terminal step (normal flow)
         var runId = Guid.NewGuid().ToString();
-        var run = PipelineRun.Create(runId, "owner/repo#100", "Feature",
+        var run = PipelineRun.CreateImplementation(runId, "owner/repo#100", "Feature",
             "ip-1", "rp-1");
         run.CurrentStep = PipelineStep.Completed;
         run.MarkCompleted();
@@ -371,7 +371,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
     {
         // Arrange: non-terminal step via sync (obsolete) method
         var runId = Guid.NewGuid().ToString();
-        var run = PipelineRun.Create(runId, "owner/repo#101", "Sync test",
+        var run = PipelineRun.CreateImplementation(runId, "owner/repo#101", "Sync test",
             "ip-1", "rp-1");
         run.CurrentStep = PipelineStep.ReviewingCode;
         run.MarkCompleted();
@@ -541,7 +541,7 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
         string? modelName = null,
         DateTimeOffset? startedAt = null)
     {
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId, issueIdentifier, issueTitle,
             "ip-1", "rp-1",
             startedAt: startedAt ?? DateTimeOffset.UtcNow,

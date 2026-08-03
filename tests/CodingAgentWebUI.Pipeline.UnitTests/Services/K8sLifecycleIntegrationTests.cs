@@ -95,11 +95,11 @@ public class K8sLifecycleIntegrationTests : IDisposable
 
         // Simulate agent check-in → Running
         await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Running,
-            w => { }, CancellationToken.None);
+            w => { }, ct: CancellationToken.None);
 
         // Simulate agent completion → Succeeded (this is how the agent API reports success)
         await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Succeeded,
-            w => { w.CompletedAt = DateTimeOffset.UtcNow; }, CancellationToken.None);
+            w => { w.CompletedAt = DateTimeOffset.UtcNow; }, ct: CancellationToken.None);
 
         // Assert: full lifecycle completed
         await using (var db = await _dbFactory.CreateDbContextAsync())
@@ -589,15 +589,17 @@ public class K8sLifecycleIntegrationTests : IDisposable
         // Build JobTemplateStore from imageMapping dictionary
         var templateProvider = BuildTemplateProvider(imageMapping);
 
-        return new DispatchService(_dbFactory, _leaderElection, new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
-        {
-            PollIntervalSeconds = 10,
-            RateLimitPerSecond = 100,
-            Namespace = "default",
-            OrchestratorUrl = "http://orchestrator:8080",
-            AgentApiKeySecretName = "agent-api-key",
-            KiroPvcPool = Enumerable.Range(0, pvcCount).Select(i => $"pvc-test-{i + 1}").ToList()
-        }), config, templateProvider);
+        return new DispatchService(
+            new DispatchServiceCoreDependencies(_dbFactory, _leaderElection, new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+            {
+                PollIntervalSeconds = 10,
+                RateLimitPerSecond = 100,
+                Namespace = "default",
+                OrchestratorUrl = "http://orchestrator:8080",
+                AgentApiKeySecretName = "agent-api-key",
+                KiroPvcPool = Enumerable.Range(0, pvcCount).Select(i => $"pvc-test-{i + 1}").ToList()
+            })),
+            config, templateProvider);
     }
 
     private static JobTemplateStore BuildTemplateProvider(Dictionary<string, string> imageMapping)
@@ -625,14 +627,14 @@ public class K8sLifecycleIntegrationTests : IDisposable
         var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
 
         return new ReconciliationService(
-            _dbFactory, _leaderElection, _mockKube.Object,
-            _transitionService, config,
-            withLabelService ? _mockLabelService.Object : null);
+            new ReconciliationServiceDependencies(_dbFactory, _leaderElection, _mockKube.Object,
+                _transitionService, config,
+                LabelService: withLabelService ? _mockLabelService.Object : null));
     }
 
     // ── Invocation Helpers (reflection for private methods) ──────────────
 
-    private async Task InvokePollAndDispatch(DispatchService service)
+    private static async Task InvokePollAndDispatch(DispatchService service)
     {
         var method = typeof(DispatchService).GetMethod("PollAndDispatchAsync",
             BindingFlags.NonPublic | BindingFlags.Instance);
@@ -640,7 +642,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
         await task;
     }
 
-    private async Task InvokeHandleJobEventAsync(ReconciliationService service, WatchEventType type, V1Job job)
+    private static async Task InvokeHandleJobEventAsync(ReconciliationService service, WatchEventType type, V1Job job)
     {
         var method = typeof(ReconciliationService).GetMethod("HandleJobEventAsync",
             BindingFlags.NonPublic | BindingFlags.Instance);
@@ -648,7 +650,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
         await task;
     }
 
-    private async Task InvokeDetectOrphansAsync(ReconciliationService service)
+    private static async Task InvokeDetectOrphansAsync(ReconciliationService service)
     {
         var method = typeof(ReconciliationService).GetMethod("DetectOrphansAsync",
             BindingFlags.NonPublic | BindingFlags.Instance);
@@ -656,7 +658,7 @@ public class K8sLifecycleIntegrationTests : IDisposable
         await task;
     }
 
-    private async Task InvokeReconcileStartupLabelsAsync(ReconciliationService service)
+    private static async Task InvokeReconcileStartupLabelsAsync(ReconciliationService service)
     {
         var method = typeof(ReconciliationService).GetMethod("ReconcileStartupLabelsAsync",
             BindingFlags.NonPublic | BindingFlags.Instance);

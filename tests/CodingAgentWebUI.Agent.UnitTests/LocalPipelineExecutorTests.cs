@@ -60,7 +60,7 @@ public class LocalPipelineExecutorTests : IDisposable
         act.Should().Throw<ArgumentNullException>().WithParameterName(expectedParamName);
     }
 
-    public static IEnumerable<object?[]> NullConstructorArgs()
+    public static TheoryData<IKiroCliOrchestrator?, IHttpClientFactory?, PipelineConfiguration?, IQualityGateValidator?, Serilog.ILogger?, string> NullConstructorArgs()
     {
         var orch = new Mock<IKiroCliOrchestrator>().Object;
         var http = new Mock<IHttpClientFactory>().Object;
@@ -68,11 +68,13 @@ public class LocalPipelineExecutorTests : IDisposable
         var qg = new Mock<IQualityGateValidator>().Object;
         var log = new Mock<Serilog.ILogger>().Object;
 
-        yield return new object?[] { null, http, config, qg, log, "orchestrator" };
-        yield return new object?[] { orch, null, config, qg, log, "httpClientFactory" };
-        yield return new object?[] { orch, http, null, qg, log, "defaultPipelineConfig" };
-        yield return new object?[] { orch, http, config, null, log, "qualityGateValidator" };
-        yield return new object?[] { orch, http, config, qg, null, "logger" };
+        var data = new TheoryData<IKiroCliOrchestrator?, IHttpClientFactory?, PipelineConfiguration?, IQualityGateValidator?, Serilog.ILogger?, string>();
+        data.Add(null, http, config, qg, log, "orchestrator");
+        data.Add(orch, null, config, qg, log, "httpClientFactory");
+        data.Add(orch, http, null, qg, log, "defaultPipelineConfig");
+        data.Add(orch, http, config, null, log, "qualityGateValidator");
+        data.Add(orch, http, config, qg, null, "logger");
+        return data;
     }
 
     [Fact]
@@ -537,7 +539,7 @@ public class LocalPipelineExecutorTests : IDisposable
         payload.FinalLabel.Should().Be(AgentLabels.WontDo);
     }
 
-    // TODO: ExecuteAsync tests below dispose OutputBatcher/HubConnection after assertions.
+    // TODO(#1776): ExecuteAsync tests below dispose OutputBatcher/HubConnection after assertions.
     // If an assertion fails, DisposeAsync calls are skipped, leaking timers and semaphores.
     // Refactor to use 'await using' declarations or try/finally for reliable cleanup.
 
@@ -1093,7 +1095,7 @@ public class LocalPipelineExecutorTests : IDisposable
 
     // ── BuildAgentStepPipeline ─────────────────────────────────────────
 
-    // TODO: These tests dispose HubConnection after assertions. If an assertion fails,
+    // TODO(#1776): These tests dispose HubConnection after assertions. If an assertion fails,
     // DisposeAsync is skipped. Use 'await using' declarations for reliable cleanup.
 
     [Fact]
@@ -1358,10 +1360,10 @@ public class LocalPipelineExecutorTests : IDisposable
 
     // ── TransitionToInternalAsync (PipelineSignalRReporter) ────────────
 
-    // TODO: Add test for PipelineSignalRReporter.ReportStepTransitionAsync — verify it updates
+    // TODO(#1776): Add test for PipelineSignalRReporter.ReportStepTransitionAsync — verify it updates
     // run.CurrentStep and swallows SignalR failures (awaited path used during PR creation).
 
-    // TODO: Add test for PipelineSignalRReporter.ReportBrainSyncResultAsync — verify it correctly
+    // TODO(#1776): Add test for PipelineSignalRReporter.ReportBrainSyncResultAsync — verify it correctly
     // forwards parameters and swallows exceptions on connection failure.
 
     [Fact]
@@ -1660,7 +1662,7 @@ public class LocalPipelineExecutorTests : IDisposable
 
     // ── PullRequestCreationContext ──────────────────────────────────────
 
-    // TODO: Add test that exercises CreatePullRequestAsync with ReportStepTransition set to null,
+    // TODO(#1776): Add test that exercises CreatePullRequestAsync with ReportStepTransition set to null,
     // verifying it completes without NullReferenceException (validates the ?.Invoke ?? Task.CompletedTask fix).
 
     [Fact]

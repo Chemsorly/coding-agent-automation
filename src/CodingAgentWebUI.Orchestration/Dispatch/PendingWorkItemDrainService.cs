@@ -35,26 +35,19 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     internal static readonly TimeSpan DefaultDrainInterval = TimeSpan.FromSeconds(5);
 
     public PendingWorkItemDrainService(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        ISignalRWorkDistributorAgentResolver agentResolver,
-        IAgentCommunication agentComm,
-        IOrchestratorRunService runService,
-        WorkItemTransitionService transitionService,
-        IPendingWorkQuery pendingWorkQuery,
-        ILabelService labelService,
-        ILogger<PendingWorkItemDrainService> logger,
+        DrainServiceDependencies deps,
         IProjectStore? projectStore = null,
         IConsolidationDispatchService? consolidationDispatcher = null,
         IConsolidationRunStore? consolidationRunStore = null)
     {
-        _dbFactory = dbFactory;
-        _agentResolver = agentResolver;
-        _agentComm = agentComm;
-        _runService = runService;
-        _transitionService = transitionService;
-        _pendingWorkQuery = pendingWorkQuery;
-        _labelService = labelService;
-        _logger = logger;
+        _dbFactory = deps.DbFactory;
+        _agentResolver = deps.AgentResolver;
+        _agentComm = deps.AgentComm;
+        _runService = deps.RunService;
+        _transitionService = deps.TransitionService;
+        _pendingWorkQuery = deps.PendingWorkQuery;
+        _labelService = deps.LabelService;
+        _logger = deps.Logger;
         _projectStore = projectStore;
         _consolidationDispatcher = consolidationDispatcher;
         _consolidationRunStore = consolidationRunStore;
@@ -191,7 +184,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     _agentResolver.ReleaseAgent(agentId);
                     await _transitionService.TransitionAsync(
                         item.Id, WorkItemStatus.Cancelled,
-                        entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct);
+                        entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct: ct);
                     continue;
                 }
 
@@ -204,7 +197,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                         {
                             entity.DispatchedAt = DateTimeOffset.UtcNow;
                             entity.AssignedAgentId = agentId;
-                        }, ct);
+                        }, ct: ct);
 
                     var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
                         runId,
@@ -240,7 +233,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                             {
                                 entity.DispatchedAt = null;
                                 entity.AssignedAgentId = null;
-                            }, ct);
+                            }, ct: ct);
                     }
                 }
                 catch (Exception ex)
@@ -259,7 +252,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                             {
                                 entity.DispatchedAt = null;
                                 entity.AssignedAgentId = null;
-                            }, CancellationToken.None);
+                            }, ct: CancellationToken.None);
                     }
                     catch (Exception revertEx)
                     {
@@ -289,7 +282,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                         entity.DispatchedAt = dispatchTime;
                         entity.AssignedAgentId = agentId;
                     },
-                    ct);
+                    ct: ct);
 
                 dispatchedSuccessfully = true;
 
@@ -373,7 +366,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                             entity.DispatchedAt = null;
                             entity.AssignedAgentId = null;
                             entity.RetryCount++;
-                        }, CancellationToken.None);
+                        }, ct: CancellationToken.None);
                 }
                 catch (Exception revertEx)
                 {
@@ -415,58 +408,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
             // Swap label to agent:in-progress now that an agent is actually working on it (#997)
             // Retry with exponential backoff to cover transient API failures (#1579)
-            const int maxLabelSwapAttempts = 3; // 1 initial + 2 retries
-            {
-                var providerForLabel = request.RunType == PipelineRunType.Review
-                    ? request.RepoProviderConfigId
-                    : request.IssueProviderConfigId;
-                var targetKind = request.RunType == PipelineRunType.Review
-                    ? LabelTargetKind.PullRequest
-                    : LabelTargetKind.Issue;
-
-                bool labelSwapCompleted = false;
-                try
-                {
-                    for (int attempt = 1; attempt <= maxLabelSwapAttempts; attempt++)
-                    {
-                        try
-                        {
-                            await _labelService.SwapLabelStrictAsync(
-                                providerForLabel, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
-                            labelSwapCompleted = true;
-                            break;
-                        }
-                        catch (Exception ex) when (ex is not OperationCanceledException)
-                        {
-                            if (attempt < maxLabelSwapAttempts)
-                            {
-                                var delay = TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt - 1)); // 200ms, 400ms
-                                _logger.LogWarning(ex,
-                                    "PendingWorkItemDrainService: label swap attempt {Attempt}/{Max} failed, retrying in {Delay}ms",
-                                    attempt, maxLabelSwapAttempts, delay.TotalMilliseconds);
-                                await Task.Delay(delay, ct);
-                            }
-                            else
-                            {
-                                _logger.LogWarning(ex,
-                                    "PendingWorkItemDrainService: label swap exhausted all {Max} attempts for WorkItem {WorkItemId} — flagging for reconciliation",
-                                    maxLabelSwapAttempts, item.Id);
-                                await FlagForLabelReconciliationAsync(item.Id);
-                            }
-                        }
-                    }
-                }
-                finally
-                {
-                    // If shutdown occurred during backoff (Task.Delay throws OCE) or during
-                    // SwapLabelStrictAsync itself, the label swap never completed. Flag for
-                    // reconciliation so OrphanedLabelRecoveryService can fix the stale label. (#1681)
-                    if (!labelSwapCompleted && ct.IsCancellationRequested)
-                    {
-                        await FlagForLabelReconciliationAsync(item.Id);
-                    }
-                }
-            }
+            await SwapLabelWithRetryAsync(item.Id, request, ct);
 
             _logger.LogInformation(
                 "PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
@@ -478,6 +420,64 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         // does not increment, creating metric inconsistency. Matches K8s DispatchService pattern but deviates from
         // the stated requirement text. Low risk due to inner try-catch coverage.
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+    }
+
+    /// <summary>
+    /// Swaps the work item label to agent:in-progress with exponential backoff retry.
+    /// Flags for reconciliation if all attempts fail or if shutdown occurs mid-retry.
+    /// </summary>
+    private async Task SwapLabelWithRetryAsync(Guid workItemId, JobDistributionRequest request, CancellationToken ct)
+    {
+        const int maxLabelSwapAttempts = 3; // 1 initial + 2 retries
+        var providerForLabel = request.RunType == PipelineRunType.Review
+            ? request.RepoProviderConfigId
+            : request.IssueProviderConfigId;
+        var targetKind = request.RunType == PipelineRunType.Review
+            ? LabelTargetKind.PullRequest
+            : LabelTargetKind.Issue;
+
+        bool labelSwapCompleted = false;
+        try
+        {
+            for (int attempt = 1; attempt <= maxLabelSwapAttempts; attempt++)
+            {
+                try
+                {
+                    await _labelService.SwapLabelStrictAsync(
+                        providerForLabel, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
+                    labelSwapCompleted = true;
+                    break;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    if (attempt < maxLabelSwapAttempts)
+                    {
+                        var delay = TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt - 1)); // 200ms, 400ms
+                        _logger.LogWarning(ex,
+                            "PendingWorkItemDrainService: label swap attempt {Attempt}/{Max} failed, retrying in {Delay}ms",
+                            attempt, maxLabelSwapAttempts, delay.TotalMilliseconds);
+                        await Task.Delay(delay, ct);
+                    }
+                    else
+                    {
+                        _logger.LogWarning(ex,
+                            "PendingWorkItemDrainService: label swap exhausted all {Max} attempts for WorkItem {WorkItemId} — flagging for reconciliation",
+                            maxLabelSwapAttempts, workItemId);
+                        await FlagForLabelReconciliationAsync(workItemId);
+                    }
+                }
+            }
+        }
+        finally
+        {
+            // If shutdown occurred during backoff (Task.Delay throws OCE) or during
+            // SwapLabelStrictAsync itself, the label swap never completed. Flag for
+            // reconciliation so OrphanedLabelRecoveryService can fix the stale label. (#1681)
+            if (!labelSwapCompleted && ct.IsCancellationRequested)
+            {
+                await FlagForLabelReconciliationAsync(workItemId);
+            }
+        }
     }
 
     /// <summary>

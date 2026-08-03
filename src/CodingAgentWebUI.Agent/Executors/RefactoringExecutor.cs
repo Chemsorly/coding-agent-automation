@@ -130,7 +130,7 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
             // ── Phased Refactoring Detection ──
             var phasedResult = await ExecutePhasedRefactoringAsync(
-                job, agentProvider, workspacePath, issueContext, outcomeContext, onOutputLine, ct);
+                job, agentProvider, workspacePath, issueContext, outcomeContext, ct);
             if (!phasedResult.Success) return phasedResult;
 
             // Phased path wrote proposals to workspace — finalize with review + issue creation
@@ -148,7 +148,6 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
         string workspacePath,
         string? issueContext,
         string outcomeContext,
-        Action<string>? onOutputLine,
         CancellationToken ct)
     {
         ConsolidationJobResult? failure;

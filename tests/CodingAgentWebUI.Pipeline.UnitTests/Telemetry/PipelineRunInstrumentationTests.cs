@@ -138,7 +138,8 @@ public class PipelineRunInstrumentationTests : IDisposable
 
         var instrumentation = PipelineRunInstrumentation.Start(
             "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
-        Thread.Sleep(10); // Ensure non-zero duration
+        using var mres1 = new ManualResetEventSlim(false);
+        mres1.Wait(10); // Ensure non-zero duration
         instrumentation.Dispose();
 
         var duration = _doubleMeasurements.Where(m => m.InstrumentName == "pipeline.jobs.duration").ToList();
@@ -253,11 +254,13 @@ public class PipelineRunInstrumentationTests : IDisposable
 
         var instrumentation = PipelineRunInstrumentation.Start(
             "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
-        Thread.Sleep(10); // Ensure non-zero duration
+        using var mres2 = new ManualResetEventSlim(false);
+        mres2.Wait(10); // Ensure non-zero duration
         instrumentation.StopTiming();
 
         var frozenTime = Stopwatch.GetTimestamp();
-        Thread.Sleep(500); // Simulate expensive cleanup after StopTiming
+        using var mres3 = new ManualResetEventSlim(false);
+        mres3.Wait(500); // Simulate expensive cleanup after StopTiming
 
         instrumentation.Dispose();
 
@@ -280,7 +283,8 @@ public class PipelineRunInstrumentationTests : IDisposable
 
         var instrumentation = PipelineRunInstrumentation.Start(
             "run-1", "issue-1", PipelineRunType.Implementation, "proj-1", "Proj");
-        Thread.Sleep(10);
+        using var mres4 = new ManualResetEventSlim(false);
+        mres4.Wait(10);
 
         instrumentation.StopTiming();
         instrumentation.StopTiming();

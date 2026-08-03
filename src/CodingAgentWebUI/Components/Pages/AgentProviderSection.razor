@@ -35,7 +35,7 @@
         <div class="agent-detail-confirm" style="margin-top: 12px;">
             <p>Delete this agent provider?</p>
             <div class="confirm-buttons">
-                @* TODO: OnDelete.InvokeAsync(id) is fire-and-forget — if delete fails asynchronously, user gets no error feedback. *@
+                @* TODO(#1773): OnDelete.InvokeAsync(id) is fire-and-forget — if delete fails asynchronously, user gets no error feedback. *@
                 <button class="btn-delete" @onclick="() => { var id = _deletingProviderId!; _showDeleteConfirm = false; _deletingProviderId = null; OnDelete.InvokeAsync(id); }">Delete</button>
                 <button class="btn-cancel" @onclick="() => { _showDeleteConfirm = false; _deletingProviderId = null; }">Cancel</button>
             </div>
@@ -62,7 +62,7 @@
                 {
                     <div class="form-group">
                         <label>Executable Path</label>
-                        <input type="text" @bind="_form.ExecutablePath" placeholder="/root/.local/bin/kiro-cli" /> @* TODO: Clarify if this placeholder should reference AgentDefaults.KiroCliPath (/home/ubuntu/...) or remain /root/... for a different container context *@
+                        <input type="text" @bind="_form.ExecutablePath" placeholder="/root/.local/bin/kiro-cli" /> @* TODO(#1775): Clarify if this placeholder should reference AgentDefaults.KiroCliPath (/home/ubuntu/...) or remain /root/... for a different container context *@
                     </div>
                 }
                 else
@@ -435,8 +435,7 @@
         {
             // #1: Always reached — no stuck _loadingModels
             _loadingModels = false;
-            _elapsedTimer?.Dispose();
-            _elapsedTimer = null;
+            if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
         }
     }
 
@@ -447,8 +446,7 @@
         _cts.Dispose();
         _cts = new CancellationTokenSource();
         _loadingModels = false;
-        _elapsedTimer?.Dispose();
-        _elapsedTimer = null;
+        if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
     }
 
     private class AgentProviderForm
@@ -465,7 +463,7 @@
 
     public async ValueTask DisposeAsync()
     {
-        _elapsedTimer?.Dispose();
+        if (_elapsedTimer is not null) { await _elapsedTimer.DisposeAsync(); _elapsedTimer = null; }
         await _cts.CancelAsync();
         _cts.Dispose();
     }

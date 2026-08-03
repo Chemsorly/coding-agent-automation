@@ -27,32 +27,20 @@ internal sealed class DecompositionDispatchPreparation : IDispatchPreparationHan
     private readonly string _initiatedBy;
     private readonly string? _decompositionSource;
 
-    public DecompositionDispatchPreparation(
-        DispatchInfrastructure infra,
-        IDispatchRunCreator orchestration,
-        ILogger logger,
-        AgentEntry agent,
-        string epicIdentifier,
-        string epicTitle,
-        PipelineRunType phaseType,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string initiatedBy,
-        string? decompositionSource)
+    public DecompositionDispatchPreparation(DecompositionDispatchRequest request)
     {
-        _infra = infra;
-        _orchestration = orchestration;
-        _logger = logger;
-        _agent = agent;
-        _epicIdentifier = epicIdentifier;
-        _epicTitle = epicTitle;
-        _phaseType = phaseType;
-        _issueProviderId = issueProviderId;
-        _repoProviderId = repoProviderId;
-        _brainProviderId = brainProviderId;
-        _initiatedBy = initiatedBy;
-        _decompositionSource = decompositionSource;
+        _infra = request.Infra;
+        _orchestration = request.Orchestration;
+        _logger = request.Logger;
+        _agent = request.Agent;
+        _epicIdentifier = request.EpicIdentifier;
+        _epicTitle = request.EpicTitle;
+        _phaseType = request.PhaseType;
+        _issueProviderId = request.IssueProviderId;
+        _repoProviderId = request.RepoProviderId;
+        _brainProviderId = request.BrainProviderId;
+        _initiatedBy = request.InitiatedBy;
+        _decompositionSource = request.DecompositionSource;
     }
 
     public async Task<AgentJobDispatcher.DispatchPipelineResult?> PrepareAsync(
@@ -63,9 +51,17 @@ internal sealed class DecompositionDispatchPreparation : IDispatchPreparationHan
     {
         // Reserve a run ID and dedup guard via PipelineOrchestrationService
         var reservation = await _orchestration.ReserveRunIdAsync(
-            _issueProviderId, _repoProviderId, _epicIdentifier,
-            agentProviderId, _agent.AgentId, ct,
-            _brainProviderId, pipelineProviderId: null, _initiatedBy);
+            new DispatchRunRequest
+            {
+                IssueProviderId = _issueProviderId,
+                RepoProviderId = _repoProviderId,
+                IssueIdentifier = _epicIdentifier,
+                AgentProviderId = agentProviderId,
+                AgentId = _agent.AgentId,
+                BrainProviderId = _brainProviderId,
+                PipelineProviderId = null,
+                InitiatedBy = _initiatedBy
+            }, ct);
 
         if (reservation == null)
         {

@@ -80,14 +80,14 @@ public sealed class ConsolidationWorkspaceTests : IDisposable
         }
     }
 
-    private ConsolidationService CreateSut(ILogger? logger = null) => new(
+    private ConsolidationService CreateSut(ILogger? logger = null) => new(new ConsolidationServiceDependencies(
         logger ?? new LoggerConfiguration().CreateLogger(),
         _config,
         _mockProjectStore.Object,
         _mockRunHistory.Object,
         new FileSystemConsolidationRunStore(_runsDir),
         new FileSystemHarnessSuggestionStore(_suggestionsPath),
-        workspaceManager: _workspaceManager);
+        WorkspaceManager: _workspaceManager));
 
     // ── Workspace uses separate directory from pipeline ───────────────────
 

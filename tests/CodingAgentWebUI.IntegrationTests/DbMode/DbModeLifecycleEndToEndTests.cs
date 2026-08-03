@@ -59,14 +59,14 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
         _mockHistoryService = new Mock<IPipelineRunHistoryService>();
         _mockLabelService = new Mock<ILabelService>();
 
-        _lifecycleManager = new RunLifecycleManager(
+        _lifecycleManager = new RunLifecycleManager(new RunLifecycleManagerDependencies(
             _runService,
             _mockHistoryService.Object,
             _registry,
             _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
-            _transitionService);
+            WorkItemTransition: _transitionService));
     }
 
     public void Dispose()
@@ -709,10 +709,11 @@ public sealed class DbModeLifecycleEndToEndTests : IDisposable
             await db.SaveChangesAsync();
         }
 
-        var pipelineRun = PipelineRun.Create(
+        var pipelineRun = PipelineRun.CreateReview(
             runId.ToString(), "55", "Review PR 55",
             "ip-13", "rp-13",
-            PipelineRunType.Review,
+            reviewPrBranchName: "feature/review",
+            reviewPrTargetBranch: "main",
             agentId: "agent-rev-13");
         _runService.AddRun(pipelineRun);
 

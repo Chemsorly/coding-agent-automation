@@ -212,8 +212,10 @@ public class CriticalMessageBufferTests
             }
         });
 
-        // Should complete without throwing
-        await Task.WhenAll(enqueueTask, drainTask);
+        var exception = await Record.ExceptionAsync(() => Task.WhenAll(enqueueTask, drainTask));
+
+        exception.Should().BeNull("concurrent enqueue and drain should not throw");
+        buffer.Count.Should().BeGreaterThanOrEqualTo(0).And.BeLessThanOrEqualTo(CriticalMessageBuffer.MaxCapacity);
     }
 
     // ── HasPendingMessages ───────────────────────────────────────────────

@@ -75,7 +75,7 @@ public class AgentJobDispatcherTests : IDisposable
                 runService: _runService);
         }
 
-        return new AgentJobDispatcher(
+        return new AgentJobDispatcher(new AgentJobDispatcherDependencies(
             _dispatcher,
             _registry,
             _runService,
@@ -92,7 +92,7 @@ public class AgentJobDispatcherTests : IDisposable
                     _mockLogger.Object)),
             _mockAgentComm.Object,
             shutdownOverride ?? new ShutdownSignal(),
-            _mockLogger.Object);
+            _mockLogger.Object));
     }
 
     [Fact]
@@ -1121,10 +1121,7 @@ public class AgentJobDispatcherTests : IDisposable
         // Mock IDispatchRunCreator to return null (simulates issue already being processed)
         var mockOrchestration = new Mock<IDispatchRunCreator>();
         mockOrchestration.Setup(o => o.CreateDispatchedRunAsync(
-            It.IsAny<ProviderConfigId>(), It.IsAny<ProviderConfigId>(), It.IsAny<string>(),
-            It.IsAny<ProviderConfigId>(), It.IsAny<string?>(), It.IsAny<CancellationToken>(),
-            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(),
-            It.IsAny<PipelineRunType>()))
+            It.IsAny<DispatchRunRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((PipelineRun?)null);
 
         var dispatcher = CreateDispatcher(orchestrationOverride: mockOrchestration.Object);

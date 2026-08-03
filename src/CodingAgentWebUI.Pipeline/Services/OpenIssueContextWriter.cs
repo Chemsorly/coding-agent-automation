@@ -114,7 +114,7 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
             }
             catch (Exception ex)
             {
-                _logger.Warning(
+                _logger.Warning(ex,
                     "Failed to fetch or write open issue {Identifier}: {Error}",
                     identifier, ex.Message);
             }
@@ -139,7 +139,7 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
             }
             catch (Exception ex)
             {
-                _logger.Warning(
+                _logger.Warning(ex,
                     "Failed to fetch or write closed issue {Identifier}: {Error}",
                     identifier, ex.Message);
             }
@@ -186,7 +186,7 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
         }
         catch (Exception ex)
         {
-            _logger.Warning(
+            _logger.Warning(ex,
                 "Failed to list open issues at page {Page}: {Error}. Proceeding with {Count} identifiers collected so far.",
                 page, ex.Message, identifiers.Count);
         }
@@ -230,7 +230,7 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
         }
         catch (Exception ex)
         {
-            _logger.Warning(
+            _logger.Warning(ex,
                 "Failed to list closed issues at page {Page}: {Error}. Proceeding with {Count} identifiers collected so far.",
                 page, ex.Message, identifiers.Count);
         }

@@ -54,9 +54,16 @@ public partial class QualityGateExecutor
                 try
                 {
                     var cleanupResult = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
-                        context.AgentProvider, cleanupPrompt, run, config,
-                        "Pre-PR cleanup agent",
-                        callbacks, _logger, linkedCt);
+                        new AgentExecutionRequest
+                        {
+                            AgentProvider = context.AgentProvider,
+                            Prompt = cleanupPrompt,
+                            Run = run,
+                            Config = config,
+                            Description = "Pre-PR cleanup agent",
+                            Logger = _logger
+                        },
+                        callbacks, linkedCt);
 
                     if (cleanupResult != null)
                         await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
@@ -285,9 +292,17 @@ public partial class QualityGateExecutor
             try
             {
                 var agentResult = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
-                    context.AgentProvider, fixPrompt, run, config,
-                    $"{retryAgentDescription} (attempt {run.RetryCount})",
-                    callbacks, _logger, ct,
+                    new AgentExecutionRequest
+                    {
+                        AgentProvider = context.AgentProvider,
+                        Prompt = fixPrompt,
+                        Run = run,
+                        Config = config,
+                        Description = $"{retryAgentDescription} (attempt {run.RetryCount})",
+                        Logger = _logger,
+                        Phase = null
+                    },
+                    callbacks, ct,
                     resumeSessionId: run.CodegenSessionId);
 
                 // Detect dead/exhausted session: agent returned successfully but produced nothing.

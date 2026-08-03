@@ -46,9 +46,17 @@ internal sealed class ReviewDispatchPreparation : IDispatchPreparationHandler
 
         // Reserve a run ID and dedup guard via PipelineOrchestrationService
         var reservation = await _orchestration.ReserveRunIdAsync(
-            _request.IssueProviderId, _request.RepoProviderId, _request.PrIdentifier,
-            agentProviderId, _agent.AgentId, ct,
-            _request.BrainProviderId, pipelineProviderId: null, _request.InitiatedBy);
+            new DispatchRunRequest
+            {
+                IssueProviderId = _request.IssueProviderId,
+                RepoProviderId = _request.RepoProviderId,
+                IssueIdentifier = _request.PrIdentifier,
+                AgentProviderId = agentProviderId,
+                AgentId = _agent.AgentId,
+                BrainProviderId = _request.BrainProviderId,
+                PipelineProviderId = null,
+                InitiatedBy = _request.InitiatedBy
+            }, ct);
 
         if (reservation == null)
         {

@@ -161,7 +161,7 @@
     [Parameter] public EventCallback OnClearLabels { get; set; }
 
     // Prevent default only disrupts scroll on arrow keys; keeping false avoids keyboard traps (Tab works normally)
-    private bool ShouldPreventDefault => false;
+    private static bool ShouldPreventDefault => false;
 
     protected override void OnParametersSet()
     {

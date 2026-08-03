@@ -1,6 +1,5 @@
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
-using ILogger = Serilog.ILogger;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
@@ -15,8 +14,6 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
     private readonly IJobDispatcher _jobDispatcher;
     private readonly JobDeduplicationGuardService _dispatcherService;
     private readonly IOrchestratorRunService _runService;
-    private readonly Lazy<IConsolidationDispatchService>? _consolidationDispatcher;
-    private readonly ILogger _logger;
 
     /// <summary>
     /// Exposes the internal <see cref="AgentJobDispatcher"/> for same-assembly consumers
@@ -30,20 +27,15 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
     internal LegacyWorkDistributor(
         IJobDispatcher jobDispatcher,
         JobDeduplicationGuardService dispatcherService,
-        IOrchestratorRunService runService,
-        ILogger logger,
-        Lazy<IConsolidationDispatchService>? consolidationDispatcher = null)
+        IOrchestratorRunService runService)
     {
         ArgumentNullException.ThrowIfNull(jobDispatcher);
         ArgumentNullException.ThrowIfNull(dispatcherService);
         ArgumentNullException.ThrowIfNull(runService);
-        ArgumentNullException.ThrowIfNull(logger);
 
         _jobDispatcher = jobDispatcher;
         _dispatcherService = dispatcherService;
         _runService = runService;
-        _logger = logger;
-        _consolidationDispatcher = consolidationDispatcher;
     }
 
     /// <inheritdoc />

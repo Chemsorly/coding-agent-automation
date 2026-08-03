@@ -23,7 +23,10 @@ public abstract class ConsolidationRunStoreContractTests : IDisposable
     protected abstract IConsolidationRunStore CreateStore();
 
     /// <summary>Cleanup resources after each test.</summary>
-    public virtual void Dispose() { }
+    public virtual void Dispose()
+    {
+        GC.SuppressFinalize(this);
+    }
 
     // ── SaveRunAsync + GetByIdAsync ─────────────────────────────────────
 
@@ -374,6 +377,7 @@ public class FileSystemConsolidationRunStoreContractTests : ConsolidationRunStor
     {
         if (Directory.Exists(_tempDir))
             Directory.Delete(_tempDir, recursive: true);
+        base.Dispose();
     }
 }
 
@@ -408,6 +412,7 @@ public class PostgresConsolidationRunStoreContractTests : ConsolidationRunStoreC
     {
         using var db = new PipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
+        base.Dispose();
     }
 }
 

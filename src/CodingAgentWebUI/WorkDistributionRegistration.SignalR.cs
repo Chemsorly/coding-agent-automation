@@ -51,7 +51,6 @@ public static partial class WorkDistributionRegistration
             sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
             sp.GetRequiredService<IOrchestratorRunService>(),
             sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SignalRWorkDistributor>>(),
             sp.GetService<Pipeline.Interfaces.IRunLifecycleManager>(),
             sp.GetService<Pipeline.Interfaces.IAgentCancellationSender>()));
@@ -63,14 +62,15 @@ public static partial class WorkDistributionRegistration
 
         // PendingWorkItemDrainService: drains Pending WorkItems to idle agents
         services.AddSingleton<PendingWorkItemDrainService>(sp => new PendingWorkItemDrainService(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
-            sp.GetRequiredService<IAgentCommunication>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<IPendingWorkQuery>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>(),
+            new DrainServiceDependencies(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<ISignalRWorkDistributorAgentResolver>(),
+                sp.GetRequiredService<IAgentCommunication>(),
+                sp.GetRequiredService<IOrchestratorRunService>(),
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                sp.GetRequiredService<IPendingWorkQuery>(),
+                sp.GetRequiredService<ILabelService>(),
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>()),
             sp.GetService<IProjectStore>(),
             sp.GetRequiredService<IConsolidationDispatchService>(),
             sp.GetRequiredService<IConsolidationRunStore>()));

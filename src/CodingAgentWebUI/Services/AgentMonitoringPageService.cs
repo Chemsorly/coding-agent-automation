@@ -32,10 +32,26 @@ public class AgentMonitoringPageService
     private readonly IPendingWorkQuery _pendingWorkQuery;
     private readonly IWorkDistributor _workDistributor;
     private readonly IHubContext<AgentHub, IAgentHubClient> _hubContext;
-    private readonly ILabelService _labelService;
     private readonly IPipelineRunHistoryService _historyService;
     private readonly IRunLifecycleManager _lifecycleManager;
 
+    public AgentMonitoringPageService(AgentMonitoringPageServiceDependencies deps)
+    {
+        _activeRunQuery = deps.ActiveRunQuery;
+        _registry = deps.Registry;
+        _dispatcher = deps.Dispatcher;
+        _runService = deps.RunService;
+        _lifecycle = deps.Lifecycle;
+        _configStore = deps.ConfigStore;
+        _consolidationService = deps.ConsolidationService;
+        _pendingWorkQuery = deps.PendingWorkQuery;
+        _workDistributor = deps.WorkDistributor;
+        _hubContext = deps.HubContext;
+        _historyService = deps.HistoryService;
+        _lifecycleManager = deps.LifecycleManager;
+    }
+
+    // Backward-compatible constructor used by DI and existing callers
     public AgentMonitoringPageService(
         IActiveRunQueryService activeRunQuery,
         IAgentRegistryService registry,
@@ -47,23 +63,13 @@ public class AgentMonitoringPageService
         IPendingWorkQuery pendingWorkQuery,
         IWorkDistributor workDistributor,
         IHubContext<AgentHub, IAgentHubClient> hubContext,
-        ILabelService labelService,
         IPipelineRunHistoryService historyService,
         IRunLifecycleManager lifecycleManager)
+        : this(new AgentMonitoringPageServiceDependencies(
+            activeRunQuery, registry, dispatcher, runService, lifecycle, configStore,
+            consolidationService, pendingWorkQuery, workDistributor, hubContext,
+            historyService, lifecycleManager))
     {
-        _activeRunQuery = activeRunQuery;
-        _registry = registry;
-        _dispatcher = dispatcher;
-        _runService = runService;
-        _lifecycle = lifecycle;
-        _configStore = configStore;
-        _consolidationService = consolidationService;
-        _pendingWorkQuery = pendingWorkQuery;
-        _workDistributor = workDistributor;
-        _hubContext = hubContext;
-        _labelService = labelService;
-        _historyService = historyService;
-        _lifecycleManager = lifecycleManager;
     }
 
     // ── State ──
@@ -306,9 +312,9 @@ public class AgentMonitoringPageService
         }
     }
 
-    public void EnableAgent(AgentEntry agent) => agent.Disabled = false;
+    public static void EnableAgent(AgentEntry agent) => agent.Disabled = false;
 
-    public void DisableAgent(AgentEntry agent) => agent.Disabled = true;
+    public static void DisableAgent(AgentEntry agent) => agent.Disabled = true;
 
     // ── Resolvers ──
 
