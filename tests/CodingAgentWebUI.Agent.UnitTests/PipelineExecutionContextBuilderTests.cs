@@ -710,6 +710,135 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         await buildResult.DisposeAsync();
     }
 
+    // ── Review run type ───────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Build_ReviewRunType_CreatesReviewRun()
+    {
+        SetupReporterFactory();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var builder = CreateBuilder();
+        var job = CreateTestJob(PipelineRunType.Review);
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        result.Run.RunType.Should().Be(PipelineRunType.Review);
+        result.Run.RunId.Should().Be("job-123");
+
+        await result.DisposeAsync();
+    }
+
+    // ── Decomposition run type ────────────────────────────────────────────
+
+    [Fact]
+    public async Task Build_DecompositionRunType_CreatesDecompositionRun()
+    {
+        SetupReporterFactory();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var builder = CreateBuilder();
+        var job = CreateTestJob(PipelineRunType.Decomposition);
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        result.Run.RunType.Should().Be(PipelineRunType.Decomposition);
+        result.Run.RunId.Should().Be("job-123");
+
+        await result.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Build_DecompositionAnalysisRunType_CreatesDecompositionRun()
+    {
+        SetupReporterFactory();
+
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var builder = CreateBuilder();
+        var job = CreateTestJob(PipelineRunType.DecompositionAnalysis);
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builder.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        result.Run.RunType.Should().Be(PipelineRunType.DecompositionAnalysis);
+
+        await result.DisposeAsync();
+    }
+
+    // ── CreatePullRequest callback / null finalization ────────────────────
+
+    [Fact]
+    public async Task Build_CreatePullRequestCallback_WhenFinalizationNull_ThrowsInvalidOperationException()
+    {
+        // Build without a PullRequestFinalizationService — _finalization is null.
+        // Invoking the CreatePullRequest callback through the step context's Callbacks
+        // must throw InvalidOperationException.
+        var builderWithoutFinalization = new PipelineExecutionContextBuilder(
+            _mockQualityGateValidator.Object,
+            _mockReporterFactory.Object,
+            _feedbackService,
+            _agentId,
+            _mockLogger.Object,
+            brainUpdateService: null,
+            historyService: null,
+            finalization: null);
+
+        SetupReporterFactory();
+        var mockRepo = new Mock<IRepositoryProvider>();
+        mockRepo.Setup(r => r.RepositoryFullName).Returns("test/repo");
+        var mockAgent = new Mock<IAgentProvider>();
+        mockAgent.Setup(a => a.PipelineInjectedPaths).Returns(Array.Empty<string>());
+
+        var job = CreateTestJob();
+        var config = new PipelineConfiguration();
+        var proxy = new OrchestratorProxy(_connection, "job-123");
+
+        var result = await builderWithoutFinalization.Build(
+            job, config, mockRepo.Object, mockAgent.Object, null, null,
+            proxy, _connection, _batcher, null, CancellationToken.None);
+
+        // CreateStepContext wires up AgentCallbacks which delegates CreatePullRequest
+        // to the private CreatePullRequestAsync (which throws when _finalization is null).
+        var stepCtx = builderWithoutFinalization.CreateStepContext(
+            result.ExecutionContext, (PipelineSignalRReporter)result.Reporter, CancellationToken.None);
+
+        var report = new QualityGateReport
+        {
+            Compilation = new GateResult { GateName = "Compilation", Passed = true },
+            Tests = new GateResult { GateName = "Tests", Passed = true }
+        };
+        var act = () => stepCtx.Callbacks.CreatePullRequest(
+            result.Run, report, isDraft: false, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*PullRequestFinalizationService*");
+
+        await result.DisposeAsync();
+    }
+
     private sealed class NoOpHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(
