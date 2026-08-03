@@ -16,7 +16,7 @@ public class PipelineRunConcurrencyTests
     public void StartedAtOffset_ConcurrentReadWrite_NeverProducesTornRead()
     {
         // Arrange: create a PipelineRun and define a set of known-good timestamps
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: "concurrency-test",
             issueIdentifier: "org/repo#1",
             issueTitle: "Concurrency test",
@@ -106,7 +106,7 @@ public class PipelineRunConcurrencyTests
     public void StartedAtOffset_AfterResetStartedAt_MatchesExpectedValue()
     {
         // Verify basic correctness of the Interlocked-backed property
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: "r1",
             issueIdentifier: "i",
             issueTitle: "t",

@@ -70,13 +70,16 @@ public class ExecuteAgentAndRecordAsyncTests
 
         // Act
         var result = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
-            _mockAgent.Object,
-            "test prompt",
-            _run,
-            _config,
-            "Test description",
+            new AgentExecutionRequest
+            {
+                AgentProvider = _mockAgent.Object,
+                Prompt = "test prompt",
+                Run = _run,
+                Config = _config,
+                Description = "Test description",
+                Logger = _mockLogger.Object
+            },
             _mockCallbacks.Object,
-            _mockLogger.Object,
             CancellationToken.None);
 
         // Assert
@@ -105,13 +108,16 @@ public class ExecuteAgentAndRecordAsyncTests
         // Act & Assert
         await Assert.ThrowsAsync<OperationCanceledException>(() =>
             AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
-                _mockAgent.Object,
-                "test prompt",
-                _run,
-                _config,
-                "Cancelled operation",
+                new AgentExecutionRequest
+                {
+                    AgentProvider = _mockAgent.Object,
+                    Prompt = "test prompt",
+                    Run = _run,
+                    Config = _config,
+                    Description = "Cancelled operation",
+                    Logger = _mockLogger.Object
+                },
                 _mockCallbacks.Object,
-                _mockLogger.Object,
                 CancellationToken.None));
 
         // ChatHistory should NOT contain an error entry (exception is rethrown, not caught)
@@ -128,13 +134,16 @@ public class ExecuteAgentAndRecordAsyncTests
 
         // Act
         var result = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
-            _mockAgent.Object,
-            "test prompt",
-            _run,
-            _config,
-            "Failing operation",
+            new AgentExecutionRequest
+            {
+                AgentProvider = _mockAgent.Object,
+                Prompt = "test prompt",
+                Run = _run,
+                Config = _config,
+                Description = "Failing operation",
+                Logger = _mockLogger.Object
+            },
             _mockCallbacks.Object,
-            _mockLogger.Object,
             CancellationToken.None);
 
         // Assert

@@ -655,6 +655,11 @@ public class ChatJobDispatcherTests
 
         // Stop — should complete without error; sessions tracked in-memory are cleaned up
         await dispatcher.StopAsync(CancellationToken.None);
+
+        // Verify exactly one job was created before stop (confirms the session existed and was cleaned up)
+        jobClientMock.Verify(
+            c => c.CreateJobAsync(It.IsAny<V1Job>(), TestNamespace, It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     // ─── 20. TerminateChatSessionAsync — sends CancelChat ────────────────────

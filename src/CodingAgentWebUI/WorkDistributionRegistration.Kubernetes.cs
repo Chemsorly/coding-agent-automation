@@ -63,14 +63,15 @@ public static partial class WorkDistributionRegistration
 
         // DispatchService — handles regular (non-consolidation) work items
         services.AddHostedService(sp => new DispatchService(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<ILeaderElectionService>(),
-            sp.GetRequiredService<DispatchLifecycleService>(),
+            new DispatchServiceCoreDependencies(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<ILeaderElectionService>(),
+                sp.GetRequiredService<DispatchLifecycleService>(),
+                sp.GetService<ILabelService>(),
+                sp.GetService<IAgentProfileStore>(),
+                sp.GetService<IOrchestratorRunService>()),
             sp.GetRequiredService<IConfiguration>(),
-            sp.GetRequiredService<JobTemplateStore>(),
-            sp.GetService<ILabelService>(),
-            sp.GetService<IAgentProfileStore>(),
-            sp.GetService<IOrchestratorRunService>()));
+            sp.GetRequiredService<JobTemplateStore>()));
 
         // ConsolidationDispatchHandler — handles consolidation work items
         services.AddHostedService(sp => new ConsolidationDispatchHandler(
@@ -88,16 +89,17 @@ public static partial class WorkDistributionRegistration
             sp.GetService<IAgentProfileStore>()));
 
         services.AddHostedService(sp => new ReconciliationService(
-            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
-            sp.GetRequiredService<ILeaderElectionService>(),
-            sp.GetRequiredService<IKubernetes>(),
-            sp.GetRequiredService<WorkItemTransitionService>(),
-            sp.GetRequiredService<IConfiguration>(),
-            sp.GetService<ILabelService>(),
-            sp.GetService<IRunLifecycleManager>(),
-            sp.GetService<IConsolidationService>(),
-            sp.GetService<IConfigurationStore>(),
-            sp.GetService<IJobDeduplicationGuard>()));
+            new ReconciliationServiceDependencies(
+                sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+                sp.GetRequiredService<ILeaderElectionService>(),
+                sp.GetRequiredService<IKubernetes>(),
+                sp.GetRequiredService<WorkItemTransitionService>(),
+                sp.GetRequiredService<IConfiguration>(),
+                sp.GetService<ILabelService>(),
+                sp.GetService<IRunLifecycleManager>(),
+                sp.GetService<IConsolidationService>(),
+                sp.GetService<IConfigurationStore>(),
+                sp.GetService<IJobDeduplicationGuard>())));
 
         // HeartbeatMonitorService NOT registered in K8s mode (agent liveness via ReconciliationService)
         // JobQueueDrainService NOT registered (work distribution via IWorkDistributor)
@@ -126,12 +128,13 @@ public static partial class WorkDistributionRegistration
 
         // ModelFetchJobService — k8s-mode Fetch Models via one-shot agent job + SignalR response
         services.AddSingleton<ModelFetchJobService>(sp => new ModelFetchJobService(
-            sp.GetRequiredService<IKubernetesJobClient>(),
-            sp.GetRequiredService<JobTemplateStore>(),
-            DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>()),
-            sp.GetRequiredService<IPipelineConfigStore>(),
-            sp.GetRequiredService<ModelFetchService>(),
-            logger: Log.Logger));
+            new ModelFetchJobDependencies(
+                sp.GetRequiredService<IKubernetesJobClient>(),
+                sp.GetRequiredService<JobTemplateStore>(),
+                DispatchServiceOptionsFactory.Create(sp.GetRequiredService<IConfiguration>()),
+                sp.GetRequiredService<IPipelineConfigStore>(),
+                sp.GetRequiredService<ModelFetchService>(),
+                Logger: Log.Logger)));
 
         Log.Information("WorkDistribution: Kubernetes mode — DispatchService + ConsolidationDispatchHandler + ReconciliationService + LeaderElection registered");
     }

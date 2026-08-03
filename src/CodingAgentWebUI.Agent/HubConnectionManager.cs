@@ -126,7 +126,13 @@ public sealed class HubConnectionManager : IAsyncDisposable
             .WithKeepAliveInterval(TimeSpan.FromSeconds(15))
             .Build();
 
-        // Wire up connection lifecycle events
+        RegisterConnectionLifecycleHandlers();
+        RegisterClientHandlers();
+    }
+
+    /// <summary>Wires up SignalR connection lifecycle events (Reconnecting, Reconnected, Closed).</summary>
+    private void RegisterConnectionLifecycleHandlers()
+    {
         _connection.Reconnecting += error =>
         {
             _logger.Warning(error, "SignalR connection lost, reconnecting...");
@@ -168,8 +174,11 @@ public sealed class HubConnectionManager : IAsyncDisposable
                 }
             }
         };
+    }
 
-        // Register client-side handlers (Orchestrator → Agent)
+    /// <summary>Registers all client-side handlers for Orchestrator → Agent messages.</summary>
+    private void RegisterClientHandlers()
+    {
         _connection.On<JobAssignmentMessage>("AssignJob", async message =>
         {
             _logger.Information("Received job assignment {JobId} for issue {IssueIdentifier}",

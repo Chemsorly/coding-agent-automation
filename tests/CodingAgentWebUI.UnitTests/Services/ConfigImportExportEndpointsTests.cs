@@ -22,6 +22,16 @@ namespace CodingAgentWebUI.UnitTests.Services;
 // provide no regression protection for the RequireAuthorization("AgentApiKey") policy binding.
 public class ConfigImportExportEndpointsTests : IDisposable
 {
+    private static readonly JsonSerializerOptions CamelCaseReadOptions = new()
+    {
+        PropertyNameCaseInsensitive = true
+    };
+
+    private static readonly JsonSerializerOptions CamelCaseWriteOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly InMemoryDbContextFactory _dbFactory;
 
@@ -80,10 +90,7 @@ public class ConfigImportExportEndpointsTests : IDisposable
 
         // Parse the bundle
         var json = System.Text.Encoding.UTF8.GetString(fileResult.FileContents.ToArray());
-        var bundle = JsonSerializer.Deserialize<ConfigBundle>(json, new JsonSerializerOptions
-        {
-            PropertyNameCaseInsensitive = true
-        });
+        var bundle = JsonSerializer.Deserialize<ConfigBundle>(json, CamelCaseReadOptions);
         bundle.Should().NotBeNull();
         bundle!.PipelineConfig.Should().NotBeNull();
         bundle.ProviderConfigs.Should().HaveCount(1);
@@ -148,7 +155,7 @@ public class ConfigImportExportEndpointsTests : IDisposable
             JobTemplates = []
         };
 
-        var bundleJson = JsonSerializer.Serialize(bundle, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+        var bundleJson = JsonSerializer.Serialize(bundle, CamelCaseWriteOptions);
 
         // Create a mock IFormFile
         var file = CreateFormFile(bundleJson, "config.json");
@@ -193,7 +200,7 @@ public class ConfigImportExportEndpointsTests : IDisposable
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    private static Microsoft.AspNetCore.Http.IFormFile CreateFormFile(string content, string fileName)
+    private static Microsoft.AspNetCore.Http.FormFile CreateFormFile(string content, string fileName)
     {
         var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(content));
         return new Microsoft.AspNetCore.Http.FormFile(stream, 0, stream.Length, "file", fileName)

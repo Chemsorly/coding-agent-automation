@@ -356,7 +356,7 @@ public class DispatchServiceStartupValidationTests : IDisposable
         return await task;
     }
 
-    private async Task InvokePollAndDispatch(DispatchService service)
+    private static async Task InvokePollAndDispatch(DispatchService service)
     {
         var method = typeof(DispatchService).GetMethod("PollAndDispatchAsync",
             BindingFlags.NonPublic | BindingFlags.Instance)
@@ -412,12 +412,12 @@ public class DispatchServiceStartupValidationTests : IDisposable
         };
 
         return new DispatchService(
-            _dbFactory,
-            CreateAlwaysLeaderElection(),
-            new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options),
+            new DispatchServiceCoreDependencies(_dbFactory,
+                CreateAlwaysLeaderElection(),
+                new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options),
+                AgentProfileStore: agentProfileStore),
             config,
-            templateStore,
-            agentProfileStore: agentProfileStore);
+            templateStore);
     }
 
     private static LeaderElectionService CreateAlwaysLeaderElection()

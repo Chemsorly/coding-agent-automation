@@ -34,7 +34,7 @@
             </div>
         }
 
-        @* TODO: Migrate _successMessage/_errorMessage to <InlineStatus> component for inline feedback (issue #876 requirement) *@
+        @* TODO(#1775): Migrate _successMessage/_errorMessage to <InlineStatus> component for inline feedback (issue #876 requirement) *@
         @if (!string.IsNullOrEmpty(_successMessage))
         {
             <div class="settings-status status-success">@_successMessage</div>

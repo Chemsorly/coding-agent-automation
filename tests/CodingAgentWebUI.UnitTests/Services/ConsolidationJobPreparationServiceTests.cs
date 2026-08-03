@@ -13,6 +13,10 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// </summary>
 public sealed class ConsolidationJobPreparationServiceTests
 {
+    private static readonly string[] E2ELabels = ["e2e"];
+    private static readonly string[] KiroDotnetLabels = ["kiro", "dotnet"];
+    private static readonly string[] KiroLabels = ["kiro"];
+
     private readonly Mock<IConfigurationStore> _mockConfigStore = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
     private readonly Mock<ITokenVendingService> _mockTokenVending = new();
@@ -118,7 +122,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.RefactoringDetection, "t1", new[] { "e2e" }, CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.RefactoringDetection, "t1", E2ELabels, CancellationToken.None);
 
         capturedIncludeIssue.Should().BeTrue();
     }
@@ -137,7 +141,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, new[] { "e2e" }, CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, E2ELabels, CancellationToken.None);
 
         capturedIncludeIssue.Should().BeFalse();
     }
@@ -156,7 +160,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, new[] { "e2e" }, CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, E2ELabels, CancellationToken.None);
 
         capturedIncludeIssue.Should().BeFalse();
     }
@@ -182,7 +186,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.RefactoringDetection, "t1", new[] { "e2e" }, CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.RefactoringDetection, "t1", E2ELabels, CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         capturedConfigs!.Any(c => c.Kind == ProviderKind.Issue).Should().BeTrue();
@@ -205,7 +209,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", new[] { "e2e" }, CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", E2ELabels, CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         capturedConfigs!.Any(c => c.Kind == ProviderKind.Issue).Should().BeFalse();
@@ -239,7 +243,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, new[] { "kiro", "dotnet" }, CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, KiroDotnetLabels, CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         var agentCfg = capturedConfigs!.FirstOrDefault(c => c.Kind == ProviderKind.Agent);
@@ -260,7 +264,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig> { openCodeConfig });
 
         var svc = CreateService();
-        var result = await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, new[] { "kiro" }, CancellationToken.None);
+        var result = await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, null, KiroLabels, CancellationToken.None);
 
         // No configs → token vending not called
         _mockTokenVending.Verify(
@@ -328,7 +332,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", new[] { "e2e" }, CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", E2ELabels, CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         // Should contain agent + repo (no brain, no issue for BrainConsolidation)
@@ -363,7 +367,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", new[] { "e2e" }, CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", E2ELabels, CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         // agent + repo + brain
@@ -385,7 +389,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var result = await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, new[] { "e2e" }, CancellationToken.None);
+        var result = await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, E2ELabels, CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         capturedConfigs!.Should().HaveCount(1);
@@ -414,7 +418,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "nonexistent", new[] { "e2e" }, CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "nonexistent", E2ELabels, CancellationToken.None);
 
         capturedConfigs.Should().NotBeNull();
         capturedConfigs!.Should().HaveCount(1);
@@ -450,7 +454,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", new[] { "e2e" }, CancellationToken.None);
+        await svc.PrepareAsync(ConsolidationRunType.BrainConsolidation, "t1", E2ELabels, CancellationToken.None);
 
         capturedRepoId.Should().Be("rp-1");
     }
@@ -463,7 +467,7 @@ public sealed class ConsolidationJobPreparationServiceTests
             .ReturnsAsync(new List<ProviderConfig>());
 
         var svc = CreateService();
-        var result = await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, new[] { "e2e" }, CancellationToken.None);
+        var result = await svc.PrepareAsync(ConsolidationRunType.HarnessSuggestions, null, E2ELabels, CancellationToken.None);
 
         _mockTokenVending.Verify(
             t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(),
@@ -491,7 +495,7 @@ public sealed class ConsolidationJobPreparationServiceTests
         SetupIssueConfig();
 
         var svc = CreateService();
-        var labels = new[] { "e2e" };
+        var labels = E2ELabels;
 
         // Call twice with identical inputs
         var result1 = await svc.PrepareAsync(

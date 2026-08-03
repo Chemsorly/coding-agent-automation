@@ -163,14 +163,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 
         // Create service WITHOUT consolidation dependencies
         var service = new PendingWorkItemDrainService(
-            _dbFactory,
-            _mockResolver.Object,
-            _mockAgentComm.Object,
-            _runService,
-            _transitionService,
-            _mockPendingWork.Object,
-            _mockLabelService.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance);
+            MakeDeps());
 
         // Act
         await InvokeDrainAsync(service);
@@ -254,18 +247,16 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
     private PendingWorkItemDrainService CreateService()
     {
         return new PendingWorkItemDrainService(
-            _dbFactory,
-            _mockResolver.Object,
-            _mockAgentComm.Object,
-            _runService,
-            _transitionService,
-            _mockPendingWork.Object,
-            _mockLabelService.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance,
+            MakeDeps(),
             null, // IProjectStore
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
     }
+
+    private DrainServiceDependencies MakeDeps() =>
+        new(_dbFactory, _mockResolver.Object, _mockAgentComm.Object,
+            _runService, _transitionService, _mockPendingWork.Object,
+            _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance);
 
     private async Task InsertConsolidationWorkItem(
         Guid workItemId, string runId, ConsolidationRunType runType, string? templateId, string workspacePath,
@@ -328,6 +319,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
     {
         using var db = new PipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
+        GC.SuppressFinalize(this);
     }
 
     private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>
@@ -437,16 +429,17 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
             });
 
         var service = new PendingWorkItemDrainService(
-            _dbFactory,
-            _mockResolver.Object,
-            _mockAgentComm.Object,
-            _runService,
-            new WorkItemTransitionService(
-                new CancellationAwareDbContextFactory(_dbOptions),
-                NullLogger<WorkItemTransitionService>.Instance),
-            _mockPendingWork.Object,
-            _mockLabelService.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance,
+            new DrainServiceDependencies(
+                _dbFactory,
+                _mockResolver.Object,
+                _mockAgentComm.Object,
+                _runService,
+                new WorkItemTransitionService(
+                    new CancellationAwareDbContextFactory(_dbOptions),
+                    NullLogger<WorkItemTransitionService>.Instance),
+                _mockPendingWork.Object,
+                _mockLabelService.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance),
             null, // IProjectStore
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -477,18 +470,16 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
     private PendingWorkItemDrainService CreateService()
     {
         return new PendingWorkItemDrainService(
-            _dbFactory,
-            _mockResolver.Object,
-            _mockAgentComm.Object,
-            _runService,
-            _transitionService,
-            _mockPendingWork.Object,
-            _mockLabelService.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance,
+            MakeDeps(),
             null, // IProjectStore
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
     }
+
+    private DrainServiceDependencies MakeDeps() =>
+        new(_dbFactory, _mockResolver.Object, _mockAgentComm.Object,
+            _runService, _transitionService, _mockPendingWork.Object,
+            _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance);
 
     private async Task InsertConsolidationWorkItem(
         Guid workItemId, string runId, ConsolidationRunType runType, string? templateId, string workspacePath)
@@ -550,6 +541,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
     {
         using var db = new PipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
+        GC.SuppressFinalize(this);
     }
 
     private sealed class InMemoryDbContextFactory : IDbContextFactory<PipelineDbContext>

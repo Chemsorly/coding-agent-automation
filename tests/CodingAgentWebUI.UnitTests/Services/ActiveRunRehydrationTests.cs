@@ -201,7 +201,7 @@ public sealed class ActiveRunRehydrationTests : IDisposable
     {
         // Arrange — pre-populate with an existing run (simulating agent already reconnected)
         var runId = Guid.NewGuid().ToString();
-        var existingRun = PipelineRun.Create(
+        var existingRun = PipelineRun.CreateImplementation(
             runId: runId,
             issueIdentifier: "owner/repo#60",
             issueTitle: "Already here",

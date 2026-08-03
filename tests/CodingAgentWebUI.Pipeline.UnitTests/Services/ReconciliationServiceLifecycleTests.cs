@@ -494,7 +494,7 @@ public class ReconciliationServiceLifecycleTests : IDisposable
             k8sJobName: "caa-lifecycle2", dispatchedAt: dispatchedAt,
             lastProgressAt: DateTimeOffset.UtcNow.AddHours(-2.5));
 
-        var mockRun = PipelineRun.Create(workItemId.ToString(), "owner/repo#lifecycle2", "Test",
+        var mockRun = PipelineRun.CreateImplementation(workItemId.ToString(), "owner/repo#lifecycle2", "Test",
             "ip-1", "rp-1", initiatedBy: "manual");
         var mockLifecycle = new Mock<IRunLifecycleManager>();
         mockLifecycle
@@ -554,12 +554,12 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         }
 
         return new ReconciliationService(
-            _dbFactory, leaderElection, _mockKube.Object,
-            _transitionService, config, labelService, lifecycleManager,
-            consolidationService, configStore, dedupGuard);
+            new ReconciliationServiceDependencies(_dbFactory, leaderElection, _mockKube.Object,
+                _transitionService, config, labelService, lifecycleManager,
+                consolidationService, configStore, dedupGuard));
     }
 
-    private async Task InvokeExecuteAsync(ReconciliationService service, CancellationToken stoppingToken)
+    private static async Task InvokeExecuteAsync(ReconciliationService service, CancellationToken stoppingToken)
     {
         var method = typeof(BackgroundService).GetMethod("ExecuteAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);

@@ -27,7 +27,6 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
     private readonly ISignalRWorkDistributorAgentResolver _agentResolver;
     private readonly IOrchestratorRunService _runService;
     private readonly IProjectStore _projectStore;
-    private readonly ILabelService _labelService;
     private readonly IRunLifecycleManager? _lifecycleManager;
     private readonly IAgentCancellationSender? _cancellationSender;
 
@@ -38,7 +37,6 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         ISignalRWorkDistributorAgentResolver agentResolver,
         IOrchestratorRunService runService,
         IProjectStore projectStore,
-        ILabelService labelService,
         ILogger<SignalRWorkDistributor> logger,
         IRunLifecycleManager? lifecycleManager = null,
         IAgentCancellationSender? cancellationSender = null)
@@ -48,7 +46,6 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         _agentResolver = agentResolver;
         _runService = runService;
         _projectStore = projectStore;
-        _labelService = labelService;
         _lifecycleManager = lifecycleManager;
         _cancellationSender = cancellationSender;
     }
@@ -252,7 +249,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
                     entity.CompletedAt = DateTimeOffset.UtcNow;
                     entity.FailureReason = FailureReason.InfrastructureFailure;
                     entity.ErrorMessage = "Stuck in Dispatched status — likely silent SignalR delivery failure";
-                }, ct);
+                }, ct: ct);
         }
 
         return stuckItems.Count;
@@ -271,6 +268,6 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
                 item.FailureReason = FailureReason.InfrastructureFailure;
                 item.CompletedAt = DateTimeOffset.UtcNow;
             },
-            ct);
+            ct: ct);
     }
 }

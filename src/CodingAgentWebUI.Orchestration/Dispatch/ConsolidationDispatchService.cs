@@ -9,6 +9,23 @@ using ILogger = Serilog.ILogger;
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
+/// Groups the core dependencies of <see cref="ConsolidationDispatchService"/> to reduce
+/// constructor parameter count (S107). All members are required.
+/// </summary>
+public sealed record ConsolidationDispatchDependencies(
+    IAgentRegistryService Registry,
+    JobDeduplicationGuardService JobDispatcher,
+    IAgentCommunication AgentComm,
+    IConfigurationStore ConfigStore,
+    IProjectStore ProjectStore,
+    ITokenVendingService TokenVending,
+    PipelineConfiguration Config,
+    IWorkDistributor WorkDistributor,
+    IPipelineRunHistoryService RunHistoryService,
+    ILogger Logger,
+    IConsolidationRunStore RunStore);
+
+/// <summary>
 /// Implements <see cref="IConsolidationDispatchService"/> by selecting an idle agent from the
 /// <see cref="AgentRegistryService"/>, building a <see cref="ConsolidationJobMessage"/>,
 /// and dispatching it via <see cref="IAgentCommunication"/>.
@@ -31,44 +48,35 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     private readonly Lazy<IConsolidationRunTracker>? _runTracker;
 
     public ConsolidationDispatchService(
-        IAgentRegistryService registry,
-        JobDeduplicationGuardService jobDispatcher,
-        IAgentCommunication agentComm,
-        IConfigurationStore configStore,
-        IProjectStore projectStore,
-        ITokenVendingService tokenVending,
-        PipelineConfiguration config,
-        IWorkDistributor workDistributor,
-        IPipelineRunHistoryService runHistoryService,
-        ILogger logger,
-        IConsolidationRunStore runStore,
+        ConsolidationDispatchDependencies deps,
         IConsolidationJobPreparationService? jobPreparer = null,
         Lazy<IConsolidationRunTracker>? runTracker = null)
     {
-        ArgumentNullException.ThrowIfNull(registry);
-        ArgumentNullException.ThrowIfNull(jobDispatcher);
-        ArgumentNullException.ThrowIfNull(agentComm);
-        ArgumentNullException.ThrowIfNull(configStore);
-        ArgumentNullException.ThrowIfNull(projectStore);
-        ArgumentNullException.ThrowIfNull(tokenVending);
-        ArgumentNullException.ThrowIfNull(config);
-        ArgumentNullException.ThrowIfNull(workDistributor);
-        ArgumentNullException.ThrowIfNull(runHistoryService);
-        ArgumentNullException.ThrowIfNull(logger);
-        ArgumentNullException.ThrowIfNull(runStore);
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.Registry);
+        ArgumentNullException.ThrowIfNull(deps.JobDispatcher);
+        ArgumentNullException.ThrowIfNull(deps.AgentComm);
+        ArgumentNullException.ThrowIfNull(deps.ConfigStore);
+        ArgumentNullException.ThrowIfNull(deps.ProjectStore);
+        ArgumentNullException.ThrowIfNull(deps.TokenVending);
+        ArgumentNullException.ThrowIfNull(deps.Config);
+        ArgumentNullException.ThrowIfNull(deps.WorkDistributor);
+        ArgumentNullException.ThrowIfNull(deps.RunHistoryService);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
+        ArgumentNullException.ThrowIfNull(deps.RunStore);
 
-        _registry = registry;
-        _jobDispatcher = jobDispatcher;
-        _agentComm = agentComm;
-        _configStore = configStore;
-        _projectStore = projectStore;
-        _tokenVending = tokenVending;
-        _jobPreparer = jobPreparer ?? new ConsolidationJobPreparationService(configStore, projectStore, tokenVending, logger);
-        _config = config;
-        _workDistributor = workDistributor;
-        _runHistoryService = runHistoryService;
-        _logger = logger;
-        _runStore = runStore;
+        _registry = deps.Registry;
+        _jobDispatcher = deps.JobDispatcher;
+        _agentComm = deps.AgentComm;
+        _configStore = deps.ConfigStore;
+        _projectStore = deps.ProjectStore;
+        _tokenVending = deps.TokenVending;
+        _jobPreparer = jobPreparer ?? new ConsolidationJobPreparationService(deps.ConfigStore, deps.ProjectStore, deps.TokenVending, deps.Logger);
+        _config = deps.Config;
+        _workDistributor = deps.WorkDistributor;
+        _runHistoryService = deps.RunHistoryService;
+        _logger = deps.Logger;
+        _runStore = deps.RunStore;
         _runTracker = runTracker;
     }
 
@@ -401,8 +409,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     {
         var profiles = await _configStore.LoadAgentProfilesAsync(ct);
 
-        var resolver = new ProfileResolver();
-        var profile = resolver.ResolveByRequiredLabels(profiles, requiredLabels);
+        var profile = ProfileResolver.ResolveByRequiredLabels(profiles, requiredLabels);
 
         if (profile is null)
         {

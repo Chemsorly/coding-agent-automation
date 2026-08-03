@@ -197,5 +197,6 @@ public sealed class LoopStatePersistenceService : IHostedLifecycleService, IDisp
     {
         _resumeCts?.Dispose();
         _writeLock.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

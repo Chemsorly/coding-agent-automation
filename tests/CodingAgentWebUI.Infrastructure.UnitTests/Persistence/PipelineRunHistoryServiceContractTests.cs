@@ -25,9 +25,10 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     protected abstract IPipelineRunHistoryService CreateService();
 
     /// <summary>Cleanup resources after each test.</summary>
-    // TODO: Consider adding GC.SuppressFinalize(this) per CA1816 — while no finalizer exists,
-    // this base class is intended for inheritance and derived classes perform IO in Dispose overrides.
-    public virtual void Dispose() { }
+    public virtual void Dispose()
+    {
+        GC.SuppressFinalize(this);
+    }
 
     // ── AddRunToHistoryAsync + GetRunHistoryAsync ────────────────────────
 
@@ -60,7 +61,7 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         // CRITICAL: Insert in chronological order (oldest first, newest last).
         // Filesystem uses LIFO (Insert(0,...)), Postgres uses ORDER BY StartedAt DESC.
         // Both produce newest-first ONLY when insertion order matches chronological order.
-        // TODO: Add a complementary test where runs are inserted out-of-chronological-order
+        // TODO(#1776): Add a complementary test where runs are inserted out-of-chronological-order
         // (e.g., newest first, then oldest) to detect ordering parity divergence between
         // filesystem (insertion-order) and Postgres (timestamp-order) implementations.
         var oldest = CreateCompletedRun(Guid.NewGuid().ToString(), "issue-1", "Oldest",
@@ -86,7 +87,7 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     public async Task MaxHistorySize_OldestEvicted()
     {
         var service = CreateService();
-        // TODO: MaxHistorySize is referenced from PipelineRunHistoryService (filesystem class).
+        // TODO(#1776): MaxHistorySize is referenced from PipelineRunHistoryService (filesystem class).
         // PostgresPipelineRunHistoryService has its own constant. If they diverge, the Postgres
         // contract test will silently use the wrong boundary. Consider an interface-level constant
         // or asserting both implementations share the same value.
@@ -95,7 +96,7 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         var baseTime = DateTimeOffset.UtcNow.AddHours(-maxSize - overflow);
 
         // Insert runs in chronological order (oldest first)
-        // TODO: The filesystem implementation uses fire-and-forget PersistRunSummaryAsync.
+        // TODO(#1776): The filesystem implementation uses fire-and-forget PersistRunSummaryAsync.
         // With 1005 iterations, hundreds of concurrent file writes may still be in-flight,
         // potentially causing flaky Dispose() failures under CI load.
         for (var i = 0; i < maxSize + overflow; i++)
@@ -148,7 +149,7 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
 
         // At least one entry with that RunId exists in history
         // (Postgres upserts → 1, Filesystem inserts duplicates → 2; both are valid)
-        // TODO: Strengthen assertion to verify count is >= 1 && <= 2 to rule out data corruption
+        // TODO(#1776): Strengthen assertion to verify count is >= 1 && <= 2 to rule out data corruption
         // while remaining permissive about implementation-specific deduplication behavior.
         var history = await service.GetRunHistoryAsync();
         history.Should().Contain(s => s.RunId == runId);
@@ -159,15 +160,13 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
     {
         var service = CreateService();
 
-#pragma warning disable CS0618
-        var consolidationRun = PipelineRun.Create(
+        var consolidationRun = PipelineRun.CreateImplementation(
             runId: Guid.NewGuid().ToString(),
             issueIdentifier: "consolidation-issue",
             issueTitle: "Consolidation run",
             issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
             repoProviderConfigId: "rp-1",
             initiatedBy: ConsolidationConstants.InitiatedBy);
-#pragma warning restore CS0618
         consolidationRun.CurrentStep = PipelineStep.Completed;
         consolidationRun.MarkCompleted();
 
@@ -186,15 +185,13 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         var runId = Guid.NewGuid().ToString();
         var startedAt = new DateTimeOffset(2026, 6, 15, 10, 30, 0, TimeSpan.Zero);
 
-#pragma warning disable CS0618
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: runId,
             issueIdentifier: "org/repo#99",
             issueTitle: "Preserve all fields",
             issueProviderConfigId: "ip-fidelity",
             repoProviderConfigId: "rp-fidelity",
             startedAt: startedAt);
-#pragma warning restore CS0618
         run.CurrentStep = PipelineStep.Completed;
         run.RetryCount = 3;
         run.MarkCompleted(new DateTimeOffset(2026, 6, 15, 11, 0, 0, TimeSpan.Zero));
@@ -227,15 +224,13 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         string issueTitle,
         DateTimeOffset? startedAt = null)
     {
-#pragma warning disable CS0618
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId,
             issueIdentifier,
             issueTitle,
             "ip-contract",
             "rp-contract",
             startedAt: startedAt ?? DateTimeOffset.UtcNow);
-#pragma warning restore CS0618
         run.CurrentStep = PipelineStep.Completed;
         run.MarkCompleted();
         return run;
@@ -273,6 +268,7 @@ public class FilePipelineRunHistoryServiceContractTests : PipelineRunHistoryServ
             try
             {
                 Directory.Delete(_tempDir, recursive: true);
+                base.Dispose();
                 return;
             }
             catch (IOException) when (attempt < 9)
@@ -293,6 +289,7 @@ public class FilePipelineRunHistoryServiceContractTests : PipelineRunHistoryServ
                 catch { /* best-effort — leftover temp files are harmless */ }
             }
         }
+        base.Dispose();
     }
 }
 
@@ -301,7 +298,7 @@ public class FilePipelineRunHistoryServiceContractTests : PipelineRunHistoryServ
 /// <summary>
 /// Runs the contract tests against <see cref="PostgresPipelineRunHistoryService"/> using InMemory EF Core.
 /// </summary>
-// TODO: InMemory EF provider does not faithfully replicate Postgres DateTimeOffset/timezone handling.
+// TODO(#1776): InMemory EF provider does not faithfully replicate Postgres DateTimeOffset/timezone handling.
 // The ordering guarantee test cannot surface real Postgres timezone edge cases with this approach.
 // Consider a Testcontainers-based integration test for full Postgres fidelity.
 public class PostgresPipelineRunHistoryServiceContractTests : PipelineRunHistoryServiceContractTests
@@ -330,6 +327,7 @@ public class PostgresPipelineRunHistoryServiceContractTests : PipelineRunHistory
     {
         using var db = new PipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
+        base.Dispose();
     }
 }
 

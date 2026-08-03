@@ -61,34 +61,55 @@ internal sealed class PipelineExecutionContextBuilder
     /// Constructs all orchestrators, the reporter, delegates, and parameter objects needed
     /// for a single pipeline execution.
     /// </summary>
-    public async Task<PipelineExecutionBuildResult> Build(
-        JobAssignmentMessage job,
-        PipelineConfiguration config,
-        IRepositoryProvider repoProvider,
-        IAgentProvider agentProvider,
-        IRepositoryProvider? brainProvider,
-        IPipelineProvider? pipelineProvider,
-        OrchestratorProxy issueOps,
-        HubConnection connection,
-        OutputBatcher outputBatcher,
-        Action<PipelineStep?>? onStepChanged,
-        CancellationToken ct)
+    public async Task<PipelineExecutionBuildResult> Build(PipelineBuildRequest req)
     {
-        var run = PipelineRun.Create(
-            runId: job.JobId,
-            issueIdentifier: job.IssueIdentifier,
-            issueTitle: job.IssueDetail.Title,
-            issueProviderConfigId: string.Empty, // Agent doesn't have issue provider
-            repoProviderConfigId: job.RepoProviderConfigId,
-            runType: job.RunType,
-            initiatedBy: job.InitiatedBy,
-            agentId: _agentId.Value,
-            brainProviderConfigId: brainProvider is not null ? job.BrainProviderConfigId : null,
-            reviewPrBranchName: job.LinkedPullRequest?.BranchName,
-            reviewPrTargetBranch: job.ReviewPrTargetBranch,
-            reviewPrDescription: job.ReviewPrDescription,
-            reviewPrAuthor: job.ReviewPrAuthor,
-            linkedIssueContexts: job.LinkedIssueContexts);
+        var job = req.Job;
+        var config = req.Config;
+        var repoProvider = req.RepoProvider;
+        var agentProvider = req.AgentProvider;
+        var brainProvider = req.BrainProvider;
+        var pipelineProvider = req.PipelineProvider;
+        var issueOps = req.IssueOps;
+        var connection = req.Connection;
+        var outputBatcher = req.OutputBatcher;
+        var onStepChanged = req.OnStepChanged;
+        var ct = req.Ct;
+        var run = job.RunType switch
+        {
+            PipelineRunType.Review => PipelineRun.CreateReview(
+                runId: job.JobId,
+                issueIdentifier: job.IssueIdentifier,
+                issueTitle: job.IssueDetail.Title,
+                issueProviderConfigId: string.Empty,
+                repoProviderConfigId: job.RepoProviderConfigId,
+                reviewPrBranchName: job.LinkedPullRequest?.BranchName ?? string.Empty,
+                reviewPrTargetBranch: job.ReviewPrTargetBranch ?? string.Empty,
+                initiatedBy: job.InitiatedBy,
+                agentId: _agentId.Value,
+                brainProviderConfigId: brainProvider is not null ? job.BrainProviderConfigId : null,
+                reviewPrDescription: job.ReviewPrDescription,
+                reviewPrAuthor: job.ReviewPrAuthor,
+                linkedIssueContexts: job.LinkedIssueContexts),
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
+                runId: job.JobId,
+                issueIdentifier: job.IssueIdentifier,
+                issueTitle: job.IssueDetail.Title,
+                issueProviderConfigId: string.Empty,
+                repoProviderConfigId: job.RepoProviderConfigId,
+                phaseType: job.RunType,
+                initiatedBy: job.InitiatedBy,
+                agentId: _agentId.Value,
+                brainProviderConfigId: brainProvider is not null ? job.BrainProviderConfigId : null),
+            _ => PipelineRun.CreateImplementation(
+                runId: job.JobId,
+                issueIdentifier: job.IssueIdentifier,
+                issueTitle: job.IssueDetail.Title,
+                issueProviderConfigId: string.Empty,
+                repoProviderConfigId: job.RepoProviderConfigId,
+                initiatedBy: job.InitiatedBy,
+                agentId: _agentId.Value,
+                brainProviderConfigId: brainProvider is not null ? job.BrainProviderConfigId : null)
+        };
         run.RepositoryName = repoProvider.RepositoryFullName;
         run.ModelName = agentProvider.Model;
         run.PipelineProviderConfigId = job.PipelineProviderConfigId;
@@ -192,6 +213,25 @@ internal sealed class PipelineExecutionContextBuilder
     }
 
     /// <summary>
+    /// Backward-compatible overload accepting individual parameters.
+    /// Used by tests and callers that do not yet use <see cref="PipelineBuildRequest"/>.
+    /// </summary>
+    public Task<PipelineExecutionBuildResult> Build(
+        JobAssignmentMessage job,
+        PipelineConfiguration config,
+        IRepositoryProvider repoProvider,
+        IAgentProvider agentProvider,
+        IRepositoryProvider? brainProvider,
+        IPipelineProvider? pipelineProvider,
+        OrchestratorProxy issueOps,
+        HubConnection connection,
+        OutputBatcher outputBatcher,
+        Action<PipelineStep?>? onStepChanged,
+        CancellationToken ct)
+        => Build(new PipelineBuildRequest(job, config, repoProvider, agentProvider, brainProvider,
+            pipelineProvider, issueOps, connection, outputBatcher, onStepChanged, ct));
+
+    /// <summary>
     /// Creates the <see cref="PipelineStepContext"/> that carries all dependencies needed by
     /// individual pipeline steps. Wires up <see cref="AgentCallbacks"/> with the correct
     /// delegates for PR creation, label swaps, and brain sync reporting.
@@ -213,22 +253,25 @@ internal sealed class PipelineExecutionContextBuilder
             async (contextLoaded, fileCount) => await reporter.ReportBrainSyncResultAsync(contextLoaded, fileCount, ct));
 
         var ctx = PipelineStepContext.ForAgent(
-            run: inputs.Run,
-            config: inputs.Config,
-            repoProvider: inputs.RepoProvider,
-            agentProvider: inputs.AgentProvider,
-            brainProvider: inputs.BrainProvider,
-            pipelineProvider: inputs.PipelineProvider,
-            cts: inputs.LocalCts,
-            configStore: new NullConfigurationStore(),
-            callbacks: callbacks,
-            issueOps: inputs.IssueOps,
-            agentExecution: inputs.AgentExecution,
-            qualityGates: inputs.QualityGates,
-            brainSync: inputs.BrainSync,
-            prOrchestrator: inputs.PrOrchestrator,
-            logger: _logger,
-            qualityGateValidator: _qualityGateValidator,
+            services: new PipelineStepContextServices
+            {
+                Run = inputs.Run,
+                Config = inputs.Config,
+                RepoProvider = inputs.RepoProvider,
+                AgentProvider = inputs.AgentProvider,
+                BrainProvider = inputs.BrainProvider,
+                PipelineProvider = inputs.PipelineProvider,
+                Cts = inputs.LocalCts,
+                ConfigStore = new NullConfigurationStore(),
+                Callbacks = callbacks,
+                IssueOps = inputs.IssueOps,
+                AgentExecution = inputs.AgentExecution,
+                QualityGates = inputs.QualityGates,
+                BrainSync = inputs.BrainSync,
+                PrOrchestrator = inputs.PrOrchestrator,
+                Logger = _logger,
+                QualityGateValidator = _qualityGateValidator
+            },
             issue: inputs.Job.IssueDetail,
             parsedIssue: inputs.Job.ParsedIssue,
             issueComments: inputs.Job.IssueComments,
@@ -257,13 +300,24 @@ internal sealed class PipelineExecutionContextBuilder
         }
 
         await _finalization.RunFullPrCreationAsync(
-            run, report, isDraft,
-            context.PrOrchestrator, context.RepoProvider, context.AgentProvider,
-            context.BrainProvider, context.BrainSync, context.Config,
-            context.Job.IssueDetail, context.Job.IssueComments,
-            _feedbackService, _historyService,
-            context.EmitOutputLine,
-            step => context.ReportStepTransition?.Invoke(step, ct) ?? Task.CompletedTask,
+            new PrCreationRequest
+            {
+                Run = run,
+                Report = report,
+                IsDraft = isDraft,
+                PrOrchestrator = context.PrOrchestrator,
+                RepoProvider = context.RepoProvider,
+                AgentProvider = context.AgentProvider,
+                BrainProvider = context.BrainProvider,
+                BrainSync = context.BrainSync,
+                Config = context.Config,
+                Issue = context.Job.IssueDetail,
+                IssueComments = context.Job.IssueComments,
+                FeedbackService = _feedbackService,
+                HistoryService = _historyService,
+                EmitOutputLine = context.EmitOutputLine,
+                TransitionCallback = step => context.ReportStepTransition?.Invoke(step, ct) ?? Task.CompletedTask
+            },
             ct);
     }
 
@@ -306,11 +360,25 @@ internal sealed class PipelineExecutionContextBuilder
             Serilog.Log.Warning(ex, "Agent {RunId} failed to create draft PR, continuing", run.RunId);
         }
         public override Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
-        {
-            reportQualityGateResult(report);
-            return createPullRequest(run, report, isDraft, ct);
-        }
+            => CreatePullRequest(run, report, isDraft, ct);
         public override Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)
             => reportBrainSyncResult(contextLoaded, knowledgeFileCount);
     }
 }
+
+/// <summary>
+/// Groups the parameters for <see cref="PipelineExecutionContextBuilder.Build"/>
+/// to reduce method parameter count (S107).
+/// </summary>
+internal sealed record PipelineBuildRequest(
+    JobAssignmentMessage Job,
+    PipelineConfiguration Config,
+    IRepositoryProvider RepoProvider,
+    IAgentProvider AgentProvider,
+    IRepositoryProvider? BrainProvider,
+    IPipelineProvider? PipelineProvider,
+    OrchestratorProxy IssueOps,
+    Microsoft.AspNetCore.SignalR.Client.HubConnection Connection,
+    OutputBatcher OutputBatcher,
+    Action<PipelineStep?>? OnStepChanged,
+    CancellationToken Ct);

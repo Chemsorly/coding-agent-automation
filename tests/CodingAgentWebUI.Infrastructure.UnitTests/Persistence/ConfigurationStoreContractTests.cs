@@ -21,7 +21,10 @@ public abstract class ConfigurationStoreContractTests : IDisposable
     protected abstract IConfigurationStore CreateStore();
 
     /// <summary>Cleanup resources after each test.</summary>
-    public virtual void Dispose() { }
+    public virtual void Dispose()
+    {
+        GC.SuppressFinalize(this);
+    }
 
     // ── Pipeline Configuration ──────────────────────────────────────────
 
@@ -253,6 +256,7 @@ public class JsonConfigurationStoreContractTests : ConfigurationStoreContractTes
     {
         if (Directory.Exists(_tempDir))
             Directory.Delete(_tempDir, recursive: true);
+        base.Dispose();
     }
 }
 
@@ -287,6 +291,7 @@ public class PostgresConfigurationStoreContractTests : ConfigurationStoreContrac
     {
         using var db = new ContractTestPipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
+        base.Dispose();
     }
 }
 

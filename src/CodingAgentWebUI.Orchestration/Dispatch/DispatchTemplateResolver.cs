@@ -44,8 +44,7 @@ internal sealed class DispatchTemplateResolver
 
         var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
 
-        var resolver = new ProfileResolver();
-        var profile = resolver.ResolveByRequiredLabels(profiles, selectorLabels);
+        var profile = ProfileResolver.ResolveByRequiredLabels(profiles, selectorLabels);
 
         if (profile is null)
         {

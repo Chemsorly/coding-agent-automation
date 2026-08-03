@@ -31,16 +31,19 @@ public partial class AgentPhaseExecutor
 
             // Dispatch as a fresh prompt (no resume) to the agent provider
             var agentResult = await ExecuteAgentRawAsync(
-                context.AgentProvider,
-                followUpPrompt,
-                run,
-                config,
-                $"Follow-up for reviewer '{reviewerConfig.DisplayName}'",
-                context.Callbacks.NotifyChange,
-                _logger,
-                ct,
-                line => context.Callbacks.EmitOutputLine(line),
-                phase: $"follow_up_{reviewerConfig.DisplayName}");
+                new AgentExecutionRequest
+                {
+                    AgentProvider = context.AgentProvider,
+                    Prompt = followUpPrompt,
+                    Run = run,
+                    Config = config,
+                    Description = $"Follow-up for reviewer '{reviewerConfig.DisplayName}'",
+                    OnChange = context.Callbacks.NotifyChange,
+                    Logger = _logger,
+                    OnOutputLine = line => context.Callbacks.EmitOutputLine(line),
+                    Phase = $"follow_up_{reviewerConfig.DisplayName}"
+                },
+                ct);
 
             // Collect the agent's response text from output lines
             var responseText = agentResult.OutputLines.Count > 0
@@ -215,16 +218,19 @@ public partial class AgentPhaseExecutor
             var prompt = PromptBuilder.BuildReviewSummaryPrompt(diffStat, run.IssueTitle, findings);
 
             var agentResult = await ExecuteAgentRawAsync(
-                context.AgentProvider,
-                prompt,
-                run,
-                config,
-                "Review summary generation",
-                context.Callbacks.NotifyChange,
-                _logger,
-                ct,
-                line => context.Callbacks.EmitOutputLine($"[ReviewSummary] {line}"),
-                phase: "review_summary");
+                new AgentExecutionRequest
+                {
+                    AgentProvider = context.AgentProvider,
+                    Prompt = prompt,
+                    Run = run,
+                    Config = config,
+                    Description = "Review summary generation",
+                    OnChange = context.Callbacks.NotifyChange,
+                    Logger = _logger,
+                    OnOutputLine = line => context.Callbacks.EmitOutputLine($"[ReviewSummary] {line}"),
+                    Phase = "review_summary"
+                },
+                ct);
 
             // Parse the output for ## Change Summary and ## Review Verdict sections
             var output = agentResult.OutputLines.Count > 0

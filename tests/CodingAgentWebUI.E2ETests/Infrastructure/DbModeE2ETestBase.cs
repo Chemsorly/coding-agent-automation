@@ -60,14 +60,17 @@ public abstract class DbModeE2ETestBase : IAsyncLifetime
         // PrepareDistributionRequestAsync performs full orchestration:
         // issue fetch, label swap, profile/QG resolution, run creation, provider config preparation
         var request = await orchService.PrepareDistributionRequestAsync(
-            issueIdentifier,
-            issueProviderId: "issue-e2e",
-            repoProviderId: "repo-e2e",
-            brainProviderId: null,
-            pipelineProviderId: null,
-            initiatedBy: "db-e2e-test",
-            project: project,
-            ct: ct);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = issueIdentifier,
+                IssueProviderId = "issue-e2e",
+                RepoProviderId = "repo-e2e",
+                BrainProviderId = null,
+                PipelineProviderId = null,
+                InitiatedBy = "db-e2e-test",
+                Project = project
+            },
+            ct);
 
         if (request is null)
             return new DistributionResult(

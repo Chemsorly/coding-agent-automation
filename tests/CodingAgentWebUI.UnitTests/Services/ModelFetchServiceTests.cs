@@ -242,17 +242,20 @@ public class ModelFetchServiceTests
     public async Task WaitAndFetchAsync_AgentConnectsAfterDelay_StillFound()
     {
         // Agent registers after a delay (simulates pod startup time).
+        // Mock must be configured BEFORE Register to avoid a race: once the service
+        // sees the agent in the registry it immediately calls RequestFetchModelsAsync,
+        // so the setup must already be in place at that point.
         const string prefix = "caa-models-delayed";
+        _mockComm.Setup(c => c.RequestFetchModelsAsync("conn-late", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
+            .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
+            {
+                _service.CompleteRequest(new FetchModelsResponse { RequestId = req.RequestId, Models = [new AgentModelInfo { ModelId = "late-model" }] });
+                return Task.CompletedTask;
+            });
         _ = Task.Run(async () =>
         {
             await Task.Delay(200);
             _registry.Register(new AgentRegistrationMessage { AgentId = $"{prefix}-pod", Hostname = "h", Labels = [] }, "conn-late");
-            _mockComm.Setup(c => c.RequestFetchModelsAsync("conn-late", It.IsAny<FetchModelsRequest>(), It.IsAny<CancellationToken>()))
-                .Returns<string, FetchModelsRequest, CancellationToken>((_, req, _) =>
-                {
-                    _service.CompleteRequest(new FetchModelsResponse { RequestId = req.RequestId, Models = [new AgentModelInfo { ModelId = "late-model" }] });
-                    return Task.CompletedTask;
-                });
         });
 
         var (models, error) = await _service.WaitAndFetchAsync(prefix, 5, 50, CancellationToken.None);

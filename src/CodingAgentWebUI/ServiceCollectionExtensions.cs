@@ -127,30 +127,32 @@ public static partial class ServiceCollectionExtensions
                 sp.GetRequiredService<IPipelineRunHistoryService>()));
 
         services.AddSingleton<IConsolidationDispatchService>(sp => new ConsolidationDispatchService(
-            sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<IAgentCommunication>(),
-            sp.GetRequiredService<IConfigurationStore>(),
-            sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<ITokenVendingService>(),
-            pipelineConfig,
-            sp.GetRequiredService<IWorkDistributor>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            Log.Logger,
-            sp.GetRequiredService<IConsolidationRunStore>(),
+            new ConsolidationDispatchDependencies(
+                sp.GetRequiredService<AgentRegistryService>(),
+                sp.GetRequiredService<JobDeduplicationGuardService>(),
+                sp.GetRequiredService<IAgentCommunication>(),
+                sp.GetRequiredService<IConfigurationStore>(),
+                sp.GetRequiredService<IProjectStore>(),
+                sp.GetRequiredService<ITokenVendingService>(),
+                pipelineConfig,
+                sp.GetRequiredService<IWorkDistributor>(),
+                sp.GetRequiredService<IPipelineRunHistoryService>(),
+                Log.Logger,
+                sp.GetRequiredService<IConsolidationRunStore>()),
             sp.GetRequiredService<IConsolidationJobPreparationService>(),
             new Lazy<IConsolidationRunTracker>(() => sp.GetRequiredService<IConsolidationRunTracker>())));
 
         services.AddSingleton<IConsolidationService>(sp => new ConsolidationService(
-            Log.Logger,
-            pipelineConfig,
-            sp.GetRequiredService<IProjectStore>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<IConsolidationRunStore>(),
-            sp.GetRequiredService<IHarnessSuggestionStore>(),
-            sp.GetRequiredService<IConsolidationDispatchService>(),
-            sp.GetRequiredService<IConsolidationWorkspaceManager>(),
-            sp.GetRequiredService<IConsolidationFeedbackCache>()));
+            new Pipeline.Models.ConsolidationServiceDependencies(
+                Log.Logger,
+                pipelineConfig,
+                sp.GetRequiredService<IProjectStore>(),
+                sp.GetRequiredService<IPipelineRunHistoryService>(),
+                sp.GetRequiredService<IConsolidationRunStore>(),
+                sp.GetRequiredService<IHarnessSuggestionStore>(),
+                sp.GetRequiredService<IConsolidationDispatchService>(),
+                sp.GetRequiredService<IConsolidationWorkspaceManager>(),
+                sp.GetRequiredService<IConsolidationFeedbackCache>())));
 
         services.AddSingleton<IConsolidationRunTracker>(sp =>
             (IConsolidationRunTracker)sp.GetRequiredService<IConsolidationService>());

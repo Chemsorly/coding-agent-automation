@@ -44,10 +44,8 @@ ENV ASPNETCORE_ENVIRONMENT=Development
 ENV MSBUILDTERMINALLOGGER=off
 
 # Install libvips for NetVips image processing (used by pipeline under test)
-RUN apt-get update && apt-get install -y --no-install-recommends libvips42 && rm -rf /var/lib/apt/lists/*
-
 # Install PowerShell (needed for playwright.ps1 browser installer)
-RUN apt-get update && apt-get install -y --no-install-recommends wget apt-transport-https \
+RUN apt-get update && apt-get install -y --no-install-recommends libvips42 wget apt-transport-https \
     && wget -q https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb \
     && dpkg -i packages-microsoft-prod.deb && rm packages-microsoft-prod.deb \
     && apt-get update && apt-get install -y --no-install-recommends powershell \
@@ -56,6 +54,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget apt-transp
 # Install Playwright Chromium + system dependencies using the bundled script
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN pwsh tests/CodingAgentWebUI.E2ETests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium
+
+# Create a non-root user for running tests
+# TestResults directory is mounted as a volume; ensure the non-root user can write to it.
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
+    && mkdir -p /src/TestResults && chown -R appuser:appgroup /src/TestResults \
+    && chown -R appuser:appgroup /ms-playwright
+USER appuser
 
 # Run E2E tests (use --ipc=host when running the container for Chromium stability)
 # NOTE: We use 'dotnet vstest' targeting the DLL directly because the .csproj has

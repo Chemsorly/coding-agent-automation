@@ -62,8 +62,34 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
     {
         ArgumentNullException.ThrowIfNull(agentLabels);
 
-        // 1. Resolve agent provider config via profile
         var rawConfigs = new List<ProviderConfig>();
+        await ResolveAgentProviderConfigAsync(rawConfigs, agentLabels, ct);
+
+        var repoProviderId = "";
+        if (templateId is not null)
+        {
+            var template = await ResolveTemplateAsync(templateId, ct);
+            if (template is not null)
+                repoProviderId = await ResolveTemplateProviderConfigsAsync(rawConfigs, template, type, ct);
+        }
+
+        var vendedConfigs = await VendProviderConfigsAsync(rawConfigs, repoProviderId, type, ct);
+
+        return new ConsolidationJobPreparationResult
+        {
+            ProviderConfigs = vendedConfigs,
+            RepoProviderConfigId = repoProviderId
+        };
+    }
+
+    /// <summary>
+    /// Resolves the agent provider config via profile or fallback, appending to rawConfigs.
+    /// </summary>
+    private async Task ResolveAgentProviderConfigAsync(
+        List<ProviderConfig> rawConfigs,
+        IReadOnlyList<string> agentLabels,
+        CancellationToken ct)
+    {
         var agentConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
         var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
         var profileResolver = new ProfileResolver();
@@ -79,91 +105,90 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
                     "ConsolidationJobPreparationService: resolved agent provider via profile '{ProfileId}' for labels [{Labels}]",
                     profile.Id, string.Join(", ", agentLabels));
             }
+            return;
         }
-        else
+
+        // No matching profile — use first compatible agent config as fallback.
+        // Check RequiredLabels on config to avoid dispatching with wrong provider
+        // (e.g., OpenCode config to a Kiro agent).
+        var agentLabelSet = new HashSet<string>(agentLabels, StringComparer.OrdinalIgnoreCase);
+        var fallback = agentConfigs.FirstOrDefault(c =>
+            c.RequiredLabels is not { Count: > 0 } ||
+            c.RequiredLabels.All(l => agentLabelSet.Contains(l)));
+
+        if (fallback is not null)
         {
-            // No matching profile — use first compatible agent config as fallback.
-            // Check RequiredLabels on config to avoid dispatching with wrong provider
-            // (e.g., OpenCode config to a Kiro agent).
-            var agentLabelSet = new HashSet<string>(agentLabels, StringComparer.OrdinalIgnoreCase);
-            var fallback = agentConfigs.FirstOrDefault(c =>
-                c.RequiredLabels is not { Count: > 0 } ||
-                c.RequiredLabels.All(l => agentLabelSet.Contains(l)));
-
-            if (fallback is not null)
-            {
-                rawConfigs.Add(fallback);
-            }
-            else if (agentConfigs.Count > 0)
-            {
-                _logger.Warning(
-                    "ConsolidationJobPreparationService: no compatible agent config for labels [{Labels}] — skipping agent provider",
-                    string.Join(", ", agentLabels));
-            }
-
-            if (profiles.Count > 0)
-            {
-                _logger.Warning(
-                    "ConsolidationJobPreparationService: no profile matches labels [{Labels}], using fallback agent config",
-                    string.Join(", ", agentLabels));
-            }
+            rawConfigs.Add(fallback);
+        }
+        else if (agentConfigs.Count > 0)
+        {
+            _logger.Warning(
+                "ConsolidationJobPreparationService: no compatible agent config for labels [{Labels}] — skipping agent provider",
+                string.Join(", ", agentLabels));
         }
 
-        // 2. Resolve template for repo/brain/issue providers
+        if (profiles.Count > 0)
+        {
+            _logger.Warning(
+                "ConsolidationJobPreparationService: no profile matches labels [{Labels}], using fallback agent config",
+                string.Join(", ", agentLabels));
+        }
+    }
+
+    /// <summary>
+    /// Resolves repo, brain, and issue provider configs from the template, appending to rawConfigs.
+    /// Returns the repoProviderId.
+    /// </summary>
+    private async Task<string> ResolveTemplateProviderConfigsAsync(
+        List<ProviderConfig> rawConfigs,
+        PipelineJobTemplate template,
+        ConsolidationRunType type,
+        CancellationToken ct)
+    {
         var repoProviderId = "";
-        PipelineJobTemplate? template = null;
 
-        if (templateId is not null)
-            template = await ResolveTemplateAsync(templateId, ct);
+        if (string.IsNullOrEmpty(template.RepoProviderId))
+            return repoProviderId;
 
-        if (template is not null)
+        repoProviderId = template.RepoProviderId;
+        var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+        var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == template.RepoProviderId);
+        if (repoConfig is not null)
+            rawConfigs.Add(repoConfig);
+
+        // Add brain provider if configured
+        if (!string.IsNullOrEmpty(template.BrainProviderId))
         {
-            // 3. Add repo provider
-            if (!string.IsNullOrEmpty(template.RepoProviderId))
-            {
-                repoProviderId = template.RepoProviderId;
-                var repoConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-                var repoConfig = repoConfigs.FirstOrDefault(c => c.Id == template.RepoProviderId);
-                if (repoConfig is not null)
-                    rawConfigs.Add(repoConfig);
-
-                // 4. Add brain provider if configured
-                if (!string.IsNullOrEmpty(template.BrainProviderId))
-                {
-                    var brainConfig = repoConfigs.FirstOrDefault(c => c.Id == template.BrainProviderId);
-                    if (brainConfig is not null)
-                        rawConfigs.Add(brainConfig);
-                }
-            }
-
-            // 5. Add issue provider for refactoring detection
-            if (type == ConsolidationRunType.RefactoringDetection && !string.IsNullOrEmpty(template.IssueProviderId))
-            {
-                var issueConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
-                    template.IssueProviderId, ProviderKind.Issue, ct);
-                if (issueConfig is not null)
-                    rawConfigs.Add(issueConfig);
-            }
+            var brainConfig = repoConfigs.FirstOrDefault(c => c.Id == template.BrainProviderId);
+            if (brainConfig is not null)
+                rawConfigs.Add(brainConfig);
         }
 
-        // 6. Vend tokens with correct permission scope
-        IReadOnlyList<ProviderConfig> vendedConfigs;
-        if (rawConfigs.Count > 0)
+        // Add issue provider for refactoring detection
+        if (type == ConsolidationRunType.RefactoringDetection && !string.IsNullOrEmpty(template.IssueProviderId))
         {
-            var includeIssuePermission = type == ConsolidationRunType.RefactoringDetection;
-            vendedConfigs = await _tokenVending.PrepareAgentConfigsAsync(
-                rawConfigs, repoProviderId, ct, includeIssuePermission);
-        }
-        else
-        {
-            vendedConfigs = rawConfigs.AsReadOnly();
+            var issueConfig = await _providerConfigStore.GetProviderConfigByIdAsync(
+                template.IssueProviderId, ProviderKind.Issue, ct);
+            if (issueConfig is not null)
+                rawConfigs.Add(issueConfig);
         }
 
-        return new ConsolidationJobPreparationResult
-        {
-            ProviderConfigs = vendedConfigs,
-            RepoProviderConfigId = repoProviderId
-        };
+        return repoProviderId;
+    }
+
+    /// <summary>Vends tokens with correct permission scope and returns the prepared configs.</summary>
+    private async Task<IReadOnlyList<ProviderConfig>> VendProviderConfigsAsync(
+        List<ProviderConfig> rawConfigs,
+        string repoProviderId,
+        ConsolidationRunType type,
+        CancellationToken ct)
+    {
+        if (rawConfigs.Count == 0)
+            return rawConfigs.AsReadOnly();
+
+        var includeIssuePermission = type == ConsolidationRunType.RefactoringDetection;
+        return await _tokenVending.PrepareAgentConfigsAsync(
+            rawConfigs, repoProviderId, ct, includeIssuePermission);
     }
 
     private async Task<PipelineJobTemplate?> ResolveTemplateAsync(string templateId, CancellationToken ct)

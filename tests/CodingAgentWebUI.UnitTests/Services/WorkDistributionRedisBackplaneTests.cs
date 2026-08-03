@@ -17,7 +17,7 @@ public class WorkDistributionRedisBackplaneTests
     /// Helper: calls AddWorkDistribution with Redis connection string set and returns the service collection.
     /// Uses SignalR mode (DB path) to trigger Redis backplane configuration.
     /// </summary>
-    private static IServiceCollection BuildServicesWithRedis(string? redisConnectionString)
+    private static ServiceCollection BuildServicesWithRedis(string? redisConnectionString)
     {
         var configValues = new Dictionary<string, string?>
         {

@@ -89,7 +89,18 @@ public class PipelineLoopServiceTests : IAsyncDisposable
 
     private PipelineLoopService CreateService(IWorkDistributor? workDistributor = null)
     {
-        _loopService = new PipelineLoopService(_runCreator, _mockFactory.Object, _mockStore.Object, _mockStore.Object, _mockStore.Object, _mockLogger.Object, workDistributor);
+        _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = _runCreator,
+            ProviderFactory = _mockFactory.Object,
+            PipelineConfigStore = _mockStore.Object,
+            ProviderConfigStore = _mockStore.Object,
+            ProjectStore = _mockStore.Object,
+            Logger = _mockLogger.Object,
+            WorkDistributor = workDistributor,
+            DispatchOrchestration = null,
+            DependencyChecker = null
+        });
         return _loopService;
     }
 

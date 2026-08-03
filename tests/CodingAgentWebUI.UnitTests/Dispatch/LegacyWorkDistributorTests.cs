@@ -29,8 +29,7 @@ public class LegacyWorkDistributorTests
         _sut = new LegacyWorkDistributor(
             _mockJobDispatcher.Object,
             _dispatcherService,
-            _mockRunService.Object,
-            logger);
+            _mockRunService.Object);
     }
 
     // ── DistributeAsync ─────────────────────────────────────────────────

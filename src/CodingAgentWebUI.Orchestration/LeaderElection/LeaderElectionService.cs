@@ -194,7 +194,7 @@ public sealed class LeaderElectionService : ILeaderElectionService, IHostedServi
         SafeInvokeStartedLeading();
     }
 
-    private void HandleStoppedLeading()
+    private static void HandleStoppedLeading()
     {
         // Handled in the loop after RunUntilLeadershipLostAsync returns.
         // The LeaderElector fires this before returning, so we just log here.
@@ -271,5 +271,6 @@ public sealed class LeaderElectionService : ILeaderElectionService, IHostedServi
     {
         _serviceCts?.Dispose();
         _leaderCts?.Dispose();
+        GC.SuppressFinalize(this);
     }
 }

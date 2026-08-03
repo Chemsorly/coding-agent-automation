@@ -214,7 +214,7 @@ public class AgentProviderSectionComponentTests : BunitContext
         addButton.Click();
 
         // Set a display name (required)
-        var displayNameInput = component.FindAll("input[type='text']").First();
+        var displayNameInput = component.FindAll("input[type='text']")[0];
         displayNameInput.Change("Test Agent");
 
         var saveButton = component.Find(".btn-save");
@@ -242,7 +242,7 @@ public class AgentProviderSectionComponentTests : BunitContext
         addButton.Click();
 
         // Set a display name (required field, defaults to empty)
-        var displayNameInput = component.FindAll("input[type='text']").First();
+        var displayNameInput = component.FindAll("input[type='text']")[0];
         displayNameInput.Change("My Test Agent");
 
         var saveButton = component.Find(".btn-save");
@@ -274,7 +274,7 @@ public class AgentProviderSectionComponentTests : BunitContext
 
         // The form has default display name "" which triggers "Display Name is required" first.
         // We need to set a display name. The first text input is DisplayName.
-        var displayNameInput = component.FindAll("input[type='text']").First();
+        var displayNameInput = component.FindAll("input[type='text']")[0];
         displayNameInput.Change("Test Agent");
 
         var saveButton = component.Find(".btn-save");

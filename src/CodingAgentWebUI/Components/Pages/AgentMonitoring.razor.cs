@@ -107,14 +107,14 @@ public partial class AgentMonitoring : IDisposable
                 StateHasChanged();
             });
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Intentional: component disposed between timer tick and InvokeAsync; no action needed. */ }
         catch
         {
             try
             {
                 await InvokeAsync(() => { _lastRefreshFailed = true; StateHasChanged(); });
             }
-            catch (ObjectDisposedException) { }
+            catch (ObjectDisposedException) { /* Intentional: component disposed while recording refresh failure; no action needed. */ }
         }
     }
 
@@ -132,14 +132,14 @@ public partial class AgentMonitoring : IDisposable
                 StateHasChanged();
             });
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Intentional: component disposed during state-change notification; no action needed. */ }
         catch
         {
             try
             {
                 await InvokeAsync(() => { _lastRefreshFailed = true; StateHasChanged(); });
             }
-            catch (ObjectDisposedException) { }
+            catch (ObjectDisposedException) { /* Intentional: component disposed while recording refresh failure; no action needed. */ }
         }
     }
 
@@ -211,9 +211,9 @@ public partial class AgentMonitoring : IDisposable
         }
     }
 
-    private void EnableAgent(AgentEntry agent) => PageService.EnableAgent(agent);
+    private static void EnableAgent(AgentEntry agent) => AgentMonitoringPageService.EnableAgent(agent);
 
-    private void DisableAgent(AgentEntry agent) => PageService.DisableAgent(agent);
+    private static void DisableAgent(AgentEntry agent) => AgentMonitoringPageService.DisableAgent(agent);
 
     private void ShowDisconnectConfirm() => _showDisconnectConfirm = true;
 
@@ -241,11 +241,21 @@ public partial class AgentMonitoring : IDisposable
 
     // ── Dispose ──
 
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        if (disposing)
+        {
+            _refreshTimer?.Dispose();
+            ChangeNotifier.OnChange -= HandleStateChanged;
+            ConsolidationService.OnChange -= HandleStateChanged;
+        }
+        _disposed = true;
+    }
+
     public void Dispose()
     {
-        _disposed = true;
-        _refreshTimer?.Dispose();
-        ChangeNotifier.OnChange -= HandleStateChanged;
-        ConsolidationService.OnChange -= HandleStateChanged;
+        Dispose(true);
+        GC.SuppressFinalize(this);
     }
 }

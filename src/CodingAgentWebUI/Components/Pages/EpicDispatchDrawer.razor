@@ -57,7 +57,7 @@
             }
             else
             {
-                @* TODO: max-height was changed from 380px to 320px — verify this unrelated CSS change is intentional *@
+                @* TODO(#1775): max-height was changed from 380px to 320px — verify this unrelated CSS change is intentional *@
                 <div class="agent-history-list" tabindex="0" @onkeydown="HandleKeyDown" @onkeydown:preventDefault="ShouldPreventDefault"
                      style="max-height: calc(100vh - 320px); overflow-y: auto;">
                     @{ var idx = 0; }
@@ -156,7 +156,7 @@
     [Parameter] public EventCallback<string> OnToggleLabel { get; set; }
     [Parameter] public EventCallback OnClearLabels { get; set; }
 
-    private bool ShouldPreventDefault => false;
+    private static bool ShouldPreventDefault => false;
 
     protected override void OnParametersSet()
     {

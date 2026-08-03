@@ -657,11 +657,6 @@ public sealed class PostgresConfigurationStore : IConfigurationStore
         if (project is null)
             return [];
 
-        var templateGuids = project.TemplateIds
-            .Where(t => Guid.TryParse(t, out _))
-            .Select(Guid.Parse)
-            .ToList();
-
         var entities = await db.PipelineJobTemplates
             .AsNoTracking()
             .Where(t => t.ProjectId == guid)

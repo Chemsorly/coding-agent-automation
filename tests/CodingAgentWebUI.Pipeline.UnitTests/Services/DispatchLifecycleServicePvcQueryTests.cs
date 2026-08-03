@@ -1,13 +1,10 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
-using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.Extensions.Logging.Abstractions;
-using Moq;
 using Xunit;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
@@ -21,8 +18,6 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
 {
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly TestDbContextFactory _dbFactory;
-    private readonly Mock<IKubernetesJobClient> _mockKubeClient;
-    private readonly WorkItemTransitionService _transitionService;
 
     public DispatchLifecycleServicePvcQueryTests()
     {
@@ -36,8 +31,6 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
             ctx.Database.EnsureCreated();
 
         _dbFactory = new TestDbContextFactory(_dbOptions);
-        _mockKubeClient = new Mock<IKubernetesJobClient>();
-        _transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
     }
 
     public void Dispose()
@@ -51,12 +44,11 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
     {
         // Arrange
         var pvcPool = new List<string> { "pvc-1", "pvc-2", "pvc-3" };
-        var lifecycle = CreateLifecycleService(pvcPool);
 
         await using var db = await _dbFactory.CreateDbContextAsync();
 
         // Act
-        var result = await lifecycle.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
+        var result = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
 
         // Assert
         result.AvailablePvcs.Should().BeEquivalentTo(["pvc-1", "pvc-2", "pvc-3"]);
@@ -68,7 +60,6 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
     {
         // Arrange
         var pvcPool = new List<string> { "pvc-1", "pvc-2", "pvc-3" };
-        var lifecycle = CreateLifecycleService(pvcPool);
 
         // Insert work items claiming pvc-1 and pvc-2
         await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-1", WorkItemStatus.Running);
@@ -77,7 +68,7 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
         await using var db = await _dbFactory.CreateDbContextAsync();
 
         // Act
-        var result = await lifecycle.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
+        var result = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
 
         // Assert
         result.AvailablePvcs.Should().BeEquivalentTo(["pvc-3"]);
@@ -89,7 +80,6 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
     {
         // Arrange
         var pvcPool = new List<string> { "pvc-1", "pvc-2" };
-        var lifecycle = CreateLifecycleService(pvcPool);
 
         await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-1", WorkItemStatus.Pending);
         await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-2", WorkItemStatus.Running);
@@ -97,7 +87,7 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
         await using var db = await _dbFactory.CreateDbContextAsync();
 
         // Act
-        var result = await lifecycle.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
+        var result = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
 
         // Assert
         result.AvailablePvcs.Should().BeEmpty();
@@ -109,7 +99,6 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
     {
         // Arrange — completed items should NOT count as "claimed"
         var pvcPool = new List<string> { "pvc-1", "pvc-2" };
-        var lifecycle = CreateLifecycleService(pvcPool);
 
         await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-1", WorkItemStatus.Succeeded);
         await InsertWorkItemWithPvc(Guid.NewGuid(), "pvc-2", WorkItemStatus.Failed);
@@ -117,7 +106,7 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
         await using var db = await _dbFactory.CreateDbContextAsync();
 
         // Act
-        var result = await lifecycle.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
+        var result = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
 
         // Assert — both PVCs should be available since the claims are on completed/failed items
         result.AvailablePvcs.Should().BeEquivalentTo(["pvc-1", "pvc-2"]);
@@ -133,7 +122,6 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
     {
         // Arrange
         var pvcPool = new List<string> { "pvc-1", "pvc-2", "pvc-3" };
-        var lifecycle = CreateLifecycleService(pvcPool);
 
         // Simulate inflight claim via the lifecycle service's internal tracking
         // Use ExecuteDispatchLifecycleAsync to claim a PVC internally — but since we can't easily
@@ -144,7 +132,7 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
         await using var db = await _dbFactory.CreateDbContextAsync();
 
         // Act
-        var result = await lifecycle.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
+        var result = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
 
         // Assert
         result.AvailablePvcs.Should().BeEquivalentTo(["pvc-2", "pvc-3"]);
@@ -156,12 +144,11 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
     {
         // Arrange
         var pvcPool = new List<string>();
-        var lifecycle = CreateLifecycleService(pvcPool);
 
         await using var db = await _dbFactory.CreateDbContextAsync();
 
         // Act
-        var result = await lifecycle.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
+        var result = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, pvcPool, CancellationToken.None);
 
         // Assert
         result.AvailablePvcs.Should().BeEmpty();
@@ -169,21 +156,6 @@ public class DispatchLifecycleServicePvcQueryTests : IDisposable
     }
 
     // ── Helpers ────────────────────────────────────────────────────────
-
-    private DispatchLifecycleService CreateLifecycleService(List<string> pvcPool)
-    {
-        var options = new DispatchServiceOptions
-        {
-            PollIntervalSeconds = 10,
-            RateLimitPerSecond = 100,
-            Namespace = "default",
-            OrchestratorUrl = "http://orchestrator:8080",
-            AgentApiKeySecretName = "agent-api-key",
-            KiroPvcPool = pvcPool
-        };
-
-        return new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options);
-    }
 
     private async Task InsertWorkItemWithPvc(Guid id, string pvcName, WorkItemStatus status)
     {

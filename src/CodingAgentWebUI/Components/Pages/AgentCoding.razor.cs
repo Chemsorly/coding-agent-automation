@@ -103,7 +103,7 @@ public partial class AgentCoding : IDisposable
         if (_disposed) return;
         PageService.CloseActiveDrawer();
         try { await InvokeAsync(StateHasChanged); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Intentional: component disposed before escape key handler ran; no action needed. */ }
     }
 
     // ── Template Table Callbacks ──
@@ -253,8 +253,6 @@ public partial class AgentCoding : IDisposable
     private void ResumeLoop() => PageService.ResumeLoop();
 
     // ── Drawer Mutual Exclusion ──
-
-    private string ActiveDrawerTab => PageService.ActiveDrawerTab;
 
     private PipelineJobTemplate? ActiveDrawerTemplate => PageService.ActiveDrawerTemplate;
 
@@ -540,5 +538,6 @@ public partial class AgentCoding : IDisposable
         LoopService.OnChange -= HandleStateChanged;
         if (Layout is not null)
             Layout.OnEscapePressed -= HandleGlobalEscape;
+        GC.SuppressFinalize(this);
     }
 }

@@ -113,7 +113,7 @@ public class PipelineRunExecutionHostTests
 
     // ── Helpers ──────────────────────────────────────────────────────────────────
 
-    private static PipelineRun CreateRun() => PipelineRun.Create(
+    private static PipelineRun CreateRun() => PipelineRun.CreateImplementation(
         runId: "test-run-1",
         issueIdentifier: "org/repo#1",
         issueTitle: "Test Issue",

@@ -156,18 +156,18 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
             lifecycle: new PipelineRunLifecycleService(new Mock<IPipelineRunHistoryService>().Object, _runService, _mockLogger.Object));
 
         return new DispatchOrchestrationService(
-            new DispatchInfrastructure(
-                _mockTokenVending.Object, _mockProviderFactory.Object,
-                _mockLabelService.Object,
-                new DispatchResolutionService(new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(), _mockConfigStore.Object, _mockLogger.Object)),
-            runCreator,
-            _runService,
-            new Mock<IWorkDistributor>().Object,
-            // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
-            _mockConfigStore.Object,
-            _mockConfigStore.Object,
-            _mockConfigStore.Object,
-            _mockConfigStore.Object,
+            new DispatchOrchestrationServiceDependencies(
+                new DispatchInfrastructure(
+                    _mockTokenVending.Object, _mockProviderFactory.Object,
+                    _mockLabelService.Object,
+                    new DispatchResolutionService(new ProfileResolver(), new QualityGateResolver(), new ReviewerResolver(), _mockConfigStore.Object, _mockLogger.Object)),
+                runCreator,
+                _runService,
+                new Mock<IWorkDistributor>().Object,
+                // TODO: Use separate typed mocks for each sub-interface to detect parameter wiring errors.
+                _mockConfigStore.Object,
+                _mockConfigStore.Object,
+                _mockConfigStore.Object),
             _mockLogger.Object);
     }
 
@@ -175,7 +175,7 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
     {
         var transitionService = new WorkItemTransitionService(_dbFactory, NullLogger<WorkItemTransitionService>.Instance);
         return new SignalRWorkDistributor(_dbFactory, _mockAgentComm.Object, transitionService,
-            _mockResolver.Object, _runService, new Mock<IProjectStore>().Object, new Mock<ILabelService>().Object, NullLogger<SignalRWorkDistributor>.Instance);
+            _mockResolver.Object, _runService, new Mock<IProjectStore>().Object, NullLogger<SignalRWorkDistributor>.Instance);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -191,8 +191,15 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         // Act: prepare (creates PipelineRun in OrchestratorRunService)
         var request = await orchestration.PrepareDistributionRequestAsync(
-            "org/repo#42", "issue-1", "repo-1", null, null,
-            "loop", TestProject, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "org/repo#42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
         request.Should().NotBeNull();
         request!.RunId.Should().NotBeNullOrEmpty("orchestration must set RunId from PipelineRun.RunId");
 
@@ -223,8 +230,15 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         // Act
         var request = await orchestration.PrepareDistributionRequestAsync(
-            "org/repo#42", "issue-1", "repo-1", null, null,
-            "loop", TestProject, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "org/repo#42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
 
         request!.ProviderConfigs.Should().NotBeNullOrEmpty("orchestration must resolve provider configs");
         request.ProviderConfigs!.Should().Contain(c => c.Id == "repo-1", "repo config must be included");
@@ -250,8 +264,15 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         // Act
         var request = await orchestration.PrepareDistributionRequestAsync(
-            "org/repo#42", "issue-1", "repo-1", null, null,
-            "loop", TestProject, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "org/repo#42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
         request.Should().NotBeNull();
 
         // Before distribution, run has agentId=null (dispatch window)
@@ -277,8 +298,15 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         // Act
         var request = await orchestration.PrepareDistributionRequestAsync(
-            "org/repo#42", "issue-1", "repo-1", null, null,
-            "loop", TestProject, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "org/repo#42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
         var result = await distributor.DistributeAsync(request!, CancellationToken.None);
 
         // Assert: WorkItem in DB has correct state
@@ -300,8 +328,15 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         var distributor = CreateDistributor();
 
         var request = await orchestration.PrepareDistributionRequestAsync(
-            "org/repo#42", "issue-1", "repo-1", null, null,
-            "loop", TestProject, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "org/repo#42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
         var result = await distributor.DistributeAsync(request!, CancellationToken.None);
 
         // The agent's jobId (what it passes to hub methods) is the WorkItemId
@@ -322,8 +357,15 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         var distributor = CreateDistributor();
 
         var request = await orchestration.PrepareDistributionRequestAsync(
-            "org/repo#42", "issue-1", "repo-1", null, null,
-            "loop", TestProject, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "org/repo#42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
         await distributor.DistributeAsync(request!, CancellationToken.None);
 
         // Verify: all active runs have real agent IDs (not null or "pending")
@@ -346,8 +388,15 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
 
         // Step 1: Create the run (AgentId=null during dispatch window)
         var request = await orchestration.PrepareDistributionRequestAsync(
-            "org/repo#42", "issue-1", "repo-1", null, null,
-            "loop", TestProject, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "org/repo#42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
         request.Should().NotBeNull();
 
         var run = _runService.GetRun(request!.RunId!);
@@ -357,11 +406,10 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         // Step 2: HeartbeatMonitor fires during the dispatch window
         var registry = new AgentRegistryService(_mockLogger.Object);
         var mockHistoryService = new Mock<IPipelineRunHistoryService>();
-        var dispatcher = new JobDeduplicationGuardService(registry, _mockLogger.Object);
-        var monitor = new HeartbeatMonitorService(
-            registry, _runService, mockHistoryService.Object, dispatcher,
-            _mockLabelService.Object, _mockConfigStore.Object, _mockLogger.Object,
-            lifecycleManager: new Mock<IRunLifecycleManager>().Object);
+        var monitor = new HeartbeatMonitorService(new HeartbeatMonitorDependencies(
+            registry, _runService, mockHistoryService.Object,
+            _mockConfigStore.Object, _mockLogger.Object,
+            LifecycleManager: new Mock<IRunLifecycleManager>().Object));
 
         await monitor.SweepAsync(CancellationToken.None);
 
@@ -385,8 +433,15 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         var distributor = CreateDistributor();
 
         var request = await orchestration.PrepareDistributionRequestAsync(
-            "org/repo#42", "issue-1", "repo-1", null, null,
-            "loop", TestProject, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "org/repo#42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
 
         // After prepare: no label swap happened
         _mockLabelService.Verify(
@@ -416,8 +471,15 @@ public sealed class DispatchPipelineEndToEndTests : IDisposable
         var distributor = CreateDistributor();
 
         var request = await orchestration.PrepareDistributionRequestAsync(
-            "org/repo#42", "issue-1", "repo-1", null, null,
-            "loop", TestProject, ct: CancellationToken.None);
+            new ImplementationDispatchOrchestrationRequest
+            {
+                IssueIdentifier = "org/repo#42",
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                InitiatedBy = "loop",
+                Project = TestProject
+            },
+            CancellationToken.None);
 
         var result = await distributor.DistributeAsync(request!, CancellationToken.None);
         result.Success.Should().BeTrue();

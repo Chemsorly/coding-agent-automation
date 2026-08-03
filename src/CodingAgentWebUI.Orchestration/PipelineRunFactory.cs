@@ -23,23 +23,47 @@ public static class PipelineRunFactory
         PipelineStep? initialStep = null,
         DateTimeOffset? startedAt = null)
     {
-        var run = PipelineRun.Create(
-            runId: request.RunId!,
-            issueIdentifier: request.IssueIdentifier,
-            issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title)
-                ? request.IssueIdentifier
-                : request.IssueDetail!.Title,
-            issueProviderConfigId: request.IssueProviderConfigId,
-            repoProviderConfigId: request.RepoProviderConfigId,
-            runType: request.RunType,
-            // TODO: Behavioral change — the old PendingWorkItemDrainService inline code used "loop" as the
-            // null fallback for InitiatedBy. Now that the drain service shares this factory, a null InitiatedBy
-            // will be labeled "rehydrated" instead of "loop". In practice InitiatedBy is always set by
-            // dispatchers so this is unlikely to trigger, but consider whether the drain path should pass
-            // its own fallback or if "rehydrated" is acceptable for both callers.
-            initiatedBy: request.InitiatedBy ?? "rehydrated",
-            agentId: agentId,
-            startedAt: startedAt);
+        var run = request.RunType switch
+        {
+            PipelineRunType.Review => PipelineRun.CreateReview(
+                runId: request.RunId!,
+                issueIdentifier: request.IssueIdentifier,
+                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
+                issueProviderConfigId: request.IssueProviderConfigId,
+                repoProviderConfigId: request.RepoProviderConfigId,
+                reviewPrBranchName: request.LinkedPullRequest?.BranchName ?? string.Empty,
+                reviewPrTargetBranch: request.ReviewPrTargetBranch ?? string.Empty,
+                initiatedBy: request.InitiatedBy ?? "rehydrated",
+                agentId: agentId,
+                startedAt: startedAt,
+                reviewPrUrl: request.LinkedPullRequest?.Url,
+                reviewPrDescription: request.ReviewPrDescription,
+                reviewPrAuthor: request.ReviewPrAuthor),
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
+                runId: request.RunId!,
+                issueIdentifier: request.IssueIdentifier,
+                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
+                issueProviderConfigId: request.IssueProviderConfigId,
+                repoProviderConfigId: request.RepoProviderConfigId,
+                phaseType: request.RunType,
+                initiatedBy: request.InitiatedBy ?? "rehydrated",
+                agentId: agentId,
+                startedAt: startedAt),
+            _ => PipelineRun.CreateImplementation(
+                runId: request.RunId!,
+                issueIdentifier: request.IssueIdentifier,
+                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
+                issueProviderConfigId: request.IssueProviderConfigId,
+                repoProviderConfigId: request.RepoProviderConfigId,
+                // TODO: Behavioral change — the old PendingWorkItemDrainService inline code used "loop" as the
+                // null fallback for InitiatedBy. Now that the drain service shares this factory, a null InitiatedBy
+                // will be labeled "rehydrated" instead of "loop". In practice InitiatedBy is always set by
+                // dispatchers so this is unlikely to trigger, but consider whether the drain path should pass
+                // its own fallback or if "rehydrated" is acceptable for both callers.
+                initiatedBy: request.InitiatedBy ?? "rehydrated",
+                agentId: agentId,
+                startedAt: startedAt)
+        };
 
         if (initialStep.HasValue)
             run.CurrentStep = initialStep.Value;

@@ -29,7 +29,6 @@ public sealed class AgentJobSlotManager
     private volatile string? _activeJobId;
     private JobAssignmentMessage? _activeJobAssignment;
     private DateTimeOffset? _activeJobStartedAt;
-    private PipelineRunType _activeJobRunType;
     private int _currentStep = NullStep;
     private int _jobReleased; // 0 = not released, 1 = released (Interlocked guard for exactly-once signaling)
 
@@ -115,7 +114,7 @@ public sealed class AgentJobSlotManager
     {
         var cts = _jobCts;
         try { cts?.Cancel(); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Intentional: CTS already disposed (job finished); cancellation is a no-op. */ }
     }
 
     /// <summary>
@@ -125,7 +124,7 @@ public sealed class AgentJobSlotManager
     {
         var cts = _chatCts;
         try { cts?.Cancel(); }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Intentional: CTS already disposed (chat finished); cancellation is a no-op. */ }
     }
 
     /// <summary>
@@ -147,7 +146,7 @@ public sealed class AgentJobSlotManager
 
             var cts = _chatCts;
             try { cts?.Cancel(); }
-            catch (ObjectDisposedException) { }
+            catch (ObjectDisposedException) { /* Intentional: CTS already disposed (chat finished); cancellation is a no-op. */ }
             return true;
         }
     }
@@ -171,7 +170,7 @@ public sealed class AgentJobSlotManager
 
             var cts = _jobCts;
             try { cts?.Cancel(); }
-            catch (ObjectDisposedException) { }
+            catch (ObjectDisposedException) { /* Intentional: CTS already disposed (job finished); cancellation is a no-op. */ }
             return true;
         }
     }
@@ -234,7 +233,6 @@ public sealed class AgentJobSlotManager
         lock (_busyLock)
         {
             _activeJobAssignment = message;
-            _activeJobRunType = runType;
         }
     }
 
@@ -279,7 +277,6 @@ public sealed class AgentJobSlotManager
             _activeJobId = null;
             _activeJobAssignment = null;
             _activeJobStartedAt = null;
-            _activeJobRunType = default;
             _currentStep = NullStep;
         }
 
@@ -344,7 +341,6 @@ public sealed class AgentJobSlotManager
             _activeJobId = null;
             _activeJobAssignment = null;
             _activeJobStartedAt = null;
-            _activeJobRunType = default;
             _currentStep = NullStep;
         }
 

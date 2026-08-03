@@ -70,12 +70,21 @@ public sealed partial class PipelineLoopService
 
             // Step 5: Fair dispatch
             var dispatchResult = await _dispatcher.DispatchFairRoundRobinAsync(
-                snapshot.PollableTemplates, snapshot.FlattenedTemplates, snapshot.Config,
-                snapshot.MaxRunsPerCycle, snapshot.ActiveIssueIdentifiers,
-                issueQueues, prQueues, decompositionQueues, projectLevelDecompositionQueues,
-                msg => { lock (_lock) { StatusMessage = msg; } },
-                id => CurrentIssueIdentifier = id,
-                NotifyChange,
+                new DispatchScheduler.DispatchRoundRobinRequest
+                {
+                    PollableTemplates = snapshot.PollableTemplates,
+                    FlattenedTemplates = snapshot.FlattenedTemplates,
+                    Config = snapshot.Config,
+                    MaxRunsPerCycle = snapshot.MaxRunsPerCycle,
+                    ActiveIssueIdentifiers = snapshot.ActiveIssueIdentifiers,
+                    IssueQueues = issueQueues,
+                    PrQueues = prQueues,
+                    DecompositionQueues = decompositionQueues,
+                    ProjectLevelDecompositionQueues = projectLevelDecompositionQueues,
+                    ReportStatus = msg => { lock (_lock) { StatusMessage = msg; } },
+                    ReportIssue = id => CurrentIssueIdentifier = id,
+                    NotifyChange = NotifyChange
+                },
                 stoppingToken, ct);
 
             ProcessedCount += dispatchResult.ProcessedCount;
@@ -115,37 +124,65 @@ public sealed partial class PipelineLoopService
     {
         // Step 1: Snapshot — read config at cycle start (immutable for cycle duration)
         var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
-        var pollInterval = config.ClosedLoopPollInterval;
-        var maxRunsPerCycle = config.ClosedLoopMaxRunsPerCycle;
-        var maxConsecutiveFailures = config.ClosedLoopMaxConsecutivePollFailures;
-        var maxPagesToFetch = config.ClosedLoopMaxPagesToFetch;
 
-        // Load projects and flatten templates using project-based ordering
+        var (projects, flattenedTemplates, enabledTemplates, pollableTemplates, templateLookup) =
+            await LoadAndFlattenTemplatesAsync(config, ct);
+
+        CurrentCycleTemplateCount = enabledTemplates.Count;
+
+        // Step 2: Provider cache reconciliation
+        await ReconcileIssueProviderCacheAsync(enabledTemplates, projects, ct);
+        await ReconcileRepoProviderCacheAsync(enabledTemplates, ct);
+
+        // Step 2b: Batch-load active issue identifiers and reconcile stuck work items
+        var activeIssueIdentifiers = await LoadActiveIssueIdentifiersAsync(ct);
+        await ReconcileStuckWorkItemsAsync(ct);
+
+        return new CycleSnapshot(
+            config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
+            templateLookup.AsReadOnly(),
+            config.ClosedLoopPollInterval, config.ClosedLoopMaxRunsPerCycle,
+            config.ClosedLoopMaxConsecutivePollFailures, config.ClosedLoopMaxPagesToFetch,
+            activeIssueIdentifiers);
+    }
+
+    /// <summary>Loads projects and templates, deduplicates, flattens, and filters rate-limited templates.</summary>
+    private async Task<(
+        IReadOnlyList<PipelineProject> Projects,
+        IReadOnlyList<(PipelineJobTemplate Template, PipelineProject Project)> FlattenedTemplates,
+        List<PipelineJobTemplate> EnabledTemplates,
+        List<PipelineJobTemplate> PollableTemplates,
+        Dictionary<string, PipelineJobTemplate> TemplateLookup)>
+        LoadAndFlattenTemplatesAsync(PipelineConfiguration _, CancellationToken ct)
+    {
         var projects = await _projectStore.LoadProjectsAsync(ct) ?? (IReadOnlyList<PipelineProject>)[];
         var allTemplates = await _projectStore.LoadAllTemplatesAsync(ct);
         var deduplicatedTemplates = allTemplates.DistinctBy(t => t.Id).ToList();
         if (deduplicatedTemplates.Count != allTemplates.Count)
             _logger.Warning("Duplicate template IDs detected in store ({Total} loaded, {Unique} unique) — using first occurrence",
                 allTemplates.Count, deduplicatedTemplates.Count);
+
         var flattenedTemplates = FlattenTemplates(projects, deduplicatedTemplates);
         var enabledTemplates = flattenedTemplates.Select(ft => ft.Template).ToList();
-
-        // Pre-built lookup shared by SelectDecompositionTemplate and dispatch logic
         var templateLookup = deduplicatedTemplates.ToDictionary(t => t.Id);
 
-        // Filter out rate-limited templates
         var now = DateTimeOffset.UtcNow;
-        var pollableEntries = flattenedTemplates.Where(ft =>
+        var pollableTemplates = flattenedTemplates.Where(ft =>
         {
             if (_templateStatuses.TryGetValue(ft.Template.Id, out var status) && status.RateLimitResetAt.HasValue)
                 return now >= status.RateLimitResetAt.Value;
             return true;
-        }).ToList();
-        var pollableTemplates = pollableEntries.Select(pe => pe.Template).ToList();
+        }).Select(pe => pe.Template).ToList();
 
-        CurrentCycleTemplateCount = enabledTemplates.Count;
+        return (projects, flattenedTemplates, enabledTemplates, pollableTemplates, templateLookup);
+    }
 
-        // Step 2: Provider cache reconciliation
+    /// <summary>Reconciles the issue provider cache, including project-level epic providers.</summary>
+    private async Task ReconcileIssueProviderCacheAsync(
+        List<PipelineJobTemplate> enabledTemplates,
+        IReadOnlyList<PipelineProject> projects,
+        CancellationToken ct)
+    {
         var neededIds = enabledTemplates.Select(t => t.IssueProviderId).ToHashSet();
 
         // Include project-level EpicIssueProviderId values so the cache contains epic providers for polling
@@ -154,66 +191,65 @@ public sealed partial class PipelineLoopService
 
         var issueProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Issue, ct);
         await _cacheManager.ReconcileIssueProvidersAsync(neededIds, issueProviderConfigs, ct);
+    }
 
-        // Reconcile repo provider cache for templates with ReviewEnabled or DecompositionEnabled
+    /// <summary>Reconciles the repo provider cache for templates with ReviewEnabled or DecompositionEnabled.</summary>
+    private async Task ReconcileRepoProviderCacheAsync(List<PipelineJobTemplate> enabledTemplates, CancellationToken ct)
+    {
         var neededRepoIds = enabledTemplates
             .Where(t => t.ReviewEnabled || t.DecompositionEnabled)
             .Select(t => t.RepoProviderId)
             .ToHashSet();
-        if (neededRepoIds.Count > 0)
-        {
-            try
-            {
-                var repoProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
-                await _cacheManager.ReconcileRepoProvidersAsync(neededRepoIds, repoProviderConfigs, ct);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to reconcile repo provider cache, PR polling will be skipped this cycle");
-            }
-        }
+        if (neededRepoIds.Count == 0) return;
 
-        // Step 2b: Batch-load active issue identifiers for O(1) dedup checks per issue
-        // Replaces per-issue IsIssueDistributedAsync calls in the dispatch loop
-        HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> activeIssueIdentifiers;
-        if (_workDistributor is not null)
+        try
         {
-            try
-            {
-                activeIssueIdentifiers = await _workDistributor.GetActiveIssueIdentifiersAsync(ct);
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to load active issue identifiers — proceeding with empty dedup set (may cause duplicate dispatch attempts)");
-                activeIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>();
-            }
+            var repoProviderConfigs = await _providerConfigStore.LoadProviderConfigsAsync(ProviderKind.Repository, ct);
+            await _cacheManager.ReconcileRepoProvidersAsync(neededRepoIds, repoProviderConfigs, ct);
         }
-        else
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
         {
-            activeIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>();
+            _logger.Warning(ex, "Failed to reconcile repo provider cache, PR polling will be skipped this cycle");
         }
+    }
 
-        // Detect and remediate stuck work items (SignalR mode: Dispatched > 5min → Failed)
-        if (_workDistributor is not null)
-        {
-            try
-            {
-                var stuckCount = await _workDistributor.ReconcileStuckItemsAsync(ct);
-                if (stuckCount > 0)
-                    _logger.Information("Reconciled {StuckCount} stuck work items at cycle start", stuckCount);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex, "Failed to reconcile stuck work items at cycle start");
-            }
-        }
+    /// <summary>
+    /// Batch-loads active issue identifiers for O(1) dedup checks per issue.
+    /// Returns empty set if distributor unavailable or on error.
+    /// </summary>
+    private async Task<HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)>> LoadActiveIssueIdentifiersAsync(CancellationToken ct)
+    {
+        if (_workDistributor is null)
+            return new HashSet<(IssueIdentifier, ProviderConfigId)>();
 
-        return new CycleSnapshot(
-            config, projects, flattenedTemplates, enabledTemplates.AsReadOnly(), pollableTemplates.AsReadOnly(),
-            templateLookup.AsReadOnly(), pollInterval, maxRunsPerCycle, maxConsecutiveFailures, maxPagesToFetch,
-            activeIssueIdentifiers);
+        try
+        {
+            return await _workDistributor.GetActiveIssueIdentifiersAsync(ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to load active issue identifiers — proceeding with empty dedup set (may cause duplicate dispatch attempts)");
+            return new HashSet<(IssueIdentifier, ProviderConfigId)>();
+        }
+    }
+
+    /// <summary>Detects and remediates stuck work items (SignalR mode: Dispatched > 5min → Failed).</summary>
+    private async Task ReconcileStuckWorkItemsAsync(CancellationToken ct)
+    {
+        if (_workDistributor is null) return;
+
+        try
+        {
+            var stuckCount = await _workDistributor.ReconcileStuckItemsAsync(ct);
+            if (stuckCount > 0)
+                _logger.Information("Reconciled {StuckCount} stuck work items at cycle start", stuckCount);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to reconcile stuck work items at cycle start");
+        }
     }
 
     /// <summary>

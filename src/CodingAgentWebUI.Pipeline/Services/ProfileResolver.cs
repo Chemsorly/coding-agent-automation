@@ -45,7 +45,7 @@ public sealed class ProfileResolver
     /// <param name="profiles">All available profiles to evaluate.</param>
     /// <param name="requiredLabels">Labels that must ALL be present in the profile's MatchLabels.</param>
     /// <returns>The best matching profile, or <c>null</c> if none cover all required labels.</returns>
-    public AgentProfile? ResolveByRequiredLabels(IReadOnlyList<AgentProfile> profiles, IReadOnlyList<string> requiredLabels)
+    public static AgentProfile? ResolveByRequiredLabels(IReadOnlyList<AgentProfile> profiles, IReadOnlyList<string> requiredLabels)
     {
         ArgumentNullException.ThrowIfNull(profiles);
         ArgumentNullException.ThrowIfNull(requiredLabels);

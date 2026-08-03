@@ -158,7 +158,7 @@ public sealed class PostgresPipelineRunHistoryServiceAsyncTests : IDisposable
 
     private static PipelineRun CreateCompletedRun(string runId, string issueIdentifier, string issueTitle)
     {
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId, issueIdentifier, issueTitle,
             "ip-1", "rp-1",
             startedAt: DateTimeOffset.UtcNow);
