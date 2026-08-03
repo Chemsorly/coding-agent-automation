@@ -151,7 +151,7 @@
         _resultMessage = null;
     }
 
-    private const long MaxImportFileSizeBytes = 10 * 1024 * 1024; // 10 MB
+    private const long MaxImportFileSizeBytes = 8 * 1024 * 1024; // 8 MB (Sonar S5693 threshold)
 
     private async Task ImportAsync()
     {
@@ -167,7 +167,7 @@
             if (_selectedFile.Size > MaxImportFileSizeBytes)
             {
                 _resultSuccess = false;
-                _resultMessage = $"File too large: {_selectedFile.Size / (1024 * 1024)} MB. Maximum allowed size is 10 MB.";
+                _resultMessage = $"File too large: {_selectedFile.Size / (1024 * 1024)} MB. Maximum allowed size is 8 MB.";
                 await OnShowStatus.InvokeAsync((_resultMessage, true));
                 return;
             }

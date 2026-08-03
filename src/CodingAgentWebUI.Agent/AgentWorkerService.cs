@@ -165,7 +165,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             return;
 
         var jobToken = _slotManager.JobCancellationToken!.Value;
-        var activeTask = Task.Run(async () => await RunJobTaskAsync(message, jobToken));
+        var activeTask = Task.Run(async () => await RunJobTaskAsync(message, jobToken), CancellationToken.None);
         _slotManager.SetActiveJobTask(activeTask);
     }
 
@@ -176,7 +176,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _logger.Warning("Rejecting job {JobId} — agent is busy with {ActiveJobId}", jobId, busyWith);
         try
         {
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobRejected, jobId, "Agent is busy");
+            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobRejected, jobId, "Agent is busy", CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -290,7 +290,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         _logger.Information("Accepted chat prompt for session {SessionId}", message.SessionId);
 
         var chatToken = _slotManager.ChatCancellationToken!.Value;
-        var activeTask = Task.Run(async () => await RunChatTaskAsync(message, chatToken));
+        var activeTask = Task.Run(async () => await RunChatTaskAsync(message, chatToken), CancellationToken.None);
         _slotManager.SetActiveChatTask(activeTask);
     }
 
@@ -312,7 +312,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                         SessionId = message.SessionId,
                         Lines = lines.ToList()
                     };
-                    await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatResponse, response);
+                    await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatResponse, response, CancellationToken.None);
                 }
                 catch (Exception ex)
                 {
@@ -578,7 +578,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             message.JobId, message.Type);
 
         var jobToken = _slotManager.JobCancellationToken!.Value;
-        var activeTask = Task.Run(async () => await RunConsolidationTaskAsync(message, jobToken));
+        var activeTask = Task.Run(async () => await RunConsolidationTaskAsync(message, jobToken), CancellationToken.None);
         _slotManager.SetActiveJobTask(activeTask);
     }
 
@@ -590,7 +590,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             jobId, busyWith);
         try
         {
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobRejected, jobId, "Agent is busy");
+            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.JobRejected, jobId, "Agent is busy", CancellationToken.None);
         }
         catch (Exception ex)
         {

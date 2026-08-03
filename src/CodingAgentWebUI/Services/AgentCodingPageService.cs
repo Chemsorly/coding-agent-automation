@@ -422,7 +422,7 @@ public class AgentCodingPageService : IDisposable
                         PipelineProviderId = template.PipelineProviderId,
                         InitiatedBy = InitiatedByManual,
                         Project = project
-                    }),
+                    }, CancellationToken.None),
                 "Could not dispatch — distribution failed.",
                 $"⏳ Queued #{issue.Identifier} — waiting for an idle agent",
                 $"✅ Dispatched #{issue.Identifier}");
@@ -619,7 +619,7 @@ public class AgentCodingPageService : IDisposable
                         BrainProviderId = template.BrainProviderId,
                         InitiatedBy = InitiatedByManual,
                         Project = project
-                    }),
+                    }, CancellationToken.None),
                 "Could not dispatch — epic is already being processed or queued, or no agents are available.",
                 $"⏳ Queued epic #{issue.Identifier} for {phaseLabel} — waiting for an idle agent",
                 $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}");
