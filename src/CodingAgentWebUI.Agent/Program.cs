@@ -99,7 +99,11 @@ try
         .WithMetrics(m => m
             .AddHttpClientInstrumentation()
             .AddMeter(PipelineTelemetry.SourceName)
-            .AddOtlpExporter());
+            // Prometheus requires Cumulative temporality. The OTLP exporter defaults to Delta
+            // for histograms and counters, which causes Grafana Cloud to silently drop histogram
+            // data while gauges continue to export correctly. See orchestrator Program.cs for details.
+            .AddOtlpExporter((_, readerOptions) =>
+                readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative));
 
     // ── KiroCliLib ──
     var kiroConfig = new Configuration
