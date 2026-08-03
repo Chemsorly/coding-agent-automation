@@ -18,7 +18,7 @@ public class SidebarHealthIndicatorsTests : BunitContext
 {
     private readonly Mock<ILogger> _mockLogger = new();
 
-    private InfrastructureHealthService CreateHealthService(
+    private static InfrastructureHealthService CreateHealthService(
         bool dbConfigured = false,
         bool dbHealthy = true,
         bool redisConfigured = false,

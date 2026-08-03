@@ -99,37 +99,7 @@ public static class WorkItemEndpoints
     {
         var success = await transitionService.TransitionAsync(
             id, request.Status,
-            mutate: entity =>
-            {
-                if (request.AgentId is not null)
-                    entity.AssignedAgentId = request.AgentId;
-
-                if (request.ErrorMessage is not null)
-                    entity.ErrorMessage = request.ErrorMessage;
-                else if (request.Status == WorkItemStatus.Failed)
-                    entity.ErrorMessage = "Job failed without specific error information";
-
-                if (request.Result is not null)
-                    entity.Result = request.Result;
-
-                // Set FailureReason enum from string when status is Failed
-                if (request.Status == WorkItemStatus.Failed)
-                {
-                    if (request.FailureReason is not null
-                        && Enum.TryParse<Pipeline.Models.FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason))
-                    {
-                        entity.FailureReason ??= parsedReason;
-                    }
-                    else
-                    {
-                        entity.FailureReason ??= Pipeline.Models.FailureReason.AgentError;
-                    }
-                }
-
-                // Set CompletedAt for terminal statuses
-                if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-                    entity.CompletedAt = DateTimeOffset.UtcNow;
-            });
+            mutate: entity => ApplyStatusMutation(entity, request));
 
         if (!success)
         {
@@ -148,23 +118,71 @@ public static class WorkItemEndpoints
 
         // Emit structured terminal-status log and metrics (Req 10.3)
         if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-        {
-            TimeSpan? duration = null;
-            if (dbFactory is not null)
-            {
-                await using var db = await dbFactory.CreateDbContextAsync();
-                var item = await db.WorkItems.AsNoTracking()
-                    .Where(w => w.Id == id)
-                    .Select(w => new { w.DispatchedAt, w.CompletedAt })
-                    .FirstOrDefaultAsync();
-                if (item?.DispatchedAt is not null && item.CompletedAt is not null)
-                    duration = item.CompletedAt.Value - item.DispatchedAt.Value;
-            }
-
-            WorkDistributionTelemetry.LogTerminalStatus(
-                id, request.Status, duration, request.AgentId, failureReason: null);
-        }
+            await EmitTerminalStatusTelemetryAsync(id, request, dbFactory);
 
         return TypedResults.Ok();
+    }
+
+    /// <summary>
+    /// Applies the incoming status request fields to a work item entity.
+    /// Called as the mutation delegate inside TransitionAsync.
+    /// </summary>
+    private static void ApplyStatusMutation(
+        WorkItemEntity entity,
+        WorkItemStatusRequest request)
+    {
+        if (request.AgentId is not null)
+            entity.AssignedAgentId = request.AgentId;
+
+        if (request.ErrorMessage is not null)
+            entity.ErrorMessage = request.ErrorMessage;
+        else if (request.Status == WorkItemStatus.Failed)
+            entity.ErrorMessage = "Job failed without specific error information";
+
+        if (request.Result is not null)
+            entity.Result = request.Result;
+
+        // Set FailureReason enum from string when status is Failed
+        if (request.Status == WorkItemStatus.Failed)
+        {
+            if (request.FailureReason is not null
+                && Enum.TryParse<Pipeline.Models.FailureReason>(request.FailureReason, ignoreCase: true, out var parsedReason))
+            {
+                entity.FailureReason ??= parsedReason;
+            }
+            else
+            {
+                entity.FailureReason ??= Pipeline.Models.FailureReason.AgentError;
+            }
+        }
+
+        // Set CompletedAt for terminal statuses
+        if (request.Status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+            entity.CompletedAt = DateTimeOffset.UtcNow;
+    }
+
+    /// <summary>
+    /// Queries the completed work item's dispatch and completion timestamps,
+    /// then records telemetry for the terminal status transition.
+    /// </summary>
+    private static async Task EmitTerminalStatusTelemetryAsync(
+        Guid id,
+        WorkItemStatusRequest request,
+        IDbContextFactory<PipelineDbContext>? dbFactory)
+    {
+        TimeSpan? duration = null;
+        if (dbFactory is not null)
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            var item = await db.WorkItems.AsNoTracking()
+                .Where(w => w.Id == id)
+                .Select(w => new { w.DispatchedAt, w.CompletedAt })
+                .FirstOrDefaultAsync();
+            if (item?.DispatchedAt is not null && item.CompletedAt is not null)
+                duration = item.CompletedAt.Value - item.DispatchedAt.Value;
+        }
+
+        WorkDistributionTelemetry.LogTerminalStatus(
+            id, request.Status, duration, request.AgentId, failureReason: null);
     }
 }

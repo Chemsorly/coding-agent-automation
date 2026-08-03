@@ -52,7 +52,7 @@ public static class PipelineConfigurationResolver
                 else
                 {
                     // Simple replacement: unwrap Nullable<T> if needed, then assign
-                    var unwrapped = mapping.UnwrapNullable(projectValue);
+                    var unwrapped = OverrideMapping.UnwrapNullable(projectValue);
                     mapping.ConfigProperty.SetValue(clone, unwrapped);
                 }
             }
@@ -169,7 +169,7 @@ public static class PipelineConfigurationResolver
         /// For Nullable&lt;T&gt; value types, the boxed value is already the unwrapped T.
         /// For reference types, the value is used as-is.
         /// </summary>
-        public object UnwrapNullable(object value) => value;
+        public static object UnwrapNullable(object value) => value;
     }
 
     /// <summary>

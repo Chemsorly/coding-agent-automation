@@ -230,12 +230,17 @@ public class LoopStatePersistenceServiceTests : IDisposable
             providerFactory: mockFactory.Object,
             logger: _logger);
 
-        return new PipelineLoopService(
-            runCreator,
-            mockFactory.Object,
-            mockConfigStore.Object,
-            mockProviderConfigStore.Object,
-            mockProjectStore.Object,
-            _logger);
+        return new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = runCreator,
+            ProviderFactory = mockFactory.Object,
+            PipelineConfigStore = mockConfigStore.Object,
+            ProviderConfigStore = mockProviderConfigStore.Object,
+            ProjectStore = mockProjectStore.Object,
+            Logger = _logger,
+            WorkDistributor = null,
+            DispatchOrchestration = null,
+            DependencyChecker = null
+        });
     }
 }

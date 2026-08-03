@@ -47,7 +47,7 @@ internal sealed class DispatchLifecycleService
     /// <returns>
     /// A result containing the list of available PVCs and the count of claimed PVCs (for telemetry).
     /// </returns>
-    public async Task<PvcAvailabilityResult> QueryAvailablePvcsAsync(
+    public static async Task<PvcAvailabilityResult> QueryAvailablePvcsAsync(
         PipelineDbContext db, IReadOnlyList<string> pvcPool, CancellationToken ct)
     {
         var claimedPvcs = await db.WorkItems
@@ -82,18 +82,20 @@ internal sealed class DispatchLifecycleService
     /// For regular: resets StartedAt + swaps label. For consolidation: transitions run to Running.
     /// </param>
     public async Task ExecuteDispatchLifecycleAsync(
-        PipelineDbContext db,
-        PendingWorkItemProjection item,
-        JobTemplate template,
-        bool isKiroAgent,
-        List<string> availablePvcs,
-        Dictionary<string, int> concurrencyBySelector,
-        string logPrefix,
+        DispatchLifecycleContext ctx,
         Func<WorkItemEntity, Task<(bool shouldContinue, Dictionary<string, string>? projectSecrets)>> prepareVariant,
         Func<WorkItemEntity, Task>? onDispatchSuccess,
         CancellationToken ct,
         Func<Guid, string, Task>? onFailure = null)
     {
+        var db = ctx.Db;
+        var item = ctx.Item;
+        var template = ctx.Template;
+        var isKiroAgent = ctx.IsKiroAgent;
+        var availablePvcs = ctx.AvailablePvcs;
+        var concurrencyBySelector = ctx.ConcurrencyBySelector;
+        var logPrefix = ctx.LogPrefix;
+
         // Generate deterministic job name
         var jobName = DispatchService.GenerateJobName(item.Id);
 
@@ -231,7 +233,7 @@ internal sealed class DispatchLifecycleService
                 item.FailureReason = FailureReason.InfrastructureFailure;
                 item.CompletedAt = DateTimeOffset.UtcNow;
             },
-            ct);
+            ct: ct);
 
         Log.Warning("DispatchLifecycleService: WorkItem {WorkItemId} failed: {Error}", workItemId, errorMessage);
     }
@@ -239,7 +241,7 @@ internal sealed class DispatchLifecycleService
     /// <summary>
     /// Loads project secrets from the project's Settings JSON.
     /// </summary>
-    public async Task<Dictionary<string, string>?> LoadProjectSecretsAsync(
+    public static async Task<Dictionary<string, string>?> LoadProjectSecretsAsync(
         PipelineDbContext db, string projectId, CancellationToken ct)
     {
         if (!Guid.TryParse(projectId, out var projGuid))

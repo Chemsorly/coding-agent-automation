@@ -237,6 +237,8 @@ public partial class QualityGateExecutor
         var run = context.Run;
         var maxRetries = config.CiNotStartedMaxRetries;
         var notStartedTimeout = config.CiNotStartedTimeout;
+        var pipelineProvider = context.PipelineProvider
+            ?? throw new InvalidOperationException("PipelineProvider must not be null when entering CI polling");
 
         for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
@@ -244,12 +246,12 @@ public partial class QualityGateExecutor
 
             // Wait up to CiNotStartedTimeout for any workflow runs to appear
             var appeared = await WaitForCiRunsToAppearAsync(
-                context.PipelineProvider!, run.BranchName!, pollSha, notStartedTimeout, config.ExternalCiPollInterval, ct);
+                pipelineProvider, run.BranchName!, pollSha, notStartedTimeout, config.ExternalCiPollInterval, ct);
 
             if (appeared)
             {
                 // Runs detected — switch to the full wait-for-completion (uses the full ExternalCiTimeout)
-                return await context.PipelineProvider!.WaitForCompletionAsync(
+                return await pipelineProvider.WaitForCompletionAsync(
                     run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
             }
 
@@ -259,7 +261,7 @@ public partial class QualityGateExecutor
                 _logger.Error("Pipeline {RunId} CI never started after {MaxRetries} re-push retries. " +
                               "Falling back to full timeout wait.", run.RunId, maxRetries);
                 callbacks.EmitOutputLine($"⚠️ CI never started after {maxRetries} retries — waiting with full timeout as last resort...");
-                return await context.PipelineProvider!.WaitForCompletionAsync(
+                return await pipelineProvider.WaitForCompletionAsync(
                     run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
             }
 
@@ -270,11 +272,11 @@ public partial class QualityGateExecutor
                 $"⚠️ CI never started (attempt {attempt + 1}/{maxRetries}) — re-pushing to trigger GitHub Actions...");
 
             // Final check before re-pushing — avoid racing with GitHub's delayed trigger
-            var lastCheck = await context.PipelineProvider!.GetRunStatusAsync(run.BranchName!, pollSha, ct);
+            var lastCheck = await pipelineProvider.GetRunStatusAsync(run.BranchName!, pollSha, ct);
             if (lastCheck.State != PipelineRunState.Pending || lastCheck.Jobs.Count > 0)
             {
                 _logger.Information("Pipeline {RunId} CI appeared just before re-push (race avoided), proceeding to full wait", run.RunId);
-                return await context.PipelineProvider!.WaitForCompletionAsync(
+                return await pipelineProvider.WaitForCompletionAsync(
                     run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
             }
 
@@ -292,7 +294,7 @@ public partial class QualityGateExecutor
         }
 
         // Should not reach here, but satisfy the compiler
-        return await context.PipelineProvider!.WaitForCompletionAsync(
+        return await pipelineProvider.WaitForCompletionAsync(
             run.BranchName!, pollSha, config.ExternalCiTimeout, ct);
     }
 

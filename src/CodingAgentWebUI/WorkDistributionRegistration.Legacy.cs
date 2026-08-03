@@ -22,9 +22,7 @@ public static partial class WorkDistributionRegistration
         services.AddSingleton<IWorkDistributor>(sp => new LegacyWorkDistributor(
             sp.GetRequiredService<IJobDispatcher>(),
             sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            Log.Logger,
-            new Lazy<IConsolidationDispatchService>(() => sp.GetRequiredService<IConsolidationDispatchService>())));
+            sp.GetRequiredService<IOrchestratorRunService>()));
         services.AddSingleton<IActiveRunQueryService>(sp => new InMemoryActiveRunQueryService(
             sp.GetRequiredService<IOrchestratorRunService>()));
         services.AddSingleton<IConsolidationRunStore>(sp =>
@@ -43,14 +41,15 @@ public static partial class WorkDistributionRegistration
         // RunLifecycleManager (Legacy — no WorkItemTransitionService, no K8s cleanup)
         services.AddSingleton<IJobCleanupStrategy>(new NoOpJobCleanup());
         services.AddSingleton<IRunLifecycleManager>(sp => new Orchestration.RunLifecycleManager(
-            sp.GetRequiredService<IOrchestratorRunService>(),
-            sp.GetRequiredService<IPipelineRunHistoryService>(),
-            sp.GetRequiredService<AgentRegistryService>(),
-            sp.GetRequiredService<ILabelService>(),
-            sp.GetRequiredService<JobDeduplicationGuardService>(),
-            Log.Logger,
-            workItemTransition: null,
-            jobCleanup: sp.GetRequiredService<IJobCleanupStrategy>()));
+            new Orchestration.RunLifecycleManagerDependencies(
+                sp.GetRequiredService<IOrchestratorRunService>(),
+                sp.GetRequiredService<IPipelineRunHistoryService>(),
+                sp.GetRequiredService<AgentRegistryService>(),
+                sp.GetRequiredService<ILabelService>(),
+                sp.GetRequiredService<JobDeduplicationGuardService>(),
+                Log.Logger,
+                WorkItemTransition: null,
+                JobCleanup: sp.GetRequiredService<IJobCleanupStrategy>())));
         Log.Information("WorkDistribution: Legacy mode (no database). Using JsonConfigurationStore + LegacyWorkDistributor");
     }
 }

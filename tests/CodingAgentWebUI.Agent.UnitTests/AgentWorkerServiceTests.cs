@@ -54,8 +54,8 @@ public class AgentWorkerServiceTests : IDisposable
         var mockLogger = new Mock<Serilog.ILogger>();
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
-        var act = () => new AgentWorkerService(null!, new AgentJobSlotManager(() => Task.CompletedTask), new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("connectionLifecycle");
+        var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new AgentJobSlotManager(() => Task.CompletedTask), new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object));
+        act.Should().Throw<ArgumentNullException>().WithParameterName("ConnectionLifecycle");
     }
 
     [Fact]
@@ -66,8 +66,8 @@ public class AgentWorkerServiceTests : IDisposable
         var (_, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         var act = () => new AgentWorkerService(
-            lifecycle, slotManager, new AgentId("test-agent"), null!, CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("executor");
+            new AgentWorkerServiceDependencies(lifecycle, slotManager, new AgentId("test-agent"), null!, CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object));
+        act.Should().Throw<ArgumentNullException>().WithParameterName("Executor");
     }
 
     [Fact]
@@ -77,8 +77,8 @@ public class AgentWorkerServiceTests : IDisposable
         var (_, slotManager, lifecycle) = TestAgentWorkerServiceFactory.CreateWithComponents();
 
         var act = () => new AgentWorkerService(
-            lifecycle, slotManager, new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), null!);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("logger");
+            new AgentWorkerServiceDependencies(lifecycle, slotManager, new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), null!));
+        act.Should().Throw<ArgumentNullException>().WithParameterName("Logger");
     }
 
     [Fact]

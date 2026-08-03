@@ -56,12 +56,13 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
     /// <param name="workItemId">The work item to transition.</param>
     /// <param name="target">The desired target status.</param>
     /// <param name="mutate">Optional action to set additional fields during the transition (e.g., CompletedAt, ErrorMessage).</param>
-    /// <param name="ct">Cancellation token.</param>
     /// <param name="maxRetries">Maximum retry attempts on concurrency conflict (default 3).</param>
+    /// <param name="ct">Cancellation token.</param>
     public async Task<bool> TransitionAsync(
         Guid workItemId, WorkItemStatus target,
         Action<WorkItemEntity>? mutate = null,
-        CancellationToken ct = default, int maxRetries = 3)
+        int maxRetries = 3,
+        CancellationToken ct = default)
     {
         if (_resiliencePipeline is not null)
         {
@@ -213,9 +214,10 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
             }
             catch (DbUpdateConcurrencyException) when (attempt < MaxRetries)
             {
+                var retryAttempt = attempt + 1;
                 _logger.LogInformation(
                     "Concurrency conflict on WorkItem {WorkItemId} recovery to {DesiredStatus}, retry {Attempt}/{MaxRetries}",
-                    workItemId, desiredStatus, attempt + 1, MaxRetries);
+                    workItemId, desiredStatus, retryAttempt, MaxRetries);
                 // Row modified by another writer — retry with fresh state
             }
         }
@@ -251,7 +253,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
             item.RetryCount++;
             item.DispatchedAt = null;
             item.AssignedAgentId = null;
-        }, ct);
+        }, ct: ct);
     }
 
     /// <inheritdoc />
@@ -285,7 +287,7 @@ public sealed class WorkItemTransitionService : IWorkItemQueryService
                 && w.IssueProviderConfigId == providerConfigIdValue
                 && w.Status == WorkItemStatus.Succeeded
                 && w.CompletedAt != null)
-            .Select(w => (DateTimeOffset?)w.CompletedAt)
+            .Select(w => w.CompletedAt)
             .MaxAsync(ct);
     }
 }

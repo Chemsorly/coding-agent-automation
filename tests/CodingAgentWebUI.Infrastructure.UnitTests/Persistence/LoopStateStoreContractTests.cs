@@ -18,7 +18,10 @@ namespace CodingAgentWebUI.Infrastructure.UnitTests.Persistence;
 public abstract class LoopStateStoreContractTests : IDisposable
 {
     protected abstract ILoopStateStore CreateStore();
-    public virtual void Dispose() { }
+    public virtual void Dispose()
+    {
+        GC.SuppressFinalize(this);
+    }
 
     // ── ReadAsync ────────────────────────────────────────────────────────
 
@@ -152,6 +155,7 @@ public class FileSystemLoopStateStoreContractTests : LoopStateStoreContractTests
     {
         if (Directory.Exists(_tempDir))
             Directory.Delete(_tempDir, recursive: true);
+        base.Dispose();
     }
 }
 
@@ -186,6 +190,7 @@ public class PostgresLoopStateStoreContractTests : LoopStateStoreContractTests
     {
         using var db = new PipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
+        base.Dispose();
     }
 }
 

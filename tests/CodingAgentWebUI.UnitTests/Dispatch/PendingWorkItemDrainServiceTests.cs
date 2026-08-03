@@ -761,16 +761,17 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
             });
 
         var service = new PendingWorkItemDrainService(
-            _dbFactory,
-            _mockResolver.Object,
-            _mockAgentComm.Object,
-            _runService,
-            new WorkItemTransitionService(
-                new CancellationAwareDbContextFactory(_dbOptions),
-                NullLogger<WorkItemTransitionService>.Instance),
-            _mockPendingWork.Object,
-            _mockLabelService.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance,
+            new DrainServiceDependencies(
+                _dbFactory,
+                _mockResolver.Object,
+                _mockAgentComm.Object,
+                _runService,
+                new WorkItemTransitionService(
+                    new CancellationAwareDbContextFactory(_dbOptions),
+                    NullLogger<WorkItemTransitionService>.Instance),
+                _mockPendingWork.Object,
+                _mockLabelService.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance),
             _mockProjectStore.Object);
 
         // Act: start with the CTS that will be cancelled inside the mock
@@ -800,14 +801,15 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
     private PendingWorkItemDrainService CreateService()
     {
         return new PendingWorkItemDrainService(
-            _dbFactory,
-            _mockResolver.Object,
-            _mockAgentComm.Object,
-            _runService,
-            _transitionService,
-            _mockPendingWork.Object,
-            _mockLabelService.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance,
+            new DrainServiceDependencies(
+                _dbFactory,
+                _mockResolver.Object,
+                _mockAgentComm.Object,
+                _runService,
+                _transitionService,
+                _mockPendingWork.Object,
+                _mockLabelService.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance),
             _mockProjectStore.Object);
     }
 
@@ -1040,14 +1042,15 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
 
         // The drain service uses normalFactory for its direct DB access (_dbFactory field)
         var service = new PendingWorkItemDrainService(
-            normalFactory,
-            _mockResolver.Object,
-            _mockAgentComm.Object,
-            _runService,
-            transitionService,
-            _mockPendingWork.Object,
-            _mockLabelService.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance,
+            new DrainServiceDependencies(
+                normalFactory,
+                _mockResolver.Object,
+                _mockAgentComm.Object,
+                _runService,
+                transitionService,
+                _mockPendingWork.Object,
+                _mockLabelService.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance),
             _mockProjectStore.Object);
 
         // Act

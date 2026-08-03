@@ -14,7 +14,7 @@ public class DrawerStateServiceTests
     private static PullRequestSummary MakePr() =>
         new() { Identifier = "99", Number = 99, Title = "PR", BranchName = "feat/x", TargetBranch = "main", Url = "http://x", Description = "", Labels = Array.Empty<string>(), IsDraft = false };
 
-    private DrawerStateService<IssueSummary> CreateIssueDrawer(
+    private static DrawerStateService<IssueSummary> CreateIssueDrawer(
         Func<PipelineJobTemplate, Task<string?>>? loadItems = null,
         Func<PipelineJobTemplate, Task<string?>>? loadLabels = null,
         bool closeOnDispatch = false)
@@ -26,7 +26,7 @@ public class DrawerStateServiceTests
             closeOnDispatch);
     }
 
-    private DrawerStateService<PullRequestSummary> CreatePrDrawer(bool closeOnDispatch = false)
+    private static DrawerStateService<PullRequestSummary> CreatePrDrawer(bool closeOnDispatch = false)
     {
         return new DrawerStateService<PullRequestSummary>(
             _ => Task.FromResult<string?>(null),

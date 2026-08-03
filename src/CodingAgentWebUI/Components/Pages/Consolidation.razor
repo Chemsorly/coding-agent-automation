@@ -275,7 +275,7 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // TODO: FocusAsync is called on every re-render while the modal is open, which could steal
+        // TODO(#1772): FocusAsync is called on every re-render while the modal is open, which could steal
         // focus from the checkbox during interaction. Consider tracking a _modalJustOpened flag that
         // is set in OpenRefactoringModal and cleared after the first successful FocusAsync call.
         if (_showRefactoringModal)
@@ -387,7 +387,7 @@
         _showRefactoringModal = false;
     }
 
-    // TODO: Enter key bubbles up from checkbox input and will confirm the modal even when the
+    // TODO(#1772): Enter key bubbles up from checkbox input and will confirm the modal even when the
     // user may intend to toggle the checkbox. Browsers use Space (not Enter) for checkbox toggle,
     // so this is low risk, but consider guarding against e.Target being the checkbox element.
     private async Task HandleRefactoringModalKeyDown(KeyboardEventArgs e)
@@ -409,10 +409,9 @@
 
         try
         {
-            // TODO: `new TemplateId(tid)` bypasses ThrowIfNullOrEmpty validation. While `tid`
+            // TODO(#1775): `new TemplateId(tid)` bypasses ThrowIfNullOrEmpty validation. While `tid`
             // cannot be null here (pattern match ensures it), an empty-string templateId would
-            // pass through without error. Consider using the implicit conversion instead:
-            // TemplateId? typedTemplateId = templateId is { Length: > 0 } tid ? (TemplateId)tid : null;
+            // pass through without error. Consider using the implicit conversion with a length check.
             TemplateId? typedTemplateId = templateId is { } tid ? new TemplateId(tid) : (TemplateId?)null;
             var run = await ConsolidationService.TriggerAsync(type, typedTemplateId, CancellationToken.None, autoDispatch);
             if (run == null)

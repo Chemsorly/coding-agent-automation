@@ -148,7 +148,7 @@
                                                                     <button class="move-to-option" style="display: block; width: 100%; text-align: left; padding: 6px 12px; background: none; border: none; color: var(--text); cursor: pointer; font-size: 0.8rem;"
                                                                             @onclick="() => MoveTemplate(template.Id, projectGroup.Project.Id, targetProject.Id)">
                                                                         @targetProject.Name
-                                                                        @* TODO: Fix indentation — @if block is 4 spaces less than surrounding content *@
+                                                                        @* TODO(#1775): Fix indentation — @if block is 4 spaces less than surrounding content *@
                                                                     @if (!string.IsNullOrEmpty(targetProject.EpicIssueProviderId))
                                                                         {
                                                                             <text> </text><Icon Name="puzzle" Size="12" />

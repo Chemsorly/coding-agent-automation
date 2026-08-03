@@ -59,7 +59,7 @@ public class AgentCodingPageService : IDisposable
             (pr, template) => DispatchPrReviewAsync(pr, template));
 
         _epicDrawer = new DrawerStateService<IssueSummary>(
-            LoadEpicDrawerIssuesAsync,
+            t => LoadEpicDrawerIssuesAsync(t, 1),
             LoadEpicDrawerLabelsAsync,
             (issue, template) => DispatchDecompositionAsync(issue, template),
             closeOnDispatch: true);
@@ -122,13 +122,27 @@ public class AgentCodingPageService : IDisposable
 
     public HashSet<(IssueIdentifier IssueIdentifier, ProviderConfigId IssueProviderConfigId)> ActiveIssues { get; private set; } = new();
 
-    public string ActiveDrawerTab => IsIssueDrawerOpen ? "issue" : IsPrDrawerOpen ? "pr" : IsEpicDrawerOpen ? "epic" : "";
+    private const string DrawerTabIssue = "issue";
+    private const string DrawerTabPr = "pr";
+    private const string DrawerTabEpic = "epic";
+    private const string InitiatedByManual = "manual";
+
+    public string ActiveDrawerTab
+    {
+        get
+        {
+            if (IsIssueDrawerOpen) return DrawerTabIssue;
+            if (IsPrDrawerOpen) return DrawerTabPr;
+            if (IsEpicDrawerOpen) return DrawerTabEpic;
+            return "";
+        }
+    }
 
     public PipelineJobTemplate? ActiveDrawerTemplate => ActiveDrawerTab switch
     {
-        "issue" => IssueDrawerTemplate,
-        "pr" => PrDrawerTemplate,
-        "epic" => EpicDrawerTemplate,
+        DrawerTabIssue => IssueDrawerTemplate,
+        DrawerTabPr => PrDrawerTemplate,
+        DrawerTabEpic => EpicDrawerTemplate,
         _ => null
     };
 
@@ -399,11 +413,16 @@ public class AgentCodingPageService : IDisposable
             return await DispatchWithOrchestrationAsync(
                 template.Id,
                 project => _dispatchOrchestration.PrepareDistributionRequestAsync(
-                    issue.Identifier,
-                    template.IssueProviderId, template.RepoProviderId,
-                    template.BrainProviderId, template.PipelineProviderId,
-                    "manual", project,
-                    ct: CancellationToken.None),
+                    new ImplementationDispatchOrchestrationRequest
+                    {
+                        IssueIdentifier = issue.Identifier,
+                        IssueProviderId = template.IssueProviderId,
+                        RepoProviderId = template.RepoProviderId,
+                        BrainProviderId = template.BrainProviderId,
+                        PipelineProviderId = template.PipelineProviderId,
+                        InitiatedBy = InitiatedByManual,
+                        Project = project
+                    }),
                 "Could not dispatch — distribution failed.",
                 $"⏳ Queued #{issue.Identifier} — waiting for an idle agent",
                 $"✅ Dispatched #{issue.Identifier}");
@@ -411,7 +430,7 @@ public class AgentCodingPageService : IDisposable
 
         // Legacy mode: pass minimal identifiers to LegacyWorkDistributor
         var minimalRequest = JobDistributionRequest.FromTemplate(
-            template, issue, initiatedBy: "manual", timeoutSeconds: 3600,
+            template, issue, initiatedBy: InitiatedByManual, timeoutSeconds: 3600,
             projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
         return await DispatchLegacyAsync(minimalRequest,
             $"✅ Dispatched #{issue.Identifier}",
@@ -498,7 +517,7 @@ public class AgentCodingPageService : IDisposable
                         IssueProviderId = template.IssueProviderId,
                         RepoProviderId = template.RepoProviderId,
                         BrainProviderId = template.BrainProviderId,
-                        InitiatedBy = "manual"
+                        InitiatedBy = InitiatedByManual
                     };
                     return _dispatchOrchestration.PrepareReviewDistributionRequestAsync(
                         reviewRequest, project, CancellationToken.None);
@@ -510,7 +529,7 @@ public class AgentCodingPageService : IDisposable
 
         // Legacy mode
         var minimalRequest = JobDistributionRequest.FromTemplate(
-            template, pr, initiatedBy: "manual", timeoutSeconds: 3600,
+            template, pr, initiatedBy: InitiatedByManual, timeoutSeconds: 3600,
             projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
         return await DispatchLegacyAsync(minimalRequest,
             $"PR #{pr.Identifier} dispatched for review.",
@@ -518,40 +537,6 @@ public class AgentCodingPageService : IDisposable
     }
 
     // ── Epic Drawer Data ──
-
-    private async Task<string?> LoadEpicDrawerIssuesAsync(PipelineJobTemplate template)
-    {
-        _epicDrawer.Loading = true;
-        _epicDrawer.Page = 1;
-        try
-        {
-            var parentProject = GetParentProject(template.Id);
-            var epicProviderId = !string.IsNullOrEmpty(parentProject?.EpicIssueProviderId) ? parentProject.EpicIssueProviderId : template.IssueProviderId;
-            var providerConfig = IssueProviders.FirstOrDefault(p => p.Id == epicProviderId);
-            if (providerConfig == null) { _epicDrawer.Loading = false; return "Epic issue provider not found."; }
-            await using var provider = _providerFactory.CreateIssueProvider(providerConfig);
-
-            var epicLabels = new List<string> { AgentLabels.Epic };
-            if (_epicDrawer.SelectedLabels.Count > 0)
-                epicLabels.AddRange(_epicDrawer.SelectedLabels);
-
-            var approvedLabels = new List<string> { AgentLabels.EpicApproved };
-            if (_epicDrawer.SelectedLabels.Count > 0)
-                approvedLabels.AddRange(_epicDrawer.SelectedLabels);
-
-            var epicResult = await provider.ListOpenIssuesAsync(_epicDrawer.Page, 8, epicLabels, CancellationToken.None);
-            var approvedResult = await provider.ListOpenIssuesAsync(_epicDrawer.Page, 8, approvedLabels, CancellationToken.None);
-
-            _epicDrawer.Items = epicResult.Items.Concat(approvedResult.Items)
-                .GroupBy(i => i.Identifier)
-                .Select(g => g.First())
-                .ToList();
-            _epicDrawer.HasMore = epicResult.HasMore || approvedResult.HasMore;
-            return null;
-        }
-        catch (Exception ex) { _epicDrawer.Items.Clear(); return $"Failed to load epics: {ex.Message}"; }
-        finally { _epicDrawer.Loading = false; }
-    }
 
     private async Task<string?> LoadEpicDrawerLabelsAsync(PipelineJobTemplate template)
     {
@@ -624,9 +609,17 @@ public class AgentCodingPageService : IDisposable
             return await DispatchWithOrchestrationAsync(
                 template.Id,
                 project => _dispatchOrchestration.PrepareDecompositionDistributionRequestAsync(
-                    issue.Identifier, issue.Title ?? "", phaseType,
-                    template.IssueProviderId, template.RepoProviderId, template.BrainProviderId,
-                    "manual", project, ct: CancellationToken.None),
+                    new DecompositionDispatchOrchestrationRequest
+                    {
+                        EpicIdentifier = issue.Identifier,
+                        EpicTitle = issue.Title ?? "",
+                        PhaseType = phaseType,
+                        IssueProviderId = template.IssueProviderId,
+                        RepoProviderId = template.RepoProviderId,
+                        BrainProviderId = template.BrainProviderId,
+                        InitiatedBy = InitiatedByManual,
+                        Project = project
+                    }),
                 "Could not dispatch — epic is already being processed or queued, or no agents are available.",
                 $"⏳ Queued epic #{issue.Identifier} for {phaseLabel} — waiting for an idle agent",
                 $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}");
@@ -634,7 +627,7 @@ public class AgentCodingPageService : IDisposable
 
         // Legacy mode
         var minimalRequest = JobDistributionRequest.FromTemplate(
-            template, issue, phaseType, initiatedBy: "manual", timeoutSeconds: 3600,
+            template, issue, phaseType, initiatedBy: InitiatedByManual, timeoutSeconds: 3600,
             projectId: GetParentProject(template.Id)?.Id, projectName: GetParentProject(template.Id)?.Name);
         return await DispatchLegacyAsync(minimalRequest,
             $"✅ Dispatched epic #{issue.Identifier} for {phaseLabel}",
@@ -655,9 +648,9 @@ public class AgentCodingPageService : IDisposable
 
     private void HideOtherDrawers(string keepOpen)
     {
-        if (keepOpen != "issue") _issueDrawer.IsOpen = false;
-        if (keepOpen != "pr") _prDrawer.IsOpen = false;
-        if (keepOpen != "epic") _epicDrawer.IsOpen = false;
+        if (keepOpen != DrawerTabIssue) _issueDrawer.IsOpen = false;
+        if (keepOpen != DrawerTabPr) _prDrawer.IsOpen = false;
+        if (keepOpen != DrawerTabEpic) _epicDrawer.IsOpen = false;
     }
 
     /// <summary>Closes whichever drawer is currently open.</summary>
@@ -674,7 +667,7 @@ public class AgentCodingPageService : IDisposable
     {
         var template = Templates.FirstOrDefault(t => t.Id == templateId);
         if (template == null) return null;
-        HideOtherDrawers("issue");
+        HideOtherDrawers(DrawerTabIssue);
         await RefreshActiveIssuesAsync();
         return await _issueDrawer.OpenAsync(template, notifyStateChanged);
     }
@@ -683,7 +676,7 @@ public class AgentCodingPageService : IDisposable
 
     public Task<string?> SwitchToIssueDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
     {
-        HideOtherDrawers("issue");
+        HideOtherDrawers(DrawerTabIssue);
         return _issueDrawer.SwitchAsync(templateId, notifyStateChanged,
             () => _issueDrawer.Items.Count > 0,
             async (id, ns) =>
@@ -705,7 +698,7 @@ public class AgentCodingPageService : IDisposable
         if (string.IsNullOrEmpty(templateId)) return null;
         var template = Templates.FirstOrDefault(t => t.Id == templateId);
         if (template == null) return null;
-        HideOtherDrawers("pr");
+        HideOtherDrawers(DrawerTabPr);
         return await _prDrawer.OpenAsync(template, notifyStateChanged);
     }
 
@@ -713,7 +706,7 @@ public class AgentCodingPageService : IDisposable
 
     public Task<string?> SwitchToPrDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
     {
-        HideOtherDrawers("pr");
+        HideOtherDrawers(DrawerTabPr);
         return _prDrawer.SwitchAsync(templateId, notifyStateChanged,
             () => _prDrawer.Items.Count > 0,
             async (id, ns) =>
@@ -734,7 +727,7 @@ public class AgentCodingPageService : IDisposable
         if (string.IsNullOrEmpty(templateId)) return null;
         var template = Templates.FirstOrDefault(t => t.Id == templateId);
         if (template == null) return null;
-        HideOtherDrawers("epic");
+        HideOtherDrawers(DrawerTabEpic);
         return await _epicDrawer.OpenAsync(template, notifyStateChanged);
     }
 
@@ -742,7 +735,7 @@ public class AgentCodingPageService : IDisposable
 
     public Task<string?> SwitchToEpicDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
     {
-        HideOtherDrawers("epic");
+        HideOtherDrawers(DrawerTabEpic);
         return _epicDrawer.SwitchAsync(templateId, notifyStateChanged,
             () => _epicDrawer.Items.Count > 0,
             async (id, ns) =>
@@ -819,10 +812,23 @@ public class AgentCodingPageService : IDisposable
     public PipelineProject? GetParentProject(string templateId) =>
         Projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
 
+    private bool _disposed;
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        if (disposing)
+        {
+            _issueDrawer.Dispose();
+            _prDrawer.Dispose();
+            _epicDrawer.Dispose();
+        }
+        _disposed = true;
+    }
+
     public void Dispose()
     {
-        _issueDrawer.Dispose();
-        _prDrawer.Dispose();
-        _epicDrawer.Dispose();
+        Dispose(true);
+        GC.SuppressFinalize(this);
     }
 }

@@ -58,18 +58,20 @@ public class PipelineEnumJsonRoundtripTests
 
     // ── Data source ──────────────────────────────────────────────────────
 
-    public static IEnumerable<object[]> AllPipelineEnumValues()
+    public static TheoryData<Type, object> AllPipelineEnumValues()
     {
+        var data = new TheoryData<Type, object>();
         foreach (var enumType in GetPipelineEnumTypes())
         {
             foreach (var value in Enum.GetValues(enumType))
             {
-                yield return [enumType, value];
+                data.Add(enumType, value);
             }
         }
+        return data;
     }
 
-    private static IReadOnlyList<Type> GetPipelineEnumTypes()
+    private static List<Type> GetPipelineEnumTypes()
     {
         var assembly = typeof(PipelineStep).Assembly;
         return assembly.GetExportedTypes()

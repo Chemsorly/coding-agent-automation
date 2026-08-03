@@ -33,8 +33,9 @@
                             <td>
                                 @if (job.IsConsolidation)
                                 {
-                                    <span class="run-type-badge run-type-consolidation" title="@FormatConsolidationRunType(job.ConsolidationRunType!.Value)">
-                                        <Icon Name="@GetConsolidationTypeIconName(job.ConsolidationRunType!.Value)" Size="14" /> @FormatConsolidationRunTypeShort(job.ConsolidationRunType!.Value)
+                                    var consolidationType = job.ConsolidationRunType.GetValueOrDefault();
+                                    <span class="run-type-badge run-type-consolidation" title="@FormatConsolidationRunType(consolidationType)">
+                                        <Icon Name="@GetConsolidationTypeIconName(consolidationType)" Size="14" /> @FormatConsolidationRunTypeShort(consolidationType)
                                     </span>
                                 }
                                 else if (job.RunType == PipelineRunType.Review)

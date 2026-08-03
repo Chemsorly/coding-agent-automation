@@ -248,6 +248,17 @@ public class DecompositionTemplatePropertyTests
             providerFactory: mockFactory.Object,
             logger: mockLogger.Object);
 
-        return new PipelineLoopService(runCreator, mockFactory.Object, mockStore.Object, mockStore.Object, mockStore.Object, mockLogger.Object, distributor);
+        return new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = runCreator,
+            ProviderFactory = mockFactory.Object,
+            PipelineConfigStore = mockStore.Object,
+            ProviderConfigStore = mockStore.Object,
+            ProjectStore = mockStore.Object,
+            Logger = mockLogger.Object,
+            WorkDistributor = distributor,
+            DispatchOrchestration = null,
+            DependencyChecker = null
+        });
     }
 }

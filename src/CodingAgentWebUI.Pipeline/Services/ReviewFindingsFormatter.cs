@@ -17,7 +17,18 @@ internal static class ReviewFindingsFormatter
         sb.AppendLine("## 🤖 Automated Code Review");
         sb.AppendLine();
 
-        // Render AI-generated summaries before the structured data
+        AppendAiSummaries(sb, run);
+        AppendSeverityTable(sb, run);
+        AppendPerAgentFindings(sb, run);
+        AppendAcceptanceCriteriaSection(sb, run);
+        AppendInlineCommentStatus(sb, run);
+
+        return sb.ToString();
+    }
+
+    /// <summary>Appends AI-generated change and verdict summaries to the output.</summary>
+    private static void AppendAiSummaries(StringBuilder sb, PipelineRun run)
+    {
         var truncatedChange = ReviewSummaryParser.TruncateAtSentenceBoundary(run.CodeReviewChangeSummary);
         if (truncatedChange is not null)
         {
@@ -35,8 +46,11 @@ internal static class ReviewFindingsFormatter
         if (run.CodeReviewAgentsRun.Count > 0)
             sb.AppendLine($"**Review Agents**: {string.Join(", ", run.CodeReviewAgentsRun)}");
         sb.AppendLine();
+    }
 
-        // Summary table
+    /// <summary>Appends the severity summary table (or "No issues found") to the output.</summary>
+    private static void AppendSeverityTable(StringBuilder sb, PipelineRun run)
+    {
         if (run.CodeReviewCriticalCount == 0 && run.CodeReviewWarningCount == 0
             && run.CodeReviewSuggestionCount == 0)
         {
@@ -54,8 +68,11 @@ internal static class ReviewFindingsFormatter
                 sb.AppendLine($"| [SUGGESTION] | {run.CodeReviewSuggestionCount} |");
         }
         sb.AppendLine();
+    }
 
-        // Per-agent findings
+    /// <summary>Appends per-agent findings in collapsible detail blocks.</summary>
+    private static void AppendPerAgentFindings(StringBuilder sb, PipelineRun run)
+    {
         foreach (var kvp in run.CodeReviewAgentFindings)
         {
             if (string.IsNullOrEmpty(kvp.Value)) continue;
@@ -67,32 +84,37 @@ internal static class ReviewFindingsFormatter
             sb.AppendLine("</details>");
             sb.AppendLine();
         }
+    }
 
-        // Acceptance criteria compliance section
-        if (run.AcceptanceCriteriaReport is { Criteria.Count: > 0 } report)
+    /// <summary>Appends the acceptance criteria compliance table if present.</summary>
+    private static void AppendAcceptanceCriteriaSection(StringBuilder sb, PipelineRun run)
+    {
+        if (run.AcceptanceCriteriaReport is not { Criteria.Count: > 0 } report) return;
+
+        sb.AppendLine("### 📋 Acceptance Criteria Compliance");
+        sb.AppendLine();
+        sb.AppendLine("| Status | Criterion | Notes |");
+        sb.AppendLine("|--------|-----------|-------|");
+        foreach (var c in report.Criteria)
         {
-            sb.AppendLine("### 📋 Acceptance Criteria Compliance");
-            sb.AppendLine();
-            sb.AppendLine("| Status | Criterion | Notes |");
-            sb.AppendLine("|--------|-----------|-------|");
-            foreach (var c in report.Criteria)
+            var icon = c.Status switch
             {
-                var icon = c.Status switch
-                {
-                    CriterionStatus.Compliant => "✅",
-                    CriterionStatus.NonCompliant => "❌",
-                    CriterionStatus.NotApplicable => "⚠️",
-                    _ => "❓"
-                };
-                var notes = SanitizeTableCell(c.Evidence ?? c.Reasoning ?? "");
-                sb.AppendLine($"| {icon} | {SanitizeTableCell(c.Criterion)} | {notes} |");
-            }
-            sb.AppendLine();
-            sb.AppendLine($"*{report.Summary}*");
-            sb.AppendLine();
+                CriterionStatus.Compliant => "✅",
+                CriterionStatus.NonCompliant => "❌",
+                CriterionStatus.NotApplicable => "⚠️",
+                _ => "❓"
+            };
+            var notes = SanitizeTableCell(c.Evidence ?? c.Reasoning ?? "");
+            sb.AppendLine($"| {icon} | {SanitizeTableCell(c.Criterion)} | {notes} |");
         }
+        sb.AppendLine();
+        sb.AppendLine($"*{report.Summary}*");
+        sb.AppendLine();
+    }
 
-        // Inline comment status (only when inline comments are active)
+    /// <summary>Appends inline comment count and degradation notices.</summary>
+    private static void AppendInlineCommentStatus(StringBuilder sb, PipelineRun run)
+    {
         if (run.InlineCommentsPosted > 0)
         {
             sb.AppendLine("---");
@@ -100,15 +122,12 @@ internal static class ReviewFindingsFormatter
             sb.AppendLine();
         }
 
-        // Degradation notice (when fallback to body-only occurred)
         if (run.InlineCommentsDegraded)
         {
             var reason = run.InlineCommentsDegradedReason ?? "Unknown reason";
             sb.AppendLine($"⚠️ Inline comments degraded: {reason}. Findings included in body only.");
             sb.AppendLine();
         }
-
-        return sb.ToString();
     }
 
     /// <summary>

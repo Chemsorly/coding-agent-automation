@@ -428,7 +428,7 @@ public class DispatchServiceLifecycleTests : IDisposable
         var workItemId = Guid.NewGuid();
         var enqueueTime = DateTimeOffset.UtcNow.AddHours(-4);
 
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: workItemId.ToString(),
             issueIdentifier: "owner/repo#bug14",
             issueTitle: "BUG-14 test",
@@ -474,7 +474,7 @@ public class DispatchServiceLifecycleTests : IDisposable
         var workItemId = Guid.NewGuid();
         var enqueueTime = DateTimeOffset.UtcNow.AddHours(-4);
 
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: workItemId.ToString(),
             issueIdentifier: "owner/repo#duration",
             issueTitle: "Duration test",
@@ -545,15 +545,17 @@ public class DispatchServiceLifecycleTests : IDisposable
         // Build JobTemplateStore from imageMapping + maxConcurrentPods
         var templateProvider = BuildTemplateProvider(imageMapping, maxConcurrentPods);
 
-        return new DispatchService(_dbFactory, leaderElection ?? _leaderElection, new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
-        {
-            PollIntervalSeconds = 10,
-            RateLimitPerSecond = 100,
-            Namespace = "default",
-            OrchestratorUrl = "http://orchestrator:8080",
-            AgentApiKeySecretName = "agent-api-key",
-            KiroPvcPool = new List<string> { "pvc-test-1", "pvc-test-2" }
-        }), config, templateProvider, runService: runService);
+        return new DispatchService(
+            new DispatchServiceCoreDependencies(_dbFactory, leaderElection ?? _leaderElection, new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+            {
+                PollIntervalSeconds = 10,
+                RateLimitPerSecond = 100,
+                Namespace = "default",
+                OrchestratorUrl = "http://orchestrator:8080",
+                AgentApiKeySecretName = "agent-api-key",
+                KiroPvcPool = new List<string> { "pvc-test-1", "pvc-test-2" }
+            }), RunService: runService),
+            config, templateProvider);
     }
 
     private static JobTemplateStore BuildTemplateProvider(
@@ -581,7 +583,7 @@ public class DispatchServiceLifecycleTests : IDisposable
     // via InternalsVisibleTo, matching the pattern established in DispatchServiceConsolidationTests.
     // The reflection approach is fragile — if PollAndDispatchAsync is renamed, GetMethod returns null
     // and the null-forgiving operator throws NullReferenceException with no clear diagnostic.
-    private async Task InvokePollAndDispatch(DispatchService service)
+    private static async Task InvokePollAndDispatch(DispatchService service)
     {
         var method = typeof(DispatchService).GetMethod("PollAndDispatchAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -589,7 +591,7 @@ public class DispatchServiceLifecycleTests : IDisposable
         await task;
     }
 
-    private async Task InvokeExecuteAsync(DispatchService service, CancellationToken stoppingToken)
+    private static async Task InvokeExecuteAsync(DispatchService service, CancellationToken stoppingToken)
     {
         var method = typeof(BackgroundService).GetMethod("ExecuteAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);

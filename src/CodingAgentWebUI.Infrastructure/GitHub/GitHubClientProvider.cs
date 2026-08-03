@@ -20,7 +20,6 @@ internal class GitHubClientProvider
     private readonly string? _apiUrl;
     private readonly string? _staticToken;
     private readonly Func<CancellationToken, Task<string>>? _tokenProvider;
-    private readonly TimeProvider _timeProvider;
 
     /// <summary>
     /// The API URL used for client construction, or null if a static client was provided.
@@ -31,27 +30,25 @@ internal class GitHubClientProvider
     /// <summary>
     /// Creates a provider with a dynamic token provider (for GitHub App auth via <see cref="Services.GitHubAppAuthService"/>).
     /// </summary>
-    public GitHubClientProvider(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider, TimeProvider? timeProvider = null)
+    public GitHubClientProvider(string apiUrl, Func<CancellationToken, Task<string>> tokenProvider)
     {
         ArgumentNullException.ThrowIfNull(apiUrl);
         ArgumentNullException.ThrowIfNull(tokenProvider);
 
         _apiUrl = apiUrl;
         _tokenProvider = tokenProvider;
-        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>
     /// Creates a provider with a static token (backward compatible).
     /// </summary>
-    public GitHubClientProvider(string apiUrl, string token, TimeProvider? timeProvider = null)
+    public GitHubClientProvider(string apiUrl, string token)
     {
         ArgumentNullException.ThrowIfNull(apiUrl);
         ArgumentNullException.ThrowIfNull(token);
 
         _apiUrl = apiUrl;
         _staticToken = token;
-        _timeProvider = timeProvider ?? TimeProvider.System;
         _staticClient = new GitHubClient(AppProductHeader, new Uri(apiUrl))
         {
             Credentials = new Credentials(token)
@@ -62,13 +59,12 @@ internal class GitHubClientProvider
     /// Creates a provider with a pre-built client for testing.
     /// Optionally accepts a token for providers that need raw token access (e.g., LibGit2Sharp operations).
     /// </summary>
-    public GitHubClientProvider(IGitHubClient staticClient, string? token = null, TimeProvider? timeProvider = null)
+    public GitHubClientProvider(IGitHubClient staticClient, string? token = null)
     {
         ArgumentNullException.ThrowIfNull(staticClient);
 
         _staticClient = staticClient;
         _staticToken = token;
-        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     /// <summary>

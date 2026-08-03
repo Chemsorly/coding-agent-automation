@@ -331,7 +331,9 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         try
         {
             await _signalRPipeline.ExecuteAsync(async token =>
-                await manager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token), CancellationToken.None);
+                await manager.Connection.InvokeAsync(HubMethodNames.RegisterAgent, registration, token),
+                // Fire-and-forget: reconnect event handler has no ambient token; re-registration must proceed
+                CancellationToken.None);
             _logger.Information("Agent {AgentId} re-registered successfully after reconnection", _agentId);
             await DrainBufferAsync();
         }
@@ -412,6 +414,7 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
                         await _signalRPipeline.ExecuteAsync(async token =>
                             await manager.Connection.InvokeAsync(
                                 HubMethodNames.ReportJobCompleted, completed.JobId, completed.Payload, token),
+                            // Fire-and-forget: buffer drain after reconnect has no ambient token; messages must be delivered
                             CancellationToken.None);
                         _logger.Information("Successfully replayed buffered ReportJobCompleted for job {JobId}", completed.JobId);
                         break;

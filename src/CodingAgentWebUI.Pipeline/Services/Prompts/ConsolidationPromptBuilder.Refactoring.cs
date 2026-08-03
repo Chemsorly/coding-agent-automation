@@ -11,12 +11,15 @@ namespace CodingAgentWebUI.Pipeline.Services.Prompts;
 /// </summary>
 public static partial class ConsolidationPromptBuilder
 {
+    private const string JsonCodeFence = "```json";
+    private const string OutputFormatHeading = "## Output Format";
+
     // ─────────────────────────────────────────────────────────────────────
     //  Shared preamble injected at the TOP of every sub-agent prompt.
     //  Exploits primacy bias (arXiv:2307.03172 "lost in the middle").
     // ─────────────────────────────────────────────────────────────────────
 
-    private static string BuildRefactoringSubAgentPreamble() =>
+    private const string RefactoringSubAgentPreamble =
 """
 ## CRITICAL RULES — Read First
 
@@ -85,7 +88,7 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("    \"e.g., 'Agent projects communicate only through interfaces in Pipeline'\"");
         sb.AppendLine("  ]");
         sb.AppendLine("}");
-        sb.AppendLine("```");
+        sb.AppendLine(JsonCodeFence);
         sb.AppendLine();
         sb.AppendLine("## Rules");
         sb.AppendLine();
@@ -111,7 +114,7 @@ public static partial class ConsolidationPromptBuilder
     {
         var sb = new StringBuilder();
 
-        sb.Append(BuildRefactoringSubAgentPreamble());
+        sb.Append(RefactoringSubAgentPreamble);
 
         sb.AppendLine("# Agent A: Structural Debt Detection");
         sb.AppendLine();
@@ -148,11 +151,11 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("4. Then read 5 files NOT in the hotspot list (stable but potentially problematic)");
         sb.AppendLine("5. For duplication detection: when you find a pattern in one file, grep for similar patterns elsewhere");
         sb.AppendLine();
-        sb.AppendLine("## Output Format");
+        sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
         sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringStructuralFindingsFilePath}` as a JSON array:");
         sb.AppendLine();
-        sb.AppendLine("```json");
+        sb.AppendLine(JsonCodeFence);
         sb.AppendLine("[");
         sb.AppendLine("  {");
         sb.AppendLine("    \"title\": \"Short descriptive title\",");
@@ -191,7 +194,7 @@ public static partial class ConsolidationPromptBuilder
     {
         var sb = new StringBuilder();
 
-        sb.Append(BuildRefactoringSubAgentPreamble());
+        sb.Append(RefactoringSubAgentPreamble);
 
         sb.AppendLine("# Agent B: Correctness & Hygiene Detection");
         sb.AppendLine();
@@ -245,11 +248,11 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("2. Check README.md for references to files/features that no longer exist");
         sb.AppendLine("3. Check inline comments that reference specific behavior — verify the behavior still exists");
         sb.AppendLine();
-        sb.AppendLine("## Output Format");
+        sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
         sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringCorrectnessFindingsFilePath}` as a JSON array:");
         sb.AppendLine();
-        sb.AppendLine("```json");
+        sb.AppendLine(JsonCodeFence);
         sb.AppendLine("[");
         sb.AppendLine("  {");
         sb.AppendLine("    \"title\": \"Short descriptive title\",");
@@ -290,7 +293,7 @@ public static partial class ConsolidationPromptBuilder
     {
         var sb = new StringBuilder();
 
-        sb.Append(BuildRefactoringSubAgentPreamble());
+        sb.Append(RefactoringSubAgentPreamble);
 
         sb.AppendLine("# Agent C: Design Consistency Detection");
         sb.AppendLine();
@@ -336,11 +339,11 @@ public static partial class ConsolidationPromptBuilder
         sb.AppendLine("4. Check switch statements over enums — if the same enum is switched over in 4+ locations,");
         sb.AppendLine("   it may be a candidate for polymorphism (but check `intentionalPatterns` first).");
         sb.AppendLine();
-        sb.AppendLine("## Output Format");
+        sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
         sb.AppendLine($"Write findings to `{AgentWorkspacePaths.RefactoringDesignFindingsFilePath}` as a JSON array:");
         sb.AppendLine();
-        sb.AppendLine("```json");
+        sb.AppendLine(JsonCodeFence);
         sb.AppendLine("[");
         sb.AppendLine("  {");
         sb.AppendLine("    \"title\": \"Short descriptive title\",");
@@ -457,11 +460,11 @@ public static partial class ConsolidationPromptBuilder
             sb.AppendLine();
         }
 
-        sb.AppendLine("## Output Format");
+        sb.AppendLine(OutputFormatHeading);
         sb.AppendLine();
         sb.AppendLine($"Produce the final proposals at `{AgentWorkspacePaths.RefactoringProposalsFilePath}` as a JSON array:");
         sb.AppendLine();
-        sb.AppendLine("```json");
+        sb.AppendLine(JsonCodeFence);
         sb.AppendLine("[");
         sb.AppendLine("  {");
         sb.AppendLine("    \"title\": \"Short descriptive title of the refactoring opportunity\",");

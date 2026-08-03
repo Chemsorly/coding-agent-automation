@@ -43,6 +43,20 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         shell: powershell
         run: |
-          ${{ runner.temp }}\scanner\dotnet-sonarscanner begin /k:"Chemsorly_coding-agent-automation" /o:"chemsorly" /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
-          dotnet build
-          ${{ runner.temp }}\scanner\dotnet-sonarscanner end /d:sonar.token="${{ secrets.SONAR_TOKEN }}"
+          ${{ runner.temp }}\scanner\dotnet-sonarscanner begin `
+            /k:"Chemsorly_coding-agent-automation" `
+            /o:"chemsorly" `
+            /d:sonar.token="$env:SONAR_TOKEN" `
+            "/d:sonar.cs.opencover.reportsPaths=**/TestResults/**/coverage.opencover.xml"
+          dotnet build --no-incremental
+          dotnet test `
+            tests/CodingAgentWebUI.Pipeline.UnitTests/ `
+            tests/CodingAgentWebUI.Agent.UnitTests/ `
+            tests/CodingAgentWebUI.Orchestration.UnitTests/ `
+            tests/CodingAgentWebUI.Infrastructure.UnitTests/ `
+            tests/CodingAgentWebUI.UnitTests/ `
+            tests/KiroCliLib.UnitTests/ `
+            --collect:"XPlat Code Coverage" `
+            --results-directory TestResults `
+            -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+          ${{ runner.temp }}\scanner\dotnet-sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"

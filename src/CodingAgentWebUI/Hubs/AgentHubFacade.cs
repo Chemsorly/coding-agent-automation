@@ -32,6 +32,32 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
     private readonly ILogger<AgentHubFacade> _logger;
 
+    public AgentHubFacade(AgentHubFacadeDependencies deps)
+    {
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.Registry, nameof(deps.Registry));
+        ArgumentNullException.ThrowIfNull(deps.RunService, nameof(deps.RunService));
+        ArgumentNullException.ThrowIfNull(deps.Dispatcher, nameof(deps.Dispatcher));
+        ArgumentNullException.ThrowIfNull(deps.DrainService, nameof(deps.DrainService));
+        ArgumentNullException.ThrowIfNull(deps.HistoryService, nameof(deps.HistoryService));
+        ArgumentNullException.ThrowIfNull(deps.ConfigStore, nameof(deps.ConfigStore));
+        ArgumentNullException.ThrowIfNull(deps.ProviderFactory, nameof(deps.ProviderFactory));
+        ArgumentNullException.ThrowIfNull(deps.Logger, nameof(deps.Logger));
+
+        _registry = deps.Registry;
+        _runService = deps.RunService;
+        _dispatcher = deps.Dispatcher;
+        _drainService = deps.DrainService;
+        _historyService = deps.HistoryService;
+        _configStore = deps.ConfigStore;
+        _providerFactory = deps.ProviderFactory;
+        _logger = deps.Logger;
+        _workItemTransition = deps.WorkItemTransition;
+        _pendingDrainService = deps.PendingDrainService;
+        _dbFactory = deps.DbFactory;
+    }
+
+    // Backward-compatible constructor used by DI and existing callers
     public AgentHubFacade(
         IAgentRegistryService registry,
         OrchestratorRunService runService,
@@ -44,27 +70,10 @@ public sealed class AgentHubFacade : IAgentHubFacade
         WorkItemTransitionService? workItemTransition = null,
         PendingWorkItemDrainService? pendingDrainService = null,
         IDbContextFactory<PipelineDbContext>? dbFactory = null)
+        : this(new AgentHubFacadeDependencies(
+            registry, runService, dispatcher, drainService, historyService, configStore,
+            providerFactory, logger, workItemTransition, pendingDrainService, dbFactory))
     {
-        ArgumentNullException.ThrowIfNull(registry);
-        ArgumentNullException.ThrowIfNull(runService);
-        ArgumentNullException.ThrowIfNull(dispatcher);
-        ArgumentNullException.ThrowIfNull(drainService);
-        ArgumentNullException.ThrowIfNull(historyService);
-        ArgumentNullException.ThrowIfNull(configStore);
-        ArgumentNullException.ThrowIfNull(providerFactory);
-        ArgumentNullException.ThrowIfNull(logger);
-
-        _registry = registry;
-        _runService = runService;
-        _dispatcher = dispatcher;
-        _drainService = drainService;
-        _historyService = historyService;
-        _configStore = configStore;
-        _providerFactory = providerFactory;
-        _logger = logger;
-        _workItemTransition = workItemTransition;
-        _pendingDrainService = pendingDrainService;
-        _dbFactory = dbFactory;
     }
 
     // ── Registry operations ─────────────────────────────────────────────
@@ -116,77 +125,14 @@ public sealed class AgentHubFacade : IAgentHubFacade
         {
             try
             {
-                var result = await _workItemTransition.TransitionAsync(workItemId, status, item =>
-                {
-                    if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-                        item.CompletedAt = DateTimeOffset.UtcNow;
-                    if (status == WorkItemStatus.Failed)
-                    {
-                        item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
-                        item.FailureReason ??= failureReason ?? FailureReason.AgentError;
-                    }
-                }, ct);
-
-                if (result)
-                {
-                    _logger.LogInformation(
-                        "WorkItem {WorkItemId} transitioned to {Status}",
-                        workItemId, status);
+                if (await TryDirectTransitionAsync(workItemId, status, errorMessage, failureReason, ct))
                     return;
-                }
 
-                // Transition rejected — likely Dispatched → Succeeded/Cancelled (skipped Running).
-                // Attempt two-step: Dispatched → Running → terminal status.
-                if (status is WorkItemStatus.Succeeded or WorkItemStatus.Cancelled)
-                {
-                    _logger.LogWarning(
-                        "WorkItem {WorkItemId} direct transition to {Status} rejected, attempting two-step via Running",
-                        workItemId, status);
+                if (await TryTwoStepTransitionAsync(workItemId, status, errorMessage, failureReason, ct))
+                    return;
 
-                    var intermediateResult = await _workItemTransition.TransitionAsync(
-                        workItemId, WorkItemStatus.Running, ct: ct);
-
-                    if (intermediateResult)
-                    {
-                        var finalResult = await _workItemTransition.TransitionAsync(workItemId, status, item =>
-                        {
-                            if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-                                item.CompletedAt = DateTimeOffset.UtcNow;
-                        }, ct);
-
-                        if (finalResult)
-                        {
-                            _logger.LogInformation(
-                                "WorkItem {WorkItemId} two-step transition to {Status} succeeded (via Running)",
-                                workItemId, status);
-                            return;
-                        }
-                    }
-                }
-
-                // If we get here, transition was rejected for a non-recoverable reason
-                // (e.g., already terminal). Attempt infrastructure-failure recovery as last resort.
-                if (_workItemTransition is not null)
-                {
-                    var recovered = await _workItemTransition.TryRecoverFromInfrastructureFailureAsync(
-                        workItemId, status, item =>
-                        {
-                            if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
-                                item.CompletedAt = DateTimeOffset.UtcNow;
-                            if (status == WorkItemStatus.Failed)
-                            {
-                                item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
-                                item.FailureReason ??= failureReason ?? FailureReason.AgentError;
-                            }
-                        }, ct);
-                    if (recovered)
-                    {
-                        _logger.LogWarning(
-                            "WorkItem {WorkItemId} recovered from infrastructure-failure Failed to {Status}",
-                            workItemId, status);
-                        return;
-                    }
-                }
+                if (await TryInfrastructureFailureRecoveryAsync(workItemId, status, errorMessage, failureReason, ct))
+                    return;
 
                 _logger.LogWarning(
                     "WorkItem {WorkItemId} transition to {Status} rejected (may already be terminal)",
@@ -207,6 +153,91 @@ public sealed class AgentHubFacade : IAgentHubFacade
         _logger.LogError(
             "WorkItem {WorkItemId} transition to {Status} failed after all retry attempts",
             workItemId, status);
+    }
+
+    private async Task<bool> TryDirectTransitionAsync(
+        Guid workItemId, WorkItemStatus status, string? errorMessage, FailureReason? failureReason, CancellationToken ct)
+    {
+        var result = await _workItemTransition!.TransitionAsync(workItemId, status, item =>
+        {
+            if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+                item.CompletedAt = DateTimeOffset.UtcNow;
+            if (status == WorkItemStatus.Failed)
+            {
+                item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
+                item.FailureReason ??= failureReason ?? FailureReason.AgentError;
+            }
+        }, ct: ct);
+
+        if (result)
+        {
+            _logger.LogInformation(
+                "WorkItem {WorkItemId} transitioned to {Status}",
+                workItemId, status);
+        }
+
+        return result;
+    }
+
+    private async Task<bool> TryTwoStepTransitionAsync(
+        Guid workItemId, WorkItemStatus status, string? errorMessage, FailureReason? failureReason, CancellationToken ct)
+    {
+        // Transition rejected — likely Dispatched → Succeeded/Cancelled (skipped Running).
+        // Attempt two-step: Dispatched → Running → terminal status.
+        if (status is not (WorkItemStatus.Succeeded or WorkItemStatus.Cancelled))
+            return false;
+
+        _logger.LogWarning(
+            "WorkItem {WorkItemId} direct transition to {Status} rejected, attempting two-step via Running",
+            workItemId, status);
+
+        var intermediateResult = await _workItemTransition!.TransitionAsync(
+            workItemId, WorkItemStatus.Running, ct: ct);
+
+        if (!intermediateResult)
+            return false;
+
+        var finalResult = await _workItemTransition.TransitionAsync(workItemId, status, item =>
+        {
+            if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+                item.CompletedAt = DateTimeOffset.UtcNow;
+        }, ct: ct);
+
+        if (finalResult)
+        {
+            _logger.LogInformation(
+                "WorkItem {WorkItemId} two-step transition to {Status} succeeded (via Running)",
+                workItemId, status);
+        }
+
+        return finalResult;
+    }
+
+    private async Task<bool> TryInfrastructureFailureRecoveryAsync(
+        Guid workItemId, WorkItemStatus status, string? errorMessage, FailureReason? failureReason, CancellationToken ct)
+    {
+        // If we get here, transition was rejected for a non-recoverable reason
+        // (e.g., already terminal). Attempt infrastructure-failure recovery as last resort.
+        var recovered = await _workItemTransition!.TryRecoverFromInfrastructureFailureAsync(
+            workItemId, status, item =>
+            {
+                if (status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
+                    item.CompletedAt = DateTimeOffset.UtcNow;
+                if (status == WorkItemStatus.Failed)
+                {
+                    item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
+                    item.FailureReason ??= failureReason ?? FailureReason.AgentError;
+                }
+            }, ct);
+
+        if (recovered)
+        {
+            _logger.LogWarning(
+                "WorkItem {WorkItemId} recovered from infrastructure-failure Failed to {Status}",
+                workItemId, status);
+        }
+
+        return recovered;
     }
 
     /// <inheritdoc />

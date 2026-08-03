@@ -151,6 +151,8 @@
         _resultMessage = null;
     }
 
+    private const long MaxImportFileSizeBytes = 10 * 1024 * 1024; // 10 MB
+
     private async Task ImportAsync()
     {
         if (_selectedFile is null) return;
@@ -161,8 +163,17 @@
 
         try
         {
+            // Reject files exceeding the maximum allowed size before reading any content (S5693)
+            if (_selectedFile.Size > MaxImportFileSizeBytes)
+            {
+                _resultSuccess = false;
+                _resultMessage = $"File too large: {_selectedFile.Size / (1024 * 1024)} MB. Maximum allowed size is 10 MB.";
+                await OnShowStatus.InvokeAsync((_resultMessage, true));
+                return;
+            }
+
             // Read the file content directly (Blazor Server — file streams from browser to server)
-            using var stream = _selectedFile.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            using var stream = _selectedFile.OpenReadStream(maxAllowedSize: MaxImportFileSizeBytes);
 
             var bundle = await JsonSerializer.DeserializeAsync<ConfigBundle>(stream, new JsonSerializerOptions
             {

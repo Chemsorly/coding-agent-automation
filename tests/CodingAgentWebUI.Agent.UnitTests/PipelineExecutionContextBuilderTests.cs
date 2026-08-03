@@ -37,7 +37,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         await _connection.DisposeAsync();
     }
 
-    // TODO: Add a test that invokes the PrContext.CreatePullRequest callback and verifies it delegates
+    // TODO(#1776): Add a test that invokes the PrContext.CreatePullRequest callback and verifies it delegates
     // to PullRequestFinalizationService.RunFullPrCreationAsync to cover the fixed null-dereference path.
     private PipelineExecutionContextBuilder CreateBuilder(
         IBrainUpdateService? brainUpdateService = null,
@@ -328,7 +328,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
     [Fact]
     public async Task Build_EmitOutputLine_DelegatesToReporter()
     {
-        // TODO: This test only asserts no-throw. Verify the reporter actually receives the output
+        // TODO(#1776): This test only asserts no-throw. Verify the reporter actually receives the output
         // line (e.g., via mock verification). Also add a test for the mutable StepContext
         // late-binding pattern: verify that setting StepContext post-Build causes EmitOutputLine
         // to use it for secret masking.
@@ -448,7 +448,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         var act = () => result.LocalCts.Token;
         act.Should().NotThrow();
 
-        // TODO: [WARNING] Tautological assertion — `Should().NotBeNull()` only checks that the
+        // TODO(#1776): [WARNING] Tautological assertion — `Should().NotBeNull()` only checks that the
         // required init property is set and will always pass regardless of disposal state.
         // A meaningful assertion should verify the internal semaphore is still usable via
         // reflection (as done in PipelineExecutionBuildResultTests.DisposeAsync_DisposesReporter).
@@ -605,7 +605,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
 
     // ── CreateStepContext ─────────────────────────────────────────────────
 
-    // TODO: CreateBuilder() does not pass a PullRequestFinalizationService, leaving _finalization null.
+    // TODO(#1776): CreateBuilder() does not pass a PullRequestFinalizationService, leaving _finalization null.
     // Add a test that constructs the builder with a mock finalization service and exercises the
     // CreatePullRequest callback path to cover the moved CreatePullRequestAsync logic.
     [Fact]
@@ -701,7 +701,7 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         ctx.Callbacks.TransitionTo(PipelineStep.AnalyzingCode);
 
         // Assert — the TransitionTo delegate fires through the reporter which updates onStepChanged
-        // TODO: Replace Task.Delay(100) with a proper synchronization primitive (e.g., TaskCompletionSource
+        // TODO(#1776): Replace Task.Delay(100) with a proper synchronization primitive (e.g., TaskCompletionSource
         // or ManualResetEventSlim) to avoid flaky failures on loaded CI runners.
         // Allow a small delay for the fire-and-forget to complete
         await Task.Delay(100);

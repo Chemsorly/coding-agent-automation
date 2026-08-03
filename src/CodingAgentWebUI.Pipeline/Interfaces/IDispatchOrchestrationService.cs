@@ -21,15 +21,7 @@ public interface IDispatchOrchestrationService
     /// </summary>
     /// <returns>The distribution request, or null if orchestration failed.</returns>
     Task<JobDistributionRequest?> PrepareDistributionRequestAsync(
-        string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        string initiatedBy,
-        PipelineProject project,
-        WorkItemTaskType taskType = WorkItemTaskType.Implementation,
-        PipelineRunType runType = PipelineRunType.Implementation,
+        ImplementationDispatchOrchestrationRequest request,
         CancellationToken ct = default);
 
     /// <summary>
@@ -48,15 +40,7 @@ public interface IDispatchOrchestrationService
     /// </summary>
     /// <returns>The distribution request, or null if orchestration failed.</returns>
     Task<JobDistributionRequest?> PrepareDecompositionDistributionRequestAsync(
-        string epicIdentifier,
-        string epicTitle,
-        PipelineRunType phaseType,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string initiatedBy,
-        PipelineProject project,
-        string? decompositionSource = null,
+        DecompositionDispatchOrchestrationRequest request,
         CancellationToken ct = default);
 
     /// <summary>

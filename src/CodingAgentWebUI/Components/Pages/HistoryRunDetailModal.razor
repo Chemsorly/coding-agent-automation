@@ -49,7 +49,7 @@
                     }
                 </div>
                 <div><strong>Duration:</strong> @FormatDuration(Run.StartedAt, Run.CompletedAt)</div>
-                @* TODO: [UX-24] Add AgentProviderConfigId to PipelineRunSummary and resolve display name/type here *@
+                @* TODO(#1774): [UX-24] Add AgentProviderConfigId to PipelineRunSummary and resolve display name/type here *@
                 <div><strong>Agent:</strong> @(Run.AgentId ?? "—")</div>
                 <div><strong>Initiated By:</strong> @Run.InitiatedBy</div>
                 @if (Run.RunType == PipelineRunType.Review)
@@ -64,7 +64,7 @@
                     }
                     @if (Run.CodeReviewCriticalCount > 0 || Run.CodeReviewWarningCount > 0 || Run.CodeReviewSuggestionCount > 0)
                     {
-                        @* TODO: CSS classes text-danger, text-warning, text-info are not defined in app.css — icons will not be colored until these are added (dependency #906) *@
+                        @* TODO(#1774): CSS classes text-danger, text-warning, text-info are not defined in app.css — icons will not be colored until these are added (dependency #906) *@
                         <div><strong>Findings:</strong> <Icon Name="circle" Size="12" Class="text-danger" /> @Run.CodeReviewCriticalCount critical · <Icon Name="circle" Size="12" Class="text-warning" /> @Run.CodeReviewWarningCount warning · <Icon Name="circle" Size="12" Class="text-info" /> @Run.CodeReviewSuggestionCount suggestion</div>
                     }
                     else
@@ -72,12 +72,9 @@
                         <div><strong>Findings:</strong> <Icon Name="check-circle" Size="14" /> No issues found</div>
                     }
                 }
-                @if (Run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
+                @if (Run.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition && Run.DecompositionSubIssuesAttempted > 0)
                 {
-                    @if (Run.DecompositionSubIssuesAttempted > 0)
-                    {
-                        <div><strong>Sub-Issues:</strong> @Run.DecompositionSubIssuesCreated/@Run.DecompositionSubIssuesAttempted created</div>
-                    }
+                    <div><strong>Sub-Issues:</strong> @Run.DecompositionSubIssuesCreated/@Run.DecompositionSubIssuesAttempted created</div>
                 }
                 @if (Run.TotalCost is not null and > 0m)
                 {
@@ -151,12 +148,18 @@
 
     private ElementReference _overlayRef;
 
-    // TODO: Change to `private async Task HandleKeyDown(KeyboardEventArgs e)` and await OnDismiss.InvokeAsync().
-    // Currently fire-and-forget — if the parent callback becomes async and throws, the exception will be unobserved
-    // and Blazor will not re-render the component tree after the async operation completes.
-    private void HandleKeyDown(KeyboardEventArgs e)
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (IsVisible)
+        {
+            try { await _overlayRef.FocusAsync(); }
+            catch { /* overlay may not be mounted yet */ }
+        }
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Escape")
-            OnDismiss.InvokeAsync();
+            await OnDismiss.InvokeAsync();
     }
 }

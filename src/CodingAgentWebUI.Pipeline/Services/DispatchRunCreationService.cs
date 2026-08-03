@@ -51,17 +51,23 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
         _lifecycle.IsIssueBeingProcessed(issueIdentifier, issueProviderConfigId.Value);
 
     /// <inheritdoc />
-    public async Task<PipelineRun?> CreateDispatchedRunAsync(
-        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
-        ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
-        string? brainProviderId = null, string? pipelineProviderId = null,
-        string initiatedBy = "dispatch",
-        PipelineRunType runType = PipelineRunType.Implementation)
+    public async Task<PipelineRun?> CreateDispatchedRunAsync(DispatchRunRequest request, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
-        ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value, nameof(issueProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value, nameof(repoProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(agentProviderId.Value, nameof(agentProviderId));
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.IssueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value, nameof(request.IssueProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value, nameof(request.RepoProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value, nameof(request.AgentProviderId));
+
+        var issueProviderId = request.IssueProviderId;
+        var repoProviderId = request.RepoProviderId;
+        var issueIdentifier = request.IssueIdentifier;
+        var agentProviderId = request.AgentProviderId;
+        var agentId = request.AgentId;
+        var brainProviderId = request.BrainProviderId;
+        var pipelineProviderId = request.PipelineProviderId;
+        var initiatedBy = request.InitiatedBy;
+        var runType = request.RunType;
 
         var compositeKey = $"{issueProviderId.Value}:{issueIdentifier}";
 
@@ -80,8 +86,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
                 return null;
             }
 
-            var run = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
-                issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy, runType, ct);
+            var run = await ResolveAndCreateRunAsync(request, ct);
 
             if (!_lifecycle.RegisterDispatchedRun(run))
                 return null;
@@ -103,16 +108,22 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     }
 
     /// <inheritdoc />
-    public async Task<RunReservation?> ReserveRunIdAsync(
-        ProviderConfigId issueProviderId, ProviderConfigId repoProviderId, string issueIdentifier,
-        ProviderConfigId agentProviderId, string? agentId, CancellationToken ct,
-        string? brainProviderId = null, string? pipelineProviderId = null,
-        string initiatedBy = "dispatch")
+    public async Task<RunReservation?> ReserveRunIdAsync(DispatchRunRequest request, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
-        ArgumentException.ThrowIfNullOrEmpty(issueProviderId.Value, nameof(issueProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(repoProviderId.Value, nameof(repoProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(agentProviderId.Value, nameof(agentProviderId));
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.IssueIdentifier);
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value, nameof(request.IssueProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value, nameof(request.RepoProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value, nameof(request.AgentProviderId));
+
+        var issueProviderId = request.IssueProviderId;
+        var repoProviderId = request.RepoProviderId;
+        var issueIdentifier = request.IssueIdentifier;
+        var agentProviderId = request.AgentProviderId;
+        var agentId = request.AgentId;
+        var brainProviderId = request.BrainProviderId;
+        var pipelineProviderId = request.PipelineProviderId;
+        var initiatedBy = request.InitiatedBy;
 
         var compositeKey = $"{issueProviderId.Value}:{issueIdentifier}";
 
@@ -136,9 +147,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
             // latency from start time matters, move this assignment after the helper call.
             var startedAt = DateTimeOffset.UtcNow;
 
-            var sentinel = await ResolveAndCreateRunAsync(repoProviderId, agentProviderId, issueIdentifier,
-                issueProviderId, agentId, brainProviderId, pipelineProviderId, initiatedBy,
-                PipelineRunType.Implementation, ct);
+            var sentinel = await ResolveAndCreateRunAsync(request with { RunType = PipelineRunType.Implementation }, ct);
 
             if (!_lifecycle.RegisterDispatchedRun(sentinel))
                 return null;
@@ -172,33 +181,60 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     /// Shared by <see cref="CreateDispatchedRunAsync"/> and <see cref="ReserveRunIdAsync"/>.
     /// </summary>
     private async Task<PipelineRun> ResolveAndCreateRunAsync(
-        ProviderConfigId repoProviderId,
-        ProviderConfigId agentProviderId,
-        string issueIdentifier,
-        ProviderConfigId issueProviderId,
-        string? agentId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        string initiatedBy,
-        PipelineRunType runType,
+        DispatchRunRequest request,
         CancellationToken ct)
     {
+        var repoProviderId = request.RepoProviderId;
+        var agentProviderId = request.AgentProviderId;
+        var issueIdentifier = request.IssueIdentifier;
+        var issueProviderId = request.IssueProviderId;
+        var agentId = request.AgentId;
+        var brainProviderId = request.BrainProviderId;
+        var pipelineProviderId = request.PipelineProviderId;
+        var initiatedBy = request.InitiatedBy;
+        var runType = request.RunType;
+
         var repoProviderConfig = await _providerManager.ResolveProviderConfigAsync(repoProviderId.Value, ProviderKind.Repository, ct);
         await using var tempRepoProvider = _providerFactory.CreateRepositoryProvider(repoProviderConfig);
         var agentProviderConfig = await _providerManager.ResolveProviderConfigAsync(agentProviderId.Value, ProviderKind.Agent, ct);
         var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(ProviderSettingKeys.Model, "auto");
 
-        var run = PipelineRun.Create(
-            runId: Guid.NewGuid().ToString(),
-            issueIdentifier: issueIdentifier,
-            issueTitle: string.Empty,
-            issueProviderConfigId: issueProviderId.Value,
-            repoProviderConfigId: repoProviderId.Value,
-            runType: runType,
-            initiatedBy: initiatedBy,
-            agentId: agentId,
-            agentProviderConfigId: agentProviderId.Value,
-            brainProviderConfigId: brainProviderId);
+        var run = runType switch
+        {
+            PipelineRunType.Review => PipelineRun.CreateReview(
+                runId: Guid.NewGuid().ToString(),
+                issueIdentifier: issueIdentifier,
+                issueTitle: string.Empty,
+                issueProviderConfigId: issueProviderId.Value,
+                repoProviderConfigId: repoProviderId.Value,
+                reviewPrBranchName: string.Empty,
+                reviewPrTargetBranch: string.Empty,
+                initiatedBy: initiatedBy,
+                agentId: agentId,
+                agentProviderConfigId: agentProviderId.Value,
+                brainProviderConfigId: brainProviderId),
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
+                runId: Guid.NewGuid().ToString(),
+                issueIdentifier: issueIdentifier,
+                issueTitle: string.Empty,
+                issueProviderConfigId: issueProviderId.Value,
+                repoProviderConfigId: repoProviderId.Value,
+                phaseType: runType,
+                initiatedBy: initiatedBy,
+                agentId: agentId,
+                agentProviderConfigId: agentProviderId.Value,
+                brainProviderConfigId: brainProviderId),
+            _ => PipelineRun.CreateImplementation(
+                runId: Guid.NewGuid().ToString(),
+                issueIdentifier: issueIdentifier,
+                issueTitle: string.Empty,
+                issueProviderConfigId: issueProviderId.Value,
+                repoProviderConfigId: repoProviderId.Value,
+                initiatedBy: initiatedBy,
+                agentId: agentId,
+                agentProviderConfigId: agentProviderId.Value,
+                brainProviderConfigId: brainProviderId)
+        };
         run.RepositoryName = tempRepoProvider.RepositoryFullName;
         run.ModelName = configuredModel;
         run.PipelineProviderConfigId = pipelineProviderId;
@@ -209,17 +245,33 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     // TODO: Add a `bool _disposed` guard to make DisposeAsync idempotent. Currently, double-calling
     // DisposeAsync delegates to _providerManager.DisposeAsync() twice, which attempts to dispose
     // already-disposed provider instances (tolerated but violates the idempotency contract).
-    public async ValueTask DisposeAsync()
+    private bool _disposed;
+
+    protected virtual void Dispose(bool disposing)
     {
-        await _providerManager.DisposeAsync();
-        GC.SuppressFinalize(this);
+        if (_disposed) return;
+        if (disposing)
+        {
+            // Sync-only managed resources: none currently (provider manager is async-disposed).
+            // DisposeAsync() handles _providerManager disposal.
+        }
+        _disposed = true;
     }
 
     public void Dispose()
     {
+        Dispose(true);
         // Do not call DisposeAsync synchronously — .GetAwaiter().GetResult()
         // deadlocks in Blazor Server's SynchronizationContext.
         // DisposeAsync() is the correct disposal path; sync Dispose handles only sync resources.
+        GC.SuppressFinalize(this);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        await _providerManager.DisposeAsync();
         GC.SuppressFinalize(this);
     }
 }

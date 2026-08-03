@@ -167,7 +167,7 @@ public abstract class DbWorkDistributorBase : IWorkDistributor
             workItemId,
             WorkItemStatus.Cancelled,
             item => item.CompletedAt = DateTimeOffset.UtcNow,
-            ct);
+            ct: ct);
     }
 
     // ── Shared: Status Query ──────────────────────────────────────────────

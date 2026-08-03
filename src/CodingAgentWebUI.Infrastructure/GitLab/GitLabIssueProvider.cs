@@ -51,7 +51,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
         }
         catch (GitLabException ex) when ((int)ex.StatusCode == 404)
         {
-            Log.Warning("Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
+            Log.Warning(ex, "Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
             throw new InvalidOperationException(
                 $"Issue with identifier '{identifier}' was not found in project {ProjectId}.", ex);
         }
@@ -146,7 +146,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
         }
         catch (GitLabException ex) when ((int)ex.StatusCode == 404)
         {
-            Log.Warning("Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
+            Log.Warning(ex, "Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
             throw new InvalidOperationException(
                 $"Issue with identifier '{identifier}' was not found in project {ProjectId}.", ex);
         }
@@ -279,7 +279,7 @@ public class GitLabIssueProvider : GitLabProviderBase, IIssueProvider
         }
         catch (GitLabException ex) when ((int)ex.StatusCode == 404)
         {
-            Log.Warning("Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
+            Log.Warning(ex, "Issue with identifier '{Identifier}' not found in project {ProjectId}", identifier, ProjectId);
             throw new InvalidOperationException(
                 $"Issue with identifier '{identifier}' was not found in project {ProjectId}.", ex);
         }

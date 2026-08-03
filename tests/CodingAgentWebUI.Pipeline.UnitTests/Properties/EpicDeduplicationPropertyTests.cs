@@ -68,7 +68,7 @@ public class EpicDeduplicationPropertyTests
             historyService: mockHistoryService.Object,
             runService: runService);
 
-        var dispatcher = new AgentJobDispatcher(
+        var dispatcher = new AgentJobDispatcher(new AgentJobDispatcherDependencies(
             jobService,
             registry,
             runService,
@@ -85,7 +85,7 @@ public class EpicDeduplicationPropertyTests
                     mockLogger.Object)),
             mockAgentComm.Object,
             new ShutdownSignal(),
-            mockLogger.Object);        return (dispatcher, runService, jobService, new List<IDisposable> { orchestration });
+            mockLogger.Object));        return (dispatcher, runService, jobService, new List<IDisposable> { orchestration });
     }
 
     /// <summary>

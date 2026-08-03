@@ -109,10 +109,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     public async Task<AgentResult> ExecuteAsync(AgentRequest request, CancellationToken ct, Action<string>? onOutputLine = null)
     {
         Interlocked.Increment(ref _activeExecutionCount);
-        _sessionStatus = null;
-        _sessionStatusMessage = null;
-        _allSessionsSummary = null;
-        LastOutputTime = DateTime.UtcNow; // Reset so stall monitor measures from this call's start
+        ResetExecutionState();
 
         var sseEmitted = false;
         // NOTE: Per-call local variable for SSE dedup — avoids races with concurrent parallel calls.
@@ -149,137 +146,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             AgentResult result;
             try
             {
-                result = await TimeoutHelper.ExecuteWithTimeoutAsync(
-                    request.Timeout, ct,
-                    async linkedCt =>
-                    {
-                        using var client = CreateDirectoryClientForPath(workspacePath);
-
-                        var parts = new List<MessagePart>
-                        {
-                            new() { Type = "text", Text = request.Prompt }
-                        };
-
-                        // Add image file parts when available
-                        if (request.ImagePaths is { Count: > 0 })
-                        {
-                            foreach (var imagePath in request.ImagePaths)
-                            {
-                                try
-                                {
-                                    byte[] bytes;
-                                    try
-                                    {
-                                        bytes = ImageResizer.DownscaleIfNeeded(imagePath);
-                                    }
-                                    catch
-                                    {
-                                        // Fallback to raw bytes if resizer fails (e.g., NetVips unavailable)
-                                        bytes = File.ReadAllBytes(imagePath);
-                                    }
-                                    var mime = GetMimeFromExtension(Path.GetExtension(imagePath));
-                                    var base64 = Convert.ToBase64String(bytes);
-                                    parts.Add(new MessagePart
-                                    {
-                                        Type = "file",
-                                        Mime = mime,
-                                        Url = $"data:{mime};base64,{base64}",
-                                        Filename = Path.GetFileName(imagePath)
-                                    });
-                                }
-                                catch (Exception ex)
-                                {
-                                    _logger.Warning(ex, "Failed to encode image {Path} as file part", imagePath);
-                                }
-                            }
-                        }
-
-                        var messageRequest = new SendMessageRequest
-                        {
-                            Parts = parts,
-                            Model = null // Model is configured server-side via OPENCODE_CONFIG_CONTENT
-                        };
-
-                        _logger.Debug("POST /session/{SessionId}/message", sessionId);
-                        var response = await client.PostAsJsonAsync(
-                            $"/session/{sessionId}/message", messageRequest, OpenCodeJson.JsonOptions, linkedCt);
-
-                        if (!response.IsSuccessStatusCode)
-                        {
-                            // 404/410: session no longer exists (e.g., opencode server restarted).
-                            // Evict the stale cached session and let the caller retry via the pipeline retry logic.
-                            if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
-                            {
-                                _logger.Warning("Session {SessionId} not found on server (HTTP {Status}) — evicting from cache",
-                                    sessionId, (int)response.StatusCode);
-                                _sessionByWorkspace.TryRemove(workspacePath, out _);
-                                if (_lastKnownSessionId == sessionId)
-                                    _lastKnownSessionId = null;
-                            }
-
-                            var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
-                            return new AgentResult
-                            {
-                                ExitCode = ExitCodes.GeneralFailure,
-                                OutputLines = [$"HTTP {(int)response.StatusCode}: {body[..Math.Min(body.Length, 1000)]}"]
-                            };
-                        }
-
-                        var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
-                        SendMessageResponse? messageResponse;
-                        try
-                        {
-                            messageResponse = JsonSerializer.Deserialize<SendMessageResponse>(json, OpenCodeJson.JsonOptions);
-                        }
-                        catch (JsonException ex)
-                        {
-                            _logger.Debug(ex, "Malformed JSON response: {RawResponse}", json[..Math.Min(json.Length, 500)]);
-                            return new AgentResult
-                            {
-                                ExitCode = ExitCodes.GeneralFailure,
-                                OutputLines = [$"JSON parse error ({ex.GetType().Name}): {json[..Math.Min(json.Length, 500)]}"]
-                            };
-                        }
-
-                        // Extract text parts, concatenate, split into lines
-                        var textParts = messageResponse?.Parts
-                            .Where(p => string.Equals(p.Type, "text", StringComparison.OrdinalIgnoreCase))
-                            .Select(p => p.Text ?? string.Empty)
-                            ?? [];
-                        var combinedText = string.Join("\n", textParts);
-                        var outputLines = combinedText.Split('\n')
-                            .Select(line => StripAnsiEscapes(line))
-                            .ToList();
-
-                        // Dedup: Only emit HTTP response lines to the output callback if
-                        // SSE did not already stream assistant content for this call.
-                        // Use the local `sseEmitted` variable — not the shared _sseEmittedAssistantContent
-                        // which can be set by concurrent parallel calls.
-                        var sseAlreadyEmitted = sseEmitted;
-                        if (onOutputLine is not null && !sseAlreadyEmitted)
-                        {
-                            foreach (var line in outputLines)
-                            {
-                                if (!string.IsNullOrWhiteSpace(line))
-                                    onOutputLine(line);
-                            }
-                        }
-
-                        return new AgentResult
-                        {
-                            ExitCode = ExitCodes.Success,
-                            OutputLines = outputLines
-                        };
-                    },
-                    async () =>
-                    {
-                        await AbortBestEffortAsync(sessionId, workspacePath);
-                        return new AgentResult
-                        {
-                            ExitCode = ExitCodes.Timeout,
-                            OutputLines = ["Execution timed out"]
-                        };
-                    });
+                result = await SendMessageWithTimeoutAsync(
+                    request, sessionId, workspacePath, sseEmitted, onOutputLine, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -313,12 +181,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             }
             finally
             {
-                // Allow a brief window for late-arriving SSE events (e.g., final
-                // message.part.updated) to be processed before tearing down the stream.
-                try { await Task.Delay(500, CancellationToken.None); } catch { }
-                sseCts.Cancel();
-                try { await sseTask.ConfigureAwait(false); } catch { /* expected cancellation */ }
-                sseCts.Dispose();
+                await TearDownSseAsync(sseCts, sseTask);
             }
 
             // Capture token usage delta on all paths (success, timeout, error)
@@ -335,11 +198,205 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         {
             Interlocked.Decrement(ref _activeExecutionCount);
             // Stop polling
-            try { pollCts.Cancel(); } catch { }
+            try { await pollCts.CancelAsync(); } catch { }
             try { await pollTask.ConfigureAwait(false); } catch { }
             pollCts.Dispose();
             _sessionStatusPollCts = null;
         }
+    }
+
+    /// <summary>Resets per-call state before execution begins.</summary>
+    private void ResetExecutionState()
+    {
+        _sessionStatus = null;
+        _sessionStatusMessage = null;
+        _allSessionsSummary = null;
+        LastOutputTime = DateTime.UtcNow; // Reset so stall monitor measures from this call's start
+    }
+
+    /// <summary>
+    /// Tears down the SSE reader by waiting briefly for late-arriving events,
+    /// then cancelling and awaiting the reader task.
+    /// </summary>
+    private static async Task TearDownSseAsync(CancellationTokenSource sseCts, Task sseTask)
+    {
+        // Allow a brief window for late-arriving SSE events (e.g., final
+        // message.part.updated) to be processed before tearing down the stream.
+        try { await Task.Delay(500, CancellationToken.None); } catch { }
+        await sseCts.CancelAsync();
+        try { await sseTask.ConfigureAwait(false); } catch { /* expected cancellation */ }
+        sseCts.Dispose();
+    }
+
+    /// <summary>
+    /// Sends the agent message with timeout enforcement and returns the result.
+    /// Builds message parts (text + optional images), posts to the session, and
+    /// processes the response. On timeout, aborts the session best-effort.
+    /// </summary>
+    private async Task<AgentResult> SendMessageWithTimeoutAsync(
+        AgentRequest request,
+        string sessionId,
+        string workspacePath,
+        bool sseEmitted,
+        Action<string>? onOutputLine,
+        CancellationToken ct)
+    {
+        return await TimeoutHelper.ExecuteWithTimeoutAsync(
+            request.Timeout, ct,
+            async linkedCt =>
+            {
+                using var client = CreateDirectoryClientForPath(workspacePath);
+
+                var parts = BuildTextPart(request.Prompt);
+                await AppendImagePartsAsync(parts, request.ImagePaths, linkedCt);
+
+                var messageRequest = new SendMessageRequest
+                {
+                    Parts = parts,
+                    Model = null // Model is configured server-side via OPENCODE_CONFIG_CONTENT
+                };
+
+                _logger.Debug("POST /session/{SessionId}/message", sessionId);
+                var response = await client.PostAsJsonAsync(
+                    $"/session/{sessionId}/message", messageRequest, OpenCodeJson.JsonOptions, linkedCt);
+
+                if (!response.IsSuccessStatusCode)
+                    return await HandleHttpErrorResponseAsync(response, sessionId, workspacePath);
+
+                return await ParseAndEmitResponseAsync(response, sseEmitted, onOutputLine);
+            },
+            async () =>
+            {
+                await AbortBestEffortAsync(sessionId, workspacePath);
+                return new AgentResult
+                {
+                    ExitCode = ExitCodes.Timeout,
+                    OutputLines = ["Execution timed out"]
+                };
+            });
+    }
+
+    /// <summary>Builds the initial message parts list containing only the text prompt.</summary>
+    private static List<MessagePart> BuildTextPart(string prompt)
+        => [new() { Type = "text", Text = prompt }];
+
+    /// <summary>
+    /// Appends image file parts to an existing parts list.
+    /// Failures per image are logged and skipped; processing continues with remaining images.
+    /// </summary>
+    private async Task AppendImagePartsAsync(List<MessagePart> parts, IReadOnlyList<string>? imagePaths, CancellationToken ct)
+    {
+        if (imagePaths is not { Count: > 0 })
+            return;
+
+        foreach (var imagePath in imagePaths)
+        {
+            try
+            {
+                byte[] bytes;
+                try
+                {
+                    bytes = ImageResizer.DownscaleIfNeeded(imagePath);
+                }
+                catch
+                {
+                    // Fallback to raw bytes if resizer fails (e.g., NetVips unavailable)
+                    bytes = await File.ReadAllBytesAsync(imagePath, ct);
+                }
+                var mime = GetMimeFromExtension(Path.GetExtension(imagePath));
+                var base64 = Convert.ToBase64String(bytes);
+                parts.Add(new MessagePart
+                {
+                    Type = "file",
+                    Mime = mime,
+                    Url = $"data:{mime};base64,{base64}",
+                    Filename = Path.GetFileName(imagePath)
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex, "Failed to encode image {Path} as file part", imagePath);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Handles a non-success HTTP response from the message endpoint.
+    /// Evicts stale cached sessions on 404/410 and returns a failure result.
+    /// </summary>
+    private async Task<AgentResult> HandleHttpErrorResponseAsync(
+        HttpResponseMessage response, string sessionId, string workspacePath)
+    {
+        // 404/410: session no longer exists (e.g., opencode server restarted).
+        // Evict the stale cached session and let the caller retry via the pipeline retry logic.
+        if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone)
+        {
+            _logger.Warning("Session {SessionId} not found on server (HTTP {Status}) — evicting from cache",
+                sessionId, (int)response.StatusCode);
+            _sessionByWorkspace.TryRemove(workspacePath, out _);
+            if (_lastKnownSessionId == sessionId)
+                _lastKnownSessionId = null;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(CancellationToken.None);
+        return new AgentResult
+        {
+            ExitCode = ExitCodes.GeneralFailure,
+            OutputLines = [$"HTTP {(int)response.StatusCode}: {body[..Math.Min(body.Length, 1000)]}"]
+        };
+    }
+
+    /// <summary>
+    /// Reads and parses the message HTTP response, emitting output lines if SSE did not
+    /// already stream the assistant content for this call.
+    /// </summary>
+    private async Task<AgentResult> ParseAndEmitResponseAsync(
+        HttpResponseMessage response, bool sseEmitted, Action<string>? onOutputLine)
+    {
+        var json = await response.Content.ReadAsStringAsync(CancellationToken.None);
+        SendMessageResponse? messageResponse;
+        try
+        {
+            messageResponse = JsonSerializer.Deserialize<SendMessageResponse>(json, OpenCodeJson.JsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            _logger.Debug(ex, "Malformed JSON response: {RawResponse}", json[..Math.Min(json.Length, 500)]);
+            return new AgentResult
+            {
+                ExitCode = ExitCodes.GeneralFailure,
+                OutputLines = [$"JSON parse error ({ex.GetType().Name}): {json[..Math.Min(json.Length, 500)]}"]
+            };
+        }
+
+        // Extract text parts, concatenate, split into lines
+        var textParts = messageResponse?.Parts
+            .Where(p => string.Equals(p.Type, "text", StringComparison.OrdinalIgnoreCase))
+            .Select(p => p.Text ?? string.Empty)
+            ?? [];
+        var combinedText = string.Join("\n", textParts);
+        var outputLines = combinedText.Split('\n')
+            .Select(line => StripAnsiEscapes(line))
+            .ToList();
+
+        // Dedup: Only emit HTTP response lines to the output callback if
+        // SSE did not already stream assistant content for this call.
+        // Use the local `sseEmitted` variable — not the shared _sseEmittedAssistantContent
+        // which can be set by concurrent parallel calls.
+        if (onOutputLine is not null && !sseEmitted)
+        {
+            foreach (var line in outputLines)
+            {
+                if (!string.IsNullOrWhiteSpace(line))
+                    onOutputLine(line);
+            }
+        }
+
+        return new AgentResult
+        {
+            ExitCode = ExitCodes.Success,
+            OutputLines = outputLines
+        };
     }
 
     public async Task KillAsync()
@@ -661,7 +718,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             }
             catch
             {
-                // Best-effort — don't fail the execution over diagnostic polling
+                // Intentional: diagnostic polling is best-effort; failures must not affect agent execution.
             }
 
             try { await Task.Delay(10_000, ct); } catch (OperationCanceledException) { break; }
@@ -805,63 +862,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 // session.diff, message.updated) are excluded so the stall monitor can
                 // detect extended LLM thinking/reasoning phases where no visible output
                 // is being produced.
-                switch (sseEvent.Type)
-                {
-                    case "message.part.updated":
-                        LastOutputTime = DateTime.UtcNow;
-                        onSseEmitted?.Invoke(true);
-                        onOutputLine?.Invoke(StripAnsiEscapes($"[assistant] {sseEvent.Part?.Text}"));
-                        break;
-
-                    case "tool.execute.before":
-                        LastOutputTime = DateTime.UtcNow;
-                        onOutputLine?.Invoke(StripAnsiEscapes($"[tool_call] {sseEvent.ToolName} {sseEvent.ToolArgs}"));
-                        break;
-
-                    case "tool.execute.after":
-                        LastOutputTime = DateTime.UtcNow;
-                        onOutputLine?.Invoke(StripAnsiEscapes($"[tool_result] {sseEvent.ToolResult}"));
-                        break;
-
-                    case "permission.updated":
-                        LastOutputTime = DateTime.UtcNow;
-                        await AutoApprovePermissionAsync(sessionId, sseEvent.PermissionId, ct, workspacePath);
-                        break;
-
-                    case "session.idle":
-                        // Signal completion — informational only, sync message response is primary
-                        _sessionStatus = "idle";
-                        _sessionStatusMessage = null;
-                        break;
-
-                    case "session.status":
-                        // Track session status for health reporting.
-                        // The "retry" status indicates an LLM provider error with details.
-                        if (sseEvent.Status is not null)
-                        {
-                            _sessionStatus = sseEvent.Status.Type;
-                            if (string.Equals(sseEvent.Status.Type, "retry", StringComparison.OrdinalIgnoreCase))
-                            {
-                                var retryMsg = sseEvent.Status.Message ?? "unknown error";
-                                var provider = sseEvent.Status.Action?.Provider;
-                                _sessionStatusMessage = provider is not null
-                                    ? $"[{provider}] attempt {sseEvent.Status.Attempt}: {retryMsg}"
-                                    : $"attempt {sseEvent.Status.Attempt}: {retryMsg}";
-                                _logger.Warning("Session {SessionId} retry status: {Message}", sessionId, _sessionStatusMessage);
-                                onOutputLine?.Invoke(StripAnsiEscapes($"[session.status] retry — {_sessionStatusMessage}"));
-                            }
-                            else
-                            {
-                                _sessionStatusMessage = null;
-                            }
-                        }
-                        break;
-
-                    default:
-                        // Discard metadata events (session.status, session.updated,
-                        // session.diff, message.updated, etc.)
-                        break;
-                }
+                await ProcessSseEventAsync(sseEvent, sessionId, onOutputLine, onSseEmitted, ct, workspacePath);
             }
         }
         catch (OperationCanceledException)
@@ -871,6 +872,83 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         catch (Exception ex)
         {
             _logger.Warning(ex, "SSE stream disconnected unexpectedly");
+        }
+    }
+
+    /// <summary>
+    /// Routes a single SSE event to the appropriate handler based on its type.
+    /// Updates LastOutputTime only for events that represent meaningful agent progress.
+    /// </summary>
+    private async Task ProcessSseEventAsync(
+        SseEvent sseEvent,
+        string sessionId,
+        Action<string>? onOutputLine,
+        Action<bool>? onSseEmitted,
+        CancellationToken ct,
+        string? workspacePath)
+    {
+        switch (sseEvent.Type)
+        {
+            case "message.part.updated":
+                LastOutputTime = DateTime.UtcNow;
+                onSseEmitted?.Invoke(true);
+                onOutputLine?.Invoke(StripAnsiEscapes($"[assistant] {sseEvent.Part?.Text}"));
+                break;
+
+            case "tool.execute.before":
+                LastOutputTime = DateTime.UtcNow;
+                onOutputLine?.Invoke(StripAnsiEscapes($"[tool_call] {sseEvent.ToolName} {sseEvent.ToolArgs}"));
+                break;
+
+            case "tool.execute.after":
+                LastOutputTime = DateTime.UtcNow;
+                onOutputLine?.Invoke(StripAnsiEscapes($"[tool_result] {sseEvent.ToolResult}"));
+                break;
+
+            case "permission.updated":
+                LastOutputTime = DateTime.UtcNow;
+                await AutoApprovePermissionAsync(sessionId, sseEvent.PermissionId, ct, workspacePath);
+                break;
+
+            case "session.idle":
+                // Signal completion — informational only, sync message response is primary
+                _sessionStatus = "idle";
+                _sessionStatusMessage = null;
+                break;
+
+            case "session.status":
+                HandleSessionStatusEvent(sseEvent, sessionId, onOutputLine);
+                break;
+
+            default:
+                // Discard metadata events (session.updated, session.diff, message.updated, etc.)
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Handles session.status SSE events by updating session status fields and
+    /// logging/emitting retry details when the provider indicates a retry.
+    /// </summary>
+    private void HandleSessionStatusEvent(SseEvent sseEvent, string sessionId, Action<string>? onOutputLine)
+    {
+        if (sseEvent.Status is null)
+            return;
+
+        _sessionStatus = sseEvent.Status.Type;
+        if (string.Equals(sseEvent.Status.Type, "retry", StringComparison.OrdinalIgnoreCase))
+        {
+            var retryMsg = sseEvent.Status.Message ?? "unknown error";
+            var provider = sseEvent.Status.Action?.Provider;
+            _sessionStatusMessage = provider is not null
+                ? $"[{provider}] attempt {sseEvent.Status.Attempt}: {retryMsg}"
+                : $"attempt {sseEvent.Status.Attempt}: {retryMsg}";
+            _logger.Warning("Session {SessionId} retry status: {Message}", sessionId, _sessionStatusMessage);
+            onOutputLine?.Invoke(StripAnsiEscapes($"[session.status] retry — {_sessionStatusMessage}"));
+        }
+        else
+        {
+            _sessionStatusMessage = null;
         }
     }
 

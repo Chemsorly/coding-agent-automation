@@ -23,30 +23,19 @@ internal sealed class ImplementationDispatchPreparation : IDispatchPreparationHa
     private readonly string _initiatedBy;
     private readonly IReadOnlyList<string> _requiredLabels;
 
-    public ImplementationDispatchPreparation(
-        DispatchInfrastructure infra,
-        IDispatchRunCreator orchestration,
-        ILogger logger,
-        AgentEntry agent,
-        string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        string initiatedBy,
-        IReadOnlyList<string> requiredLabels)
+    public ImplementationDispatchPreparation(ImplementationDispatchRequest request)
     {
-        _infra = infra;
-        _orchestration = orchestration;
-        _logger = logger;
-        _agent = agent;
-        _issueIdentifier = issueIdentifier;
-        _issueProviderId = issueProviderId;
-        _repoProviderId = repoProviderId;
-        _brainProviderId = brainProviderId;
-        _pipelineProviderId = pipelineProviderId;
-        _initiatedBy = initiatedBy;
-        _requiredLabels = requiredLabels;
+        _infra = request.Infra;
+        _orchestration = request.Orchestration;
+        _logger = request.Logger;
+        _agent = request.Agent;
+        _issueIdentifier = request.IssueIdentifier;
+        _issueProviderId = request.IssueProviderId;
+        _repoProviderId = request.RepoProviderId;
+        _brainProviderId = request.BrainProviderId;
+        _pipelineProviderId = request.PipelineProviderId;
+        _initiatedBy = request.InitiatedBy;
+        _requiredLabels = request.RequiredLabels;
     }
 
     public async Task<AgentJobDispatcher.DispatchPipelineResult?> PrepareAsync(
@@ -57,9 +46,11 @@ internal sealed class ImplementationDispatchPreparation : IDispatchPreparationHa
     {
         // Shared dispatch preparation: QG/reviewer resolution, issue context, config, staleness
         var preparation = await _infra.PrepareDispatchCoreAsync(
-            _requiredLabels, _issueIdentifier, _issueProviderId,
-            _repoProviderId, agentProviderId, _brainProviderId, _pipelineProviderId,
-            project, _logger, ct);
+            new DispatchCoreRequest(
+                _requiredLabels, _issueIdentifier, _issueProviderId,
+                _repoProviderId, agentProviderId, _brainProviderId, _pipelineProviderId,
+                project, _logger),
+            ct);
         if (preparation is null) return null;
 
         var (resolvedQgcs, resolvedReviewerConfigs, issueContext, providerConfigs, config,
@@ -67,9 +58,17 @@ internal sealed class ImplementationDispatchPreparation : IDispatchPreparationHa
 
         // Create the dispatched run via PipelineOrchestrationService
         var run = await _orchestration.CreateDispatchedRunAsync(
-            _issueProviderId, _repoProviderId, _issueIdentifier,
-            agentProviderId, _agent.AgentId, ct,
-            _brainProviderId, _pipelineProviderId, _initiatedBy);
+            new DispatchRunRequest
+            {
+                IssueProviderId = _issueProviderId,
+                RepoProviderId = _repoProviderId,
+                IssueIdentifier = _issueIdentifier,
+                AgentProviderId = agentProviderId,
+                AgentId = _agent.AgentId,
+                BrainProviderId = _brainProviderId,
+                PipelineProviderId = _pipelineProviderId,
+                InitiatedBy = _initiatedBy
+            }, ct);
 
         if (run == null)
         {

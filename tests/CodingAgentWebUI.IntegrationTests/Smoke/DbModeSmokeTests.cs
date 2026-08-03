@@ -35,8 +35,9 @@ public class DbModeSmokeTests : IClassFixture<DbModeWebApplicationFactory>
     [Fact]
     public void App_Starts_In_DbMode_Without_Throwing()
     {
-        // If DI is broken, this throws during host build
-        using var client = _factory.CreateClient();
+        // Explicit assertion: factory must start without throwing (DI wiring is valid)
+        var exception = Record.Exception(() => _factory.CreateClient());
+        Assert.Null(exception);
     }
 
     [Fact]

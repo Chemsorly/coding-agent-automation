@@ -65,22 +65,7 @@ public class PipelineStepContextFactoryTests
     public void ForOrchestrator_SetsAllSharedProperties_Correctly()
     {
         var ctx = PipelineStepContext.ForOrchestrator(
-            run: _run,
-            config: _config,
-            repoProvider: _repoProvider.Object,
-            agentProvider: _agentProvider.Object,
-            brainProvider: _brainProvider.Object,
-            pipelineProvider: _pipelineProvider.Object,
-            cts: _cts,
-            configStore: _configStore.Object,
-            callbacks: _callbacks.Object,
-            issueOps: _issueOps.Object,
-            agentExecution: _agentExecution.Object,
-            qualityGates: _qualityGates.Object,
-            brainSync: _brainSync.Object,
-            prOrchestrator: _prOrchestrator,
-            logger: _logger,
-            qualityGateValidator: _qualityGateValidator.Object,
+            services: BuildServices(),
             issueProvider: _issueProvider.Object);
 
         ctx.Run.Should().BeSameAs(_run);
@@ -224,24 +209,30 @@ public class PipelineStepContextFactoryTests
     // Helpers
     // ──────────────────────────────────────────────────────────────────────────
 
+    private PipelineStepContextServices BuildServices() =>
+        new()
+        {
+            Run = _run,
+            Config = _config,
+            RepoProvider = _repoProvider.Object,
+            AgentProvider = _agentProvider.Object,
+            BrainProvider = _brainProvider.Object,
+            PipelineProvider = _pipelineProvider.Object,
+            Cts = _cts,
+            ConfigStore = _configStore.Object,
+            Callbacks = _callbacks.Object,
+            IssueOps = _issueOps.Object,
+            AgentExecution = _agentExecution.Object,
+            QualityGates = _qualityGates.Object,
+            BrainSync = _brainSync.Object,
+            PrOrchestrator = _prOrchestrator,
+            Logger = _logger,
+            QualityGateValidator = _qualityGateValidator.Object
+        };
+
     private PipelineStepContext BuildOrchestratorContext() =>
         PipelineStepContext.ForOrchestrator(
-            run: _run,
-            config: _config,
-            repoProvider: _repoProvider.Object,
-            agentProvider: _agentProvider.Object,
-            brainProvider: _brainProvider.Object,
-            pipelineProvider: _pipelineProvider.Object,
-            cts: _cts,
-            configStore: _configStore.Object,
-            callbacks: _callbacks.Object,
-            issueOps: _issueOps.Object,
-            agentExecution: _agentExecution.Object,
-            qualityGates: _qualityGates.Object,
-            brainSync: _brainSync.Object,
-            prOrchestrator: _prOrchestrator,
-            logger: _logger,
-            qualityGateValidator: _qualityGateValidator.Object,
+            services: BuildServices(),
             issueProvider: _issueProvider.Object);
 
     private PipelineStepContext BuildAgentContext(
@@ -252,22 +243,7 @@ public class PipelineStepContextFactoryTests
         IReadOnlyList<QualityGateConfiguration>? preResolvedQualityGateConfigs = null,
         DecompositionProjectContext? projectContext = null) =>
         PipelineStepContext.ForAgent(
-            run: _run,
-            config: _config,
-            repoProvider: _repoProvider.Object,
-            agentProvider: _agentProvider.Object,
-            brainProvider: _brainProvider.Object,
-            pipelineProvider: _pipelineProvider.Object,
-            cts: _cts,
-            configStore: _configStore.Object,
-            callbacks: _callbacks.Object,
-            issueOps: _issueOps.Object,
-            agentExecution: _agentExecution.Object,
-            qualityGates: _qualityGates.Object,
-            brainSync: _brainSync.Object,
-            prOrchestrator: _prOrchestrator,
-            logger: _logger,
-            qualityGateValidator: _qualityGateValidator.Object,
+            services: BuildServices(),
             issue: issue,
             parsedIssue: parsedIssue,
             issueComments: issueComments,

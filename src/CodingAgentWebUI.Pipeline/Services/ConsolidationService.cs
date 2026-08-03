@@ -36,30 +36,23 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
     }
 
     public ConsolidationService(
-        ILogger logger,
-        PipelineConfiguration config,
-        IProjectStore projectStore,
-        IPipelineRunHistoryService runHistoryService,
-        IConsolidationRunStore runStore,
-        IHarnessSuggestionStore harnessSuggestionStore,
-        IConsolidationDispatchService? dispatcher = null,
-        IConsolidationWorkspaceManager? workspaceManager = null,
-        IConsolidationFeedbackCache? feedbackCache = null)
+        ConsolidationServiceDependencies deps)
     {
-        ArgumentNullException.ThrowIfNull(logger);
-        ArgumentNullException.ThrowIfNull(config);
-        ArgumentNullException.ThrowIfNull(projectStore);
-        ArgumentNullException.ThrowIfNull(runHistoryService);
-        ArgumentNullException.ThrowIfNull(runStore);
-        ArgumentNullException.ThrowIfNull(harnessSuggestionStore);
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
+        ArgumentNullException.ThrowIfNull(deps.Config);
+        ArgumentNullException.ThrowIfNull(deps.ProjectStore);
+        ArgumentNullException.ThrowIfNull(deps.RunHistoryService);
+        ArgumentNullException.ThrowIfNull(deps.RunStore);
+        ArgumentNullException.ThrowIfNull(deps.HarnessSuggestionStore);
 
-        _logger = logger;
-        _runStore = runStore;
-        _harnessSuggestionStore = harnessSuggestionStore;
-        _dispatcher = dispatcher;
-        _workspaceManager = workspaceManager ?? new ConsolidationWorkspaceManager(logger, config);
-        _feedbackCache = feedbackCache ?? new ConsolidationFeedbackCache(logger, runStore, runHistoryService);
-        _templateResolver = new ConsolidationTemplateResolver(projectStore);
+        _logger = deps.Logger;
+        _runStore = deps.RunStore;
+        _harnessSuggestionStore = deps.HarnessSuggestionStore;
+        _dispatcher = deps.Dispatcher;
+        _workspaceManager = deps.WorkspaceManager ?? new ConsolidationWorkspaceManager(deps.Logger, deps.Config);
+        _feedbackCache = deps.FeedbackCache ?? new ConsolidationFeedbackCache(deps.Logger, deps.RunStore, deps.RunHistoryService);
+        _templateResolver = new ConsolidationTemplateResolver(deps.ProjectStore);
     }
 
     /// <inheritdoc />
@@ -207,9 +200,10 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             _feedbackCache.ClearFeedbackDataForRun(run.RunId);
             return DispatchOutcome.Success;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            _logger.Error(ex, "Consolidation run {RunId} dispatch failed with exception for {Type}/{TemplateName}", run.RunId, type, templateName);
+            // Exception is propagated to the caller (TriggerAsync); logging here would cause
+            // duplicate log entries. Cleanup is done before rethrowing.
             _runningRuns.TryRemove(key, out _);
             DeletePersistedRun(run.RunId);
             _feedbackCache.ClearFeedbackDataForRun(run.RunId);

@@ -21,6 +21,11 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// </summary>
 public class WorkItemEndpointsTests : IDisposable
 {
+    private static readonly JsonSerializerOptions WebOptionsWithEnumConverter = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
     private readonly DbContextOptions<PipelineDbContext> _dbOptions;
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<IOrchestratorRunService> _runService;
@@ -341,10 +346,7 @@ public class WorkItemEndpointsTests : IDisposable
         var agentJson = """{"status": "Running", "agentId": "caa-pod-xyz"}""";
 
         // Use the same options the host configures via ConfigureHttpJsonOptions
-        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-        options.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
-
-        var request = JsonSerializer.Deserialize<WorkItemStatusRequest>(agentJson, options);
+        var request = JsonSerializer.Deserialize<WorkItemStatusRequest>(agentJson, WebOptionsWithEnumConverter);
 
         request.Should().NotBeNull();
         request!.Status.Should().Be(WorkItemStatus.Running);
@@ -360,10 +362,7 @@ public class WorkItemEndpointsTests : IDisposable
     {
         var json = $$"""{"status": "{{statusString}}", "agentId": "test"}""";
 
-        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
-        options.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
-
-        var request = JsonSerializer.Deserialize<WorkItemStatusRequest>(json, options);
+        var request = JsonSerializer.Deserialize<WorkItemStatusRequest>(json, WebOptionsWithEnumConverter);
 
         request.Should().NotBeNull();
         request!.Status.Should().Be(expected);

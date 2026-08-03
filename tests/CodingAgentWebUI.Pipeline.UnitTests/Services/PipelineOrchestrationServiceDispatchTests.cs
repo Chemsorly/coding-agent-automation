@@ -82,8 +82,16 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
     {
         // Act
         var run = await _service.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "42", "agent-1", "agent-container-1", CancellationToken.None,
-            initiatedBy: "closed-loop");
+            new DispatchRunRequest
+            {
+                IssueProviderId = "issue-1",
+                RepoProviderId = "repo-1",
+                IssueIdentifier = "42",
+                AgentProviderId = "agent-1",
+                AgentId = "agent-container-1",
+                InitiatedBy = "closed-loop"
+            },
+            CancellationToken.None);
 
         // Assert
         run.Should().NotBeNull();
@@ -106,7 +114,8 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
 
         // Act
         var run = await _service.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "42", "agent-1", "agent-container-1", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-container-1" },
+            CancellationToken.None);
 
         // Assert
         run.Should().BeNull();
@@ -117,7 +126,9 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
     {
         // Act & Assert
         await Assert.ThrowsAsync<ArgumentNullException>(() =>
-            _service.CreateDispatchedRunAsync("issue-1", "repo-1", null!, "agent-1", "agent-container-1", CancellationToken.None));
+            _service.CreateDispatchedRunAsync(
+                new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = null!, AgentProviderId = "agent-1", AgentId = "agent-container-1" },
+                CancellationToken.None));
     }
 
     [Fact]
@@ -125,7 +136,8 @@ public class PipelineOrchestrationServiceDispatchTests : IAsyncDisposable
     {
         // Act — null agentId is valid (used during dispatch window before agent resolution)
         var run = await _service.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "42", "agent-1", null, CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = null },
+            CancellationToken.None);
 
         // Assert
         run.Should().NotBeNull();

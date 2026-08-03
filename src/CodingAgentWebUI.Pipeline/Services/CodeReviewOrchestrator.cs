@@ -238,12 +238,19 @@ internal class CodeReviewOrchestrator
         _logger.Debug("Pipeline {RunId} fix prompt (iteration {Iteration}):\n{Prompt}", run.RunId, iterationIndex + 1, fixPrompt);
 
         await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
-            context.AgentProvider, fixPrompt, run, config,
-            $"Code review fix agent (iteration {iterationIndex + 1})",
-            context.Callbacks, _logger, ct,
+            new AgentExecutionRequest
+            {
+                AgentProvider = context.AgentProvider,
+                Prompt = fixPrompt,
+                Run = run,
+                Config = config,
+                Description = $"Code review fix agent (iteration {iterationIndex + 1})",
+                Logger = _logger,
+                Phase = "fix"
+            },
+            context.Callbacks, ct,
             recordOutputToHistory: false,
-            resumeSessionId: run.CodegenSessionId,
-            phase: "fix");
+            resumeSessionId: run.CodegenSessionId);
 
         run.ChatHistory.Enqueue(new ChatEntry
         {

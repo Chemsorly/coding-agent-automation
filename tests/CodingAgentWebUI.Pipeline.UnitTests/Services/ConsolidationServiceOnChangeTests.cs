@@ -38,16 +38,16 @@ public sealed class ConsolidationServiceOnChangeTests : IDisposable
         var mockHistory = new Mock<IPipelineRunHistoryService>();
         mockHistory.Setup(x => x.GetRunHistoryAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new List<PipelineRunSummary>());
 
-        _sut = new ConsolidationService(
+        _sut = new ConsolidationService(new ConsolidationServiceDependencies(
             new LoggerConfiguration().CreateLogger(),
             new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir },
             mockProjectStore.Object,
             mockHistory.Object,
             new FileSystemConsolidationRunStore(Path.Combine(_tempDir, "runs")),
             new FileSystemHarnessSuggestionStore(Path.Combine(_tempDir, "h.json")),
-            workspaceManager: new ConsolidationWorkspaceManager(
+            WorkspaceManager: new ConsolidationWorkspaceManager(
                 new LoggerConfiguration().CreateLogger(),
-                new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir }));
+                new PipelineConfiguration { WorkspaceBaseDirectory = _tempDir })));
 
         _sut.OnChange += () => _onChangeLog.Add(DateTime.UtcNow.ToString("O"));
     }

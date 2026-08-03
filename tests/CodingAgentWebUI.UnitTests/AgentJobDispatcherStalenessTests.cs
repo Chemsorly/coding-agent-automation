@@ -101,7 +101,7 @@ public class AgentJobDispatcherStalenessTests : IDisposable
                 _mockWorkItemQuery.Object, _mockLogger.Object);
         }
 
-        return new AgentJobDispatcher(
+        return new AgentJobDispatcher(new AgentJobDispatcherDependencies(
             _dedup,
             _registry,
             _runService,
@@ -109,7 +109,7 @@ public class AgentJobDispatcherStalenessTests : IDisposable
             infra,
             _mockAgentComm.Object,
             new ShutdownSignal(),
-            _mockLogger.Object);
+            _mockLogger.Object));
     }
 
     private void SetupHappyPathMocks()

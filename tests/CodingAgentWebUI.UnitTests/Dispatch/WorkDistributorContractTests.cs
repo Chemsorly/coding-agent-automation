@@ -94,7 +94,10 @@ public abstract class WorkDistributorContractTests : IDisposable
         active.Should().Contain((request.IssueIdentifier, request.IssueProviderConfigId));
     }
 
-    public virtual void Dispose() { }
+    public virtual void Dispose()
+    {
+        GC.SuppressFinalize(this);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -157,8 +160,7 @@ public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
         return new LegacyWorkDistributor(
             _mockJobDispatcher.Object,
             _dispatcherService,
-            _mockRunService.Object,
-            Mock.Of<ILogger>());
+            _mockRunService.Object);
     }
 
     protected override void SetupForDistribution(JobDistributionRequest request)
@@ -171,7 +173,7 @@ public class LegacyWorkDistributorContractTests : WorkDistributorContractTests
         // Since the mocked TryDispatchAsync doesn't actually enqueue, we provide the state via GetActiveRuns.
         _mockRunService.Setup(r => r.GetActiveRuns()).Returns(new List<PipelineRun>
         {
-            PipelineRun.Create(
+            PipelineRun.CreateImplementation(
                 runId: Guid.NewGuid().ToString(),
                 issueIdentifier: request.IssueIdentifier,
                 issueTitle: "Contract test issue",
@@ -222,7 +224,6 @@ public class SignalRWorkDistributorContractTests : WorkDistributorContractTests
             _mockResolver.Object,
             new Mock<IOrchestratorRunService>().Object,
             new Mock<IProjectStore>().Object,
-            new Mock<ILabelService>().Object,
             NullLogger<SignalRWorkDistributor>.Instance);
     }
 
@@ -252,6 +253,7 @@ public class SignalRWorkDistributorContractTests : WorkDistributorContractTests
     {
         using var db = new ContractTestPipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
+        base.Dispose();
     }
 }
 
@@ -302,13 +304,12 @@ public class WorkDistributorAdditionalTests
     /// <summary>
     /// Creates implementations for cold-state contract verification.
     /// </summary>
-    public static IEnumerable<object[]> AllImplementations()
+    public static TheoryData<string, IWorkDistributor> AllImplementations()
     {
-        // Legacy
-        yield return new object[] { "Legacy", CreateLegacy() };
-
-        // Kubernetes (in-memory EF Core)
-        yield return new object[] { "Kubernetes", CreateKubernetes() };
+        var data = new TheoryData<string, IWorkDistributor>();
+        data.Add("Legacy", CreateLegacy());
+        data.Add("Kubernetes", CreateKubernetes());
+        return data;
     }
 
     // ── Null Request Guard ───────────────────────────────────────────────
@@ -436,7 +437,7 @@ public class WorkDistributorAdditionalTests
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
-    private static IWorkDistributor CreateLegacy()
+    private static LegacyWorkDistributor CreateLegacy()
     {
         var mockJobDispatcher = new Mock<IJobDispatcher>();
         mockJobDispatcher.Setup(d => d.IsIssueBeingProcessedOrQueued(It.IsAny<string>(), It.IsAny<string>()))
@@ -450,8 +451,7 @@ public class WorkDistributorAdditionalTests
         return new LegacyWorkDistributor(
             mockJobDispatcher.Object,
             dispatcherService,
-            mockRunService.Object,
-            logger);
+            mockRunService.Object);
     }
 
     private static KubernetesWorkDistributor CreateKubernetes()

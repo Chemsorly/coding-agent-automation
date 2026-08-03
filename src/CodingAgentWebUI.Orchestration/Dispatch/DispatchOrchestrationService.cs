@@ -29,33 +29,19 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     private readonly ILogger _logger;
 
     public DispatchOrchestrationService(
-        DispatchInfrastructure infra,
-        IDispatchRunCreator orchestration,
-        IOrchestratorRunService runService,
-        IWorkDistributor workDistributor,
-        IAgentProfileStore agentProfileStore,
-        IConfigurationStore providerConfigStore,
-        IPipelineConfigStore pipelineConfigStore,
-        IProjectStore projectStore,
+        DispatchOrchestrationServiceDependencies deps,
         ILogger logger)
     {
-        ArgumentNullException.ThrowIfNull(infra);
-        ArgumentNullException.ThrowIfNull(orchestration);
-        ArgumentNullException.ThrowIfNull(runService);
-        ArgumentNullException.ThrowIfNull(workDistributor);
-        ArgumentNullException.ThrowIfNull(agentProfileStore);
-        ArgumentNullException.ThrowIfNull(providerConfigStore);
-        ArgumentNullException.ThrowIfNull(pipelineConfigStore);
-        ArgumentNullException.ThrowIfNull(projectStore);
+        ArgumentNullException.ThrowIfNull(deps);
         ArgumentNullException.ThrowIfNull(logger);
 
-        _infra = infra;
-        _orchestration = orchestration;
-        _runService = runService;
-        _workDistributor = workDistributor;
-        _agentProfileStore = agentProfileStore;
-        _providerConfigStore = providerConfigStore;
-        _pipelineConfigStore = pipelineConfigStore;
+        _infra = deps.Infra;
+        _orchestration = deps.Orchestration;
+        _runService = deps.RunService;
+        _workDistributor = deps.WorkDistributor;
+        _agentProfileStore = deps.AgentProfileStore;
+        _providerConfigStore = deps.ProviderConfigStore;
+        _pipelineConfigStore = deps.PipelineConfigStore;
         _logger = logger;
     }
 
@@ -74,51 +60,42 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Preparation result or null if orchestration failed.</returns>
     public async Task<DispatchPreparationResult?> PrepareAsync(
-        string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        string initiatedBy,
-        IReadOnlyList<string> requiredLabels,
-        PipelineProject project,
-        CancellationToken ct,
-        PipelineRunType runType = PipelineRunType.Implementation)
+        OrchestratorPreparationRequest request,
+        CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(issueIdentifier);
-        ArgumentNullException.ThrowIfNull(issueProviderId);
-        ArgumentNullException.ThrowIfNull(repoProviderId);
-        ArgumentNullException.ThrowIfNull(initiatedBy);
-        ArgumentNullException.ThrowIfNull(requiredLabels);
-        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.IssueIdentifier);
+        ArgumentNullException.ThrowIfNull(request.IssueProviderId);
+        ArgumentNullException.ThrowIfNull(request.RepoProviderId);
+        ArgumentNullException.ThrowIfNull(request.InitiatedBy);
+        ArgumentNullException.ThrowIfNull(request.RequiredLabels);
+        ArgumentNullException.ThrowIfNull(request.Project);
 
         try
         {
-            return await PrepareCoreAsync(
-                issueIdentifier, issueProviderId, repoProviderId,
-                brainProviderId, pipelineProviderId, initiatedBy,
-                requiredLabels, project, ct, runType);
+            return await PrepareCoreAsync(request, ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Error(ex,
-                "Orchestration failed for issue {IssueIdentifier}", issueIdentifier);
+                "Orchestration failed for issue {IssueIdentifier}", request.IssueIdentifier);
             return null;
         }
     }
 
     private async Task<DispatchPreparationResult?> PrepareCoreAsync(
-        string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        string initiatedBy,
-        IReadOnlyList<string> requiredLabels,
-        PipelineProject project,
-        CancellationToken ct,
-        PipelineRunType runType)
+        OrchestratorPreparationRequest request,
+        CancellationToken ct)
     {
+        var issueIdentifier = request.IssueIdentifier;
+        var issueProviderId = request.IssueProviderId;
+        var repoProviderId = request.RepoProviderId;
+        var brainProviderId = request.BrainProviderId;
+        var pipelineProviderId = request.PipelineProviderId;
+        var initiatedBy = request.InitiatedBy;
+        var requiredLabels = request.RequiredLabels;
+        var project = request.Project;
+        var runType = request.RunType;
         // Resolve profile using required labels (no agent entry — DB mode has no connected agents)
         var profile = await ResolveProfileByLabelsAsync(requiredLabels, ct);
         if (profile is null)
@@ -128,9 +105,11 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
         // Shared dispatch preparation: QG/reviewer resolution, issue context, config, staleness
         var preparation = await _infra.PrepareDispatchCoreAsync(
-            requiredLabels, issueIdentifier, issueProviderId,
-            repoProviderId, agentProviderId, brainProviderId, pipelineProviderId,
-            project, _logger, ct);
+            new DispatchCoreRequest(
+                requiredLabels, issueIdentifier, issueProviderId,
+                repoProviderId, agentProviderId, brainProviderId, pipelineProviderId,
+                project, _logger),
+            ct);
         if (preparation is null)
             return null;
 
@@ -139,9 +118,18 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
         // Create the dispatched run via PipelineOrchestrationService
         var run = await _orchestration.CreateDispatchedRunAsync(
-            issueProviderId, repoProviderId, issueIdentifier,
-            agentProviderId, null, ct,
-            brainProviderId, pipelineProviderId, initiatedBy, runType);
+            new DispatchRunRequest
+            {
+                IssueProviderId = issueProviderId,
+                RepoProviderId = repoProviderId,
+                IssueIdentifier = issueIdentifier,
+                AgentProviderId = agentProviderId,
+                AgentId = null,
+                BrainProviderId = brainProviderId,
+                PipelineProviderId = pipelineProviderId,
+                InitiatedBy = initiatedBy,
+                RunType = runType
+            }, ct);
 
         if (run is null)
         {
@@ -191,8 +179,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
     {
         var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
 
-        var resolver = new ProfileResolver();
-        var profile = resolver.ResolveByRequiredLabels(profiles, requiredLabels);
+        var profile = ProfileResolver.ResolveByRequiredLabels(profiles, requiredLabels);
 
         if (profile is null)
         {
@@ -209,25 +196,21 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
     /// <inheritdoc />
     public async Task<JobDistributionRequest?> PrepareDistributionRequestAsync(
-        string issueIdentifier,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string? pipelineProviderId,
-        string initiatedBy,
-        PipelineProject project,
-        WorkItemTaskType taskType = WorkItemTaskType.Implementation,
-        PipelineRunType runType = PipelineRunType.Implementation,
+        ImplementationDispatchOrchestrationRequest request,
         CancellationToken ct = default)
     {
-        var requiredLabels = await ResolveRequiredLabelsInternalAsync(repoProviderId, ct);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var requiredLabels = await ResolveRequiredLabelsInternalAsync(request.RepoProviderId, ct);
 
         var result = await PrepareAsync(
-            issueIdentifier, issueProviderId, repoProviderId,
-            brainProviderId, pipelineProviderId, initiatedBy,
-            requiredLabels, project, ct, runType);
+            new OrchestratorPreparationRequest(
+                request.IssueIdentifier, request.IssueProviderId, request.RepoProviderId,
+                request.BrainProviderId, request.PipelineProviderId, request.InitiatedBy,
+                requiredLabels, request.Project, request.RunType),
+            ct);
 
-        return result is null ? null : MapToRequest(result, taskType, runType);
+        return result is null ? null : MapToRequest(result, request.TaskType, request.RunType);
     }
 
     /// <inheritdoc />
@@ -242,14 +225,15 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
         var requiredLabels = await ResolveRequiredLabelsInternalAsync(reviewRequest.RepoProviderId, ct);
 
         var result = await PrepareAsync(
-            reviewRequest.PrIdentifier,
-            reviewRequest.IssueProviderId,
-            reviewRequest.RepoProviderId,
-            reviewRequest.BrainProviderId,
-            null, // pipelineProviderId
-            reviewRequest.InitiatedBy,
-            requiredLabels, project, ct,
-            PipelineRunType.Review);
+            new OrchestratorPreparationRequest(
+                reviewRequest.PrIdentifier,
+                reviewRequest.IssueProviderId,
+                reviewRequest.RepoProviderId,
+                reviewRequest.BrainProviderId,
+                null, // pipelineProviderId
+                reviewRequest.InitiatedBy,
+                requiredLabels, project, PipelineRunType.Review),
+            ct);
 
         if (result is null) return null;
 
@@ -271,33 +255,27 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
 
     /// <inheritdoc />
     public async Task<JobDistributionRequest?> PrepareDecompositionDistributionRequestAsync(
-        string epicIdentifier,
-        string epicTitle,
-        PipelineRunType phaseType,
-        string issueProviderId,
-        string repoProviderId,
-        string? brainProviderId,
-        string initiatedBy,
-        PipelineProject project,
-        string? decompositionSource = null,
+        DecompositionDispatchOrchestrationRequest request,
         CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(project);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.Project);
 
-        var requiredLabels = await ResolveRequiredLabelsInternalAsync(repoProviderId, ct);
+        var requiredLabels = await ResolveRequiredLabelsInternalAsync(request.RepoProviderId, ct);
 
         var result = await PrepareAsync(
-            epicIdentifier, issueProviderId, repoProviderId,
-            brainProviderId, null, initiatedBy,
-            requiredLabels, project, ct,
-            phaseType);
+            new OrchestratorPreparationRequest(
+                request.EpicIdentifier, request.IssueProviderId, request.RepoProviderId,
+                request.BrainProviderId, null, request.InitiatedBy,
+                requiredLabels, request.Project, request.PhaseType),
+            ct);
 
         if (result is null) return null;
 
-        var request = MapToRequest(result, WorkItemTaskType.Decomposition, phaseType);
-        return request with
+        var jobRequest = MapToRequest(result, WorkItemTaskType.Decomposition, request.PhaseType);
+        return jobRequest with
         {
-            DecompositionSource = decompositionSource
+            DecompositionSource = request.DecompositionSource
         };
     }
 

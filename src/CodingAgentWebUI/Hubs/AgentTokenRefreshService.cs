@@ -87,7 +87,7 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
         }
         else
         {
-            targetConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId!, ProviderKind.Repository, ct);
+            targetConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId, ProviderKind.Repository, ct);
             if (targetConfig is null)
             {
                 _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);

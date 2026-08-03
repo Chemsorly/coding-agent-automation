@@ -16,6 +16,7 @@ namespace CodingAgentWebUI.UnitTests.Services;
 // continues to the next tick rather than terminating. This exercises the outer catch in the periodic loop.
 public class OrphanedLabelRecoveryServiceTests : IDisposable
 {
+    private static readonly string[] InProgressLabels = ["agent:in-progress"];
     private readonly Mock<IOrchestratorRunService> _mockRunService;
     private readonly Mock<IProjectStore> _mockProjectStore;
     private readonly Mock<IProviderConfigStore> _mockProviderConfigStore;
@@ -65,7 +66,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         {
             Identifier = "42",
             Title = "Orphaned issue",
-            Labels = new[] { "agent:in-progress" }
+            Labels = InProgressLabels
         });
 
         _mockRunService
@@ -101,7 +102,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         {
             Identifier = "42",
             Title = "Active issue",
-            Labels = new[] { "agent:in-progress" }
+            Labels = InProgressLabels
         });
 
         _mockRunService
@@ -186,7 +187,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         {
             Identifier = "99",
             Title = "Orphaned",
-            Labels = new[] { "agent:in-progress" }
+            Labels = InProgressLabels
         });
 
         _mockRunService
@@ -253,13 +254,13 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         {
             Identifier = "10",
             Title = "Issue A",
-            Labels = new[] { "agent:in-progress" }
+            Labels = InProgressLabels
         });
         SetupIssueProvider("provider-2", new IssueSummary
         {
             Identifier = "20",
             Title = "Issue B",
-            Labels = new[] { "agent:in-progress" }
+            Labels = InProgressLabels
         });
 
         _mockRunService
@@ -372,7 +373,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         {
             Identifier = "5",
             Title = "Issue",
-            Labels = new[] { "agent:in-progress" }
+            Labels = InProgressLabels
         });
 
         _mockRunService
@@ -478,7 +479,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         {
             Identifier = "1635",
             Title = "Issue with race",
-            Labels = new[] { "agent:in-progress" }
+            Labels = InProgressLabels
         });
 
         // Run was already removed from active tracking (simulates the race window)
@@ -527,7 +528,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
                 {
                     Identifier = "1635",
                     Title = "Completed issue (stale list)",
-                    Labels = new[] { "agent:in-progress" } // stale — GitHub hasn't reflected label swap yet
+                    Labels = InProgressLabels // stale — GitHub hasn't reflected label swap yet
                 }},
                 Page = 1,
                 PageSize = 100,
@@ -596,7 +597,7 @@ public class OrphanedLabelRecoveryServiceTests : IDisposable
         {
             Identifier = "500",
             Title = "Genuinely orphaned issue",
-            Labels = new[] { "agent:in-progress" }
+            Labels = InProgressLabels
         });
 
         // No active run

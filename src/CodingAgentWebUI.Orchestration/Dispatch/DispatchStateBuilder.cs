@@ -141,7 +141,7 @@ internal sealed class DispatchStateBuilder
         var concurrencyBySelector = activeCounts.ToDictionary(x => x.Selector, x => x.Count);
 
         // PVC pool: determine available PVCs for kiro agents
-        var pvcResult = await _lifecycle.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
+        var pvcResult = await DispatchLifecycleService.QueryAvailablePvcsAsync(db, _options.KiroPvcPool, ct);
         var availablePvcs = pvcResult.AvailablePvcs;
 
         if (recordTelemetry)

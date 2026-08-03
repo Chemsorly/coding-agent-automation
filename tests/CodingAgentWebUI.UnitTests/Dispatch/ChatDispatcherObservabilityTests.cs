@@ -281,9 +281,10 @@ public class ChatDispatcherObservabilityTests : IDisposable
         await dispatcher.TerminateChatSessionAsync(agentId, CancellationToken.None);
 
         var terminateActivity = _capturedActivities
-            .FirstOrDefault(a => a.OperationName == "Chat.Terminate");
+            .FirstOrDefault(a => a.OperationName == "Chat.Terminate"
+                && a.GetTagItem("agent_id")?.ToString() == agentId);
 
-        terminateActivity.Should().NotBeNull("Chat.Terminate span must be created");
+        terminateActivity.Should().NotBeNull($"Chat.Terminate span with agent_id='{agentId}' must be created");
         terminateActivity!.GetTagItem("agent_id")!.ToString().Should().Be(agentId);
         terminateActivity.GetTagItem("job_name").Should().NotBeNull();
     }

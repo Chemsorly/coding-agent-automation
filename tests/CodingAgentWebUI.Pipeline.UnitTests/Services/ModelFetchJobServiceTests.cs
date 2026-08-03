@@ -567,14 +567,15 @@ public sealed class ModelFetchJobServiceTests
                        .ReturnsAsync(new PipelineConfiguration());
 
         return new ModelFetchJobService(
-            _fakeClient,
-            templateStore ?? _templateStore,
-            options ?? _options,
-            mockConfigStore.Object,
-            _mockReceiver.Object,
-            pollTimeoutSecondsOverride,
-            pollIntervalMs,
-            _mockLogger.Object);
+            new ModelFetchJobDependencies(
+                _fakeClient,
+                templateStore ?? _templateStore,
+                options ?? _options,
+                mockConfigStore.Object,
+                _mockReceiver.Object,
+                PollTimeoutSecondsOverride: pollTimeoutSecondsOverride,
+                PollIntervalMs: pollIntervalMs,
+                Logger: _mockLogger.Object));
     }
 
     private static JobTemplateStore BuildTemplateStore()

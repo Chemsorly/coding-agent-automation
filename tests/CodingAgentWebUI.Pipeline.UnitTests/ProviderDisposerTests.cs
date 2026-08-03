@@ -6,14 +6,16 @@ public class ProviderDisposerTests
     public async Task DisposeAllAsync_NullProvider_Skips()
     {
         // Should not throw when null items are passed
-        await ProviderDisposer.DisposeAllAsync(null, null, null);
+        var exception = await Record.ExceptionAsync(() => ProviderDisposer.DisposeAllAsync(null, null, null).AsTask());
+        Assert.Null(exception);
     }
 
     [Fact]
     public async Task DisposeAllAsync_NonDisposable_Skips()
     {
         // Non-IAsyncDisposable objects should be silently ignored
-        await ProviderDisposer.DisposeAllAsync("not disposable", 42, new object());
+        var exception = await Record.ExceptionAsync(() => ProviderDisposer.DisposeAllAsync("not disposable", 42, new object()).AsTask());
+        Assert.Null(exception);
     }
 
     [Fact]
@@ -49,7 +51,8 @@ public class ProviderDisposerTests
     [Fact]
     public async Task DisposeAllAsync_EmptyArray_NoOp()
     {
-        await ProviderDisposer.DisposeAllAsync();
+        var exception = await Record.ExceptionAsync(() => ProviderDisposer.DisposeAllAsync().AsTask());
+        Assert.Null(exception);
     }
 
     [Fact]
