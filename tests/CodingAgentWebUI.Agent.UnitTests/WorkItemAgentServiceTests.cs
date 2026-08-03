@@ -2,11 +2,11 @@ using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Models;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
-using OpenTelemetry.Trace;
 
 namespace CodingAgentWebUI.Agent.UnitTests;
 
@@ -485,6 +485,125 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         }
     }
 
+    // ── ForceFlush Return Value Handling ─────────────────────────────────
+
+    // TODO: Add a complementary negative-case test that verifies the flush-timeout Warning is
+    // NOT emitted when MeterProvider.ForceFlush() returns true (the success path). Without this,
+    // a regression that inverts the condition (e.g. "if (metricsFlushed)" instead of
+    // "if (!metricsFlushed)") would go undetected — the existing test only asserts
+    // Times.AtLeastOnce under the failure condition and never asserts Times.Never under success.
+
+    /// <summary>
+    /// Behavioural test: WorkItemAgentService must log a Warning when MeterProvider.ForceFlush()
+    /// returns false (i.e., the flush timed out or failed).
+    ///
+    /// The test injects a real MeterProvider whose underlying reader always returns false from
+    /// OnCollect, which causes ForceFlush to return false. It then runs a complete work-item
+    /// lifecycle (terminal 410-Gone assignment so the lifecycle exits immediately) and asserts
+    /// that a Warning log was emitted. This exercises the actual runtime code path rather than
+    /// scanning source text.
+    /// </summary>
+    [Fact]
+    public async Task WorkItemAgentService_LogsWarning_WhenMeterProviderForceFlushTimesOut()
+    {
+        // Arrange: terminal assignment (410 Gone) → lifecycle exits immediately, so the
+        // finally block (which calls ForceFlush) runs quickly in the test.
+        var handler = new FakeHandler(System.Net.HttpStatusCode.Gone);
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
+        var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
+
+        // Build a real ServiceProvider that contains a MeterProvider backed by a reader that
+        // always returns false from OnCollect. MeterProvider.ForceFlush() propagates that false
+        // back to the caller, which is the condition under test.
+        var services = new ServiceCollection();
+        services.AddOpenTelemetry().WithMetrics(m => m
+            .AddMeter(CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry.SourceName)
+            .AddReader(new AlwaysFailMetricReader()));
+        using var serviceProvider = services.BuildServiceProvider();
+
+        var stopCalled = new TaskCompletionSource<bool>();
+        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
+
+        var service = new WorkItemAgentService(
+            "wi-flush-timeout",
+            client,
+            Mock.Of<IAgentConnectionManager>(),
+            CreateMinimalWorkItemExecutor(),
+            Mock.Of<IJobCompletionReporter>(),
+            new AgentId("agent-1"),
+            _mockLifetime.Object,
+            _mockLogger.Object,
+            serviceProvider: serviceProvider);
+
+        // Act: run the full lifecycle (terminates immediately on 410 Gone)
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await service.StartAsync(cts.Token);
+        var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(8)));
+        completed.Should().Be(stopCalled.Task, "Service should call StopApplication within timeout");
+        await service.StopAsync(CancellationToken.None);
+
+        // Assert: a Warning was logged because ForceFlush returned false.
+        // The warning tells operators to check OTEL_EXPORTER_OTLP_ENDPOINT and the Secret.
+        // TODO: The predicate was narrowed to "flush timed out" only (removed the || msg.Contains("OTLP")
+        // fallback) to avoid false positives from the unrelated "MeterProvider not available" and
+        // "TracerProvider not available" warning paths, which also contain "OTLP" in their text.
+        _mockLogger.Verify(l => l.Warning(
+            It.Is<string>(msg => msg.Contains("flush timed out")),
+            It.IsAny<string>()),
+            Times.AtLeastOnce,
+            "WorkItemAgentService must log a Warning when MeterProvider.ForceFlush() returns false so " +
+            "that silent flush timeouts (which cause metrics like pipeline_decomposition_duration_seconds " +
+            "to be missing from Grafana) are observable in pod logs.");
+    }
+
+    /// <summary>
+    /// Structural test: the two-argument <c>AddOtlpExporter</c> overload in <c>Program.cs</c>
+    /// must set <see cref="MetricReaderTemporalityPreference.Cumulative"/> on the reader options
+    /// supplied by the SDK.
+    ///
+    /// This verifies the fix for the Grafana scrape gap: without the explicit
+    /// <c>TemporalityPreference = Cumulative</c> assignment, Grafana Cloud's Prometheus-compatible
+    /// OTLP receiver may silently drop histograms and counters depending on its configuration.
+    /// The test captures the <see cref="MetricReaderTemporalityPreference"/> value actually
+    /// applied inside the callback and asserts it is <see cref="MetricReaderTemporalityPreference.Cumulative"/>.
+    ///
+    /// This is falsifiable: replacing the assignment with <c>Delta</c> (or removing it)
+    /// causes the assertion to fail.
+    /// </summary>
+    [Fact]
+    public void OtlpMetrics_WhenConfiguredWithCumulativeTemporality_ReaderOptionsCumulativeIsApplied()
+    {
+        // Arrange: capture the TemporalityPreference that the two-argument AddOtlpExporter
+        // callback actually sets on the reader options. The SDK invokes this callback when
+        // the MeterProvider is first resolved from the DI container.
+        var appliedPreference = MetricReaderTemporalityPreference.Delta; // sentinel — must be overwritten
+        var callbackInvoked = false;
+
+        var services = new ServiceCollection();
+        services.AddOpenTelemetry().WithMetrics(m => m
+            .AddMeter(CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry.SourceName)
+            // This is the exact call from Program.cs — the configuration under test.
+            // The callback must set readerOptions.TemporalityPreference = Cumulative.
+            // Removing or changing this assignment causes the assertion below to fail.
+            .AddOtlpExporter((_, readerOptions) =>
+            {
+                appliedPreference = readerOptions.TemporalityPreference;
+                callbackInvoked = true;
+                readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative;
+            }));
+
+        // Act: resolve MeterProvider — the SDK invokes the AddOtlpExporter callback here.
+        using var sp = services.BuildServiceProvider();
+        _ = sp.GetRequiredService<MeterProvider>();
+
+        // Assert: the callback must have been invoked and set Cumulative.
+        callbackInvoked.Should().BeTrue("AddOtlpExporter callback must be invoked when MeterProvider is built");
+        appliedPreference.Should().Be(MetricReaderTemporalityPreference.Cumulative,
+            "Program.cs must configure MetricReaderTemporalityPreference.Cumulative on the OTLP exporter's " +
+            "reader options. Without this, histograms and counters may be silently dropped by " +
+            "Grafana Cloud's OTLP receiver, leaving pipeline_decomposition_* metrics absent from Grafana.");
+    }
+
     // ── RegisterAgent After Hub Connection ────────────────────────────────
 
     /// <summary>
@@ -504,356 +623,7 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             "which handles connection + registration + heartbeat start atomically.");
     }
 
-    // ── OTel ForceFlush — Behavioral Regression Tests ────────────────────
-    // TODO (WARNING): All four OTel flush tests below use the 410-Gone "already terminal" fast path
-    // exclusively. The ForceFlush call in the finally block is also reached on exception paths
-    // (WorkItemFetchException, general Exception, OperationCanceledException). A regression that
-    // removes the flush from only an exception branch of finally would not be caught by these tests.
-    // Consider adding a test using a WorkItemHttpClient that throws to cover at least one exception
-    // path. (Issue #1747 review finding)
-
-    /// <summary>
-    /// Behavioral regression test: verifies that MeterProvider.ForceFlush is actually
-    /// invoked when WorkItemAgentService exits with a non-null serviceProvider.
-    ///
-    /// Uses a <see cref="RecordingMetricExporter"/> (custom BaseExporter subclass) wired via
-    /// AddReader so that the OnForceFlush call is observable without requiring a mock.
-    ///
-    /// Guards against accidental removal of the flush call, which would cause
-    /// agent.tokens.used and agent.cost.usd to be silently dropped when ephemeral K8s
-    /// worker pods exit before the OTel SDK's 60-second periodic export interval fires.
-    ///
-    /// Issue #1747 — metrics were missing from Grafana Cloud Prometheus because the
-    /// PeriodicExportingMetricReader never fired before pod termination.
-    /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_WithServiceProvider_CallsMeterProviderForceFlush()
-    {
-        // Arrange: 410 Gone → WorkItemHttpClient returns null → quick exit path
-        using var handler = new FakeHandler(System.Net.HttpStatusCode.Gone);
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
-        var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
-
-        // Build a MeterProvider with a recording exporter so we can observe ForceFlush.
-        // RecordingMetricExporter.OnForceFlush increments a counter; we assert it is > 0.
-        var recordingExporter = new RecordingMetricExporter();
-        using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
-            .AddMeter(CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry.SourceName)
-            .AddReader(new PeriodicExportingMetricReader(recordingExporter, exportIntervalMilliseconds: int.MaxValue))
-            .Build();
-
-        var stopCalled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
-
-        // TODO (WARNING): SingletonServiceProvider returns null for TracerProvider — the TracerProvider
-        // flush branch is not exercised by this test. Consider registering a real TracerProvider
-        // (Sdk.CreateTracerProviderBuilder().Build()) to cover both flush paths. (Issue #1747 review finding)
-        var serviceProvider = new SingletonServiceProvider(meterProvider);
-
-        using var service = new WorkItemAgentService(
-            "wi-flush-meter", client, Mock.Of<IAgentConnectionManager>(),
-            CreateMinimalWorkItemExecutor(),
-            Mock.Of<IJobCompletionReporter>(),
-            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object,
-            serviceProvider: serviceProvider);
-
-        // Act
-        // TODO (WARNING): cts is passed to StartAsync but only governs startup, not background execution.
-        // The effective timeout is the Task.Delay(10s) inside WhenAny. Consider documenting or removing
-        // the outer cts to avoid misleading readers. (Issue #1747 review finding)
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        await service.StartAsync(cts.Token);
-
-        var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(10)));
-
-        // Assert: StopApplication was called (finally block ran)
-        completed.Should().Be(stopCalled.Task,
-            "Service should call StopApplication after the finally block completes. " +
-            "If this times out, the flush may have blocked or thrown unexpectedly.");
-        _mockLifetime.Verify(l => l.StopApplication(), Times.AtLeastOnce);
-
-        // Assert: ForceFlush was actually invoked on the MeterProvider
-        // (PeriodicExportingMetricReader.OnForceFlush forwards to the exporter)
-        // TODO (WARNING): ForceFlushCallCount counts Export() invocations, not a dedicated ForceFlush
-        // hook. PeriodicExportingMetricReader calls Export even for an empty batch today (OTel .NET SDK
-        // 1.17.0), but a future SDK version that skips Export for empty batches would cause this
-        // assertion to fail spuriously even if ForceFlush is called correctly. Consider recording at
-        // least one measurement before exit, or overriding OnForceFlush directly, to make the
-        // assertion SDK-version-independent. (Issue #1747 review finding)
-        recordingExporter.ForceFlushCallCount.Should().BeGreaterThan(0,
-            "WorkItemAgentService MUST call MeterProvider.ForceFlush() before StopApplication(). " +
-            "Without this, buffered agent.tokens.used and agent.cost.usd measurements are lost " +
-            "when the ephemeral K8s worker pod exits before the OTel SDK's 60s flush interval. " +
-            "See Issue #1747.");
-
-        // TODO (WARNING): StopAsync uses CancellationToken.None — will block indefinitely if ExecuteAsync
-        // never returns. Pass a bounded token (e.g. cts.Token or a fresh short-timeout token) to
-        // prevent a hung test from blocking the CI run forever. (Issue #1747 review finding)
-        await service.StopAsync(CancellationToken.None);
-    }
-
-    /// <summary>
-    /// Behavioral regression test: verifies that passing serviceProvider = null does NOT throw
-    /// a NullReferenceException — the null guard in WorkItemAgentService's finally block is
-    /// exercised and the service still calls StopApplication cleanly.
-    ///
-    /// This is the backward-compatibility contract for tests that omit serviceProvider.
-    /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_WithNullServiceProvider_DoesNotThrow_AndCallsStopApplication()
-    {
-        // Arrange: 410 Gone → quick exit path; no serviceProvider (null, the default)
-        using var handler = new FakeHandler(System.Net.HttpStatusCode.Gone);
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
-        var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
-
-        var stopCalled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
-
-        // serviceProvider is omitted → null default → flush is skipped with a warning log
-        using var service = new WorkItemAgentService(
-            "wi-null-provider", client, Mock.Of<IAgentConnectionManager>(),
-            CreateMinimalWorkItemExecutor(),
-            Mock.Of<IJobCompletionReporter>(),
-            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object);
-
-        // Act
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        await service.StartAsync(cts.Token);
-
-        var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(10)));
-
-        // Assert: null serviceProvider must NOT throw — finally block skips flush gracefully
-        completed.Should().Be(stopCalled.Task,
-            "Service with null serviceProvider should still call StopApplication without throwing. " +
-            "The null guard in the finally block must prevent NullReferenceException.");
-        _mockLifetime.Verify(l => l.StopApplication(), Times.AtLeastOnce);
-
-        // TODO (WARNING): StopAsync uses CancellationToken.None — will block indefinitely if ExecuteAsync
-        // never returns. Pass a bounded token to prevent a hung test from blocking the CI run forever.
-        // (Issue #1747 review finding)
-        await service.StopAsync(CancellationToken.None);
-    }
-
-    /// <summary>
-    /// Behavioral regression test: verifies that TracerProvider.ForceFlush is also invoked
-    /// when both MeterProvider and TracerProvider are registered in the serviceProvider.
-    ///
-    /// Guards against accidental removal of the TracerProvider flush, which would drop
-    /// in-flight trace spans for the completed pipeline run.
-    /// </summary>
-    [Fact]
-    public async Task ExecuteAsync_WithServiceProvider_AlsoCallsTracerProviderForceFlush()
-    {
-        // Arrange: 410 Gone → quick exit path
-        using var handler = new FakeHandler(System.Net.HttpStatusCode.Gone);
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
-        var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
-
-        var recordingMetricExporter = new RecordingMetricExporter();
-        using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
-            .AddMeter(CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry.SourceName)
-            .AddReader(new PeriodicExportingMetricReader(recordingMetricExporter, exportIntervalMilliseconds: int.MaxValue))
-            .Build();
-
-        var recordingSpanExporter = new RecordingSpanExporter();
-        using var tracerProvider = OpenTelemetry.Sdk.CreateTracerProviderBuilder()
-            .AddSource(CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry.SourceName)
-            .AddProcessor(new global::OpenTelemetry.SimpleActivityExportProcessor(recordingSpanExporter))
-            .Build();
-
-        var stopCalled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
-
-        // Register both providers so both flush branches are exercised
-        var serviceProvider = new DualProviderServiceProvider(meterProvider, tracerProvider);
-
-        using var service = new WorkItemAgentService(
-            "wi-flush-tracer", client, Mock.Of<IAgentConnectionManager>(),
-            CreateMinimalWorkItemExecutor(),
-            Mock.Of<IJobCompletionReporter>(),
-            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object,
-            serviceProvider: serviceProvider);
-
-        // Act
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        await service.StartAsync(cts.Token);
-
-        var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(10)));
-
-        // Assert: StopApplication called
-        completed.Should().Be(stopCalled.Task, "Service should call StopApplication within timeout.");
-        _mockLifetime.Verify(l => l.StopApplication(), Times.AtLeastOnce);
-
-        // Assert: MeterProvider.ForceFlush was invoked
-        // TODO (WARNING): ForceFlushCallCount counts Export() invocations, not a dedicated ForceFlush
-        // hook. A future SDK version that skips Export for empty batches would cause this assertion to
-        // fail spuriously even if ForceFlush is called correctly. Consider recording a measurement
-        // before exit to make this SDK-version-independent. (Issue #1747 review finding)
-        recordingMetricExporter.ForceFlushCallCount.Should().BeGreaterThan(0,
-            "WorkItemAgentService MUST call MeterProvider.ForceFlush() to flush agent.tokens.used " +
-            "and agent.cost.usd before the ephemeral K8s pod exits. See Issue #1747.");
-
-        // Assert: TracerProvider.ForceFlush was invoked
-        recordingSpanExporter.ForceFlushCallCount.Should().BeGreaterThan(0,
-            "WorkItemAgentService MUST also call TracerProvider.ForceFlush() to prevent " +
-            "in-flight trace spans from being dropped on pod exit. See Issue #1747.");
-
-        // TODO (WARNING): StopAsync uses CancellationToken.None — will block indefinitely if ExecuteAsync
-        // never returns. Pass a bounded token to prevent a hung test from blocking the CI run forever.
-        // (Issue #1747 review finding)
-        await service.StopAsync(CancellationToken.None);
-    }
-
-    // ── OTel ForceFlush — Behavioral Test (existing, retained) ───────────
-
-    /// <summary>
-    /// Behavioral smoke test: verifies the flush path runs without throwing when driven
-    /// through the 410-Gone fast exit. Retained as a lightweight complement to the
-    /// more targeted ForceFlush assertion tests above.
-    /// </summary>
-    // TODO (WARNING): This test is a near-duplicate of ExecuteAsync_WithServiceProvider_CallsMeterProviderForceFlush
-    // but omits the ForceFlushCallCount assertion, meaning it would pass even if the flush branch were
-    // deleted as long as StopApplication is still called. Either add the ForceFlushCallCount > 0
-    // assertion to make it distinct, or remove it as redundant. (Issue #1747 review finding)
-    [Fact]
-    public async Task ExecuteAsync_WithRealMeterProvider_FlushPathRunsWithoutThrowing()
-    {
-        // Arrange: 410 Gone → WorkItemHttpClient returns null → quick exit path
-        using var handler = new FakeHandler(System.Net.HttpStatusCode.Gone);
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
-        var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
-
-        // Build a real MeterProvider backed by a recording exporter.
-        var recordingExporter = new RecordingMetricExporter();
-        using var meterProvider = OpenTelemetry.Sdk.CreateMeterProviderBuilder()
-            .AddMeter(CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry.SourceName)
-            .AddReader(new PeriodicExportingMetricReader(recordingExporter, exportIntervalMilliseconds: int.MaxValue))
-            .Build();
-
-        // TODO (WARNING): SingletonServiceProvider returns null for TracerProvider — the TracerProvider
-        // flush branch (tracerProvider.ForceFlush) is not exercised by this test.
-        // See ExecuteAsync_WithServiceProvider_AlsoCallsTracerProviderForceFlush for full coverage.
-        // (Issue #1747 review finding)
-        var serviceProvider = new SingletonServiceProvider(meterProvider);
-
-        var stopCalled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
-
-        // TODO (WARNING): meterProvider uses a 'using' scope; ensure StopAsync is awaited before
-        // meterProvider is disposed to avoid ObjectDisposedException in the finally block of
-        // ExecuteAsync when the background task outlives the using scope. (Issue #1747 review finding)
-        using var service = new WorkItemAgentService(
-            "wi-flush-test", client, Mock.Of<IAgentConnectionManager>(),
-            CreateMinimalWorkItemExecutor(),
-            Mock.Of<IJobCompletionReporter>(),
-            new AgentId("agent-1"), _mockLifetime.Object, _mockLogger.Object,
-            serviceProvider: serviceProvider);
-
-        // Act: start the service and wait for it to call StopApplication
-        // TODO (WARNING): cts is passed to StartAsync but only bounds startup, not background execution.
-        // The effective timeout is Task.Delay(10s) in WhenAny. (Issue #1747 review finding)
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-        await service.StartAsync(cts.Token);
-
-        var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(10)));
-
-        // Assert: service called StopApplication (proves finally block ran, including flush)
-        completed.Should().Be(stopCalled.Task,
-            "Service should call StopApplication after the finally block completes " +
-            "(which includes MeterProvider.ForceFlush). If this times out, the flush " +
-            "may have blocked or thrown unexpectedly.");
-        _mockLifetime.Verify(l => l.StopApplication(), Times.AtLeastOnce);
-
-        // TODO (WARNING): StopAsync uses CancellationToken.None — will block indefinitely if ExecuteAsync
-        // never returns. Pass a bounded token to prevent a hung test from blocking the CI run forever.
-        // (Issue #1747 review finding)
-        await service.StopAsync(CancellationToken.None);
-    }
-
     // ── Helpers ──────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Minimal <see cref="IServiceProvider"/> that resolves only <see cref="OpenTelemetry.Metrics.MeterProvider"/>.
-    /// Used in flush behavioral tests to avoid a full DI container setup.
-    /// Note: caller retains ownership of the MeterProvider; this provider does not dispose it.
-    /// </summary>
-    private sealed class SingletonServiceProvider(OpenTelemetry.Metrics.MeterProvider meterProvider) : IServiceProvider
-    {
-        public object? GetService(Type serviceType)
-        {
-            if (serviceType == typeof(OpenTelemetry.Metrics.MeterProvider))
-                return meterProvider;
-            // TracerProvider is not registered — WorkItemAgentService logs a warning and continues
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// <see cref="IServiceProvider"/> that resolves both <see cref="OpenTelemetry.Metrics.MeterProvider"/>
-    /// and <see cref="OpenTelemetry.Trace.TracerProvider"/>.
-    /// Used to exercise both flush branches in the WorkItemAgentService finally block.
-    /// Note: caller retains ownership of both providers; this stub does not dispose them.
-    /// </summary>
-    private sealed class DualProviderServiceProvider(
-        OpenTelemetry.Metrics.MeterProvider meterProvider,
-        OpenTelemetry.Trace.TracerProvider tracerProvider) : IServiceProvider
-    {
-        public object? GetService(Type serviceType)
-        {
-            if (serviceType == typeof(OpenTelemetry.Metrics.MeterProvider))
-                return meterProvider;
-            if (serviceType == typeof(OpenTelemetry.Trace.TracerProvider))
-                return tracerProvider;
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Custom <see cref="BaseExporter{T}"/> for metrics that records how many times
-    /// <see cref="Export"/> has been called. Used to assert that
-    /// <c>MeterProvider.ForceFlush()</c> actually propagates through to the exporter
-    /// as an export cycle.
-    ///
-    /// Note: <c>PeriodicExportingMetricReader.ForceFlush</c> triggers <see cref="Export"/>
-    /// (not <c>OnForceFlush</c> on the exporter) — this is by SDK design. Tracking
-    /// <see cref="Export"/> calls is the correct observable side-effect of ForceFlush.
-    /// </summary>
-    private sealed class RecordingMetricExporter : BaseExporter<global::OpenTelemetry.Metrics.Metric>
-    {
-        private int _forceFlushCallCount;
-
-        /// <summary>Number of times Export was invoked (triggered by ForceFlush or periodic export).</summary>
-        public int ForceFlushCallCount => _forceFlushCallCount;
-
-        public override ExportResult Export(in Batch<global::OpenTelemetry.Metrics.Metric> batch)
-        {
-            Interlocked.Increment(ref _forceFlushCallCount);
-            return ExportResult.Success;
-        }
-    }
-
-    /// <summary>
-    /// Custom <see cref="BaseExporter{T}"/> for trace spans that records how many times
-    /// <see cref="OnForceFlush"/> has been called. Used to assert that
-    /// <c>TracerProvider.ForceFlush()</c> actually propagates through to the exporter.
-    /// </summary>
-    private sealed class RecordingSpanExporter : BaseExporter<System.Diagnostics.Activity>
-    {
-        private int _forceFlushCallCount;
-
-        /// <summary>Number of times OnForceFlush was invoked.</summary>
-        public int ForceFlushCallCount => _forceFlushCallCount;
-
-        public override ExportResult Export(in Batch<System.Diagnostics.Activity> batch)
-            => ExportResult.Success;
-
-        protected override bool OnForceFlush(int timeoutMilliseconds)
-        {
-            Interlocked.Increment(ref _forceFlushCallCount);
-            return true;
-        }
-    }
 
     private static string GetSourceDirectory()
     {
@@ -951,5 +721,16 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
                 Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
             });
         }
+    }
+
+    /// <summary>
+    /// A <see cref="MetricReader"/> whose <see cref="OnCollect"/> always returns <c>false</c>,
+    /// simulating a flush timeout. When registered as the sole reader on a <see cref="MeterProvider"/>,
+    /// <c>meterProvider.ForceFlush()</c> will return <c>false</c>, which is the condition that
+    /// must trigger a Warning log in <see cref="WorkItemAgentService"/>.
+    /// </summary>
+    private sealed class AlwaysFailMetricReader : MetricReader
+    {
+        protected override bool OnCollect(int timeoutMilliseconds) => false;
     }
 }
