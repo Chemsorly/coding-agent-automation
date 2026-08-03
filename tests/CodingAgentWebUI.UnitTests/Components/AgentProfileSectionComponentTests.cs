@@ -237,4 +237,38 @@ public class AgentProfileSectionComponentTests : BunitContext
         var cells = cut.FindAll("td");
         Assert.Contains(cells, c => c.TextContent.Trim() == "1");
     }
+
+    /// <summary>
+    /// Regression test for: Icon component crashed when passed an unknown 'title' parameter.
+    /// In kubernetes mode, an enabled profile with match labels renders the Template column's
+    /// "matched" branch — previously rendered as &lt;Icon title="Template matched" /&gt; which
+    /// caused System.InvalidOperationException and killed the Blazor circuit silently.
+    /// Fix: the Icon is now wrapped in a &lt;span title="Template matched"&gt; instead.
+    /// </summary>
+    [Fact]
+    public void KubernetesMode_EnabledProfileWithLabels_RendersWithoutThrowingIconParameterError()
+    {
+        _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>
+            {
+                new()
+                {
+                    Id = "p-1", DisplayName = "K8s Profile", AgentProviderConfigId = "ap-1",
+                    MatchLabels = new[] { "dotnet" }, Enabled = true, Priority = 1
+                }
+            });
+
+        // Must not throw — the bug caused an unhandled exception in the Blazor circuit
+        var cut = Render<AgentProfileSection>(p =>
+            p.Add(s => s.ConfigStore, _mockStore.Object)
+             .Add(s => s.AgentProviders, _agentProviders)
+             .Add(s => s.IsKubernetesMode, true));
+
+        // Template column header present
+        Assert.Contains("Template", cut.Markup);
+        // The tooltip lives on the wrapping span, not the Icon itself
+        Assert.Contains("title=\"Template matched\"", cut.Markup);
+        // check-circle icon renders (data-icon attribute from the svg)
+        Assert.Contains("data-icon=\"check-circle\"", cut.Markup);
+    }
 }
