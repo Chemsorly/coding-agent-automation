@@ -51,7 +51,7 @@ jobs:
             /k:"Chemsorly_coding-agent-automation" `
             /o:"chemsorly" `
             /d:sonar.token="$env:SONAR_TOKEN" `
-            "/d:sonar.cs.opencover.reportsPaths=**/TestResults/**/coverage.opencover.xml"
+            "/d:sonar.cs.cobertura.reportsPaths=**/TestResults/**/coverage.cobertura.xml"
           dotnet build --no-incremental
           dotnet test `
             tests/CodingAgentWebUI.Pipeline.UnitTests/ `
@@ -61,6 +61,5 @@ jobs:
             tests/CodingAgentWebUI.UnitTests/ `
             tests/KiroCliLib.UnitTests/ `
             --collect:"XPlat Code Coverage" `
-            --results-directory TestResults `
-            -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+            --results-directory TestResults
           ${{ runner.temp }}\scanner\dotnet-sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
