@@ -42,13 +42,13 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
     public WorkItemAgentService(WorkItemAgentServiceDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
-        ArgumentNullException.ThrowIfNull(deps.WorkItemId);
-        ArgumentNullException.ThrowIfNull(deps.WorkItemClient);
-        ArgumentNullException.ThrowIfNull(deps.ConnectionManager);
-        ArgumentNullException.ThrowIfNull(deps.WorkItemExecutor);
-        ArgumentNullException.ThrowIfNull(deps.CompletionReporter);
-        ArgumentNullException.ThrowIfNull(deps.Lifetime);
-        ArgumentNullException.ThrowIfNull(deps.Logger);
+        ArgumentNullException.ThrowIfNull(deps.WorkItemId, nameof(deps.WorkItemId));
+        ArgumentNullException.ThrowIfNull(deps.WorkItemClient, nameof(deps.WorkItemClient));
+        ArgumentNullException.ThrowIfNull(deps.ConnectionManager, nameof(deps.ConnectionManager));
+        ArgumentNullException.ThrowIfNull(deps.WorkItemExecutor, nameof(deps.WorkItemExecutor));
+        ArgumentNullException.ThrowIfNull(deps.CompletionReporter, nameof(deps.CompletionReporter));
+        ArgumentNullException.ThrowIfNull(deps.Lifetime, nameof(deps.Lifetime));
+        ArgumentNullException.ThrowIfNull(deps.Logger, nameof(deps.Logger));
 
         _workItemId = deps.WorkItemId;
         _workItemClient = deps.WorkItemClient;

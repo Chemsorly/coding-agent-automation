@@ -59,15 +59,15 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     public AgentWorkerService(AgentWorkerServiceDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
-        ArgumentNullException.ThrowIfNull(deps.ConnectionLifecycle);
-        ArgumentNullException.ThrowIfNull(deps.SlotManager);
-        ArgumentNullException.ThrowIfNull(deps.Executor);
-        ArgumentNullException.ThrowIfNull(deps.ConsolidationExecutor);
-        ArgumentNullException.ThrowIfNull(deps.CompletionReporter);
-        ArgumentNullException.ThrowIfNull(deps.Orchestrator);
-        ArgumentNullException.ThrowIfNull(deps.HttpClientFactory);
-        ArgumentNullException.ThrowIfNull(deps.HostApplicationLifetime);
-        ArgumentNullException.ThrowIfNull(deps.Logger);
+        ArgumentNullException.ThrowIfNull(deps.ConnectionLifecycle, nameof(deps.ConnectionLifecycle));
+        ArgumentNullException.ThrowIfNull(deps.SlotManager, nameof(deps.SlotManager));
+        ArgumentNullException.ThrowIfNull(deps.Executor, nameof(deps.Executor));
+        ArgumentNullException.ThrowIfNull(deps.ConsolidationExecutor, nameof(deps.ConsolidationExecutor));
+        ArgumentNullException.ThrowIfNull(deps.CompletionReporter, nameof(deps.CompletionReporter));
+        ArgumentNullException.ThrowIfNull(deps.Orchestrator, nameof(deps.Orchestrator));
+        ArgumentNullException.ThrowIfNull(deps.HttpClientFactory, nameof(deps.HttpClientFactory));
+        ArgumentNullException.ThrowIfNull(deps.HostApplicationLifetime, nameof(deps.HostApplicationLifetime));
+        ArgumentNullException.ThrowIfNull(deps.Logger, nameof(deps.Logger));
 
         _connectionLifecycle = deps.ConnectionLifecycle;
         _slotManager = deps.SlotManager;
