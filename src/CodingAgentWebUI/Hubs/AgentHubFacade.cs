@@ -35,14 +35,14 @@ public sealed class AgentHubFacade : IAgentHubFacade
     public AgentHubFacade(AgentHubFacadeDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
-        ArgumentNullException.ThrowIfNull(deps.Registry, nameof(deps.Registry));
-        ArgumentNullException.ThrowIfNull(deps.RunService, nameof(deps.RunService));
-        ArgumentNullException.ThrowIfNull(deps.Dispatcher, nameof(deps.Dispatcher));
-        ArgumentNullException.ThrowIfNull(deps.DrainService, nameof(deps.DrainService));
-        ArgumentNullException.ThrowIfNull(deps.HistoryService, nameof(deps.HistoryService));
-        ArgumentNullException.ThrowIfNull(deps.ConfigStore, nameof(deps.ConfigStore));
-        ArgumentNullException.ThrowIfNull(deps.ProviderFactory, nameof(deps.ProviderFactory));
-        ArgumentNullException.ThrowIfNull(deps.Logger, nameof(deps.Logger));
+        ArgumentNullException.ThrowIfNull(deps.Registry);
+        ArgumentNullException.ThrowIfNull(deps.RunService);
+        ArgumentNullException.ThrowIfNull(deps.Dispatcher);
+        ArgumentNullException.ThrowIfNull(deps.DrainService);
+        ArgumentNullException.ThrowIfNull(deps.HistoryService);
+        ArgumentNullException.ThrowIfNull(deps.ConfigStore);
+        ArgumentNullException.ThrowIfNull(deps.ProviderFactory);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
 
         _registry = deps.Registry;
         _runService = deps.RunService;
@@ -180,7 +180,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     }
 
     private async Task<bool> TryTwoStepTransitionAsync(
-        Guid workItemId, WorkItemStatus status, string? errorMessage, FailureReason? failureReason, CancellationToken ct)
+        Guid workItemId, WorkItemStatus status, string? _, FailureReason? __, CancellationToken ct)
     {
         // Transition rejected — likely Dispatched → Succeeded/Cancelled (skipped Running).
         // Attempt two-step: Dispatched → Running → terminal status.

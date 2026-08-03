@@ -24,6 +24,7 @@ public class DesignTimePipelineDbContextFactoryTests : IDisposable
     {
         // Restore to avoid polluting other tests
         Environment.SetEnvironmentVariable(EnvVar, _originalValue);
+        GC.SuppressFinalize(this);
     }
 
     [Fact]

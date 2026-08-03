@@ -49,7 +49,7 @@ public partial class AgentPhaseExecutor
     /// Returns (existingAnalysis, forceRefresh) where existingAnalysis is null if agent must re-run.
     /// </summary>
     private static (string? ExistingAnalysis, bool ForceRefresh) DetermineExistingAnalysis(
-        PipelineRun run,
+        PipelineRun _,
         IReadOnlyList<IssueComment> issueComments,
         bool forceRefreshFromDispatch)
     {

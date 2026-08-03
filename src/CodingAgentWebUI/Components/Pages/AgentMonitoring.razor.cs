@@ -211,9 +211,9 @@ public partial class AgentMonitoring : IDisposable
         }
     }
 
-    private void EnableAgent(AgentEntry agent) => AgentMonitoringPageService.EnableAgent(agent);
+    private static void EnableAgent(AgentEntry agent) => AgentMonitoringPageService.EnableAgent(agent);
 
-    private void DisableAgent(AgentEntry agent) => AgentMonitoringPageService.DisableAgent(agent);
+    private static void DisableAgent(AgentEntry agent) => AgentMonitoringPageService.DisableAgent(agent);
 
     private void ShowDisconnectConfirm() => _showDisconnectConfirm = true;
 

@@ -557,7 +557,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         catch (OperationCanceledException)
         {
             // Cancel watcher first so it exits without running its own cleanup
-            try { await session.WatcherCts.CancelAsync(); } catch { }
+            try { await session.WatcherCts.CancelAsync(); } catch (OperationCanceledException) { }
 
             _logger.Warning(
                 "ChatJobDispatcher: grace period expired for {JobName} — force deleting job",

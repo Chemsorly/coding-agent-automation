@@ -166,7 +166,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
     /// Unified failure helper that encapsulates the standard fail-phase pattern:
     /// set FailureReason → set CompletedAt → swap label → transition step → add to history → return false.
     /// </summary>
-    private async Task<bool> FailPhaseAsync(FailPhaseRequest request)
+    private static async Task<bool> FailPhaseAsync(FailPhaseRequest request)
     {
         var run = request.Run;
         run.FailureReason = request.FailureReason;

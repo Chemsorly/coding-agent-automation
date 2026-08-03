@@ -76,9 +76,12 @@ public class TestPipelineRunnerTests : IDisposable
         using var runner = CreateSut();
         Action handler = () => { };
 
-        // Should not throw
-        runner.OnChange += handler;
-        runner.OnChange -= handler;
+        var act = () =>
+        {
+            runner.OnChange += handler;
+            runner.OnChange -= handler;
+        };
+        act.Should().NotThrow();
     }
 
     [Fact]
@@ -87,8 +90,12 @@ public class TestPipelineRunnerTests : IDisposable
         using var runner = CreateSut();
         Action<string> handler = _ => { };
 
-        runner.OnOutputLine += handler;
-        runner.OnOutputLine -= handler;
+        var act = () =>
+        {
+            runner.OnOutputLine += handler;
+            runner.OnOutputLine -= handler;
+        };
+        act.Should().NotThrow();
     }
 
     // ── GetRunHistoryAsync ─────────────────────────────────────────────────
@@ -115,8 +122,9 @@ public class TestPipelineRunnerTests : IDisposable
     public async Task DisposeAsync_DoesNotThrow()
     {
         var runner = CreateSut();
-        await runner.DisposeAsync();
+        var act = () => runner.DisposeAsync().AsTask();
+        await act.Should().NotThrowAsync();
     }
 
-    public void Dispose() { }
+    public void Dispose() => GC.SuppressFinalize(this);
 }

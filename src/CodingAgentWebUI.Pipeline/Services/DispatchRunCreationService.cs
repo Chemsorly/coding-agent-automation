@@ -55,19 +55,12 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.IssueIdentifier);
-        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value, nameof(request.IssueProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value, nameof(request.RepoProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value, nameof(request.AgentProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value);
 
         var issueProviderId = request.IssueProviderId;
-        var repoProviderId = request.RepoProviderId;
         var issueIdentifier = request.IssueIdentifier;
-        var agentProviderId = request.AgentProviderId;
-        var agentId = request.AgentId;
-        var brainProviderId = request.BrainProviderId;
-        var pipelineProviderId = request.PipelineProviderId;
-        var initiatedBy = request.InitiatedBy;
-        var runType = request.RunType;
 
         var compositeKey = $"{issueProviderId.Value}:{issueIdentifier}";
 
@@ -93,7 +86,7 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
 
             _logger.Information(
                 "Dispatched run {RunId} created for issue {IssueIdentifier} → agent {AgentId}",
-                run.RunId, issueIdentifier, agentId);
+                run.RunId, issueIdentifier, request.AgentId);
 
             return run;
         }
@@ -112,18 +105,12 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.IssueIdentifier);
-        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value, nameof(request.IssueProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value, nameof(request.RepoProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value, nameof(request.AgentProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value);
 
         var issueProviderId = request.IssueProviderId;
-        var repoProviderId = request.RepoProviderId;
         var issueIdentifier = request.IssueIdentifier;
-        var agentProviderId = request.AgentProviderId;
-        var agentId = request.AgentId;
-        var brainProviderId = request.BrainProviderId;
-        var pipelineProviderId = request.PipelineProviderId;
-        var initiatedBy = request.InitiatedBy;
 
         var compositeKey = $"{issueProviderId.Value}:{issueIdentifier}";
 

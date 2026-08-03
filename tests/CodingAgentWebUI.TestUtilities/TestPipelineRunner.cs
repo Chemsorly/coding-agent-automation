@@ -482,7 +482,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             lifecycle.TransitionTo(run, finalStep);
             await lifecycle.AddRunToHistoryAsync(run, ct);
 
-            var duration = run.CompletedAt!.Value - run.StartedAt;
+            var duration = (run.CompletedAt ?? DateTimeOffset.UtcNow) - run.StartedAt;
             if (finalStep == PipelineStep.Completed)
             {
                 lifecycle.EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");

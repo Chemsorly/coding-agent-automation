@@ -198,8 +198,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         {
             Interlocked.Decrement(ref _activeExecutionCount);
             // Stop polling
-            try { await pollCts.CancelAsync(); } catch { }
-            try { await pollTask.ConfigureAwait(false); } catch { }
+            try { await pollCts.CancelAsync(); } catch (OperationCanceledException) { }
+            try { await pollTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
             pollCts.Dispose();
             _sessionStatusPollCts = null;
         }

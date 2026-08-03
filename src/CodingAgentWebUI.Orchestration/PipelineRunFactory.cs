@@ -28,7 +28,7 @@ public static class PipelineRunFactory
             PipelineRunType.Review => PipelineRun.CreateReview(
                 runId: request.RunId!,
                 issueIdentifier: request.IssueIdentifier,
-                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail!.Title,
+                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
                 issueProviderConfigId: request.IssueProviderConfigId,
                 repoProviderConfigId: request.RepoProviderConfigId,
                 reviewPrBranchName: request.LinkedPullRequest?.BranchName ?? string.Empty,
@@ -42,7 +42,7 @@ public static class PipelineRunFactory
             PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
                 runId: request.RunId!,
                 issueIdentifier: request.IssueIdentifier,
-                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail!.Title,
+                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
                 issueProviderConfigId: request.IssueProviderConfigId,
                 repoProviderConfigId: request.RepoProviderConfigId,
                 phaseType: request.RunType,
@@ -52,7 +52,7 @@ public static class PipelineRunFactory
             _ => PipelineRun.CreateImplementation(
                 runId: request.RunId!,
                 issueIdentifier: request.IssueIdentifier,
-                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail!.Title,
+                issueTitle: string.IsNullOrEmpty(request.IssueDetail?.Title) ? request.IssueIdentifier : request.IssueDetail.Title,
                 issueProviderConfigId: request.IssueProviderConfigId,
                 repoProviderConfigId: request.RepoProviderConfigId,
                 // TODO: Behavioral change — the old PendingWorkItemDrainService inline code used "loop" as the

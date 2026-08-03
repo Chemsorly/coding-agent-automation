@@ -26,25 +26,27 @@ public class TestOrchestrationFactoryTests
     public async Task NoOpLabelService_SwapLabelAsync_WithTargetKind_Completes()
     {
         var svc = TestOrchestrationFactory.NoOpLabelService.Instance;
-        // Should complete without throwing
-        await svc.SwapLabelAsync("ip-1", "owner/repo#1", "agent:done",
+        var act = () => svc.SwapLabelAsync("ip-1", "owner/repo#1", "agent:done",
             LabelTargetKind.Issue, CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]
     public async Task NoOpLabelService_SwapLabelAsync_WithExpectedLabel_Completes()
     {
         var svc = TestOrchestrationFactory.NoOpLabelService.Instance;
-        await svc.SwapLabelAsync("ip-1", "owner/repo#1", "agent:done",
+        var act = () => svc.SwapLabelAsync("ip-1", "owner/repo#1", "agent:done",
             LabelTargetKind.Issue, "agent:in-progress", CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]
     public async Task NoOpLabelService_SwapLabelStrictAsync_Completes()
     {
         var svc = TestOrchestrationFactory.NoOpLabelService.Instance;
-        await svc.SwapLabelStrictAsync("ip-1", "owner/repo#1", "agent:done",
+        var act = () => svc.SwapLabelStrictAsync("ip-1", "owner/repo#1", "agent:done",
             LabelTargetKind.Issue, CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]
@@ -120,15 +122,16 @@ public class TestOrchestrationFactoryTests
     public void NullHistoryService_TryDeleteWorkspace_DoesNotThrow()
     {
         var svc = new TestOrchestrationFactory.NullHistoryService();
-        // Should be a no-op
-        svc.TryDeleteWorkspace("/tmp/workspace", "run-1", "/tmp");
+        var act = () => svc.TryDeleteWorkspace("/tmp/workspace", "run-1", "/tmp");
+        act.Should().NotThrow();
     }
 
     [Fact]
     public void NullHistoryService_CleanupExpiredWorkspaces_DoesNotThrow()
     {
         var svc = new TestOrchestrationFactory.NullHistoryService();
-        svc.CleanupExpiredWorkspaces(new PipelineConfiguration());
+        var act = () => svc.CleanupExpiredWorkspaces(new PipelineConfiguration());
+        act.Should().NotThrow();
     }
 
     // ── CreateMinimalOptions ──────────────────────────────────────────────

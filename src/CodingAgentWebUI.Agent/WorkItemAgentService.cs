@@ -42,13 +42,13 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
     public WorkItemAgentService(WorkItemAgentServiceDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
-        ArgumentNullException.ThrowIfNull(deps.WorkItemId, nameof(deps.WorkItemId));
-        ArgumentNullException.ThrowIfNull(deps.WorkItemClient, nameof(deps.WorkItemClient));
-        ArgumentNullException.ThrowIfNull(deps.ConnectionManager, nameof(deps.ConnectionManager));
-        ArgumentNullException.ThrowIfNull(deps.WorkItemExecutor, nameof(deps.WorkItemExecutor));
-        ArgumentNullException.ThrowIfNull(deps.CompletionReporter, nameof(deps.CompletionReporter));
-        ArgumentNullException.ThrowIfNull(deps.Lifetime, nameof(deps.Lifetime));
-        ArgumentNullException.ThrowIfNull(deps.Logger, nameof(deps.Logger));
+        ArgumentNullException.ThrowIfNull(deps.WorkItemId);
+        ArgumentNullException.ThrowIfNull(deps.WorkItemClient);
+        ArgumentNullException.ThrowIfNull(deps.ConnectionManager);
+        ArgumentNullException.ThrowIfNull(deps.WorkItemExecutor);
+        ArgumentNullException.ThrowIfNull(deps.CompletionReporter);
+        ArgumentNullException.ThrowIfNull(deps.Lifetime);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
 
         _workItemId = deps.WorkItemId;
         _workItemClient = deps.WorkItemClient;
@@ -82,13 +82,13 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         // lambdas, and leaving it optional means a future caller could omit it and silently lose ForceFlush behavior.
         IServiceProvider? serviceProvider = null)
     {
-        ArgumentNullException.ThrowIfNull(workItemId, nameof(workItemId));
-        ArgumentNullException.ThrowIfNull(workItemClient, nameof(workItemClient));
-        ArgumentNullException.ThrowIfNull(connectionManager, nameof(connectionManager));
-        ArgumentNullException.ThrowIfNull(workItemExecutor, nameof(workItemExecutor));
-        ArgumentNullException.ThrowIfNull(completionReporter, nameof(completionReporter));
-        ArgumentNullException.ThrowIfNull(lifetime, nameof(lifetime));
-        ArgumentNullException.ThrowIfNull(logger, nameof(logger));
+        ArgumentNullException.ThrowIfNull(workItemId);
+        ArgumentNullException.ThrowIfNull(workItemClient);
+        ArgumentNullException.ThrowIfNull(connectionManager);
+        ArgumentNullException.ThrowIfNull(workItemExecutor);
+        ArgumentNullException.ThrowIfNull(completionReporter);
+        ArgumentNullException.ThrowIfNull(lifetime);
+        ArgumentNullException.ThrowIfNull(logger);
 
         _workItemId = workItemId;
         _workItemClient = workItemClient;

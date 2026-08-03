@@ -53,11 +53,11 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     public LocalPipelineExecutor(LocalPipelineExecutorDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
-        ArgumentNullException.ThrowIfNull(deps.Orchestrator, nameof(deps.Orchestrator));
-        ArgumentNullException.ThrowIfNull(deps.HttpClientFactory, nameof(deps.HttpClientFactory));
-        ArgumentNullException.ThrowIfNull(deps.DefaultPipelineConfig, nameof(deps.DefaultPipelineConfig));
-        ArgumentNullException.ThrowIfNull(deps.QualityGateValidator, nameof(deps.QualityGateValidator));
-        ArgumentNullException.ThrowIfNull(deps.Logger, nameof(deps.Logger));
+        ArgumentNullException.ThrowIfNull(deps.Orchestrator);
+        ArgumentNullException.ThrowIfNull(deps.HttpClientFactory);
+        ArgumentNullException.ThrowIfNull(deps.DefaultPipelineConfig);
+        ArgumentNullException.ThrowIfNull(deps.QualityGateValidator);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
 
         _orchestrator = deps.Orchestrator;
         _httpClientFactory = deps.HttpClientFactory;
@@ -90,11 +90,11 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         AgentId? agentIdentity = null,
         IPipelineReporterFactory? reporterFactory = null)
     {
-        ArgumentNullException.ThrowIfNull(orchestrator, nameof(orchestrator));
-        ArgumentNullException.ThrowIfNull(httpClientFactory, nameof(httpClientFactory));
-        ArgumentNullException.ThrowIfNull(defaultPipelineConfig, nameof(defaultPipelineConfig));
-        ArgumentNullException.ThrowIfNull(qualityGateValidator, nameof(qualityGateValidator));
-        ArgumentNullException.ThrowIfNull(logger, nameof(logger));
+        ArgumentNullException.ThrowIfNull(orchestrator);
+        ArgumentNullException.ThrowIfNull(httpClientFactory);
+        ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
+        ArgumentNullException.ThrowIfNull(qualityGateValidator);
+        ArgumentNullException.ThrowIfNull(logger);
 
         _orchestrator = orchestrator;
         _httpClientFactory = httpClientFactory;

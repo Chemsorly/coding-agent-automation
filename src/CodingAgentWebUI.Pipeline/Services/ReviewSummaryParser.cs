@@ -47,14 +47,12 @@ internal static class ReviewSummaryParser
 
         for (var i = searchArea.Length - 1; i >= 0; i--)
         {
-            if (searchArea[i] == '.')
+            if (searchArea[i] == '.' &&
+                ((i + 1 < searchArea.Length && searchArea[i + 1] == ' ') || i == searchArea.Length - 1))
             {
                 // Accept ". " (mid-text sentence end) or "." at the very end of the search area
-                if ((i + 1 < searchArea.Length && searchArea[i + 1] == ' ') || i == searchArea.Length - 1)
-                {
-                    lastSentenceEnd = i + 1; // Include the period
-                    break;
-                }
+                lastSentenceEnd = i + 1; // Include the period
+                break;
             }
         }
 

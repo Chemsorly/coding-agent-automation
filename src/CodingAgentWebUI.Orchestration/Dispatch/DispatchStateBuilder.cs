@@ -60,7 +60,6 @@ internal sealed class DispatchStateBuilder
     private static readonly ILogger Log = Serilog.Log.ForContext<DispatchStateBuilder>();
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly DispatchLifecycleService _lifecycle;
     private readonly JobTemplateStore _templateProvider;
     private readonly DispatchTemplateResolver _templateResolver;
     private readonly DispatchServiceOptions _options;
@@ -72,8 +71,8 @@ internal sealed class DispatchStateBuilder
         DispatchTemplateResolver templateResolver,
         DispatchServiceOptions options)
     {
+        ArgumentNullException.ThrowIfNull(lifecycle); // validated but not stored — used only for DI wiring
         _dbFactory = dbFactory;
-        _lifecycle = lifecycle;
         _templateProvider = templateProvider;
         _templateResolver = templateResolver;
         _options = options;
