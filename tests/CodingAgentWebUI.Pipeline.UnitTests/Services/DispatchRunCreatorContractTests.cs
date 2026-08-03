@@ -73,7 +73,7 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     {
         // The concrete service must be assignable to the interface.
         // This test fails if the interface doesn't exist or the service doesn't implement it.
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
         creator.Should().NotBeNull();
     }
 
@@ -82,7 +82,7 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     [Fact]
     public void IsIssueBeingProcessed_WhenNotProcessing_ReturnsFalse()
     {
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         var result = creator.IsIssueBeingProcessed("issue-99", "provider-1");
 
@@ -92,11 +92,12 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     [Fact]
     public async Task IsIssueBeingProcessed_AfterDispatchedRun_ReturnsTrue()
     {
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         // Create a dispatched run which registers the issue as being processed
         await creator.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "42", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         var result = creator.IsIssueBeingProcessed("42", "issue-1");
         result.Should().BeTrue();
@@ -107,11 +108,11 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     [Fact]
     public async Task CreateDispatchedRunAsync_ViaInterface_ReturnsValidRun()
     {
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         var run = await creator.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "55", "agent-1", "agent-container-1", CancellationToken.None,
-            initiatedBy: "test");
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "55", AgentProviderId = "agent-1", AgentId = "agent-container-1", InitiatedBy = "test" },
+            CancellationToken.None);
 
         run.Should().NotBeNull();
         run!.IssueIdentifier.Value.Should().Be("55");
@@ -122,15 +123,17 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     [Fact]
     public async Task CreateDispatchedRunAsync_ViaInterface_DuplicateIssue_ReturnsNull()
     {
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         // First dispatch succeeds
         await creator.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "42", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         // Second dispatch of same issue returns null (dedup)
         var duplicate = await creator.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "42", "agent-1", "agent-y", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-y" },
+            CancellationToken.None);
 
         duplicate.Should().BeNull();
     }
@@ -140,10 +143,11 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     [Fact]
     public async Task GetAllActiveRuns_ViaInterface_IncludesDispatchedRun()
     {
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         await creator.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "77", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "77", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         var activeRuns = creator.GetAllActiveRuns();
 
@@ -153,7 +157,7 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     [Fact]
     public void GetAllActiveRuns_ViaInterface_WhenEmpty_ReturnsEmptyList()
     {
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         var activeRuns = creator.GetAllActiveRuns();
 
@@ -182,7 +186,7 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     public async Task MockInterface_CanReplaceConcreteService_ForRunCreation()
     {
         var mockCreator = new Mock<IDispatchRunCreator>();
-        var fakeRun = PipelineRun.Create(
+        var fakeRun = PipelineRun.CreateImplementation(
             runId: "run-1",
             issueIdentifier: "42",
             issueTitle: "Test",
@@ -193,12 +197,14 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
             agentProviderConfigId: "ap-1");
 
         mockCreator.Setup(c => c.CreateDispatchedRunAsync(
-                "ip-1", "rp-1", "42", "ap-1", "agent-1", It.IsAny<CancellationToken>(),
-                null, null, "dispatch"))
+                It.Is<DispatchRunRequest>(r =>
+                    r.IssueProviderId == "ip-1" && r.IssueIdentifier == "42"),
+                It.IsAny<CancellationToken>()))
             .ReturnsAsync(fakeRun);
 
         var result = await mockCreator.Object.CreateDispatchedRunAsync(
-            "ip-1", "rp-1", "42", "ap-1", "agent-1", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "ip-1", RepoProviderId = "rp-1", IssueIdentifier = "42", AgentProviderId = "ap-1", AgentId = "agent-1" },
+            CancellationToken.None);
 
         result.Should().NotBeNull();
         result!.RunId.Should().Be("run-1");
@@ -218,11 +224,11 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
         // rather than that production code correctly extracts values from provider configs. It would
         // not detect a bug where ReserveRunIdAsync reads the wrong property or provider config.
         // Consider an integration test with real provider config resolution.
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         var reservation = await creator.ReserveRunIdAsync(
-            "issue-1", "repo-1", "101", "agent-1", "agent-x", CancellationToken.None,
-            initiatedBy: "test");
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "101", AgentProviderId = "agent-1", AgentId = "agent-x", InitiatedBy = "test" },
+            CancellationToken.None);
 
         reservation.Should().NotBeNull();
         reservation!.RunId.Should().NotBeNullOrEmpty();
@@ -237,10 +243,11 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     [Fact]
     public async Task ReserveRunIdAsync_ViaInterface_ActivatesDedupGuard()
     {
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         await creator.ReserveRunIdAsync(
-            "issue-1", "repo-1", "102", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "102", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         // After reservation, IsIssueBeingProcessed should return true
         var isProcessing = creator.IsIssueBeingProcessed("102", "issue-1");
@@ -250,15 +257,17 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     [Fact]
     public async Task ReserveRunIdAsync_ViaInterface_DuplicateIssue_ReturnsNull()
     {
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         // First reservation succeeds
         await creator.ReserveRunIdAsync(
-            "issue-1", "repo-1", "103", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "103", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         // Second reservation of same issue returns null (dedup)
         var duplicate = await creator.ReserveRunIdAsync(
-            "issue-1", "repo-1", "103", "agent-1", "agent-y", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "103", AgentProviderId = "agent-1", AgentId = "agent-y" },
+            CancellationToken.None);
 
         duplicate.Should().BeNull();
     }
@@ -266,10 +275,11 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     [Fact]
     public async Task ReserveRunIdAsync_ViaInterface_SentinelVisibleInActiveRuns()
     {
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         var reservation = await creator.ReserveRunIdAsync(
-            "issue-1", "repo-1", "104", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "104", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         var activeRuns = creator.GetAllActiveRuns();
         activeRuns.Should().ContainSingle(r => r.RunId == reservation!.RunId);
@@ -284,10 +294,11 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
         // RunType=Implementation) is no longer observable after replace. The test would pass even if
         // RegisterDispatchedRun was a no-op that leaves the sentinel in place. Consider asserting
         // that sentinel properties (e.g. empty title) are gone and total active run count is still 1.
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         var reservation = await creator.ReserveRunIdAsync(
-            "issue-1", "repo-1", "105", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "105", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         // Construct a fully-populated run using the reserved RunId
         var fullRun = PipelineRun.CreateReview(
@@ -319,10 +330,11 @@ public class DispatchRunCreatorContractTests : IAsyncDisposable
     [Fact]
     public async Task RegisterDispatchedRun_ViaInterface_DedupRemainsActiveAfterReplace()
     {
-        IDispatchRunCreator creator = _service;
+        DispatchRunCreationService creator = _service;
 
         var reservation = await creator.ReserveRunIdAsync(
-            "issue-1", "repo-1", "106", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "106", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
 
         var fullRun = PipelineRun.CreateDecomposition(
             runId: reservation!.RunId,

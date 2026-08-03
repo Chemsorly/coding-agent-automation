@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// these tests assert that every persisted field is correctly populated — catching
 /// regressions like #1154 (ModelName null), #1270 (ProjectId empty), #1276 (non-terminal finalStep).
 /// </summary>
-// TODO: [WARNING] Add negative/error-path test cases to strengthen regression coverage:
+// TODO(#1776): [WARNING] Add negative/error-path test cases to strengthen regression coverage:
 // (a) Agent completes with PipelineStep.Failed — verify FinalStep is still terminal
 // (b) Agent provider with no Model setting — verify ModelName handling (#1154 scenario)
 // (c) Dispatch without a project configured — verify ProjectId behavior (#1270 scenario)

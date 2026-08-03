@@ -472,7 +472,7 @@
 
         try
         {
-            // TODO: Consider using a component-scoped CancellationToken (from a CancellationTokenSource
+            // TODO(#1774): Consider using a component-scoped CancellationToken (from a CancellationTokenSource
             // tied to component disposal) instead of CancellationToken.None to prevent orphaned async
             // operations if the user navigates away mid-operation.
             await ConfigStore.MoveTemplateAsync(sourceProject.Id, _project.Id, _selectedTemplateToAdd, CancellationToken.None);
@@ -482,7 +482,7 @@
             ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Template added to project.", false));
         }
-        // TODO: Generic catch(Exception) swallows all exceptions including OperationCanceledException.
+        // TODO(#1774): Generic catch(Exception) swallows all exceptions including OperationCanceledException.
         // Consider catching a more specific exception or re-throwing OperationCanceledException.
         catch (Exception ex)
         {
@@ -490,7 +490,7 @@
         }
     }
 
-    // TODO: RemoveTemplate does not call LoadDataAsync() so _allProjects becomes stale. If the user
+    // TODO(#1774): RemoveTemplate does not call LoadDataAsync() so _allProjects becomes stale. If the user
     // then tries to re-add the removed template via the dropdown, the source project lookup uses stale data
     // and may call MoveTemplateAsync with sourceProject == current project (effectively a no-op). Consider
     // calling LoadDataAsync() after SaveProjectAsync() to refresh _allProjects, consistent with AddTemplate.

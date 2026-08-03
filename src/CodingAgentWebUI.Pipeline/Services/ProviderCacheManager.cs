@@ -98,7 +98,16 @@ internal sealed class ProviderCacheManager : IAsyncDisposable
         string providerKindLabel,
         CancellationToken ct) where TProvider : IAsyncDisposable
     {
-        // Evict stale entries
+        await EvictStaleProvidersAsync(cache, neededIds, providerKindLabel);
+        await CreateMissingProvidersAsync(cache, neededIds, providerConfigs, factory, providerKindLabel, ct);
+    }
+
+    /// <summary>Disposes and removes all cache entries whose IDs are no longer needed.</summary>
+    private async Task EvictStaleProvidersAsync<TProvider>(
+        Dictionary<string, TProvider> cache,
+        HashSet<string> neededIds,
+        string providerKindLabel) where TProvider : IAsyncDisposable
+    {
         var staleKeys = cache.Keys.Where(k => !neededIds.Contains(k)).ToList();
         foreach (var key in staleKeys)
         {
@@ -109,8 +118,17 @@ internal sealed class ProviderCacheManager : IAsyncDisposable
                 cache.Remove(key);
             }
         }
+    }
 
-        // Create missing entries
+    /// <summary>Creates providers for all needed IDs not already in the cache.</summary>
+    private Task CreateMissingProvidersAsync<TProvider>(
+        Dictionary<string, TProvider> cache,
+        HashSet<string> neededIds,
+        IReadOnlyList<ProviderConfig> providerConfigs,
+        Func<ProviderConfig, TProvider> factory,
+        string providerKindLabel,
+        CancellationToken ct) where TProvider : IAsyncDisposable
+    {
         foreach (var neededId in neededIds)
         {
             ct.ThrowIfCancellationRequested();
@@ -131,5 +149,7 @@ internal sealed class ProviderCacheManager : IAsyncDisposable
                 }
             }
         }
+
+        return Task.CompletedTask;
     }
 }

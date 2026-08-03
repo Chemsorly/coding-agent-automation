@@ -33,6 +33,27 @@ public class AnalysisStalenessDetectorTests
             .ReturnsAsync(false);
     }
 
+    /// <summary>Convenience wrapper that matches the old 8-parameter signature for readability in tests.</summary>
+    private Task<AnalysisStalenessDetector.StalenessResult> EvalAsync(
+        IssueComment analysisComment,
+        IEnumerable<IssueComment> issueComments,
+        string issueBody,
+        string issueIdentifier,
+        string issueProviderConfigId,
+        int commitThreshold,
+        Func<DateTimeOffset, CancellationToken, Task<int>>? getCommitCount,
+        CancellationToken ct) =>
+        _detector.EvaluateAsync(
+            new StalenessEvaluationRequest(
+                analysisComment,
+                issueComments.ToArray(),
+                issueBody,
+                issueIdentifier,
+                issueProviderConfigId,
+                commitThreshold,
+                getCommitCount),
+            ct);
+
     private static IssueComment CreateAnalysisComment(string? bodyHash = null, DateTime? createdAt = null, string? id = null)
     {
         var hash = bodyHash ?? AnalysisBodyHash.Compute("original body");
@@ -67,7 +88,7 @@ public class AnalysisStalenessDetectorTests
             .ReturnsAsync(true);
 
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("body"));
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "body",
             IssueId, ProviderId, 30, null, CancellationToken.None);
 
@@ -89,7 +110,7 @@ public class AnalysisStalenessDetectorTests
             .ReturnsAsync(false);
 
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("body"));
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -105,7 +126,7 @@ public class AnalysisStalenessDetectorTests
             .ReturnsAsync(false);
 
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("body"));
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -121,7 +142,7 @@ public class AnalysisStalenessDetectorTests
             .ReturnsAsync(false);
 
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("body"));
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -141,7 +162,7 @@ public class AnalysisStalenessDetectorTests
             .ReturnsAsync(false); // DB query filters by CompletedAt > since
 
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("body"));
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -155,7 +176,7 @@ public class AnalysisStalenessDetectorTests
     {
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("original body"));
 
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "modified body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -168,7 +189,7 @@ public class AnalysisStalenessDetectorTests
     {
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("same body"));
 
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "same body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -180,7 +201,7 @@ public class AnalysisStalenessDetectorTests
     {
         var analysisComment = CreateLegacyAnalysisComment();
 
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "different body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -199,7 +220,7 @@ public class AnalysisStalenessDetectorTests
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("body"));
         Func<DateTimeOffset, CancellationToken, Task<int>> getCommits = (_, _) => Task.FromResult(35);
 
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "body",
             IssueId, ProviderId, 30, getCommits, CancellationToken.None);
 
@@ -213,7 +234,7 @@ public class AnalysisStalenessDetectorTests
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("body"));
         Func<DateTimeOffset, CancellationToken, Task<int>> getCommits = (_, _) => Task.FromResult(10);
 
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "body",
             IssueId, ProviderId, 30, getCommits, CancellationToken.None);
 
@@ -231,7 +252,7 @@ public class AnalysisStalenessDetectorTests
         };
 
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("body"));
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "body",
             IssueId, ProviderId, 0, getCommits, CancellationToken.None);
 
@@ -249,7 +270,7 @@ public class AnalysisStalenessDetectorTests
         // assert callCount == 0 (like ShortCircuit_AgentErrorFires_CommitCountNotChecked does).
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("original"));
 
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "changed body",
             IssueId, ProviderId, 30, null, CancellationToken.None);
 
@@ -275,7 +296,7 @@ public class AnalysisStalenessDetectorTests
         };
 
         var analysisComment = CreateAnalysisComment(AnalysisBodyHash.Compute("body"));
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "body",
             IssueId, ProviderId, 30, getCommits, CancellationToken.None);
 
@@ -299,7 +320,7 @@ public class AnalysisStalenessDetectorTests
         };
 
         // No successes → 3 prior refreshes counted (current comment excluded)
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             comments[3], comments, "different body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -324,7 +345,7 @@ public class AnalysisStalenessDetectorTests
         _mockQuery.Setup(q => q.GetLastSuccessfulCompletionAsync(IssueId, ProviderId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DateTimeOffset(2026, 7, 1, 11, 30, 0, TimeSpan.Zero));
 
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             comments[3], comments, "different body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -352,7 +373,7 @@ public class AnalysisStalenessDetectorTests
         _mockQuery.Setup(q => q.GetLastSuccessfulCompletionAsync(IssueId, ProviderId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DateTimeOffset(2026, 7, 1, 16, 0, 0, TimeSpan.FromHours(5.5)));
 
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             comments[3], comments, "different body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -374,7 +395,7 @@ public class AnalysisStalenessDetectorTests
         };
 
         // No successes → all 3 prior comments count as forced refreshes
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             comments[3], comments, "different body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -395,7 +416,7 @@ public class AnalysisStalenessDetectorTests
         };
 
         // No successes → 2 prior comments counted, cap not hit → signals evaluated
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             comments[2], comments, "different body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -413,7 +434,7 @@ public class AnalysisStalenessDetectorTests
         var newComment = CreateAnalysisComment(AnalysisBodyHash.Compute("current body"), new DateTime(2026, 7, 1, 12, 0, 0, DateTimeKind.Utc), id: "ac-2");
 
         // If we pass the NEWEST comment, body matches → no refresh
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             newComment, new[] { oldComment, newComment }, "current body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -435,7 +456,7 @@ public class AnalysisStalenessDetectorTests
         var analysisComment = CreateAnalysisComment(
             AnalysisBodyHash.Compute("body"), createdAt: localTime);
 
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 
@@ -454,7 +475,7 @@ public class AnalysisStalenessDetectorTests
         var analysisComment = CreateAnalysisComment(
             AnalysisBodyHash.Compute("body"), createdAt: unspecifiedTime);
 
-        var result = await _detector.EvaluateAsync(
+        var result = await EvalAsync(
             analysisComment, new[] { analysisComment }, "body",
             IssueId, ProviderId, 0, null, CancellationToken.None);
 

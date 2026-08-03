@@ -22,29 +22,29 @@ public static partial class ServiceCollectionExtensions
         if (!isKubernetesMode)
         {
             services.AddHostedService(sp => new HeartbeatMonitorService(
-                sp.GetRequiredService<IAgentRegistryService>(),
-                sp.GetRequiredService<IOrchestratorRunService>(),
-                sp.GetRequiredService<IPipelineRunHistoryService>(),
-                sp.GetRequiredService<JobDeduplicationGuardService>(),
-                sp.GetRequiredService<ILabelService>(),
-                sp.GetRequiredService<IConfigurationStore>(),
-                Log.Logger,
-                sp.GetRequiredService<IRunLifecycleManager>(),
-                sp.GetService<IConsolidationService>()));
+                new HeartbeatMonitorDependencies(
+                    sp.GetRequiredService<IAgentRegistryService>(),
+                    sp.GetRequiredService<IOrchestratorRunService>(),
+                    sp.GetRequiredService<IPipelineRunHistoryService>(),
+                    sp.GetRequiredService<IConfigurationStore>(),
+                    Log.Logger,
+                    sp.GetRequiredService<IRunLifecycleManager>(),
+                    sp.GetService<IConsolidationService>())));
         }
 
         // JobQueueDrainService: registered as singleton always (AgentHubFacade depends on it),
         // but only registered as hosted service (active background loop) in Legacy mode.
         // In DB modes (SignalR/K8s), work distribution via IWorkDistributor — in-memory queue unused.
         services.AddSingleton(sp => new JobQueueDrainService(
-            sp.GetRequiredService<JobDeduplicationGuardService>(),
-            sp.GetRequiredService<IAgentRegistryService>(),
-            sp.GetRequiredService<IJobDispatcher>(),
-            sp.GetRequiredService<IConfigurationStore>(),
-            sp.GetRequiredService<IConsolidationDispatchService>(),
-            sp.GetRequiredService<IShutdownSignal>(),
-            Log.Logger,
-            sp.GetService<IConsolidationRunStore>()));
+            new JobQueueDrainDependencies(
+                sp.GetRequiredService<JobDeduplicationGuardService>(),
+                sp.GetRequiredService<IAgentRegistryService>(),
+                sp.GetRequiredService<IJobDispatcher>(),
+                sp.GetRequiredService<IConfigurationStore>(),
+                sp.GetRequiredService<IConsolidationDispatchService>(),
+                sp.GetRequiredService<IShutdownSignal>(),
+                Log.Logger,
+                sp.GetService<IConsolidationRunStore>())));
         var hasDatabase = !string.IsNullOrEmpty(workDistributionMode);
         if (!hasDatabase)
         {

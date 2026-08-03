@@ -44,30 +44,21 @@ public sealed class ReconciliationService : LeaderElectedPollingService
     protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
 
     public ReconciliationService(
-        IDbContextFactory<PipelineDbContext> dbFactory,
-        ILeaderElectionService leaderElection,
-        IKubernetes kubeClient,
-        WorkItemTransitionService transitionService,
-        IConfiguration configuration,
-        ILabelService? labelService = null,
-        IRunLifecycleManager? lifecycleManager = null,
-        IConsolidationService? consolidationService = null,
-        IConfigurationStore? configStore = null,
-        IJobDeduplicationGuard? dedupGuard = null)
-        : base(leaderElection)
+        ReconciliationServiceDependencies deps)
+        : base(deps.LeaderElection)
     {
-        _dbFactory = dbFactory;
-        _kubeClient = kubeClient;
-        _transitionService = transitionService;
-        _labelService = labelService;
-        _lifecycleManager = lifecycleManager;
-        _consolidationService = consolidationService;
-        _configStore = configStore;
-        _dedupGuard = dedupGuard;
+        _dbFactory = deps.DbFactory;
+        _kubeClient = deps.KubeClient;
+        _transitionService = deps.TransitionService;
+        _labelService = deps.LabelService;
+        _lifecycleManager = deps.LifecycleManager;
+        _consolidationService = deps.ConsolidationService;
+        _configStore = deps.ConfigStore;
+        _dedupGuard = deps.DedupGuard;
         _options = new ReconciliationServiceOptions();
-        configuration.GetSection("WorkDistribution:Reconciliation").Bind(_options);
+        deps.Configuration.GetSection("WorkDistribution:Reconciliation").Bind(_options);
 
-        _options.Namespace = configuration.GetValue<string>("WorkDistribution:Namespace")
+        _options.Namespace = deps.Configuration.GetValue<string>("WorkDistribution:Namespace")
             ?? Environment.GetEnvironmentVariable("POD_NAMESPACE")
             ?? "default";
     }
@@ -334,7 +325,7 @@ public sealed class ReconciliationService : LeaderElectedPollingService
                     item.CompletedAt = DateTimeOffset.UtcNow;
                     item.FailureReason = FailureReason.InfrastructureFailure;
                     item.ErrorMessage = $"K8s Job failed: {reason}";
-                }, ct);
+                }, ct: ct);
 
             LogTerminalTransition(workItemId, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
 
@@ -349,10 +340,12 @@ public sealed class ReconciliationService : LeaderElectedPollingService
                 await TryDeleteJobAsync(jobName, ct);
             }
         }
-        else if (isComplete)
+        else
         {
             // Job completed (exit 0) — verify the agent actually reported terminal status.
             // Grace period: allow 30s for the POST to arrive (network latency, agent shutdown sequence).
+            // Note: isComplete is always true here — the guard `if (!isComplete && !isFailed) return`
+            // above ensures at least one is true, and this else branch is reached only when isFailed == false.
             await HandleCompleteJobWithStuckWorkItemAsync(workItemId, job, ct);
         }
     }
@@ -438,7 +431,7 @@ public sealed class ReconciliationService : LeaderElectedPollingService
                 entity.CompletedAt = DateTimeOffset.UtcNow;
                 entity.FailureReason = FailureReason.InfrastructureFailure;
                 entity.ErrorMessage = "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure";
-            }, ct);
+            }, ct: ct);
 
         LogTerminalTransition(workItemId, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
 
@@ -552,7 +545,7 @@ public sealed class ReconciliationService : LeaderElectedPollingService
                         w.CompletedAt = DateTimeOffset.UtcNow;
                         w.FailureReason = FailureReason.InfrastructureFailure;
                         w.ErrorMessage = $"K8s Job '{item.K8sJobName}' no longer exists (orphan)";
-                    }, ct);
+                    }, ct: ct);
 
                 LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
             }
@@ -639,7 +632,7 @@ public sealed class ReconciliationService : LeaderElectedPollingService
                     entity.CompletedAt = DateTimeOffset.UtcNow;
                     entity.FailureReason = FailureReason.InfrastructureFailure;
                     entity.ErrorMessage = "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure";
-                }, ct);
+                }, ct: ct);
 
             LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
 
@@ -721,7 +714,7 @@ public sealed class ReconciliationService : LeaderElectedPollingService
                         w.CompletedAt = DateTimeOffset.UtcNow;
                         w.FailureReason = FailureReason.Timeout;
                         w.ErrorMessage = timeoutReason;
-                    }, ct);
+                    }, ct: ct);
 
                 // Best-effort label swap to agent:error (prevents stale agent:in-progress on GitHub)
                 if (_labelService is not null)
@@ -948,9 +941,9 @@ public sealed class ReconciliationService : LeaderElectedPollingService
             Log.Information("ReconciliationService: released PVC {Pvc} from WorkItem {WorkItemId}",
                 pvc, workItemId);
         }
-        catch (DbUpdateConcurrencyException)
+        catch (DbUpdateConcurrencyException ex)
         {
-            Log.Warning("ReconciliationService: concurrency conflict releasing PVC for WorkItem {WorkItemId}",
+            Log.Warning(ex, "ReconciliationService: concurrency conflict releasing PVC for WorkItem {WorkItemId}",
                 workItemId);
         }
     }

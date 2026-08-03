@@ -113,7 +113,7 @@ public class CriticalMessageBufferReplayTests
     [Fact]
     public async Task JobSlot_Released_AfterSuccessfulDrain_WhenBufferEmpty()
     {
-        // TODO: Misleading test name — this actually tests the early-return path (buffer already
+        // TODO(#1776): Misleading test name — this actually tests the early-return path (buffer already
         // empty), not slot release after a successful drain of actual messages. There is no test
         // verifying the slot IS released after draining a non-empty buffer via a live connection.
         // After buffer is drained and becomes empty, job slot should be released
@@ -157,7 +157,7 @@ public class CriticalMessageBufferReplayTests
     [Fact]
     public void DrainBuffer_MaxAttemptsExceeded_MessageShouldBeDropped()
     {
-        // TODO: This test does not actually validate the drop logic. It only verifies what
+        // TODO(#1776): This test does not actually validate the drop logic. It only verifies what
         // was put in (DrainAttempts >= 3) rather than that DrainBufferAsync drops it.
         // The actual drop logic is tested in DrainBufferAsync_DropsMessagesExceedingMaxAttempts.
         // Consider removing this test or rewriting to test something meaningful.
@@ -200,7 +200,7 @@ public class CriticalMessageBufferReplayTests
     [Fact]
     public async Task DrainBufferAsync_DropsNonJobCompletedSubtype_WhenMaxAttemptsExceeded()
     {
-        // TODO(review): This test only validates the drop guard (DrainAttempts >= max), not
+        // TODO(#1776): This test only validates the drop guard (DrainAttempts >= max), not
         // the increment. Since the production switch has no case for non-BufferedJobCompleted
         // subtypes, they fall through without throwing, so the catch block's increment path
         // is never reached for these subtypes. This test would pass even with the old code.
@@ -230,7 +230,7 @@ public class CriticalMessageBufferReplayTests
         GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().BeNull("slot should be released after buffer is empty");
     }
 
-    // TODO(review): Add integration test exercising DrainBufferAsync with a non-BufferedJobCompleted
+    // TODO(#1776): Add integration test exercising DrainBufferAsync with a non-BufferedJobCompleted
     // subtype that FAILS replay (exception path), verifying DrainAttempts is incremented on
     // the base type and the message is eventually dropped after maxDrainAttempts retries.
     // Currently, non-BufferedJobCompleted subtypes silently fall through the switch without
@@ -486,13 +486,13 @@ public class CriticalMessageBufferReplayTests
         return (T?)field.GetValue(obj);
     }
 
-    // TODO: Add test for orchestrator-side idempotency guard (AgentHub.Pipeline.cs).
+    // TODO(#1776): Add test for orchestrator-side idempotency guard (AgentHub.Pipeline.cs).
     // The acceptance criteria require "Duplicate ReportJobCompleted for the same jobId is handled
     // idempotently on the orchestrator (no crash, no double-history)." The new else branch with
     // the debug log is untested — calling ReportJobCompleted twice for the same jobId where
     // GetRun returns null on the second call is not covered by any test.
 
-    // TODO: Add test for HeartbeatMonitor interaction with held slot during partition.
+    // TODO(#1776): Add test for HeartbeatMonitor interaction with held slot during partition.
     // The acceptance criteria require "HeartbeatMonitor no longer produces false 'agent stuck'
     // failures for jobs that completed during a network partition (verifiable in test)."
     // Need a scenario that exercises: delivery failure → buffer → progress timeout fires →

@@ -124,7 +124,7 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         var configuredModel = agentProviderConfig.Settings.GetValueOrDefault(
             ProviderSettingKeys.Model, "auto");
 
-        var run = PipelineRun.Create(
+        var run = PipelineRun.CreateImplementation(
             runId: Guid.NewGuid().ToString(),
             issueIdentifier: issueIdentifier,
             issueTitle: string.Empty,
@@ -169,7 +169,8 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 run.CompletedAtOffset = DateTimeOffset.UtcNow;
                 _lifecycle.EmitOutputLine($"âŒ Pipeline failed: {ex.Message}");
                 _lifecycle.TransitionTo(run, PipelineStep.Failed);
-                await _lifecycle.AddRunToHistoryAsync(run);
+                // Fire-and-forget: called in catch block where ct may already be cancelled; history must always be saved
+                await _lifecycle.AddRunToHistoryAsync(run, CancellationToken.None);
             }
             throw;
         }
@@ -208,22 +209,25 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
 
         var callbacks = new TestCallbacks(_lifecycle, run, providerManager, _prOrchestrator, _brainSync, _historyService, () => ctx);
         ctx = PipelineStepContext.ForOrchestrator(
-            run: run,
-            config: config,
-            repoProvider: providerManager.ActiveRepoProvider!,
-            agentProvider: providerManager.ActiveAgentProvider!,
-            brainProvider: providerManager.ActiveBrainProvider,
-            pipelineProvider: providerManager.ActivePipelineProvider,
-            cts: _lifecycle.CancellationTokenSource,
-            configStore: _configStore,
-            callbacks: callbacks,
-            issueOps: issueOps,
-            agentExecution: _agentExecution,
-            qualityGates: _qualityGates,
-            brainSync: _brainSync,
-            prOrchestrator: _prOrchestrator,
-            logger: _logger,
-            qualityGateValidator: _qualityGateValidator,
+            services: new PipelineStepContextServices
+            {
+                Run = run,
+                Config = config,
+                RepoProvider = providerManager.ActiveRepoProvider!,
+                AgentProvider = providerManager.ActiveAgentProvider!,
+                BrainProvider = providerManager.ActiveBrainProvider,
+                PipelineProvider = providerManager.ActivePipelineProvider,
+                Cts = _lifecycle.CancellationTokenSource,
+                ConfigStore = _configStore,
+                Callbacks = callbacks,
+                IssueOps = issueOps,
+                AgentExecution = _agentExecution,
+                QualityGates = _qualityGates,
+                BrainSync = _brainSync,
+                PrOrchestrator = _prOrchestrator,
+                Logger = _logger,
+                QualityGateValidator = _qualityGateValidator
+            },
             issueProvider: issueProvider);
 
         var steps = BuildStepPipeline();
@@ -239,7 +243,8 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
                 await callbacks.SwapAgentLabel(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
                 _lifecycle.EmitOutputLine("🚫 Pipeline cancelled");
                 _lifecycle.TransitionTo(run, PipelineStep.Cancelled);
-                await _lifecycle.AddRunToHistoryAsync(run);
+                // Fire-and-forget: called in cancellation path where ct is already cancelled; history must always be saved
+                await _lifecycle.AddRunToHistoryAsync(run, CancellationToken.None);
                 break;
 
             case PipelineExecutionOutcome.CancelledOutcome:
@@ -298,10 +303,10 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         public void TransitionTo(PipelineStep step) => lifecycle.TransitionTo(run, step);
         public void EmitOutputLine(string line) => lifecycle.EmitOutputLine(line);
         public void NotifyChange() => lifecycle.NotifyChange();
-        public Task AddRunToHistoryAsync(PipelineRun r) => lifecycle.AddRunToHistoryAsync(r);
+        public Task AddRunToHistoryAsync(PipelineRun run) => lifecycle.AddRunToHistoryAsync(run, CancellationToken.None);
 
-        public Task UpdateFileChangeStats(PipelineRun r)
-            => prOrchestrator.UpdateFileChangeStatsAsync(r, providerManager.ActiveRepoProvider!);
+        public Task UpdateFileChangeStats(PipelineRun run)
+            => prOrchestrator.UpdateFileChangeStatsAsync(run, providerManager.ActiveRepoProvider!);
 
         public async Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)
         {
@@ -326,169 +331,166 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
             catch { /* match production: swallow label failures */ }
         }
 
-        public async Task CreatePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
+        public async Task CreatePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
-            lifecycle.TransitionTo(r, PipelineStep.CreatingPullRequest);
+            lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
             try
             {
                 // Set PR info from linked PR before calling the orchestrator (rework mode)
-                if (r.LinkedPullRequest != null)
+                if (run.LinkedPullRequest != null)
                 {
-                    r.PullRequestUrl = r.LinkedPullRequest.Url;
-                    r.PullRequestNumber = r.LinkedPullRequest.Number.ToString();
+                    run.PullRequestUrl = run.LinkedPullRequest.Url;
+                    run.PullRequestNumber = run.LinkedPullRequest.Number.ToString();
                 }
 
-                var prUrl = await prOrchestrator.CreatePullRequestAsync(
-                    r, report, isDraft, providerManager.ActiveRepoProvider!, ctxAccessor()?.Issue,
+                var prUrl = await prOrchestrator.CreatePullRequestAsync(run, report, isDraft, providerManager.ActiveRepoProvider!, ctxAccessor()?.Issue,
                     ctxAccessor()?.IssueComments, ctxAccessor()?.Config ?? new PipelineConfiguration(), ct,
                     line => lifecycle.EmitOutputLine(line),
-                    isRework: r.LinkedPullRequest != null,
-                    issueReference: providerManager.ActiveIssueProvider?.FormatIssueReference(r.IssueIdentifier));
+                    isRework: run.LinkedPullRequest != null,
+                    issueReference: providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
 
                 if (prUrl == null)
                 {
-                    r.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
-                    r.CompletedAt = DateTime.UtcNow;
-                    r.CompletedAtOffset = DateTimeOffset.UtcNow;
-                    r.FinalLabel = AgentLabels.Error;
-                    await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
-                    lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
-                    lifecycle.TransitionTo(r, PipelineStep.Failed);
-                    await lifecycle.AddRunToHistoryAsync(r);
+                    run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
+                    run.CompletedAt = DateTime.UtcNow;
+                    run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                    run.FinalLabel = AgentLabels.Error;
+                    await SwapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+                    lifecycle.EmitOutputLine($"âŒ Pipeline failed: {run.FailureReason}");
+                    lifecycle.TransitionTo(run, PipelineStep.Failed);
+                    await lifecycle.AddRunToHistoryAsync(run, ct);
                     return;
                 }
 
-                r.PullRequestUrl = prUrl;
-                await PostPullRequestCompletion(r, isDraft, ct);
+                run.PullRequestUrl = prUrl;
+                await PostPullRequestCompletion(run, isDraft, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                r.FailureReason = $"PR creation failed: {ex.Message}";
-                r.CompletedAt = DateTime.UtcNow;
-                r.CompletedAtOffset = DateTimeOffset.UtcNow;
-                r.FinalLabel = AgentLabels.Error;
-                await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
-                lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
-                lifecycle.TransitionTo(r, PipelineStep.Failed);
-                await lifecycle.AddRunToHistoryAsync(r);
+                run.FailureReason = $"PR creation failed: {ex.Message}";
+                run.CompletedAt = DateTime.UtcNow;
+                run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                run.FinalLabel = AgentLabels.Error;
+                await SwapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+                lifecycle.EmitOutputLine($"âŒ Pipeline failed: {run.FailureReason}");
+                lifecycle.TransitionTo(run, PipelineStep.Failed);
+                await lifecycle.AddRunToHistoryAsync(run, ct);
             }
         }
 
-        public Task CreateDraftPrIfNotExists(PipelineRun r, CancellationToken ct)
+        public Task CreateDraftPrIfNotExists(PipelineRun run, CancellationToken ct)
             => Task.CompletedTask;
 
-        public async Task FinalizePullRequest(PipelineRun r, QualityGateReport report, bool isDraft, CancellationToken ct)
+        public async Task FinalizePullRequest(PipelineRun run, QualityGateReport report, bool isDraft, CancellationToken ct)
         {
-            lifecycle.TransitionTo(r, PipelineStep.CreatingPullRequest);
+            lifecycle.TransitionTo(run, PipelineStep.CreatingPullRequest);
             try
             {
                 // If no draft PR was created, fall back to the original CreatePullRequest flow
-                if (string.IsNullOrEmpty(r.PullRequestNumber))
+                if (string.IsNullOrEmpty(run.PullRequestNumber))
                 {
-                    await CreatePullRequest(r, report, isDraft, ct);
+                    await CreatePullRequest(run, report, isDraft, ct);
                     return;
                 }
 
-                var prUrl = await prOrchestrator.FinalizePullRequestAsync(
-                    r, report, isDraft, providerManager.ActiveRepoProvider!, ctxAccessor()?.Issue,
+                var prUrl = await prOrchestrator.FinalizePullRequestAsync(run, report, isDraft, providerManager.ActiveRepoProvider!, ctxAccessor()?.Issue,
                     ctxAccessor()?.IssueComments, ctxAccessor()?.Config ?? new PipelineConfiguration(), ct,
                     line => lifecycle.EmitOutputLine(line),
-                    issueReference: providerManager.ActiveIssueProvider?.FormatIssueReference(r.IssueIdentifier));
+                    issueReference: providerManager.ActiveIssueProvider?.FormatIssueReference(run.IssueIdentifier));
 
-                if (prUrl == null && r.PullRequestUrl == null)
+                if (prUrl == null && run.PullRequestUrl == null)
                 {
-                    r.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
-                    r.CompletedAt = DateTime.UtcNow;
-                    r.CompletedAtOffset = DateTimeOffset.UtcNow;
-                    r.FinalLabel = AgentLabels.Error;
-                    await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
-                    lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
-                    lifecycle.TransitionTo(r, PipelineStep.Failed);
-                    await lifecycle.AddRunToHistoryAsync(r);
+                    run.FailureReason = "Agent did not produce any changes. No commits ahead of base branch.";
+                    run.CompletedAt = DateTime.UtcNow;
+                    run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                    run.FinalLabel = AgentLabels.Error;
+                    await SwapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+                    lifecycle.EmitOutputLine($"âŒ Pipeline failed: {run.FailureReason}");
+                    lifecycle.TransitionTo(run, PipelineStep.Failed);
+                    await lifecycle.AddRunToHistoryAsync(run, ct);
                     return;
                 }
 
                 if (prUrl != null)
-                    r.PullRequestUrl = prUrl;
+                    run.PullRequestUrl = prUrl;
 
-                await PostPullRequestCompletion(r, isDraft, ct);
+                await PostPullRequestCompletion(run, isDraft, ct);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                r.FailureReason = $"PR finalization failed: {ex.Message}";
-                r.CompletedAt = DateTime.UtcNow;
-                r.CompletedAtOffset = DateTimeOffset.UtcNow;
-                r.FinalLabel = AgentLabels.Error;
-                await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
-                lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
-                lifecycle.TransitionTo(r, PipelineStep.Failed);
-                await lifecycle.AddRunToHistoryAsync(r);
+                run.FailureReason = $"PR finalization failed: {ex.Message}";
+                run.CompletedAt = DateTime.UtcNow;
+                run.CompletedAtOffset = DateTimeOffset.UtcNow;
+                run.FinalLabel = AgentLabels.Error;
+                await SwapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
+                lifecycle.EmitOutputLine($"âŒ Pipeline failed: {run.FailureReason}");
+                lifecycle.TransitionTo(run, PipelineStep.Failed);
+                await lifecycle.AddRunToHistoryAsync(run, ct);
             }
         }
 
-        private async Task PostPullRequestCompletion(PipelineRun r, bool isDraft, CancellationToken ct)
+        private async Task PostPullRequestCompletion(PipelineRun run, bool isDraft, CancellationToken ct)
         {
             var finalStep = isDraft ? PipelineStep.Failed : PipelineStep.Completed;
             if (isDraft)
             {
-                r.FailureReason ??= "Quality gates failed after max retries; draft PR created.";
-                r.IsDraftPr = true;
-                r.FinalLabel = AgentLabels.Error;
-                await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Error, ct);
+                run.FailureReason ??= "Quality gates failed after max retries; draft PR created.";
+                run.IsDraftPr = true;
+                run.FinalLabel = AgentLabels.Error;
+                await SwapAgentLabel(run.IssueIdentifier, AgentLabels.Error, ct);
             }
             else
             {
-                r.FinalLabel = AgentLabels.Done;
-                await SwapAgentLabel(r.IssueIdentifier, AgentLabels.Done, ct);
+                run.FinalLabel = AgentLabels.Done;
+                await SwapAgentLabel(run.IssueIdentifier, AgentLabels.Done, ct);
             }
 
             // Brain reflection + post-run sync (if brain provider configured and not read-only)
             var config = ctxAccessor()?.Config;
             if (!isDraft && providerManager.ActiveBrainProvider != null && config?.BrainReadOnly != true)
             {
-                lifecycle.TransitionTo(r, PipelineStep.ReflectingOnRun);
+                lifecycle.TransitionTo(run, PipelineStep.ReflectingOnRun);
                 try
                 {
                     var agentProvider = providerManager.ActiveAgentProvider;
                     if (agentProvider != null)
                     {
-                        var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(
-                            r, r.IssueTitle, r.RepositoryName?.Split('/').LastOrDefault());
+                        var reflectionPrompt = PromptBuilder.BuildReflectionPrompt(run, run.IssueTitle, run.RepositoryName?.Split('/').LastOrDefault());
                         await agentProvider.ExecuteAsync(
-                            new AgentRequest { Prompt = reflectionPrompt, WorkspacePath = r.WorkspacePath ?? "", UseResume = true },
+                            new AgentRequest { Prompt = reflectionPrompt, WorkspacePath = run.WorkspacePath ?? "", UseResume = true },
                             ct);
                     }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 { /* non-fatal â€” match production behavior */ }
 
-                lifecycle.TransitionTo(r, PipelineStep.SyncingBrainRepoPostRun);
+                lifecycle.TransitionTo(run, PipelineStep.SyncingBrainRepoPostRun);
                 try
                 {
-                    await brainSync.SyncPostRunAsync(r, providerManager.ActiveBrainProvider, ct,
+                    await brainSync.SyncPostRunAsync(run, providerManager.ActiveBrainProvider, ct,
                         line => lifecycle.EmitOutputLine(line), config?.BrainPushMaxRetries ?? 3);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    r.BrainUpdatesPushed = false;
+                    run.BrainUpdatesPushed = false;
                 }
             }
 
-            r.CompletedAt ??= DateTime.UtcNow;
-            r.CompletedAtOffset ??= DateTimeOffset.UtcNow;
+            run.CompletedAt ??= DateTime.UtcNow;
+            run.CompletedAtOffset ??= DateTimeOffset.UtcNow;
 
-            lifecycle.TransitionTo(r, finalStep);
-            await lifecycle.AddRunToHistoryAsync(r);
+            lifecycle.TransitionTo(run, finalStep);
+            await lifecycle.AddRunToHistoryAsync(run, ct);
 
-            var duration = r.CompletedAt!.Value - r.StartedAt;
+            var duration = (run.CompletedAt ?? DateTimeOffset.UtcNow) - run.StartedAt;
             if (finalStep == PipelineStep.Completed)
             {
                 lifecycle.EmitOutputLine($"✅ Pipeline completed in {(int)duration.TotalMinutes}m {duration.Seconds}s");
                 // Workspace cleanup on success (match production)
-                historyService.TryDeleteWorkspace(r.WorkspacePath, r.RunId, config?.WorkspaceBaseDirectory ?? "");
+                historyService.TryDeleteWorkspace(run.WorkspacePath, run.RunId, config?.WorkspaceBaseDirectory ?? "");
             }
             else
-                lifecycle.EmitOutputLine($"âŒ Pipeline failed: {r.FailureReason}");
+                lifecycle.EmitOutputLine($"âŒ Pipeline failed: {run.FailureReason}");
         }
 
         public Task ReportBrainSyncResult(bool contextLoaded, int knowledgeFileCount)

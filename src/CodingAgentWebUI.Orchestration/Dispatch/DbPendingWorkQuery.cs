@@ -54,9 +54,7 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
                     ? []
                     : w.AgentSelector.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                 TaskType = w.TaskType,
-                RunType = w.TaskType == WorkItemTaskType.Review ? PipelineRunType.Review
-                    : w.TaskType == WorkItemTaskType.Decomposition ? PipelineRunType.DecompositionAnalysis
-                    : PipelineRunType.Implementation,
+                RunType = ResolveRunType(w.TaskType),
                 ConsolidationRunType = isConsolidation ? consolidationRunType : null,
                 Project = !string.IsNullOrEmpty(projectId) && !string.IsNullOrEmpty(projectName)
                     ? new PipelineProject { Id = projectId, Name = projectName }
@@ -78,6 +76,13 @@ public sealed class DbPendingWorkQuery : IPendingWorkQuery
 
         _cachedCount = result.Count;
         return result;
+    }
+
+    private static PipelineRunType ResolveRunType(WorkItemTaskType taskType)
+    {
+        if (taskType == WorkItemTaskType.Review) return PipelineRunType.Review;
+        if (taskType == WorkItemTaskType.Decomposition) return PipelineRunType.DecompositionAnalysis;
+        return PipelineRunType.Implementation;
     }
 
     /// <summary>

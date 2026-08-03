@@ -47,10 +47,37 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     private readonly IOpenIssueContextWriter _openIssueContextWriter;
     private readonly AgentId _agentId;
     private readonly AgentProviderResolver _providerResolver;
-    private readonly IPipelineReporterFactory _reporterFactory;
     private readonly PipelineExecutionContextBuilder _contextBuilder;
     private readonly Serilog.ILogger _logger;
 
+    public LocalPipelineExecutor(LocalPipelineExecutorDependencies deps)
+    {
+        ArgumentNullException.ThrowIfNull(deps);
+        ArgumentNullException.ThrowIfNull(deps.Orchestrator, nameof(deps.Orchestrator));
+        ArgumentNullException.ThrowIfNull(deps.HttpClientFactory, nameof(deps.HttpClientFactory));
+        ArgumentNullException.ThrowIfNull(deps.DefaultPipelineConfig, nameof(deps.DefaultPipelineConfig));
+        ArgumentNullException.ThrowIfNull(deps.QualityGateValidator, nameof(deps.QualityGateValidator));
+        ArgumentNullException.ThrowIfNull(deps.Logger, nameof(deps.Logger));
+
+        _orchestrator = deps.Orchestrator;
+        _httpClientFactory = deps.HttpClientFactory;
+        _defaultPipelineConfig = deps.DefaultPipelineConfig;
+        _qualityGateValidator = deps.QualityGateValidator;
+        _brainUpdateService = deps.BrainUpdateService;
+        _historyService = deps.HistoryService;
+        _openIssueContextWriter = deps.OpenIssueContextWriter ?? new OpenIssueContextWriter(deps.Logger);
+        _agentId = deps.AgentIdentity ?? new AgentId(Environment.MachineName);
+        _providerResolver = new AgentProviderResolver(deps.Logger);
+        var reporterFactory = deps.ReporterFactory ?? new PipelineReporterFactory(deps.Logger);
+        var feedbackService = new FeedbackService(deps.Logger);
+        var finalization = new PullRequestFinalizationService(deps.Logger);
+        _contextBuilder = new PipelineExecutionContextBuilder(
+            deps.QualityGateValidator, reporterFactory, feedbackService, _agentId, deps.Logger,
+            deps.BrainUpdateService, deps.HistoryService, finalization);
+        _logger = deps.Logger;
+    }
+
+    // Backward-compatible constructor used by tests that pass individual parameters
     public LocalPipelineExecutor(
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
@@ -78,11 +105,11 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         _openIssueContextWriter = openIssueContextWriter ?? new OpenIssueContextWriter(logger);
         _agentId = agentIdentity ?? new AgentId(Environment.MachineName);
         _providerResolver = new AgentProviderResolver(logger);
-        _reporterFactory = reporterFactory ?? new PipelineReporterFactory(logger);
+        var reporterFactoryLocal = reporterFactory ?? new PipelineReporterFactory(logger);
         var feedbackService = new FeedbackService(logger);
         var finalization = new PullRequestFinalizationService(logger);
         _contextBuilder = new PipelineExecutionContextBuilder(
-            qualityGateValidator, _reporterFactory, feedbackService, _agentId, logger,
+            qualityGateValidator, reporterFactoryLocal, feedbackService, _agentId, logger,
             brainUpdateService, historyService, finalization);
         _logger = logger;
     }
@@ -153,9 +180,9 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
             config = PipelineConfigurationResolver.ApplyProviderBlacklist(config, agentProvider.PipelineInjectedPaths);
             config = config with { PipelineInjectedPaths = agentProvider.PipelineInjectedPaths };
 
-            result = await ExecutePipelineStepsAsync(
+            result = await ExecutePipelineStepsAsync(new ExecutePipelineStepsRequest(
                 job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
-                issueOps, repoConfig, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders);
+                issueOps, repoConfig, connection, outputBatcher, onStepChanged, ct, additionalRepoProviders));
 
             if (result.FinalStep == PipelineStep.Completed)
                 instrumentation.MarkCompleted();
@@ -182,24 +209,24 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         }
     }
 
-    private async Task<JobCompletionPayload> ExecutePipelineStepsAsync(
-        JobAssignmentMessage job,
-        PipelineConfiguration config,
-        IRepositoryProvider repoProvider,
-        IAgentProvider agentProvider,
-        IRepositoryProvider? brainProvider,
-        IPipelineProvider? pipelineProvider,
-        OrchestratorProxy issueOps,
-        ProviderConfig repoConfig,
-        HubConnection connection,
-        OutputBatcher outputBatcher,
-        Action<PipelineStep?>? onStepChanged,
-        CancellationToken ct,
-        List<(string TemplateName, IRepositoryProvider Provider)>? additionalRepoProviders = null)
+    private async Task<JobCompletionPayload> ExecutePipelineStepsAsync(ExecutePipelineStepsRequest req)
     {
-        var buildResult = await _contextBuilder.Build(
+        var job = req.Job;
+        var config = req.Config;
+        var repoProvider = req.RepoProvider;
+        var agentProvider = req.AgentProvider;
+        var brainProvider = req.BrainProvider;
+        var pipelineProvider = req.PipelineProvider;
+        var issueOps = req.IssueOps;
+        var repoConfig = req.RepoConfig;
+        var connection = req.Connection;
+        var outputBatcher = req.OutputBatcher;
+        var onStepChanged = req.OnStepChanged;
+        var ct = req.Ct;
+        var additionalRepoProviders = req.AdditionalRepoProviders;
+        var buildResult = await _contextBuilder.Build(new PipelineBuildRequest(
             job, config, repoProvider, agentProvider, brainProvider, pipelineProvider,
-            issueOps, connection, outputBatcher, onStepChanged, ct);
+            issueOps, connection, outputBatcher, onStepChanged, ct));
 
         var run = buildResult.Run;
         var reporter = buildResult.Reporter;
@@ -323,3 +350,22 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     };
 
 }
+
+/// <summary>
+/// Groups the parameters for <see cref="LocalPipelineExecutor.ExecutePipelineStepsAsync"/>
+/// to reduce method parameter count (S107).
+/// </summary>
+internal sealed record ExecutePipelineStepsRequest(
+    JobAssignmentMessage Job,
+    PipelineConfiguration Config,
+    IRepositoryProvider RepoProvider,
+    IAgentProvider AgentProvider,
+    IRepositoryProvider? BrainProvider,
+    IPipelineProvider? PipelineProvider,
+    OrchestratorProxy IssueOps,
+    ProviderConfig RepoConfig,
+    HubConnection Connection,
+    OutputBatcher OutputBatcher,
+    Action<PipelineStep?>? OnStepChanged,
+    CancellationToken Ct,
+    List<(string TemplateName, IRepositoryProvider Provider)>? AdditionalRepoProviders = null);

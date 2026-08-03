@@ -15,6 +15,19 @@ namespace CodingAgentWebUI.Services;
 /// </summary>
 public static class ConfigImportExportEndpoints
 {
+    private static readonly JsonSerializerOptions ExportOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    private static readonly JsonSerializerOptions ImportOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
+
     public static void MapConfigImportExportEndpoints(this IEndpointRouteBuilder app)
     {
         var group = app.MapGroup("/api/config")
@@ -79,11 +92,7 @@ public static class ConfigImportExportEndpoints
             }).ToListAsync(ct)
         };
 
-        var json = JsonSerializer.Serialize(bundle, new JsonSerializerOptions
-        {
-            WriteIndented = true,
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
-        });
+        var json = JsonSerializer.Serialize(bundle, ExportOptions);
 
         return Results.File(
             System.Text.Encoding.UTF8.GetBytes(json),
@@ -108,12 +117,7 @@ public static class ConfigImportExportEndpoints
         try
         {
             using var stream = file.OpenReadStream();
-            bundle = await JsonSerializer.DeserializeAsync<ConfigBundle>(stream, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                PropertyNameCaseInsensitive = true,
-                Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
-            }, ct);
+            bundle = await JsonSerializer.DeserializeAsync<ConfigBundle>(stream, ImportOptions, ct);
         }
         catch (JsonException ex)
         {

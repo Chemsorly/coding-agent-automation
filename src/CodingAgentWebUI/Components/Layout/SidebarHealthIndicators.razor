@@ -48,13 +48,36 @@
     private string DbDotClass => _dbStatus == true ? "dot-healthy" : "dot-unhealthy";
     private string DbTooltip => _dbStatus == true ? "Database: Connected" : "Database: Disconnected";
 
-    private string RedisDotClass => _redisStatus == true ? "dot-healthy" : _redisStatus == false ? "dot-unhealthy" : "dot-inactive";
-    private string RedisTooltip => _redisStatus == true ? "Redis: Connected" : _redisStatus == false ? "Redis: Disconnected" : "Redis: Not configured";
+    private string RedisDotClass
+    {
+        get
+        {
+            if (_redisStatus == true) return "dot-healthy";
+            if (_redisStatus == false) return "dot-unhealthy";
+            return "dot-inactive";
+        }
+    }
 
-    private string AgentDotClass => _totalCount == 0 ? "dot-inactive"
-        : _connectedCount == _totalCount ? "dot-healthy"
-        : _connectedCount == 0 ? "dot-unhealthy"
-        : "dot-warning";
+    private string RedisTooltip
+    {
+        get
+        {
+            if (_redisStatus == true) return "Redis: Connected";
+            if (_redisStatus == false) return "Redis: Disconnected";
+            return "Redis: Not configured";
+        }
+    }
+
+    private string AgentDotClass
+    {
+        get
+        {
+            if (_totalCount == 0) return "dot-inactive";
+            if (_connectedCount == _totalCount) return "dot-healthy";
+            if (_connectedCount == 0) return "dot-unhealthy";
+            return "dot-warning";
+        }
+    }
     private string AgentTooltip => $"Agents: {_connectedCount} connected, {_totalCount - _connectedCount} disconnected";
 
     protected override void OnInitialized()
@@ -94,7 +117,7 @@
                 StateHasChanged();
             });
         }
-        catch (ObjectDisposedException) { }
+        catch (ObjectDisposedException) { /* Intentional: component disposed between timer tick and InvokeAsync; no action needed. */ }
     }
 
     // TODO: Consider switching to IAsyncDisposable with await _refreshTimer.DisposeAsync() to guarantee

@@ -206,6 +206,7 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
                 try
                 {
                     await _agentCancellationSender.SendCancelJobAsync(
+                        // Fire-and-forget: called from catch block after CTS disposed; cancellation signal must still be sent
                         run.AgentId, run.RunId, CancellationToken.None).ConfigureAwait(false);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -219,7 +220,8 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         run.MarkCompleted();
         EmitOutputLine("🚫 Pipeline cancelled");
         TransitionTo(run, PipelineStep.Cancelled);
-        await AddRunToHistoryAsync(run).ConfigureAwait(false);
+        // Fire-and-forget: called from UI-triggered cancel; no ambient token available after CTS is cancelled
+        await AddRunToHistoryAsync(run, CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -239,7 +241,8 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         {
             run.MarkCompleted();
             run.CurrentStep = PipelineStep.Cancelled;
-            await AddRunToHistoryAsync(run).ConfigureAwait(false);
+            // Fire-and-forget: called from shutdown path with no ambient token; history must always be saved
+            await AddRunToHistoryAsync(run, CancellationToken.None).ConfigureAwait(false);
             _runService.RemoveRun(run.RunId);
             cancelledIssues.Add((run.IssueIdentifier, run.IssueProviderConfigId));
         }
@@ -304,15 +307,27 @@ public class PipelineRunLifecycleService : IDisposable, IAsyncDisposable, ILifec
         OnChatCompleted = null;
     }
 
+    private bool _disposed;
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (_disposed) return;
+        if (disposing)
+        {
+            Interlocked.Exchange(ref _cancellationTokenSource, null)?.Dispose();
+        }
+        _disposed = true;
+    }
+
     public void Dispose()
     {
-        Interlocked.Exchange(ref _cancellationTokenSource, null)?.Dispose();
+        Dispose(true);
         GC.SuppressFinalize(this);
     }
 
     public ValueTask DisposeAsync()
     {
-        Interlocked.Exchange(ref _cancellationTokenSource, null)?.Dispose();
+        Dispose(true);
         GC.SuppressFinalize(this);
         return ValueTask.CompletedTask;
     }

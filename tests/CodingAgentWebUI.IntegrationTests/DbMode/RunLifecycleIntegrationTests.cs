@@ -58,13 +58,14 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         _mockLabelService = new Mock<ILabelService>();
 
         _lifecycleManager = new RunLifecycleManager(
-            _runService,
-            _mockHistoryService.Object,
-            _registry,
-            _mockLabelService.Object,
-            _dispatcher,
-            _mockLogger.Object,
-            _transitionService);
+            new RunLifecycleManagerDependencies(
+                _runService,
+                _mockHistoryService.Object,
+                _registry,
+                _mockLabelService.Object,
+                _dispatcher,
+                _mockLogger.Object,
+                WorkItemTransition: _transitionService));
     }
 
     public void Dispose()
@@ -336,14 +337,15 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             .Returns(Task.CompletedTask);
 
         var lifecycleWithK8s = new RunLifecycleManager(
-            _runService,
-            _mockHistoryService.Object,
-            _registry,
-            _mockLabelService.Object,
-            _dispatcher,
-            _mockLogger.Object,
-            _transitionService,
-            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
+            new RunLifecycleManagerDependencies(
+                _runService,
+                _mockHistoryService.Object,
+                _registry,
+                _mockLabelService.Object,
+                _dispatcher,
+                _mockLogger.Object,
+                WorkItemTransition: _transitionService,
+                JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
 
         // Act
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -402,14 +404,15 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
         var mockJobClient = new Mock<IKubernetesJobClient>();
 
         var lifecycleWithK8s = new RunLifecycleManager(
-            _runService,
-            _mockHistoryService.Object,
-            _registry,
-            _mockLabelService.Object,
-            _dispatcher,
-            _mockLogger.Object,
-            _transitionService,
-            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
+            new RunLifecycleManagerDependencies(
+                _runService,
+                _mockHistoryService.Object,
+                _registry,
+                _mockLabelService.Object,
+                _dispatcher,
+                _mockLogger.Object,
+                WorkItemTransition: _transitionService,
+                JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
 
         // Act
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
@@ -472,15 +475,15 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             .ThrowsAsync(new k8s.Autorest.HttpOperationException { Response = new k8s.Autorest.HttpResponseMessageWrapper(response404, "") });
 
         var lifecycleWithK8s = new RunLifecycleManager(
-            _runService,
-            _mockHistoryService.Object,
-            _registry,
-            _mockLabelService.Object,
-            _dispatcher,
-            _mockLogger.Object,
-            _transitionService,
-            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
-
+            new RunLifecycleManagerDependencies(
+                _runService,
+                _mockHistoryService.Object,
+                _registry,
+                _mockLabelService.Object,
+                _dispatcher,
+                _mockLogger.Object,
+                WorkItemTransition: _transitionService,
+                JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
         // Act — should not throw despite 404
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
 
@@ -546,15 +549,15 @@ public sealed class RunLifecycleIntegrationTests : IDisposable
             .ThrowsAsync(new TimeoutException("K8s API unavailable"));
 
         var lifecycleWithK8s = new RunLifecycleManager(
-            _runService,
-            _mockHistoryService.Object,
-            _registry,
-            _mockLabelService.Object,
-            _dispatcher,
-            _mockLogger.Object,
-            _transitionService,
-            new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object));
-
+            new RunLifecycleManagerDependencies(
+                _runService,
+                _mockHistoryService.Object,
+                _registry,
+                _mockLabelService.Object,
+                _dispatcher,
+                _mockLogger.Object,
+                WorkItemTransition: _transitionService,
+                JobCleanup: new KubernetesJobCleanup(_dbFactory, mockJobClient.Object, k8sNamespace, _mockLogger.Object)));
         // Act — should not throw despite K8s API failure
         var result = await lifecycleWithK8s.CancelRunAsync(runId.ToString(), CancellationToken.None);
 

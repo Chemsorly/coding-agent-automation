@@ -38,25 +38,22 @@ public sealed class AnalysisStalenessDetector
     /// <summary>
     /// Evaluates staleness signals for an existing analysis comment.
     /// </summary>
-    /// <param name="analysisComment">The newest analysis comment on the issue.</param>
-    /// <param name="issueComments">All fetched issue comments (up to 50).</param>
-    /// <param name="issueBody">Current issue body text for hash comparison.</param>
-    /// <param name="issueIdentifier">Issue identifier for DB queries.</param>
-    /// <param name="issueProviderConfigId">Issue provider config ID for DB queries.</param>
-    /// <param name="commitThreshold">Commit count threshold (0 = disabled).</param>
-    /// <param name="getCommitCount">Delegate to fetch commit count (null = skip signal 3).</param>
+    /// <param name="request">The evaluation request containing all required inputs.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns>Staleness evaluation result including which signal fired (if any).</returns>
     public async Task<StalenessResult> EvaluateAsync(
-        IssueComment analysisComment,
-        IReadOnlyList<IssueComment> issueComments,
-        string issueBody,
-        string issueIdentifier,
-        string issueProviderConfigId,
-        int commitThreshold,
-        Func<DateTimeOffset, CancellationToken, Task<int>>? getCommitCount,
+        StalenessEvaluationRequest request,
         CancellationToken ct)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var analysisComment = request.AnalysisComment;
+        var issueComments = request.IssueComments;
+        var issueBody = request.IssueBody;
+        var issueIdentifier = request.IssueIdentifier;
+        var issueProviderConfigId = request.IssueProviderConfigId;
+        var commitThreshold = request.CommitThreshold;
+        var getCommitCount = request.GetCommitCount;
+
         ArgumentNullException.ThrowIfNull(analysisComment);
         ArgumentNullException.ThrowIfNull(issueComments);
         ArgumentNullException.ThrowIfNull(issueIdentifier);

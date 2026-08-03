@@ -134,7 +134,7 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
         var agentId = "agent-42";
         var connectionId = "conn-abc";
 
-        var existingRun = PipelineRun.Create(
+        var existingRun = PipelineRun.CreateImplementation(
             runId: runId,
             issueIdentifier: "owner/repo#10",
             issueTitle: "Existing",
@@ -224,14 +224,15 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
     private PendingWorkItemDrainService CreateService()
     {
         return new PendingWorkItemDrainService(
-            _dbFactory,
-            _mockAgentResolver.Object,
-            _mockAgentComm.Object,
-            _mockRunService.Object,
-            _transitionService,
-            _mockPendingWorkQuery.Object,
-            _mockLabelService.Object,
-            NullLogger<PendingWorkItemDrainService>.Instance);
+            new DrainServiceDependencies(
+                _dbFactory,
+                _mockAgentResolver.Object,
+                _mockAgentComm.Object,
+                _mockRunService.Object,
+                _transitionService,
+                _mockPendingWorkQuery.Object,
+                _mockLabelService.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance));
     }
 
     private static async Task InvokeDrainPendingItems(PendingWorkItemDrainService service)

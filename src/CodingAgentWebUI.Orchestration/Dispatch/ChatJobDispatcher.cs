@@ -24,8 +24,8 @@ public sealed class ChatPodTimeoutException(int timeoutSeconds)
 /// </summary>
 public interface IChatJobDispatcher
 {
-    Task<string> DispatchChatPodAsync(string agentSelector, string? model, string? effort, CancellationToken ct);
-    Task TerminateChatSessionAsync(string agentId, CancellationToken ct);
+    Task<string> DispatchChatPodAsync(string agentSelector, string? model, string? effort, CancellationToken cancellationToken);
+    Task TerminateChatSessionAsync(string agentId, CancellationToken cancellationToken);
 }
 
 // ─── Null-object implementation (SignalR mode) ────────────────────────────────
@@ -38,9 +38,9 @@ public interface IChatJobDispatcher
 /// </summary>
 public sealed class NullChatJobDispatcher : IChatJobDispatcher
 {
-    public Task<string> DispatchChatPodAsync(string agentSelector, string? model, string? effort, CancellationToken ct)
+    public Task<string> DispatchChatPodAsync(string agentSelector, string? model, string? effort, CancellationToken cancellationToken)
         => throw new NotSupportedException("Chat pod dispatch is not available in SignalR mode.");
 
-    public Task TerminateChatSessionAsync(string agentId, CancellationToken ct)
+    public Task TerminateChatSessionAsync(string agentId, CancellationToken cancellationToken)
         => Task.CompletedTask; // safe no-op in SignalR mode
 }

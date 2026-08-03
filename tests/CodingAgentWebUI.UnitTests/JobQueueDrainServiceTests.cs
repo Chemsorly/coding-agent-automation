@@ -42,10 +42,10 @@ public class JobQueueDrainServiceTests
             .ReturnsAsync((ProviderConfig?)null);
         _mockConsolidationDispatchService = new Mock<IConsolidationDispatchService>();
         _mockRunStore = new Mock<IConsolidationRunStore>();
-        _service = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object,
-            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger);
-        _serviceWithRunStore = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object,
-            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger, _mockRunStore.Object);
+        _service = new JobQueueDrainService(new JobQueueDrainDependencies(_dispatcher, _registry, _mockJobDispatcher.Object,
+            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger));
+        _serviceWithRunStore = new JobQueueDrainService(new JobQueueDrainDependencies(_dispatcher, _registry, _mockJobDispatcher.Object,
+            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger, _mockRunStore.Object));
     }
 
     private AgentEntry RegisterIdleAgent(string agentId = "agent-1", IReadOnlyList<string>? labels = null)
@@ -473,8 +473,8 @@ public class JobQueueDrainServiceTests
             .ReturnsAsync(new ConsolidationRun { RunId = "crun-cancelled", Status = ConsolidationRunStatus.Cancelled, Type = ConsolidationRunType.RefactoringDetection, StartedAtUtc = DateTime.UtcNow });
 
         var logger = new Mock<ILogger>().Object;
-        var serviceWithStore = new JobQueueDrainService(_dispatcher, _registry, _mockJobDispatcher.Object,
-            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger, runStore.Object);
+        var serviceWithStore = new JobQueueDrainService(new JobQueueDrainDependencies(_dispatcher, _registry, _mockJobDispatcher.Object,
+            _mockConfigStore.Object, _mockConsolidationDispatchService.Object, new ShutdownSignal(), logger, runStore.Object));
 
         RegisterIdleAgent();
         _dispatcher.EnqueueJob(new PendingJob

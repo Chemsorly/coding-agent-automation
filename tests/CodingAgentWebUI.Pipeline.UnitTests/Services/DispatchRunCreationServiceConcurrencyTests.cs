@@ -69,7 +69,8 @@ public class DispatchRunCreationServiceConcurrencyTests : IAsyncDisposable
         {
             barrier.SignalAndWait();
             return await _service.CreateDispatchedRunAsync(
-                "issue-1", "repo-1", "42", "agent-1", "agent-x", CancellationToken.None);
+                new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "42", AgentProviderId = "agent-1", AgentId = "agent-x" },
+                CancellationToken.None);
         })).ToArray();
 
         // Act
@@ -95,7 +96,8 @@ public class DispatchRunCreationServiceConcurrencyTests : IAsyncDisposable
         {
             barrier.SignalAndWait();
             return await _service.CreateDispatchedRunAsync(
-                "issue-1", "repo-1", "99", "agent-1", "agent-x", CancellationToken.None);
+                new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "99", AgentProviderId = "agent-1", AgentId = "agent-x" },
+                CancellationToken.None);
         })).ToArray();
 
         // Act
@@ -117,7 +119,8 @@ public class DispatchRunCreationServiceConcurrencyTests : IAsyncDisposable
         {
             barrier.SignalAndWait();
             return await _service.CreateDispatchedRunAsync(
-                "issue-1", "repo-1", $"issue-{i}", "agent-1", "agent-x", CancellationToken.None);
+                new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = $"issue-{i}", AgentProviderId = "agent-1", AgentId = "agent-x" },
+                CancellationToken.None);
         })).ToArray();
 
         // Act
@@ -140,7 +143,8 @@ public class DispatchRunCreationServiceConcurrencyTests : IAsyncDisposable
         {
             barrier.SignalAndWait();
             return await _service.ReserveRunIdAsync(
-                "issue-1", "repo-1", "77", "agent-1", "agent-x", CancellationToken.None);
+                new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "77", AgentProviderId = "agent-1", AgentId = "agent-x" },
+                CancellationToken.None);
         })).ToArray();
 
         // Act
@@ -161,13 +165,15 @@ public class DispatchRunCreationServiceConcurrencyTests : IAsyncDisposable
     {
         // Arrange: first dispatch succeeds and completes (reservation released by finally block)
         var firstRun = await _service.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "50", "agent-1", "agent-x", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "50", AgentProviderId = "agent-1", AgentId = "agent-x" },
+            CancellationToken.None);
         firstRun.Should().NotBeNull();
 
         // Act: second dispatch for same issue — should fail due to lifecycle dedup
         // (the issue is registered as being processed), NOT due to stale reservation
         var secondRun = await _service.CreateDispatchedRunAsync(
-            "issue-1", "repo-1", "50", "agent-1", "agent-y", CancellationToken.None);
+            new DispatchRunRequest { IssueProviderId = "issue-1", RepoProviderId = "repo-1", IssueIdentifier = "50", AgentProviderId = "agent-1", AgentId = "agent-y" },
+            CancellationToken.None);
 
         // Assert: second call returns null because the issue is being processed (lifecycle guard),
         // not because the reservation leaked

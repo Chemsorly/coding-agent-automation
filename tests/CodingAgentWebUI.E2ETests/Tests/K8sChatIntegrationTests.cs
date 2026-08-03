@@ -78,7 +78,7 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
             // Labels should include chat=true and chat-session-id
             Assert.Contains("chat=true", entry.Labels ?? Array.Empty<string>());
             Assert.True(
-                entry.Labels?.Any(l => l.StartsWith("chat-session-id=")) == true,
+                entry.Labels?.Any(l => l.StartsWith("chat-session-id=")) ?? false,
                 "Agent should have chat-session-id label");
         }
     }
@@ -98,6 +98,10 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
 
             var sessionId = Guid.NewGuid().ToString();
 
+            // Mirror AgentChat.razor: set ActiveChatSessionId before AssignChatPrompt so hub
+            // ownership validation in ReportChatResponse / ReportChatCompleted passes.
+            entry.ActiveChatSessionId = sessionId;
+
             // Send prompt to agent via hub
             await hubContext.Clients.Client(entry.ConnectionId)
                 .AssignChatPrompt(new ChatPromptMessage
@@ -113,10 +117,12 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
                 .WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal("What is 2+2?", prompt.Prompt);
 
-            // Agent sends response back
+            // Agent sends response back (hub validates ownership via ActiveChatSessionId)
             await fakeAgent.SendChatResponseAsync(sessionId, "The answer is 4.");
 
-            // Response is accepted without error (no assertion on UI state — pure API test)
+            // Assert: ReportChatCompleted clears ActiveChatSessionId — confirms full round-trip
+            // completed and the hub processed both ReportChatResponse and ReportChatCompleted.
+            Assert.Null(entry.ActiveChatSessionId);
         }
     }
 
@@ -139,6 +145,11 @@ public sealed class K8sChatIntegrationTests : K8sChatE2ETestBase, IClassFixture<
 
             // Simulate clean pod exit (job reaches terminal)
             await Fixture.K8sClient.SimulateChatJobTerminalAsync(jobName, success: true);
+
+            // Assert: job reached a terminal (Complete) condition
+            var terminalJob = Fixture.K8sClient.ChatJobs[jobName];
+            Assert.Contains(terminalJob.Status.Conditions,
+                c => c.Type == "Complete" && c.Status == "True");
         }
     }
 

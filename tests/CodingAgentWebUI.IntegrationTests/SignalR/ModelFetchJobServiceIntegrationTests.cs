@@ -93,13 +93,14 @@ public sealed class ModelFetchJobServiceIntegrationTests : IClassFixture<SignalR
 
         // ── Service under test ──────────────────────────────────────────────
         var service = new ModelFetchJobService(
-            fakeJobClient,
-            templateStore,
-            options,
-            mockConfig.Object,
-            modelFetchService,          // real ModelFetchService — routes through hub
-            pollTimeoutSecondsOverride: 10,
-            pollIntervalMs: 50);
+            new ModelFetchJobDependencies(
+                fakeJobClient,
+                templateStore,
+                options,
+                mockConfig.Object,
+                modelFetchService,          // real ModelFetchService — routes through hub
+                PollTimeoutSecondsOverride: 10,
+                PollIntervalMs: 50));
 
         // ── Start FetchModelsAsync in background ────────────────────────────
         // It will dispatch the fake job, then poll the registry waiting for the agent.
@@ -194,8 +195,9 @@ public sealed class ModelFetchJobServiceIntegrationTests : IClassFixture<SignalR
 
         // Use a 2-second timeout so the test is fast
         var service = new ModelFetchJobService(
-            fakeJobClient, templateStore, options, mockConfig.Object, modelFetchService,
-            pollTimeoutSecondsOverride: 2, pollIntervalMs: 50);
+            new ModelFetchJobDependencies(
+                fakeJobClient, templateStore, options, mockConfig.Object, modelFetchService,
+                PollTimeoutSecondsOverride: 2, PollIntervalMs: 50));
 
         var (models, error) = await service.FetchModelsAsync("kiro", cts.Token);
 
@@ -229,9 +231,9 @@ public sealed class ModelFetchJobServiceIntegrationTests : IClassFixture<SignalR
             KiroPvcPool = ["test-pvc"]
         };
         var service = new ModelFetchJobService(
-            fakeJobClient, templateStore, options, mockConfig.Object, modelFetchService,
-            pollTimeoutSecondsOverride: 10, pollIntervalMs: 50);
-
+            new ModelFetchJobDependencies(
+                fakeJobClient, templateStore, options, mockConfig.Object, modelFetchService,
+                PollTimeoutSecondsOverride: 10, PollIntervalMs: 50));
         var fetchTask = Task.Run(() => service.FetchModelsAsync("kiro", cts.Token), cts.Token);
 
         var deadline = DateTime.UtcNow.AddSeconds(3);
@@ -294,8 +296,9 @@ public sealed class ModelFetchJobServiceIntegrationTests : IClassFixture<SignalR
         };
 
         var firstService = new ModelFetchJobService(
-            firstJobClientCapturing, templateStore, options, mockConfig.Object, modelFetchService,
-            pollTimeoutSecondsOverride: 10, pollIntervalMs: 50);
+            new ModelFetchJobDependencies(
+                firstJobClientCapturing, templateStore, options, mockConfig.Object, modelFetchService,
+                PollTimeoutSecondsOverride: 10, PollIntervalMs: 50));
 
         var firstFetchTask = Task.Run(() => firstService.FetchModelsAsync("kiro", cts.Token), cts.Token);
 
@@ -323,9 +326,9 @@ public sealed class ModelFetchJobServiceIntegrationTests : IClassFixture<SignalR
 
         // Second fetch — cache should be populated, no new hub call
         var secondJobClient = new FakeKubernetesJobClient(_ => { });
-        var secondService = new ModelFetchJobService(
+        var secondService = new ModelFetchJobService(new ModelFetchJobDependencies(
             secondJobClient, templateStore, options, mockConfig.Object, modelFetchService,
-            pollTimeoutSecondsOverride: 10, pollIntervalMs: 50);
+            PollTimeoutSecondsOverride: 10, PollIntervalMs: 50));
 
         var hubCallsBeforeSecond = requestCountBefore;
         var (models, error) = await secondService.FetchModelsAsync("kiro", cts.Token);

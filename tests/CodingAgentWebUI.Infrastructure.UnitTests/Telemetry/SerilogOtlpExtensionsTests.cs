@@ -1,5 +1,7 @@
+using System.Reflection;
 using CodingAgentWebUI.Infrastructure.Telemetry;
 using Serilog;
+using Serilog.Core;
 
 namespace CodingAgentWebUI.Infrastructure.UnitTests.Telemetry;
 
@@ -179,6 +181,15 @@ public class SerilogOtlpExtensionsTests : IDisposable
                 .CreateLogger();
 
             logger.Information("Test message");
+
+            // Assert the OTLP sink was configured — endpoint is set so WriteTo.OpenTelemetry() must have been called.
+            // Walk the sink tree to verify that at least one sink in the chain is an OpenTelemetry sink.
+            var coreLogger = (Serilog.Core.Logger)logger;
+            var sinkField = typeof(Serilog.Core.Logger)
+                .GetField("_sink", BindingFlags.NonPublic | BindingFlags.Instance);
+            var rootSink = sinkField!.GetValue(coreLogger)!;
+            Assert.True(ContainsOpenTelemetrySink(rootSink), "Expected an OpenTelemetry sink to be configured when OTEL_EXPORTER_OTLP_ENDPOINT is set.");
+
             logger.Dispose();
         }
         finally
@@ -189,4 +200,41 @@ public class SerilogOtlpExtensionsTests : IDisposable
 
     private static void SetEnvVar(string name, string? value) =>
         Environment.SetEnvironmentVariable(name, value);
+
+    /// <summary>
+    /// Recursively searches the sink tree (via known aggregate and wrapper fields) for an OpenTelemetry sink.
+    /// </summary>
+    private static bool ContainsOpenTelemetrySink(object sink, int depth = 0)
+    {
+        if (depth > 10) return false; // guard against cycles
+
+        var typeName = sink.GetType().FullName ?? "";
+        if (typeName.Contains("OpenTelemetry", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        // Check child sinks in aggregate-style fields named "_sinks" or "_sink"
+        foreach (var fieldName in new[] { "_sinks", "_sink", "_wrapped" })
+        {
+            var field = sink.GetType().GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
+            if (field == null) continue;
+
+            var value = field.GetValue(sink);
+            if (value is IEnumerable<ILogEventSink> many)
+            {
+                foreach (var child in many)
+                    if (ContainsOpenTelemetrySink(child, depth + 1)) return true;
+            }
+            else if (value is ILogEventSink one)
+            {
+                if (ContainsOpenTelemetrySink(one, depth + 1)) return true;
+            }
+            else if (value is object[] objArr)
+            {
+                foreach (var item in objArr.OfType<ILogEventSink>())
+                    if (ContainsOpenTelemetrySink(item, depth + 1)) return true;
+            }
+        }
+
+        return false;
+    }
 }

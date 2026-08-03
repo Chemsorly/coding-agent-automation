@@ -17,7 +17,6 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IAgentCancellationSender>()));
 
         services.AddSingleton(sp => new PipelineOrchestrationService(
-            sp.GetRequiredService<IPipelineConfigStore>(),
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IProviderFactory>(),
             sp.GetRequiredService<IssueDescriptionParser>(),

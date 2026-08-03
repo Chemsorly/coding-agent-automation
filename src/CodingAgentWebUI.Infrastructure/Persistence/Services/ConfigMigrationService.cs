@@ -19,6 +19,7 @@ public sealed class ConfigMigrationService
     private static readonly JsonSerializerOptions JsonOptions = PipelineJsonOptions.Default;
 
     private const string MigrationLockKey = "caa_schema_migration";
+    private const string JsonFilePattern = "*.json";
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
     private readonly IDistributedLockProvider _lockProvider;
@@ -173,7 +174,7 @@ public sealed class ConfigMigrationService
                 continue;
             }
 
-            foreach (var file in Directory.GetFiles(subDir, "*.json"))
+            foreach (var file in Directory.GetFiles(subDir, JsonFilePattern))
             {
                 var json = await File.ReadAllTextAsync(file, ct);
                 var config = DeserializeOrThrow<ProviderConfig>(json, file);
@@ -202,7 +203,7 @@ public sealed class ConfigMigrationService
         if (!Directory.Exists(dir))
             return;
 
-        foreach (var file in Directory.GetFiles(dir, "*.json"))
+        foreach (var file in Directory.GetFiles(dir, JsonFilePattern))
         {
             var json = await File.ReadAllTextAsync(file, ct);
             var profile = DeserializeOrThrow<AgentProfile>(json, file);
@@ -227,7 +228,7 @@ public sealed class ConfigMigrationService
         if (!Directory.Exists(dir))
             return;
 
-        foreach (var file in Directory.GetFiles(dir, "*.json"))
+        foreach (var file in Directory.GetFiles(dir, JsonFilePattern))
         {
             var json = await File.ReadAllTextAsync(file, ct);
             var config = DeserializeOrThrow<QualityGateConfiguration>(json, file);
@@ -252,7 +253,7 @@ public sealed class ConfigMigrationService
         if (!Directory.Exists(dir))
             return;
 
-        foreach (var file in Directory.GetFiles(dir, "*.json"))
+        foreach (var file in Directory.GetFiles(dir, JsonFilePattern))
         {
             var json = await File.ReadAllTextAsync(file, ct);
             var config = DeserializeOrThrow<ReviewerConfiguration>(json, file);
@@ -278,7 +279,7 @@ public sealed class ConfigMigrationService
             return;
 
         // Root-level project JSON files (e.g., projects/{id}.json)
-        foreach (var file in Directory.GetFiles(projectsDir, "*.json"))
+        foreach (var file in Directory.GetFiles(projectsDir, JsonFilePattern))
         {
             var json = await File.ReadAllTextAsync(file, ct);
             var project = DeserializeOrThrow<PipelineProject>(json, file);
@@ -302,7 +303,7 @@ public sealed class ConfigMigrationService
             var templatesDir = Path.Combine(projectsDir, project.Id, "templates");
             if (Directory.Exists(templatesDir))
             {
-                foreach (var templateFile in Directory.GetFiles(templatesDir, "*.json"))
+                foreach (var templateFile in Directory.GetFiles(templatesDir, JsonFilePattern))
                 {
                     var templateJson = await File.ReadAllTextAsync(templateFile, ct);
                     var template = DeserializeOrThrow<PipelineJobTemplate>(templateJson, templateFile);
@@ -330,7 +331,7 @@ public sealed class ConfigMigrationService
         if (!Directory.Exists(dir))
             return;
 
-        foreach (var file in Directory.GetFiles(dir, "*.json"))
+        foreach (var file in Directory.GetFiles(dir, JsonFilePattern))
         {
             var json = await File.ReadAllTextAsync(file, ct);
             var run = DeserializeOrThrow<ConsolidationRun>(json, file);
@@ -354,7 +355,7 @@ public sealed class ConfigMigrationService
         if (!Directory.Exists(dir))
             return;
 
-        foreach (var file in Directory.GetFiles(dir, "*.json"))
+        foreach (var file in Directory.GetFiles(dir, JsonFilePattern))
         {
             var json = await File.ReadAllTextAsync(file, ct);
             var summary = DeserializeOrThrow<PipelineRunSummary>(json, file);
@@ -417,7 +418,7 @@ public sealed class ConfigMigrationService
 
     private static bool HasAnyJsonFiles(string directory)
     {
-        return Directory.EnumerateFiles(directory, "*.json", SearchOption.AllDirectories).Any();
+        return Directory.EnumerateFiles(directory, JsonFilePattern, SearchOption.AllDirectories).Any();
     }
 
     private sealed class MigrationCounts

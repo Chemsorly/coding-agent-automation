@@ -170,9 +170,10 @@ public record JobDistributionRequest
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(issue);
 
-        return CreateBase(template, issue.Identifier, initiatedBy,
+        return CreateBase(new JobDistributionRequestBaseParams(
+            template, issue.Identifier, initiatedBy,
             WorkItemTaskType.Implementation, timeoutSeconds,
-            PipelineRunType.Implementation, projectId, projectName)
+            PipelineRunType.Implementation, projectId, projectName))
         with
         {
             IssueDetail = new IssueDetail
@@ -210,9 +211,10 @@ public record JobDistributionRequest
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(pr);
 
-        return CreateBase(template, pr.Identifier, initiatedBy,
+        return CreateBase(new JobDistributionRequestBaseParams(
+            template, pr.Identifier, initiatedBy,
             WorkItemTaskType.Review, timeoutSeconds,
-            PipelineRunType.Review, projectId, projectName)
+            PipelineRunType.Review, projectId, projectName))
         with
         {
             IssueDetail = new IssueDetail
@@ -226,7 +228,7 @@ public record JobDistributionRequest
             {
                 Url = pr.Url,
                 BranchName = pr.BranchName,
-                IsDraft = useFullPrMetadata ? pr.IsDraft : false,
+                IsDraft = useFullPrMetadata && pr.IsDraft,
                 Number = useFullPrMetadata ? pr.Number : 0
             },
             ReviewPrTargetBranch = pr.TargetBranch,
@@ -254,9 +256,10 @@ public record JobDistributionRequest
         ArgumentNullException.ThrowIfNull(template);
         ArgumentNullException.ThrowIfNull(issue);
 
-        return CreateBase(template, issue.Identifier, initiatedBy,
+        return CreateBase(new JobDistributionRequestBaseParams(
+            template, issue.Identifier, initiatedBy,
             WorkItemTaskType.Decomposition, timeoutSeconds,
-            phase, projectId, projectName)
+            phase, projectId, projectName))
         with
         {
             DecompositionSource = decompositionSource,
@@ -274,30 +277,36 @@ public record JobDistributionRequest
     // PipelineProviderConfigId (it defaulted to null). This method always sets it from template.PipelineProviderId.
     // If templates have a non-null PipelineProviderId, review/decomposition requests will now include a value
     // that was previously absent. Verify whether this is acceptable.
-    private static JobDistributionRequest CreateBase(
-        PipelineJobTemplate template,
-        string issueIdentifier,
-        string initiatedBy,
-        WorkItemTaskType taskType,
-        int timeoutSeconds,
-        PipelineRunType runType,
-        string? projectId,
-        string? projectName)
+    private static JobDistributionRequest CreateBase(JobDistributionRequestBaseParams p)
     {
         return new JobDistributionRequest
         {
-            IssueIdentifier = issueIdentifier,
-            IssueProviderConfigId = template.IssueProviderId,
-            RepoProviderConfigId = template.RepoProviderId,
-            BrainProviderConfigId = template.BrainProviderId,
-            PipelineProviderConfigId = template.PipelineProviderId,
-            InitiatedBy = initiatedBy,
-            TaskType = taskType,
+            IssueIdentifier = p.IssueIdentifier,
+            IssueProviderConfigId = p.Template.IssueProviderId,
+            RepoProviderConfigId = p.Template.RepoProviderId,
+            BrainProviderConfigId = p.Template.BrainProviderId,
+            PipelineProviderConfigId = p.Template.PipelineProviderId,
+            InitiatedBy = p.InitiatedBy,
+            TaskType = p.TaskType,
             AgentSelector = "",
-            TimeoutSeconds = timeoutSeconds,
-            RunType = runType,
-            ProjectId = projectId,
-            ProjectName = projectName
+            TimeoutSeconds = p.TimeoutSeconds,
+            RunType = p.RunType,
+            ProjectId = p.ProjectId,
+            ProjectName = p.ProjectName
         };
     }
 }
+
+/// <summary>
+/// Groups the 8 private parameters of <see cref="JobDistributionRequest"/>'s internal
+/// <c>CreateBase</c> factory helper to satisfy S107.
+/// </summary>
+internal sealed record JobDistributionRequestBaseParams(
+    PipelineJobTemplate Template,
+    string IssueIdentifier,
+    string InitiatedBy,
+    WorkItemTaskType TaskType,
+    int TimeoutSeconds,
+    PipelineRunType RunType,
+    string? ProjectId,
+    string? ProjectName);

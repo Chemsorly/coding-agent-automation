@@ -16,6 +16,8 @@ namespace CodingAgentWebUI.UnitTests.Services;
 /// </summary>
 public sealed class RunLifecycleManagerTests
 {
+    private static readonly string[] DotnetLabels = ["dotnet"];
+
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
@@ -30,14 +32,14 @@ public sealed class RunLifecycleManagerTests
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
 
-        _sut = new RunLifecycleManager(
+        _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
             _runService,
             _mockHistoryService.Object,
             _registry,
             _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
-            workItemTransition: null); // Legacy mode — no DB
+            WorkItemTransition: null)); // Legacy mode — no DB
     }
 
     // ── AgentAcceptedRunAsync ────────────────────────────────────────────
@@ -418,7 +420,7 @@ public sealed class RunLifecycleManagerTests
         {
             AgentId = agentId,
             Hostname = $"host-{agentId}",
-            Labels = new[] { "dotnet" }
+            Labels = DotnetLabels
         }, $"conn-{agentId}");
     }
 }
@@ -429,6 +431,7 @@ public sealed class RunLifecycleManagerTests
 /// </summary>
 public sealed class RunLifecycleManagerResilienceTests
 {
+    private static readonly string[] DotnetLabels = ["dotnet"];
     private readonly Mock<ILogger> _mockLogger = new();
     private readonly Mock<ILabelService> _mockLabelService = new();
     private readonly Mock<IPipelineRunHistoryService> _mockHistoryService = new();
@@ -443,14 +446,14 @@ public sealed class RunLifecycleManagerResilienceTests
         _runService = new OrchestratorRunService(_mockLogger.Object);
         _dispatcher = new JobDeduplicationGuardService(_registry, _mockLogger.Object);
 
-        _sut = new RunLifecycleManager(
+        _sut = new RunLifecycleManager(new RunLifecycleManagerDependencies(
             _runService,
             _mockHistoryService.Object,
             _registry,
             _mockLabelService.Object,
             _dispatcher,
             _mockLogger.Object,
-            workItemTransition: null);
+            WorkItemTransition: null));
     }
 
     [Fact]
@@ -466,7 +469,7 @@ public sealed class RunLifecycleManagerResilienceTests
             IssueProviderId = "ip-1",
             RepoProviderId = "rp-1",
             EnqueuedAt = DateTimeOffset.UtcNow,
-            RequiredLabels = new[] { "dotnet" },
+            RequiredLabels = DotnetLabels,
             InitiatedBy = "test"
         });
         // Dequeue to simulate "in processing" state
@@ -505,7 +508,7 @@ public sealed class RunLifecycleManagerResilienceTests
             IssueProviderId = "ip-1",
             RepoProviderId = "rp-1",
             EnqueuedAt = DateTimeOffset.UtcNow,
-            RequiredLabels = new[] { "dotnet" },
+            RequiredLabels = DotnetLabels,
             InitiatedBy = "test"
         });
         var entry = RegisterAgent("agent-1");
@@ -544,7 +547,7 @@ public sealed class RunLifecycleManagerResilienceTests
         {
             AgentId = agentId,
             Hostname = $"host-{agentId}",
-            Labels = new[] { "dotnet" }
+            Labels = DotnetLabels
         }, $"conn-{agentId}");
     }
 }

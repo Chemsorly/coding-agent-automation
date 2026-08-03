@@ -103,8 +103,9 @@ public sealed class ImageDownloadService : IDisposable
                     return null;
 
                 var result = await DownloadSingleAsync(
-                    imageRef, targetDirectory, authToken, gitlabApiUrl, gitlabProjectId,
-                    config, budget, timeoutCts.Token).ConfigureAwait(false);
+                    new ImageDownloadContext(imageRef, targetDirectory, authToken, gitlabApiUrl, gitlabProjectId,
+                        config, budget),
+                    timeoutCts.Token).ConfigureAwait(false);
                 return result;
             }
             catch (OperationCanceledException)
@@ -124,26 +125,21 @@ public sealed class ImageDownloadService : IDisposable
 
         var downloadResults = await Task.WhenAll(tasks).ConfigureAwait(false);
 
-        foreach (var result in downloadResults)
-        {
-            if (result is not null)
-                results.Add(result);
-        }
+        results.AddRange(downloadResults.Where(result => result is not null)!);
 
         return results;
     }
 
     private async Task<DownloadedImage?> DownloadSingleAsync(
-        ImageReference imageRef,
-        string targetDirectory,
-        string authToken,
-        string? gitlabApiUrl,
-        string? gitlabProjectId,
-        PipelineConfiguration config,
-        ByteBudget budget,
+        ImageDownloadContext ctx,
         CancellationToken ct)
     {
-        var url = ResolveUrl(imageRef.Url, gitlabApiUrl, gitlabProjectId);
+        var imageRef = ctx.ImageRef;
+        var targetDirectory = ctx.TargetDirectory;
+        var authToken = ctx.AuthToken;
+        var config = ctx.Config;
+        var budget = ctx.Budget;
+        var url = ResolveUrl(imageRef.Url, ctx.GitlabApiUrl, ctx.GitlabProjectId);
         if (url is null)
             return null;
 
@@ -211,14 +207,13 @@ public sealed class ImageDownloadService : IDisposable
             break;
         }
 
-        if (response is null || !response.IsSuccessStatusCode)
-        {
-            response?.Dispose();
+        if (response is null)
             return null;
-        }
 
         using (response)
         {
+            if (!response.IsSuccessStatusCode)
+                return null;
             // Content-Type validation
             var contentType = response.Content.Headers.ContentType?.MediaType;
             if (contentType is null || !AllowedContentTypes.Contains(contentType))
@@ -231,14 +226,11 @@ public sealed class ImageDownloadService : IDisposable
             var urlExtension = GetUrlExtension(currentUrl);
             var expectedExtension = ContentTypeToExtension.GetValueOrDefault(contentType);
 
-            if (urlExtension is not null && expectedExtension is not null)
+            if (urlExtension is not null && expectedExtension is not null && !ExtensionMatchesContentType(urlExtension, contentType))
             {
                 // If URL has an extension, it must agree with Content-Type
-                if (!ExtensionMatchesContentType(urlExtension, contentType))
-                {
-                    _logger?.LogDebug("Extension/Content-Type mismatch: ext={Ext}, ct={CT}", urlExtension, contentType);
-                    return null;
-                }
+                _logger?.LogDebug("Extension/Content-Type mismatch: ext={Ext}, ct={CT}", urlExtension, contentType);
+                return null;
             }
 
             // Determine final extension
@@ -543,33 +535,6 @@ public sealed class ImageDownloadService : IDisposable
     public void Dispose()
     {
         _httpClient.Dispose();
-    }
-
-    /// <summary>
-    /// Thread-safe byte counter for tracking total download budget across concurrent tasks.
-    /// </summary>
-    private sealed class ByteBudget
-    {
-        private long _totalBytes;
-
-        public long TotalBytes => Interlocked.Read(ref _totalBytes);
-
-        public void Add(long bytes) => Interlocked.Add(ref _totalBytes, bytes);
-
-        /// <summary>
-        /// Atomically reserves bytes if doing so doesn't exceed the limit.
-        /// Returns true if reservation succeeded.
-        /// </summary>
-        public bool TryReserve(long bytes, long maxTotal)
-        {
-            while (true)
-            {
-                var current = Interlocked.Read(ref _totalBytes);
-                if (current + bytes > maxTotal)
-                    return false;
-                if (Interlocked.CompareExchange(ref _totalBytes, current + bytes, current) == current)
-                    return true;
-            }
-        }
+        GC.SuppressFinalize(this);
     }
 }

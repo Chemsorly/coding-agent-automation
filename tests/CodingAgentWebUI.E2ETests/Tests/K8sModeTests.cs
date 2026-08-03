@@ -90,7 +90,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
             {
                 w.DispatchedAt = DateTimeOffset.UtcNow;
                 w.K8sJobName = $"caa-{workItemId:N}"[..Math.Min(40, $"caa-{workItemId:N}".Length)];
-            }, CancellationToken.None);
+            }, ct: CancellationToken.None);
 
         Assert.True(transitioned);
 
@@ -151,7 +151,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
                 w.CompletedAt = DateTimeOffset.UtcNow;
                 w.FailureReason = FailureReason.Timeout;
                 w.ErrorMessage = $"Timeout exceeded: {candidate.TimeoutSeconds}s";
-            }, CancellationToken.None);
+            }, ct: CancellationToken.None);
 
         Assert.True(transitioned);
 
@@ -209,7 +209,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
                 w.CompletedAt = DateTimeOffset.UtcNow;
                 w.FailureReason = FailureReason.InfrastructureFailure;
                 w.ErrorMessage = "K8s Job 'caa-job-orphan-nonexistent' no longer exists (orphan)";
-            }, CancellationToken.None);
+            }, ct: CancellationToken.None);
 
         // Verify
         await using var finalDb = Fixture.DbContextFactory.CreateDbContext();
@@ -321,9 +321,10 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
             .GetRequiredService<WorkItemTransitionService>();
 
         var dispatchService = new DispatchService(
-            Fixture.DbContextFactory,
-            leaderElection,
-            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
+            new DispatchServiceCoreDependencies(
+                Fixture.DbContextFactory,
+                leaderElection,
+                new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions())),
             config,
             templateProvider);
 
@@ -386,8 +387,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
 
         var dispatchService = new DispatchService(
-            Fixture.DbContextFactory, leaderElection,
-            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
+            new DispatchServiceCoreDependencies(
+                Fixture.DbContextFactory, leaderElection,
+                new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions())),
             config, templateProvider);
 
         // Act
@@ -420,8 +422,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
 
         var dispatchService = new DispatchService(
-            Fixture.DbContextFactory, leaderElection,
-            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
+            new DispatchServiceCoreDependencies(
+                Fixture.DbContextFactory, leaderElection,
+                new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions())),
             config, templateProvider);
 
         // Act
@@ -505,7 +508,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         // Transition to Dispatched (as DispatchService would do)
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
-            w => w.DispatchedAt = DateTimeOffset.UtcNow, CancellationToken.None);
+            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
 
         // Act: call the assignment endpoint (same as WorkItemHttpClient.GetAssignmentAsync)
         using var httpClient = Fixture.Factory.CreateClient();
@@ -576,7 +579,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
 
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
-            w => w.DispatchedAt = DateTimeOffset.UtcNow, CancellationToken.None);
+            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
 
         // Act: agent POSTs Running status (as WorkItemAgentService does)
         using var httpClient = Fixture.Factory.CreateClient();
@@ -637,7 +640,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
 
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
-            w => w.DispatchedAt = DateTimeOffset.UtcNow, CancellationToken.None);
+            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
 
         // Act: agent POSTs Failed status (as WorkItemAgentService does on pipeline failure)
@@ -812,11 +815,12 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
 
         var reconciler = new ReconciliationService(
-            Fixture.DbContextFactory,
-            leaderElection,
-            null!, // IKubernetes — not used by EnforceTimeoutsAsync
-            transitionService,
-            config);
+            new ReconciliationServiceDependencies(
+                Fixture.DbContextFactory,
+                leaderElection,
+                null!, // IKubernetes — not used by EnforceTimeoutsAsync
+                transitionService,
+                config));
 
         await reconciler.EnforceTimeoutsAsync(CancellationToken.None);
 
@@ -844,7 +848,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
 
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
-            w => w.DispatchedAt = DateTimeOffset.UtcNow, CancellationToken.None);
+            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
 
         // Act: agent POSTs Succeeded with a result payload (completion data)
@@ -890,11 +894,11 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
 
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Dispatched,
-            w => w.DispatchedAt = DateTimeOffset.UtcNow, CancellationToken.None);
+            w => w.DispatchedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, ct: CancellationToken.None);
         await transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
             w => { w.CompletedAt = DateTimeOffset.UtcNow; w.ErrorMessage = "First failure"; },
-            CancellationToken.None);
+            ct: CancellationToken.None);
 
         // Act: agent crashes and restarts, tries to POST Failed again
         using var httpClient = Fixture.Factory.CreateClient();
@@ -1212,8 +1216,9 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
 
         var dispatchService = new DispatchService(
-            Fixture.DbContextFactory, leaderElection,
-            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
+            new DispatchServiceCoreDependencies(
+                Fixture.DbContextFactory, leaderElection,
+                new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions())),
             config, templateProvider);
 
         // Act: run one dispatch cycle
@@ -1272,8 +1277,8 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
 
         var dispatchService = new DispatchService(
-            Fixture.DbContextFactory, leaderElection,
-            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
+            new DispatchServiceCoreDependencies(Fixture.DbContextFactory, leaderElection,
+                new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions())),
             config, templateProvider);
 
         // Act
@@ -1314,8 +1319,8 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
         var transitionService = Fixture.Factory.Services.GetRequiredService<WorkItemTransitionService>();
 
         var dispatchService = new DispatchService(
-            Fixture.DbContextFactory, leaderElection,
-            new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions()),
+            new DispatchServiceCoreDependencies(Fixture.DbContextFactory, leaderElection,
+                new DispatchLifecycleService(Fixture.K8sClient, transitionService, BuildDispatchOptions())),
             config, templateProvider);
 
         // Act
@@ -1427,7 +1432,7 @@ public sealed class K8sModeTests : K8sModeE2ETestBase, IClassFixture<K8sModeE2EF
             {
                 w.DispatchedAt = DateTimeOffset.UtcNow;
                 w.K8sJobName = $"caa-{workItemId.ToString("N")[..8]}";
-            }, CancellationToken.None);
+            }, ct: CancellationToken.None);
         Assert.True(dispatched, "Pending → Dispatched transition should succeed");
 
         // ── Step 3: Agent fetches assignment (HTTP — as WorkItemHttpClient does) ──

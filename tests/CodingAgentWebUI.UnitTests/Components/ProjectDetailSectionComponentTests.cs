@@ -95,7 +95,7 @@ public class ProjectDetailSectionComponentTests : BunitContext
 
         // Find the steering textarea (last textarea in the settings tab area)
         var textareas = cut.FindAll("textarea");
-        var steeringTextarea = textareas.Last();
+        var steeringTextarea = textareas[^1];
         steeringTextarea.Change("My steering content");
 
         // Click Save Settings
@@ -124,7 +124,7 @@ public class ProjectDetailSectionComponentTests : BunitContext
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
 
         var textareas = cut.FindAll("textarea");
-        var steeringTextarea = textareas.Last();
+        var steeringTextarea = textareas[^1];
         steeringTextarea.Change("   \n  \t  ");
 
         cut.Find(".btn-save").Click();
@@ -152,7 +152,7 @@ public class ProjectDetailSectionComponentTests : BunitContext
         cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("Settings")).Click();
 
         var textareas = cut.FindAll("textarea");
-        var steeringTextarea = textareas.Last();
+        var steeringTextarea = textareas[^1];
         steeringTextarea.Change("");
 
         cut.Find(".btn-save").Click();

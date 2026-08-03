@@ -41,10 +41,18 @@ public class FlattenTemplatesTests : IAsyncDisposable
 
     private PipelineLoopService CreateService()
     {
-        _loopService = new PipelineLoopService(
-            _runCreator, _mockFactory.Object,
-            _mockStore.Object, _mockStore.Object, _mockStore.Object,
-            _mockLogger.Object);
+        _loopService = new PipelineLoopService(new PipelineLoopServiceDependencies
+        {
+            Orchestration = _runCreator,
+            ProviderFactory = _mockFactory.Object,
+            PipelineConfigStore = _mockStore.Object,
+            ProviderConfigStore = _mockStore.Object,
+            ProjectStore = _mockStore.Object,
+            Logger = _mockLogger.Object,
+            WorkDistributor = null,
+            DispatchOrchestration = null,
+            DependencyChecker = null
+        });
         return _loopService;
     }
 

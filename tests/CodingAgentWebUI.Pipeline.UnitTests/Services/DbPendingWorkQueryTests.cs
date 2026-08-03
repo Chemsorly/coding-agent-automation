@@ -355,6 +355,39 @@ public sealed class DbPendingWorkQueryTests : IDisposable
         projectName.Should().BeNull();
     }
 
+    // ── ResolveRunType mapping (via GetPendingJobsAsync) ─────────────────
+
+    [Theory]
+    [InlineData(WorkItemTaskType.Review, PipelineRunType.Review)]
+    [InlineData(WorkItemTaskType.Decomposition, PipelineRunType.DecompositionAnalysis)]
+    [InlineData(WorkItemTaskType.Implementation, PipelineRunType.Implementation)]
+    [InlineData(WorkItemTaskType.Consolidation, PipelineRunType.Implementation)] // Consolidation has no distinct run type
+    public async Task GetPendingJobsAsync_TaskType_MapsToCorrectRunType(
+        WorkItemTaskType taskType, PipelineRunType expectedRunType)
+    {
+        // Arrange
+        var payload = new JobDistributionRequest
+        {
+            IssueIdentifier = $"owner/repo#{(int)taskType}",
+            IssueProviderConfigId = "ip-1",
+            RepoProviderConfigId = "rp-1",
+            InitiatedBy = "loop",
+            TaskType = taskType,
+            AgentSelector = "",
+            TimeoutSeconds = 600
+        };
+
+        await InsertPendingWorkItem(payload.IssueIdentifier, "ip-1", payload);
+
+        // Act
+        var result = await _sut.GetPendingJobsAsync();
+
+        // Assert
+        result.Should().HaveCount(1);
+        result[0].RunType.Should().Be(expectedRunType,
+            because: $"TaskType.{taskType} should map to PipelineRunType.{expectedRunType}");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private async Task InsertPendingWorkItem(string issueIdentifier, string issueProviderId, JobDistributionRequest payload)

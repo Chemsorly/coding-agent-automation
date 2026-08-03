@@ -48,14 +48,11 @@ public sealed class PostgresConsolidationRunStore : IConsolidationRunStore
             .Take(1000)
             .ToListAsync(ct);
 
-        var runs = new List<ConsolidationRun>();
-        foreach (var entity in entities)
-        {
-            if (string.IsNullOrEmpty(entity.Data)) continue;
-            var run = JsonSerializer.Deserialize<ConsolidationRun>(entity.Data, PipelineJsonOptions.Default);
-            if (run is not null)
-                runs.Add(run);
-        }
+        var runs = entities
+            .Where(entity => !string.IsNullOrEmpty(entity.Data))
+            .Select(entity => JsonSerializer.Deserialize<ConsolidationRun>(entity.Data!, PipelineJsonOptions.Default))
+            .OfType<ConsolidationRun>()
+            .ToList();
 
         return runs;
     }

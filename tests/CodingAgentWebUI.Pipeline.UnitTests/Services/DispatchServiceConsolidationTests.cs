@@ -667,9 +667,9 @@ public class DispatchServiceConsolidationTests : IDisposable
 
         // Step 3: Simulate agent completion
         var workItemId = Guid.Parse(result.WorkItemId!);
-        await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, _ => { }, CancellationToken.None);
+        await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Running, _ => { }, ct: CancellationToken.None);
         await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Succeeded,
-            w => w.CompletedAt = DateTimeOffset.UtcNow, CancellationToken.None);
+            w => w.CompletedAt = DateTimeOffset.UtcNow, ct: CancellationToken.None);
 
         await using (var db = await _dbFactory.CreateDbContextAsync())
         {
@@ -714,11 +714,11 @@ public class DispatchServiceConsolidationTests : IDisposable
                 if (createCallCount == 1)
                 {
                     // Simulate race: another process transitions the first consolidation item
-                    await using var raceDb = await _dbFactory.CreateDbContextAsync();
-                    var item = await raceDb.WorkItems.FindAsync(racedId);
+                    await using var raceDb = await _dbFactory.CreateDbContextAsync(ct);
+                    var item = await raceDb.WorkItems.FindAsync([racedId], ct);
                     item!.Status = WorkItemStatus.Dispatched;
                     item.DispatchedAt = DateTimeOffset.UtcNow;
-                    await raceDb.SaveChangesAsync();
+                    await raceDb.SaveChangesAsync(ct);
                 }
             })
             .Returns(Task.CompletedTask);
@@ -1224,7 +1224,7 @@ public class DispatchServiceConsolidationTests : IDisposable
         await db.SaveChangesAsync();
     }
 
-    private async Task InvokePollAndDispatch(ConsolidationDispatchHandler service)
+    private static async Task InvokePollAndDispatch(ConsolidationDispatchHandler service)
     {
         await service.PollAndDispatchConsolidationAsync(CancellationToken.None);
     }

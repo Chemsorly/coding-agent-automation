@@ -39,13 +39,12 @@ internal static class ConsolidationRehydrationExtensions
             var workDistributor = app.Services.GetRequiredService<IWorkDistributor>();
             var profileStore = app.Services.GetRequiredService<IAgentProfileStore>();
             var workspaceManager = app.Services.GetRequiredService<IConsolidationWorkspaceManager>();
-            var profileResolver = new ProfileResolver();
             var rehydrationProfiles = await profileStore.LoadAgentProfilesAsync(CancellationToken.None);
             foreach (var run in queuedRuns)
             {
                 // Resolve full profile MatchLabels from QueuedRequiredLabels to produce correct AgentSelector
                 var requiredLabels = run.QueuedRequiredLabels ?? [];
-                var profile = profileResolver.ResolveByRequiredLabels(rehydrationProfiles, requiredLabels.ToList());
+                var profile = ProfileResolver.ResolveByRequiredLabels(rehydrationProfiles, requiredLabels.ToList());
                 var selectorLabels = profile?.MatchLabels ?? requiredLabels;
 
                 var request = new JobDistributionRequest
