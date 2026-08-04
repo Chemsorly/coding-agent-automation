@@ -415,6 +415,33 @@ public sealed record ChatPromptMessage
     /// </summary>
     [Key(5)]
     public string ChatWindowId { get; init; } = "";
+
+    /// <summary>
+    /// Project-level secrets to inject as process-wide environment variables for the agent CLI invocation.
+    /// Only injected on the first prompt (<see cref="UseResume"/> = false). Null = no secrets (no-op).
+    /// Same security model as <see cref="JobAssignmentMessage.ProjectSecrets"/>.
+    /// </summary>
+    [Key(6)]
+    public Dictionary<string, string>? ProjectSecrets { get; init; }
+
+    /// <summary>
+    /// Project-level steering content (markdown) to write to the workspace before the first prompt.
+    /// Only written when <see cref="UseResume"/> = false. Null = no steering (no-op).
+    /// </summary>
+    [Key(7)]
+    public string? ProjectSteeringContent { get; init; }
+
+    /// <summary>
+    /// Project ID for telemetry and context correlation. Null = no project selected.
+    /// </summary>
+    [Key(8)]
+    public string? ProjectId { get; init; }
+
+    /// <summary>
+    /// Project display name for telemetry and context correlation. Null = no project selected.
+    /// </summary>
+    [Key(9)]
+    public string? ProjectName { get; init; }
 }
 
 /// <summary>

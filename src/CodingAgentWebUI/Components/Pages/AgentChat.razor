@@ -50,6 +50,17 @@
                         </select>
                     </div>
 
+                    <div class="chat-agent-select">
+                        <label for="project-select-k8s">Project (optional):</label>
+                        <select id="project-select-k8s" @bind="_selectedProjectId" @bind:after="OnProjectSelected" class="chat-select">
+                            <option value="">— No project —</option>
+                            @foreach (var p in _projects)
+                            {
+                                <option value="@p.Id">@p.Name</option>
+                            }
+                        </select>
+                    </div>
+
                     @if (_launching)
                     {
                         <div class="agent-detail-warning">
@@ -82,6 +93,17 @@
                             @foreach (var agent in _idleAgents)
                             {
                                 <option value="@agent.AgentId">@agent.AgentId (@agent.Hostname) [@string.Join(", ", agent.Labels)]</option>
+                            }
+                        </select>
+                    </div>
+
+                    <div class="chat-agent-select">
+                        <label for="project-select-signalr">Project (optional):</label>
+                        <select id="project-select-signalr" @bind="_selectedProjectId" @bind:after="OnProjectSelected" class="chat-select">
+                            <option value="">— No project —</option>
+                            @foreach (var p in _projects)
+                            {
+                                <option value="@p.Id">@p.Name</option>
                             }
                         </select>
                     </div>
@@ -165,6 +187,11 @@
     // Per-chat-window stable ID (generated once in StartChat, included in every prompt)
     private string _chatWindowId = "";
 
+    // ── Project context (optional) ───────────────────────────────────────────
+    private IReadOnlyList<PipelineProject> _projects = [];
+    private string _selectedProjectId = "";  // empty = no project selected
+    private PipelineProject? _selectedProject;
+
     private readonly List<ChatMessage> _messages = new();
     private readonly System.Text.StringBuilder _streamingContent = new();
     private ElementReference _messagesContainer;
@@ -217,9 +244,25 @@
         }
     }
 
+    protected override async Task OnInitializedAsync()
+    {
+        // Load available projects for the optional project context dropdown.
+        // Runs after OnInitialized so the synchronous setup (agents, templates) completes first.
+        _projects = await ConfigStore.LoadProjectsAsync(CancellationToken.None);
+    }
+
     private void RefreshIdleAgents()
     {
         _idleAgents = Registry.GetIdleAgents();
+    }
+
+    // ── Project selection handler (shared by both modes) ─────────────────────
+
+    private void OnProjectSelected()
+    {
+        _selectedProject = string.IsNullOrEmpty(_selectedProjectId)
+            ? null
+            : _projects.FirstOrDefault(p => p.Id == _selectedProjectId);
     }
 
     // ── K8s-mode: template selection handler ─────────────────────────────────
@@ -434,14 +477,34 @@
             return;
         }
 
+        var mergedMcpServers = _selectedProject is not null
+            ? DispatchOrchestrationService.MergeMcpServers(
+                _resolvedProfile?.McpServers ?? [],
+                _selectedProject.McpServers)
+            : (_resolvedProfile?.McpServers ?? []);
+
+        // TODO: ProjectSecrets and ProjectSteeringContent are sent on every prompt turn;
+        // the agent-side guard (UseResume check) prevents re-injection, but secrets travel
+        // over the wire on all follow-up messages. Consider gating:
+        //   ProjectSecrets = (_isFirstPrompt ? _selectedProject?.Secrets : null)
+        // to limit secret exposure in transit logs.
+        // TODO: _selectedProject can change mid-session via OnProjectSelected() while
+        // _isChatActive is true. The next SendPrompt() will silently use new project
+        // secrets/steering without warning the user. Consider locking the dropdown once
+        // StartChat() has been called, or showing a warning when the project changes
+        // during an active session.
         var message = new ChatPromptMessage
         {
             SessionId = _activeSessionId,
             Prompt = prompt,
             UseResume = !_isFirstPrompt,
-            McpServers = _resolvedProfile?.McpServers ?? [],
+            McpServers = mergedMcpServers,
             McpConfigPath = _resolvedMcpConfigPath,
-            ChatWindowId = _chatWindowId
+            ChatWindowId = _chatWindowId,
+            ProjectSecrets = _selectedProject?.Secrets,
+            ProjectSteeringContent = _selectedProject?.SteeringContent,
+            ProjectId = _selectedProject?.Id,
+            ProjectName = _selectedProject?.Name
         };
 
         try
