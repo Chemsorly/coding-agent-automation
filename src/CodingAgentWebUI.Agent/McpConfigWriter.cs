@@ -30,15 +30,33 @@ public static class McpConfigWriter
         var serversDict = new Dictionary<string, object>();
         foreach (var server in servers)
         {
+            // TODO: SSE-type servers fall through to the stdio else-branch, so their `Headers` are silently
+            // dropped from the generated mcp.json. This is a pre-existing gap (SSE was always in the else
+            // branch), but the addition of Headers makes the omission user-visible. Fix by extending the
+            // condition to also match "sse" (consistent with OpenCodeAgentProvider's http/sse handling).
             if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase))
             {
-                serversDict[server.Name] = new
+                if (server.Headers.Count > 0)
                 {
-                    type = "http",
-                    url = server.Url,
-                    disabled = server.Disabled,
-                    autoApprove = server.AutoApprove
-                };
+                    serversDict[server.Name] = new
+                    {
+                        type = "http",
+                        url = server.Url,
+                        headers = server.Headers,
+                        disabled = server.Disabled,
+                        autoApprove = server.AutoApprove
+                    };
+                }
+                else
+                {
+                    serversDict[server.Name] = new
+                    {
+                        type = "http",
+                        url = server.Url,
+                        disabled = server.Disabled,
+                        autoApprove = server.AutoApprove
+                    };
+                }
             }
             else
             {

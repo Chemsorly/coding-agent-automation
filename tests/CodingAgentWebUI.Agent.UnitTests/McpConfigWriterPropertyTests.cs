@@ -64,6 +64,9 @@ public class McpConfigWriterPropertyTests
                     // HTTP servers must have url property
                     Assert.True(entry.TryGetProperty("url", out _),
                         $"HTTP server '{name}' missing 'url' property");
+                    // headers must appear iff non-empty
+                    var hasHeaders = entry.TryGetProperty("headers", out _);
+                    Assert.Equal(server.Headers.Count > 0, hasHeaders);
                 }
                 else
                 {
@@ -148,6 +151,16 @@ public static class McpServerConfigArbitrary
         "http://mcp-server:8080/sse"
     ];
 
+    private static readonly string[] HeaderKeys =
+    [
+        "Authorization", "X-Org", "X-Api-Key", "X-Custom-Header"
+    ];
+
+    private static readonly string[] HeaderValues =
+    [
+        "Bearer token123", "myorg", "apikey-abc", "custom-value"
+    ];
+
     public static Arbitrary<McpServerConfig> McpServerConfigs()
     {
         var boolGen = Gen.Elements(true, false);
@@ -171,12 +184,17 @@ public static class McpServerConfigArbitrary
             from name in Gen.Elements(ServerNames)
             from url in Gen.Elements(Urls)
             from disabled in boolGen
+            from headerCount in Gen.Choose(0, 2)
+            from headerKeys in Gen.ArrayOf(Gen.Elements(HeaderKeys), headerCount)
+            from headerVals in Gen.ArrayOf(Gen.Elements(HeaderValues), headerCount)
+            let headers = headerKeys.Zip(headerVals).DistinctBy(p => p.First).ToDictionary(p => p.First, p => p.Second)
             select new McpServerConfig
             {
                 Name = name,
                 Type = "http",
                 Url = url,
-                Disabled = disabled
+                Disabled = disabled,
+                Headers = headers
             };
 
         var serverGen = Gen.OneOf(stdioGen, httpGen);

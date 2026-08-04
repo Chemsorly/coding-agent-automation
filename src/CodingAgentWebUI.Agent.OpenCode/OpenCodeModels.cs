@@ -82,6 +82,7 @@ public sealed record McpStdioConfig
 public sealed record McpHttpConfig
 {
     public required string Url { get; init; }
+    public IReadOnlyDictionary<string, string>? Headers { get; init; }
 }
 
 /// <summary>Response from GET /global/health.</summary>

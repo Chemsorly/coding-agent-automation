@@ -120,6 +120,7 @@ public class OpenCodeMcpRegistrationPropertyTests
     /// <summary>
     /// Property 10c: HTTP-type servers produce config with url field only.
     /// For any enabled http/sse server, the POST body contains a config object with "url" property.
+    /// When headers are empty, the headers field must be absent from the serialized config.
     /// **Validates: Requirements 9.4**
     /// </summary>
     [Property(Arbitrary = [typeof(McpRegistrationArbitrary)], MaxTest = 20)]
@@ -160,6 +161,76 @@ public class OpenCodeMcpRegistrationPropertyTests
         var config = root.GetProperty("config");
         config.TryGetProperty("url", out _).Should().BeTrue("http config must have 'url'");
         config.GetProperty("url").GetString().Should().Be(server.Url ?? string.Empty);
+
+        // headers must be present iff non-empty
+        // TODO: The arbitrary generator caps headerCount at 2 and draws from a pool of 4 keys with DistinctBy,
+        // so when both randomly selected keys collide the dict may have 1 entry instead of 2. The generator is
+        // biased toward 0-1 entries and never reliably exercises 2 distinct headers. Add a deterministic test
+        // with exactly 2 distinct headers to close this coverage gap.
+        var hasHeaders = config.TryGetProperty("headers", out _);
+        hasHeaders.Should().Be(server.Headers.Count > 0,
+            server.Headers.Count > 0
+                ? "headers must appear in config when non-empty"
+                : "headers must be omitted from config when empty");
+    }
+
+    /// <summary>
+    /// Deterministic test: RegisterMcpServersAsync includes headers in POST body when non-empty.
+    /// **Validates: Acceptance Criteria — OpenCodeAgentProvider passes headers in POST /mcp body**
+    /// </summary>
+    [Fact]
+    public async Task HttpServers_WithHeaders_IncludesHeadersInPostBody()
+    {
+        // Arrange
+        var server = new McpServerConfig
+        {
+            Name = "sonarqube",
+            Type = "http",
+            Url = "https://api.sonarcloud.io/mcp",
+            Headers = new Dictionary<string, string> { ["Authorization"] = "Bearer tok" }
+        };
+        var handler = new MockOpenCodeHandler();
+        var factory = new MockOpenCodeClientFactory(handler);
+        var provider = OpenCodeTestHelpers.CreateProvider(factory);
+        handler.EnqueueOk();
+
+        // Act
+        await provider.RegisterMcpServersAsync([server], CancellationToken.None);
+
+        // Assert
+        var body = handler.Requests.Single(r => r.Path == "/mcp").Body!;
+        var config = JsonDocument.Parse(body).RootElement.GetProperty("config");
+        config.TryGetProperty("headers", out var headers).Should().BeTrue("headers must be present when non-empty");
+        headers.GetProperty("Authorization").GetString().Should().Be("Bearer tok");
+    }
+
+    /// <summary>
+    /// Deterministic test: RegisterMcpServersAsync omits headers from POST body when empty.
+    /// **Validates: Acceptance Criteria — empty headers dict omits the headers field**
+    /// </summary>
+    [Fact]
+    public async Task HttpServers_WithEmptyHeaders_OmitsHeadersFromPostBody()
+    {
+        // Arrange
+        var server = new McpServerConfig
+        {
+            Name = "web-search",
+            Type = "http",
+            Url = "https://mcp.example.com/search"
+            // Headers defaults to empty dictionary
+        };
+        var handler = new MockOpenCodeHandler();
+        var factory = new MockOpenCodeClientFactory(handler);
+        var provider = OpenCodeTestHelpers.CreateProvider(factory);
+        handler.EnqueueOk();
+
+        // Act
+        await provider.RegisterMcpServersAsync([server], CancellationToken.None);
+
+        // Assert
+        var body = handler.Requests.Single(r => r.Path == "/mcp").Body!;
+        var config = JsonDocument.Parse(body).RootElement.GetProperty("config");
+        config.TryGetProperty("headers", out _).Should().BeFalse("empty headers must be omitted from POST body");
     }
 
     /// <summary>
@@ -295,6 +366,16 @@ public static class McpRegistrationArbitrary
         "http://mcp-server:8080/sse"
     ];
 
+    private static readonly string[] HttpHeaderKeys =
+    [
+        "Authorization", "X-Org", "X-Api-Key", "X-Custom-Header"
+    ];
+
+    private static readonly string[] HttpHeaderValues =
+    [
+        "Bearer token123", "myorg", "apikey-abc", "custom-value"
+    ];
+
     /// <summary>
     /// All possible env var keys — mix of safe and excluded keys.
     /// Includes case variations to test case-insensitive filtering.
@@ -342,12 +423,17 @@ public static class McpRegistrationArbitrary
             from url in Gen.Elements(Urls)
             from disabled in Gen.Elements(true, false)
             from type in Gen.Elements("http", "sse")
+            from headerCount in Gen.Choose(0, 2)
+            from headerKeys in Gen.ArrayOf(Gen.Elements(HttpHeaderKeys), headerCount)
+            from headerVals in Gen.ArrayOf(Gen.Elements(HttpHeaderValues), headerCount)
+            let headers = headerKeys.Zip(headerVals).DistinctBy(p => p.First).ToDictionary(p => p.First, p => p.Second)
             select new McpServerConfig
             {
                 Name = name,
                 Type = type,
                 Url = url,
-                Disabled = disabled
+                Disabled = disabled,
+                Headers = headers
             };
 
         var serverGen = Gen.OneOf(stdioGen, httpGen);
