@@ -81,4 +81,11 @@ public sealed record PipelineProject
     /// Keys must match POSIX env var pattern: [A-Za-z_][A-Za-z0-9_]*
     /// </summary>
     public Dictionary<string, string>? Secrets { get; init; }
+
+    /// <summary>
+    /// Project-level MCP servers merged with the resolved profile's MCP servers at dispatch time.
+    /// Project MCPs override profile MCPs with the same Name (case-insensitive); others are added.
+    /// Null = inherit profile MCPs only. Empty list = explicitly override with no project MCPs (passthrough).
+    /// </summary>
+    public IReadOnlyList<McpServerConfig>? McpServers { get; init; }
 }

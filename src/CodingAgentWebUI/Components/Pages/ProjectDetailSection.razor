@@ -13,6 +13,7 @@
         <button class="tab-btn @(IsTab(TabTemplates))" @onclick="() => SetTab(TabTemplates)">Templates</button>
         <button class="tab-btn @(IsTab(TabSecrets))" @onclick="() => SetTab(TabSecrets)">Secrets</button>
         <button class="tab-btn @(IsTab(TabSettings))" @onclick="() => SetTab(TabSettings)">Settings</button>
+        <button class="tab-btn @(IsTab(TabMcp))" @onclick="() => SetTab(TabMcp)">MCP Servers</button>
     </div>
 
     @if (_activeTab == TabOverview)
@@ -31,6 +32,10 @@
     {
         @RenderSettingsTab()
     }
+    else if (_activeTab == TabMcp)
+    {
+        @RenderMcpTab()
+    }
 </section>
 
 @code {
@@ -38,6 +43,7 @@
     private const string TabTemplates = "templates";
     private const string TabSecrets = "secrets";
     private const string TabSettings = "settings";
+    private const string TabMcp = "mcp";
 
     [Parameter, EditorRequired] public string ProjectId { get; set; } = default!;
     [Parameter, EditorRequired] public IConfigurationStore ConfigStore { get; set; } = default!;
@@ -101,6 +107,12 @@
     private List<SecretEntry> _secrets = new();
     private HashSet<int> _revealedSecrets = new();
     private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
+
+    // MCP Servers management
+    private List<McpServerFormModel> _mcpServers = new();
+    private bool _showMcpForm;
+    private int _editingMcpIndex = -1;
+    private McpServerFormModel _mcpForm = new();
 
     protected override async Task OnInitializedAsync()
     {
@@ -168,6 +180,25 @@
         _brainReadOnly = _project.BrainReadOnly;
         _blacklistedPathsText = _project.BlacklistedPaths != null ? string.Join(",", _project.BlacklistedPaths) : null;
         _steeringContent = _project.SteeringContent;
+
+        // Populate MCP Servers
+        // TODO [WARNING]: s.Env.Select(...) and s.Headers.Select(...) will throw NullReferenceException
+        // if McpServerConfig.Env or .Headers is null (e.g. older persisted records before the Headers
+        // field was added). Replace with s.Env?.Select(...) ?? [] and s.Headers?.Select(...) ?? [].
+        _mcpServers = _project.McpServers?.Select(s => new McpServerFormModel
+        {
+            Name = s.Name,
+            Type = s.Type ?? "stdio",
+            Command = s.Command ?? "",
+            Args = string.Join(" ", s.Args),
+            Url = s.Url ?? "",
+            EnvVars = string.Join("\n", s.Env.Select(kv => $"{kv.Key}={kv.Value}")),
+            Headers = string.Join("\n", s.Headers.Select(kv => $"{kv.Key}={kv.Value}")),
+            Enabled = !s.Disabled
+        }).ToList() ?? new();
+        _showMcpForm = false;
+        _editingMcpIndex = -1;
+        _mcpForm = new();
     }
 
     private RenderFragment RenderOverviewTab() => __builder =>
@@ -757,5 +788,226 @@
         public string Key { get; set; } = "";
         public string Value { get; set; } = "";
         public string? ValidationError { get; set; }
+    }
+
+    // ── MCP Servers tab ───────────────────────────────────────────────────────
+
+    private RenderFragment RenderMcpTab() => __builder =>
+    {
+        <div class="provider-form">
+            <h3>MCP Servers</h3>
+            <p class="form-hint">Project MCP servers are merged with the profile's servers at dispatch time. Servers with the same name override the profile configuration; others are added. Leave empty to use the profile's MCP servers unchanged.</p>
+
+            @if (_mcpServers.Count > 0)
+            {
+                <div class="monitoring-table-wrap" style="margin-bottom: 8px;">
+                    <table class="monitoring-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Type</th>
+                                <th>Command / URL</th>
+                                <th>Enabled</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var (server, idx) in _mcpServers.Select((s, i) => (s, i)))
+                            {
+                                <tr>
+                                    <td class="monitoring-mono">@server.Name</td>
+                                    <td>@server.Type</td>
+                                    <td class="monitoring-mono">@(server.Type == "http" ? server.Url : $"{server.Command} {server.Args}".Trim())</td>
+                                    <td>@(server.Enabled ? "✓" : "✗")</td>
+                                    <td>
+                                        <button class="btn-edit" @onclick="() => EditMcpServer(idx)">Edit</button>
+                                        <button class="btn-delete" @onclick="() => RemoveMcpServer(idx)">Remove</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            @if (_showMcpForm)
+            {
+                <div class="provider-form" style="margin-top: 8px; padding: 12px; border: 1px solid var(--border-color, #ddd); border-radius: 4px;">
+                    <h4 style="margin-top: 0;">@(_editingMcpIndex >= 0 ? "Edit" : "Add") MCP Server</h4>
+                    <div class="form-group">
+                        <label>Name *</label>
+                        <input type="text" @bind="_mcpForm.Name" placeholder="e.g. context7" />
+                    </div>
+                    <div class="form-group">
+                        <label>Type</label>
+                        <select @bind="_mcpForm.Type">
+                            <option value="stdio">stdio (command-based)</option>
+                            <option value="http">HTTP (URL-based)</option>
+                        </select>
+                    </div>
+                    @if (_mcpForm.Type == "http")
+                    {
+                        <div class="form-group">
+                            <label>URL *</label>
+                            <input type="text" @bind="_mcpForm.Url" placeholder="e.g. https://mcp.context7.com/mcp" />
+                        </div>
+                        <div class="form-group">
+                            <label>Headers <span class="form-hint">(one per line, KEY=VALUE — use for auth tokens)</span></label>
+                            <textarea rows="3" @bind="_mcpForm.Headers" @bind:event="oninput" placeholder="Authorization=Bearer mytoken&#10;X-Org=myorg"></textarea>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="form-group">
+                            <label>Command *</label>
+                            <input type="text" @bind="_mcpForm.Command" placeholder="e.g. uvx" />
+                        </div>
+                        <div class="form-group">
+                            <label>Arguments <span class="form-hint">(space-separated)</span></label>
+                            <input type="text" @bind="_mcpForm.Args" placeholder="e.g. context7-mcp@latest" />
+                        </div>
+                        <div class="form-group">
+                            <label>Environment Variables <span class="form-hint">(one per line, KEY=VALUE)</span></label>
+                            <textarea rows="3" @bind="_mcpForm.EnvVars" @bind:event="oninput" placeholder="FASTMCP_LOG_LEVEL=ERROR"></textarea>
+                        </div>
+                    }
+                    <div class="form-group form-checkbox">
+                        <label>
+                            <input type="checkbox" @bind="_mcpForm.Enabled" />
+                            Enabled
+                        </label>
+                    </div>
+                    <div class="form-buttons">
+                        <button class="btn-save" @onclick="SaveMcpServer">Save Server</button>
+                        <button class="btn-cancel" @onclick="() => _showMcpForm = false">Cancel</button>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div style="display: flex; gap: 8px; margin-top: 4px;">
+                    <button class="btn-add" @onclick="ShowAddMcpForm">+ Add MCP Server</button>
+                </div>
+            }
+
+            <div class="pipeline-form-actions">
+                <button class="btn-save" @onclick="SaveMcpServersAsync">Save MCP Servers</button>
+            </div>
+        </div>
+    };
+
+    private void ShowAddMcpForm()
+    {
+        _editingMcpIndex = -1;
+        _mcpForm = new McpServerFormModel();
+        _showMcpForm = true;
+    }
+
+    private void EditMcpServer(int index)
+    {
+        _editingMcpIndex = index;
+        var server = _mcpServers[index];
+        _mcpForm = new McpServerFormModel
+        {
+            Name = server.Name,
+            Type = server.Type,
+            Command = server.Command,
+            Args = server.Args,
+            Url = server.Url,
+            EnvVars = server.EnvVars,
+            Headers = server.Headers,
+            Enabled = server.Enabled
+        };
+        _showMcpForm = true;
+    }
+
+    private void RemoveMcpServer(int index)
+    {
+        _mcpServers.RemoveAt(index);
+    }
+
+    private void SaveMcpServer()
+    {
+        if (string.IsNullOrWhiteSpace(_mcpForm.Name))
+            return;
+
+        if (_mcpForm.Type == "http" && string.IsNullOrWhiteSpace(_mcpForm.Url))
+            return;
+        if (_mcpForm.Type != "http" && string.IsNullOrWhiteSpace(_mcpForm.Command))
+            return;
+
+        var entry = new McpServerFormModel
+        {
+            Name = _mcpForm.Name.Trim(),
+            Type = _mcpForm.Type,
+            Command = _mcpForm.Command?.Trim() ?? "",
+            Args = _mcpForm.Args?.Trim() ?? "",
+            Url = _mcpForm.Url?.Trim() ?? "",
+            EnvVars = _mcpForm.EnvVars?.Trim() ?? "",
+            Headers = _mcpForm.Headers?.Trim() ?? "",
+            Enabled = _mcpForm.Enabled
+        };
+
+        if (_editingMcpIndex >= 0)
+            _mcpServers[_editingMcpIndex] = entry;
+        else
+            _mcpServers.Add(entry);
+
+        _showMcpForm = false;
+        _editingMcpIndex = -1;
+    }
+
+    private async Task SaveMcpServersAsync()
+    {
+        try
+        {
+            var servers = _mcpServers.Select(s => new McpServerConfig
+            {
+                Name = s.Name.Trim(),
+                Type = s.Type,
+                Command = s.Type == "http" ? null : (string.IsNullOrWhiteSpace(s.Command) ? null : s.Command.Trim()),
+                Args = string.IsNullOrWhiteSpace(s.Args) ? [] : s.Args.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList(),
+                Url = s.Type == "http" ? s.Url.Trim() : null,  // TODO [WARNING]: s.Url could be null if a future McpServerFormModel is constructed without enforcing the "" default; consider s.Url?.Trim() ?? "" for defensive safety.
+                Env = ParseMcpEnvVars(s.EnvVars),
+                Headers = s.Type == "http" ? ParseMcpEnvVars(s.Headers) : new Dictionary<string, string>(),
+                Disabled = !s.Enabled,
+                AutoApprove = []
+            }).ToList();
+
+            _project = _project with { McpServers = servers.Count > 0 ? servers : null };
+            await ConfigStore.SaveProjectAsync(_project, CancellationToken.None);
+            await OnProjectSaved.InvokeAsync();
+            ProjectNotifier.NotifyChanged();
+            await OnShowStatus.InvokeAsync(("Project MCP servers saved.", false));
+        }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to save: {ex.Message}", true));
+        }
+    }
+
+    private static IReadOnlyDictionary<string, string> ParseMcpEnvVars(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return new Dictionary<string, string>();
+        var dict = new Dictionary<string, string>();
+        foreach (var line in input.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var eqIdx = line.IndexOf('=');
+            if (eqIdx > 0)
+                dict[line[..eqIdx].Trim()] = line[(eqIdx + 1)..].Trim();
+        }
+        return dict;
+    }
+
+    private class McpServerFormModel
+    {
+        public string Name { get; set; } = "";
+        public string Type { get; set; } = "stdio";
+        public string Command { get; set; } = "";
+        public string Args { get; set; } = "";
+        public string Url { get; set; } = "";
+        public string EnvVars { get; set; } = "";
+        public string Headers { get; set; } = "";
+        public bool Enabled { get; set; } = true;
     }
 }

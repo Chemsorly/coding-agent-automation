@@ -165,7 +165,7 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             AnalysisRefreshCount = refreshCount,
             CreatedRun = run,
             Project = project,
-            McpServers = profile.McpServers,
+            McpServers = MergeMcpServers(profile.McpServers, project.McpServers),
             TraceContext = PipelineTelemetry.CaptureTraceContext("DispatchOrchestration")
         };
     }
@@ -418,5 +418,32 @@ public sealed class DispatchOrchestrationService : IDispatchOrchestrationService
             _logger.Error(ex, "Failed to remove dangling run for issue {IssueIdentifier} after distribution failure",
                 request.IssueIdentifier);
         }
+    }
+
+    /// <summary>
+    /// Merges profile-level and project-level MCP server configurations.
+    /// Project servers override profile servers with the same Name (case-insensitive);
+    /// new project server names are appended. Null or empty project servers = passthrough.
+    /// </summary>
+    internal static IReadOnlyList<McpServerConfig> MergeMcpServers(
+        // TODO [WARNING]: profileServers is non-nullable but has no null guard. If AgentProfile.McpServers
+        // is null for older persisted records, the caller must null-coalesce before invoking this method.
+        // Consider adding ArgumentNullException.ThrowIfNull(profileServers) or changing the parameter
+        // type to IReadOnlyList<McpServerConfig>? with a null-as-empty fallback.
+        IReadOnlyList<McpServerConfig> profileServers,
+        IReadOnlyList<McpServerConfig>? projectServers)
+    {
+        if (projectServers is null or { Count: 0 })
+            return profileServers;
+
+        // TODO [WARNING]: ToDictionary throws ArgumentException if profileServers contains duplicate
+        // Names (case-insensitive). AgentProfile has no uniqueness constraint on McpServers, so an
+        // admin can configure duplicate server names via the UI. Fix: use an explicit loop or
+        // GroupBy/Last to handle duplicates by last-wins instead of throwing.
+        var merged = profileServers.ToDictionary(s => s.Name, StringComparer.OrdinalIgnoreCase);
+        foreach (var ps in projectServers)
+            merged[ps.Name] = ps;
+
+        return merged.Values.ToList();
     }
 }

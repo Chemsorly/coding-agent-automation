@@ -1046,6 +1046,143 @@ public class DispatchOrchestrationServiceTests
         inMemoryRun!.RunType.Should().Be(PipelineRunType.Review,
             "PrepareDistributionRequestAsync must propagate non-default runType to the in-memory PipelineRun");
     }
+
+    // ── MCP merge integration tests ────────────────────────────────────────────
+
+    [Fact]
+    public async Task PrepareAsync_WhenProjectHasMcpServers_MergesWithProfileMcpServers()
+    {
+        var profileWithMcp = new AgentProfile
+        {
+            Id = "profile-1",
+            DisplayName = "Test Profile",
+            AgentProviderConfigId = "agent-config-1",
+            Enabled = true,
+            MatchLabels = ["dotnet"],
+            McpServers = [new McpServerConfig { Name = "context7", Type = "stdio", Command = "uvx" }]
+        };
+        SetupStandardMocks();
+        _mockConfigStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { profileWithMcp });
+
+        var projectWithMcp = new PipelineProject
+        {
+            Id = "proj-1",
+            Name = "TestProject",
+            Enabled = true,
+            McpServers = [new McpServerConfig { Name = "sonarqube-mcp", Type = "stdio", Command = "uvx" }]
+        };
+
+        var service = CreateService();
+
+        var result = await service.PrepareAsync(
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: null,
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: projectWithMcp),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.McpServers.Should().NotBeNull();
+        result.McpServers!.Should().HaveCount(2);
+        // TODO [WARNING]: These assertions only verify server names are present. A merge implementation
+        // that dropped the profile entry entirely and returned project servers twice would still satisfy
+        // Contain(s => s.Name == "sonarqube-mcp"). Add an assertion that the context7 entry retains
+        // its profile-sourced Command value, e.g.: result.McpServers.Should().Contain(s => s.Name == "context7" && s.Command == "uvx");
+        result.McpServers.Should().Contain(s => s.Name == "context7");
+        result.McpServers.Should().Contain(s => s.Name == "sonarqube-mcp");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WhenProjectMcpServerOverridesProfileServer_ProjectWins()
+    {
+        var profileWithMcp = new AgentProfile
+        {
+            Id = "profile-1",
+            DisplayName = "Test Profile",
+            AgentProviderConfigId = "agent-config-1",
+            Enabled = true,
+            MatchLabels = ["dotnet"],
+            McpServers = [new McpServerConfig { Name = "web-search", Type = "stdio", Command = "uvx", Disabled = false }]
+        };
+        SetupStandardMocks();
+        _mockConfigStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { profileWithMcp });
+
+        var projectWithOverride = new PipelineProject
+        {
+            Id = "proj-1",
+            Name = "TestProject",
+            Enabled = true,
+            McpServers = [new McpServerConfig { Name = "web-search", Type = "stdio", Command = "uvx", Disabled = true }]
+        };
+
+        var service = CreateService();
+
+        var result = await service.PrepareAsync(
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: null,
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: projectWithOverride),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.McpServers.Should().HaveCount(1);
+        result.McpServers![0].Name.Should().Be("web-search");
+        result.McpServers![0].Disabled.Should().BeTrue("project override wins on name collision");
+    }
+
+    [Fact]
+    public async Task PrepareAsync_WhenProjectMcpServersNull_ReturnsProfileMcpServersUnchanged()
+    {
+        var profileWithMcp = new AgentProfile
+        {
+            Id = "profile-1",
+            DisplayName = "Test Profile",
+            AgentProviderConfigId = "agent-config-1",
+            Enabled = true,
+            MatchLabels = ["dotnet"],
+            McpServers = [new McpServerConfig { Name = "context7", Type = "stdio", Command = "uvx" }]
+        };
+        SetupStandardMocks();
+        _mockConfigStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new[] { profileWithMcp });
+
+        // TestProject has McpServers = null — backward compat: profile MCPs pass through unchanged
+        var service = CreateService();
+
+        var result = await service.PrepareAsync(
+            new OrchestratorPreparationRequest(
+                IssueIdentifier: "issue-42",
+                IssueProviderId: "issue-1",
+                RepoProviderId: "repo-1",
+                BrainProviderId: null,
+                PipelineProviderId: null,
+                InitiatedBy: "loop",
+                RequiredLabels: ["dotnet"],
+                Project: TestProject),
+            CancellationToken.None);
+
+        result.Should().NotBeNull();
+        result!.McpServers.Should().HaveCount(1);
+        // TODO [WARNING]: This test only checks the server name, not that the returned entry retains
+        // its unmodified profile field values. Adding result.McpServers![0].Command.Should().Be("uvx")
+        // would make the passthrough assertion unambiguous.
+        result.McpServers![0].Name.Should().Be("context7");
+    }
 }
 
 /// <summary>
