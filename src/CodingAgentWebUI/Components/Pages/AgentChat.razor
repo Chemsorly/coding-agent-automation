@@ -52,7 +52,8 @@
 
                     <div class="chat-agent-select">
                         <label for="project-select-k8s">Project (optional):</label>
-                        <select id="project-select-k8s" @bind="_selectedProjectId" @bind:after="OnProjectSelected" class="chat-select">
+                        <select id="project-select-k8s" @bind="_selectedProjectId" @bind:after="OnProjectSelected" class="chat-select"
+                                disabled="@_isChatActive">
                             <option value="">— No project —</option>
                             @foreach (var p in _projects)
                             {
@@ -99,7 +100,8 @@
 
                     <div class="chat-agent-select">
                         <label for="project-select-signalr">Project (optional):</label>
-                        <select id="project-select-signalr" @bind="_selectedProjectId" @bind:after="OnProjectSelected" class="chat-select">
+                        <select id="project-select-signalr" @bind="_selectedProjectId" @bind:after="OnProjectSelected" class="chat-select"
+                                disabled="@_isChatActive">
                             <option value="">— No project —</option>
                             @foreach (var p in _projects)
                             {
@@ -483,16 +485,11 @@
                 _selectedProject.McpServers)
             : (_resolvedProfile?.McpServers ?? []);
 
-        // TODO: ProjectSecrets and ProjectSteeringContent are sent on every prompt turn;
-        // the agent-side guard (UseResume check) prevents re-injection, but secrets travel
-        // over the wire on all follow-up messages. Consider gating:
-        //   ProjectSecrets = (_isFirstPrompt ? _selectedProject?.Secrets : null)
-        // to limit secret exposure in transit logs.
-        // TODO: _selectedProject can change mid-session via OnProjectSelected() while
-        // _isChatActive is true. The next SendPrompt() will silently use new project
-        // secrets/steering without warning the user. Consider locking the dropdown once
-        // StartChat() has been called, or showing a warning when the project changes
-        // during an active session.
+        // Secrets are only sent on the first prompt (UseResume = false) to avoid transmitting
+        // sensitive values on every subsequent wire message. The agent-side guard also prevents
+        // re-injection on resume, but limiting wire exposure is the primary reason.
+        // SteeringContent and ProjectId/Name are harmless to repeat but are also gated to first
+        // prompt for consistency — the agent ignores them on resume anyway.
         var message = new ChatPromptMessage
         {
             SessionId = _activeSessionId,
@@ -501,10 +498,10 @@
             McpServers = mergedMcpServers,
             McpConfigPath = _resolvedMcpConfigPath,
             ChatWindowId = _chatWindowId,
-            ProjectSecrets = _selectedProject?.Secrets,
-            ProjectSteeringContent = _selectedProject?.SteeringContent,
-            ProjectId = _selectedProject?.Id,
-            ProjectName = _selectedProject?.Name
+            ProjectSecrets = _isFirstPrompt ? _selectedProject?.Secrets : null,
+            ProjectSteeringContent = _isFirstPrompt ? _selectedProject?.SteeringContent : null,
+            ProjectId = _isFirstPrompt ? _selectedProject?.Id : null,
+            ProjectName = _isFirstPrompt ? _selectedProject?.Name : null
         };
 
         try
