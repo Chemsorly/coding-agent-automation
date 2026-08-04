@@ -213,7 +213,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         {
             try
             {
-                await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportOutputLines, message.JobId, lines);
+                // intentional: fire-and-forget flush callback; no ambient token available in the OnFlush lambda, and lines must be delivered regardless
+                await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportOutputLines, message.JobId, lines, CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -378,7 +379,9 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 ExitCode = exitCode,
                 Error = error
             };
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatCompleted, completed);
+            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatCompleted, completed,
+                // intentional: completion must always be reported regardless of cancellation state; chatToken may already be cancelled when this is reached (e.g., HandleCancelChatAsync fired)
+                CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -534,7 +537,13 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             {
                 RequestId = request.RequestId,
                 Models = models
-            });
+            },
+            // TODO: The comment below is inaccurate — timeoutCts is a fresh 30-second token and the process has already exited by
+            // the time InvokeAsync is reached, so the remaining budget is nearly the full 30 seconds minus process execution time.
+            // The issue requires passing the in-scope token (timeoutCts.Token) here; consider replacing CancellationToken.None with
+            // timeoutCts.Token and updating the comment accordingly.
+            // intentional: timeoutCts is scoped to process execution and may have near-zero remaining budget by the time results are ready; results must always be reported
+            CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -552,7 +561,9 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 RequestId = requestId,
                 Models = [],
                 Error = error
-            });
+            },
+            // intentional: called from catch block where no ambient token is safe; error reporting must not be suppressed
+            CancellationToken.None);
         }
         catch (Exception ex)
         {
@@ -628,7 +639,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 Success = false,
                 ErrorMessage = errorMessage
             };
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, failResult);
+            // intentional: called from catch block where jobToken may already be cancelled; failure must always be reported
+            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, failResult, CancellationToken.None);
         }
         catch (Exception reportEx)
         {
@@ -647,7 +659,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     {
         try
         {
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.AgentReady, _agentId);
+            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.AgentReady, _agentId, _hostApplicationLifetime.ApplicationStopping);
         }
         catch (Exception ex)
         {

@@ -298,7 +298,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             DispatchId = dispatchId,
             WatcherCts = cts,
             ConnectedAt = DateTimeOffset.UtcNow,
-            WatcherTask = Task.Run(() => WatchJobUntilTerminalAsync(jobName, claimedPvc, selector, cts.Token))
+            WatcherTask = Task.Run(() => WatchJobUntilTerminalAsync(jobName, claimedPvc, selector, cts.Token), cts.Token)
         };
         _sessions[jobName] = session;
 

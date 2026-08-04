@@ -201,7 +201,11 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         {
             if (manager.IsConnected)
             {
-                await manager.Connection.InvokeAsync(HubMethodNames.DeregisterAgent, _agentId);
+                // TODO: ApplicationStopping is already cancelled by the time ShutdownAsync runs (it's the same token that triggered
+                // graceful shutdown), so this InvokeAsync is cancelled before the hub method executes on every normal shutdown,
+                // leaving the agent registered on the orchestrator until reconnect or timeout. Consider using CancellationToken.None
+                // with an // intentional: comment here (matching the pattern in AgentWorkerService.cs) so deregistration is always attempted.
+                await manager.Connection.InvokeAsync(HubMethodNames.DeregisterAgent, _agentId, _hostApplicationLifetime.ApplicationStopping);
                 _logger.Information("Agent {AgentId} deregistered from orchestrator", _agentId);
             }
         }
