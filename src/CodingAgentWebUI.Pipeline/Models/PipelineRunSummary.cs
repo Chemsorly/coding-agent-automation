@@ -79,6 +79,14 @@ public sealed class PipelineRunSummary
     /// <summary>Total number of sub-issues attempted during the Decomposition phase.</summary>
     public int DecompositionSubIssuesAttempted { get; init; }
 
+    /// <summary>
+    /// Issue provider config ID for this run. Used as a second consolidation discriminator at read time
+    /// (alongside <see cref="InitiatedBy"/>) so that ghost entries with missing <see cref="InitiatedBy"/>
+    /// are still excluded from pipeline history. Nullable: pre-fix rows in SummaryJson will not have this
+    /// field and deserialize as null, which correctly passes the filter (null != "consolidation").
+    /// </summary>
+    public string? IssueProviderConfigId { get; init; }
+
     /// <summary>Project identifier for filtering/grouping. Null for legacy runs without project data.</summary>
     public string? ProjectId { get; init; }
 

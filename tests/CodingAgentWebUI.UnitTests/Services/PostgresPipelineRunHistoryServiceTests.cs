@@ -389,6 +389,83 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
             "AddRunToHistoryAsync must not mutate the caller's PipelineRun.CurrentStep");
     }
 
+    // TODO: [WARNING] Test name says "NullInitiatedBy" but the ghost entry is constructed with an explicit
+    // InitiatedBy = "manual" rather than omitting the field from SummaryJson. Both produce the same
+    // deserialized value so the code path is correct, but the name is misleading — consider renaming to
+    // GetRunHistory_ExcludesConsolidationRun_WithManualInitiatedByButMatchingProviderConfigId, or add a
+    // sibling test that serializes SummaryJson without the InitiatedBy key to make the distinction explicit.
+    [Fact]
+    public async Task GetRunHistory_ExcludesConsolidationRun_WithNullInitiatedByButMatchingProviderConfigId()
+    {
+        // Arrange: a normal run and a consolidation ghost entry where InitiatedBy is "manual"
+        // (the default — simulating a row whose SummaryJson has no InitiatedBy field) but
+        // IssueProviderConfigId = ConsolidationConstants.ProviderConfigId.
+        // Without the fix, the read filter only checks InitiatedBy != "consolidation", so the ghost
+        // entry passes through. The fix adds an && check on IssueProviderConfigId.
+        var normalRun = CreateCompletedRun(Guid.NewGuid().ToString(), "org/repo#ghost-test", "Normal run");
+
+        // Build a ghost entry SummaryJson with InitiatedBy absent (defaults to "manual")
+        // but IssueProviderConfigId set to the consolidation sentinel.
+        var ghostSummary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "ghost-consolidation",
+            IssueTitle = "Ghost consolidation entry",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-1),
+            InitiatedBy = "manual", // NOT "consolidation" — the old filter would pass this
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId // the discriminator the new filter must catch
+        };
+
+        using (var db = new InMemoryPipelineDbContext(_dbOptions))
+        {
+            var normalSummary = normalRun.ToSummary();
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.Parse(normalRun.RunId),
+                IssueIdentifier = normalSummary.IssueIdentifier,
+                IssueTitle = normalSummary.IssueTitle,
+                FinalStep = normalSummary.FinalStep,
+                StartedAt = normalSummary.StartedAtOffset,
+                SummaryJson = System.Text.Json.JsonSerializer.Serialize(normalSummary, PipelineJsonOptions.Default)
+            });
+            db.PipelineRuns.Add(new PipelineRunEntity
+            {
+                RunId = Guid.Parse(ghostSummary.RunId),
+                IssueIdentifier = ghostSummary.IssueIdentifier,
+                IssueTitle = ghostSummary.IssueTitle,
+                FinalStep = ghostSummary.FinalStep,
+                StartedAt = ghostSummary.StartedAtOffset,
+                SummaryJson = System.Text.Json.JsonSerializer.Serialize(ghostSummary, PipelineJsonOptions.Default)
+            });
+            db.SaveChanges();
+        }
+
+        // Act — non-paged overload (GetRunHistoryInternalAsync)
+        var history = await _sut.GetRunHistoryAsync();
+
+        // Assert: only the normal run should appear; the ghost entry must be excluded
+        history.Should().HaveCount(1);
+        history[0].IssueIdentifier.Should().Be("org/repo#ghost-test");
+
+        // Act — paged overload (GetRunHistoryPagedInternalAsync) — independent filter call site
+        // TODO: [WARNING] The non-paged and paged assertions share the same database state and run in the
+        // same test method. If one path has a side effect or a distinct bug, failures cannot be independently
+        // pinpointed. Consider splitting into two separate test methods (or a [Theory]) so each filter call
+        // site can be isolated and failures attributed to the correct code path.
+        var paged = await _sut.GetRunHistoryAsync(page: 1, pageSize: 10);
+
+        // Assert: same result through the paged path
+        paged.Items.Should().HaveCount(1);
+        paged.Items[0].IssueIdentifier.Should().Be("org/repo#ghost-test");
+    }
+
+    // TODO: [WARNING] No test covers the symmetric case: a legacy row with InitiatedBy = ConsolidationConstants.InitiatedBy
+    // but IssueProviderConfigId = null. The existing pre-fix consolidation tests (GetRunHistory_ExcludesConsolidationRuns,
+    // GetRunHistoryAsync_ExcludesConsolidationRuns) now incidentally set both discriminators via the updated ToSummary().
+    // Add an explicit test seeding a SummaryJson with InitiatedBy = ConsolidationConstants.InitiatedBy and no
+    // IssueProviderConfigId key, to verify the InitiatedBy arm alone still excludes legacy consolidation rows.
+
     // ── Pagination tests ──────────────────────────────────────────────────
 
     // TODO: Add boundary/edge case tests for pagination parameter validation (page=0, pageSize=0, pageSize > MaxHistorySize).
