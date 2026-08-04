@@ -119,7 +119,7 @@ public static partial class PromptBuilder
         sb.AppendLine("Set `recommendation` to:");
         sb.AppendLine("- `\"ready\"` if the issue is clear, well-scoped, and you have a concrete implementation plan.");
         sb.AppendLine("- `\"not_ready\"` if the issue is too vague, contradictory, has hard blockers, requires information you can't determine from the codebase, OR if the scope is too broad for a single agent run (heuristic: changes affecting >30 files or spanning >3 distinct projects). When rejecting for scope, include splitting recommendations in `blockingIssues` (e.g., \"Split by concern: UI changes, data layer, test updates\"). Add any blocking issues to `blockingIssues`.");
-        sb.AppendLine("- `\"wont_do\"` if, after analyzing the codebase, you determine no code changes are needed. This includes: bugs that can't be reproduced, issues that are already fixed, features that are already implemented, or behavior that is working as designed. Explain your reasoning in `reason`.");
+        sb.AppendLine("- `\"wont_do\"` if, after analyzing the codebase, you determine no code changes are needed. This includes: bugs that can't be reproduced, issues that are already fixed, features that are already implemented, or behavior that is working as designed. Explain your reasoning in `reason`. **Important:** if the production code fix described in the issue is already present on the branch, set `\"wont_do\"` — do NOT pivot to `\"ready\"` on the grounds that test coverage could still be added. Test-only follow-up work belongs in a separate issue.");
         sb.AppendLine();
 
         if (brainContextWritten)

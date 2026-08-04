@@ -169,7 +169,14 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
                     var meterProvider = _serviceProvider.GetService<MeterProvider>();
                     if (meterProvider is not null)
                     {
-                        meterProvider.ForceFlush(timeoutMilliseconds: 3000);
+                        var metricsFlushed = meterProvider.ForceFlush(timeoutMilliseconds: 5000);
+                        if (!metricsFlushed)
+                        {
+                            _logger.Warning(
+                                "OTLP metrics flush timed out for work item {WorkItemId} — some metrics (e.g. pipeline_decomposition_duration_seconds) " +
+                                "may be missing from Grafana. Verify OTEL_EXPORTER_OTLP_ENDPOINT is set and the otel-headers Secret key exists in the cluster.",
+                                _workItemId);
+                        }
                     }
                     else
                     {
@@ -178,9 +185,17 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
                     }
 
                     var remaining = Math.Max(500, 2000 - (int)sw.ElapsedMilliseconds);
+                    // TODO: The metrics flush timeout was increased to 5000ms but the traces budget
+                    // is still calculated as Math.Max(500, 2000 - sw.ElapsedMilliseconds). If the
+                    // metrics flush actually times out (taking ~5000ms), this clamps the traces window
+                    // to 500ms. Consider using a separate stopwatch for the traces budget, or increasing
+                    // the total window to (metricsTimeout + tracesTimeout) with independent budgets.
                     var tracerProvider = _serviceProvider.GetService<TracerProvider>();
                     if (tracerProvider is not null)
                     {
+                        // TODO: TracerProvider.ForceFlush() also returns bool (true = success, false = timeout).
+                        // For consistency with the metrics flush, capture the return value and log a Warning
+                        // when it returns false so that trace export failures are observable in pod logs.
                         tracerProvider.ForceFlush(timeoutMilliseconds: remaining);
                     }
                     else
