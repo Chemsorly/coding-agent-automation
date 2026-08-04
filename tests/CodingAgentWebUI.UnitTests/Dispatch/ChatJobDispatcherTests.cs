@@ -605,10 +605,27 @@ public class ChatJobDispatcherTests
         var act = async () => await dispatcher.StartAsync(CancellationToken.None);
         await act.Should().NotThrowAsync();
 
-        // Wait briefly for the background recovery task to complete
-        await Task.Delay(500);
+        // Poll until the background recovery task has called ListJobsAsync, with a 5s timeout.
+        // A fixed Task.Delay(500) is flaky under load; polling is deterministic.
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                jobClientMock.Verify(c => c.ListJobsAsync(
+                    TestNamespace,
+                    It.Is<string>(s => s.Contains("caa/chat-session-id")),
+                    It.IsAny<CancellationToken>()),
+                    Times.Once);
+                break; // verified — exit the poll loop
+            }
+            catch (MockException)
+            {
+                await Task.Delay(50);
+            }
+        }
 
-        // Verify ListJobsAsync was called with the chat-session-id label selector
+        // Final assertion (throws if still not satisfied after deadline)
         jobClientMock.Verify(c => c.ListJobsAsync(
             TestNamespace,
             It.Is<string>(s => s.Contains("caa/chat-session-id")),

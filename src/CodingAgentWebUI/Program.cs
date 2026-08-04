@@ -237,14 +237,21 @@ builder.Services.AddOpenTelemetry()
         m.AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
             .AddMeter(PipelineTelemetry.SourceName)
-            // TODO: [WARNING] AddOtlpExporter is called before WorkDistributionTelemetry.MeterName is added.
-            // In the OTel .NET SDK, AddOtlpExporter registers a PeriodicExportingMetricReader at this point;
-            // meters added afterward are still observed by the same reader (so Cumulative does apply to
-            // WorkDistributionTelemetry at runtime), but the ordering is misleading and could prompt a
-            // future author to add a second AddOtlpExporter without the Cumulative override. Consider
-            // moving AddOtlpExporter after all AddMeter calls, or keep this comment to document the intent.
+            // Prometheus requires Cumulative temporality. The OTLP exporter defaults to Delta
+            // for histograms and counters, which causes Grafana Cloud to silently drop histogram
+            // data (dispatch_queue_wait_time, pipeline_jobs_duration, etc.) while gauges — which
+            // have no temporality — continue to export correctly. Setting Cumulative here ensures
+            // all instrument types are compatible with the Prometheus remote-write pipeline.
             .AddOtlpExporter((_, readerOptions) =>
                 readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative);
+
+        // TODO [WARNING]: WorkDistributionTelemetry meter is added after AddOtlpExporter above.
+        // In the OTel .NET SDK, AddMeter and AddOtlpExporter both operate on the same MeterProviderBuilder
+        // pipeline — registration order within WithMetrics does not affect which meters are covered by
+        // the exporter. This meter IS exported with Cumulative temporality. However, the ordering may
+        // mislead future maintainers into thinking it is on a separate, unconfigured exporter. Consider
+        // moving AddMeter(WorkDistributionTelemetry.MeterName) inside the fluent chain above, or keep
+        // this comment as a clarification. (DotNetSpecialist / Correctness review finding)
 
         // Work distribution metrics (035a)
         if (!string.IsNullOrEmpty(dbConnectionString))
