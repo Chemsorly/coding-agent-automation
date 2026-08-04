@@ -66,7 +66,7 @@ public sealed partial class AgentJobDispatcher
             PipelineConfiguration = ctx.Config,
             InitiatedBy = ctx.InitiatedBy,
             ResolvedProfileId = ctx.Profile.Id,
-            McpServers = ctx.Profile.McpServers,
+            McpServers = DispatchOrchestrationService.MergeMcpServers(ctx.Profile.McpServers, ctx.Project.McpServers),
             ProjectId = ctx.Project.Id,
             ProjectName = ctx.Project.Name,
             ProjectSecrets = ctx.Project.Secrets,

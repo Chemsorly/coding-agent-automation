@@ -652,6 +652,8 @@ public class ApplyProjectOverridesTests
         nameof(PipelineProject.EpicIssueProviderId),
         nameof(PipelineProject.SteeringContent),
         nameof(PipelineProject.Secrets),
+        // McpServers is dispatched directly (merged at dispatch time), not via ApplyProjectOverrides
+        nameof(PipelineProject.McpServers),
     };
 
     [Fact]

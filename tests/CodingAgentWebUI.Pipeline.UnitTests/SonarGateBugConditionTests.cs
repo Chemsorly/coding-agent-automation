@@ -121,7 +121,7 @@ public class SonarGateBugConditionTests
             ("tests/CodingAgentWebUI.IntegrationTests/Smoke/DbModeSmokeTests.cs",                                36,  "DbModeSmokeTests line 36"),
             ("tests/CodingAgentWebUI.Infrastructure.UnitTests/Locking/InProcessDistributedLockProviderTests.cs", 44,  "InProcessDistributedLockProviderTests line 44"),
             ("tests/CodingAgentWebUI.Infrastructure.UnitTests/Locking/InProcessDistributedLockProviderTests.cs", 93,  "InProcessDistributedLockProviderTests line 93"),
-            ("tests/CodingAgentWebUI.UnitTests/DispatchOrchestrationServiceTests.cs",                          1102,  "DispatchOrchestrationServiceTests line 1103 (RevertFailedDistribution_SwapsLabelBackToNext)"),
+            ("tests/CodingAgentWebUI.UnitTests/DispatchOrchestrationServiceTests.cs",                          1232,  "DispatchOrchestrationServiceTests line 1233 (RevertFailedDistribution_SwapsLabelBackToNext)"),
             ("tests/CodingAgentWebUI.Agent.UnitTests/OpenCode/OpenCodeHealthMonitorTests.cs",                   165,  "OpenCodeHealthMonitorTests line 165"),
         };
 
