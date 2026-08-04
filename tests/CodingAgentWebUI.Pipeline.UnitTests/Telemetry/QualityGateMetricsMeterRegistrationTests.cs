@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics.Metrics;
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Telemetry;
@@ -23,11 +24,11 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
 {
     private readonly MeterListener _listener = new();
-    // TODO: [WARNING] Use ConcurrentBag<T> instead of List<T> to match the pattern in PipelineTelemetryQualityGateTests,
-    // PipelineRunInstrumentationTests, StepMetricsTests, and other metric tests in this suite. Although measurement
-    // callbacks fire on the test thread here (purely synchronous), List<T> is inconsistent with established convention
-    // and could silently corrupt state if async measurement paths are added in future.
-    private readonly List<(string InstrumentName, string MeterName)> _observed = [];
+    // Use ConcurrentBag<T> to match the established pattern in PipelineTelemetryQualityGateTests,
+    // PipelineRunInstrumentationTests, StepMetricsTests, and other metric tests in this suite.
+    // MeterListener measurement callbacks can fire on a different thread; List<T> is not thread-safe
+    // and caused "Collection was modified; enumeration operation may not execute." in CI.
+    private readonly ConcurrentBag<(string InstrumentName, string MeterName)> _observed = [];
 
     public QualityGateMetricsMeterRegistrationTests()
     {
