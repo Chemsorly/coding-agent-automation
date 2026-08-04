@@ -97,10 +97,10 @@ public sealed class PipelineRunInstrumentation : IDisposable
 
         if (_runType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition)
         {
-            // TODO: This unconditionally records DecompositionDuration for decomposition run types, but the
-            // old PipelineOrchestrationService never emitted this metric — only LocalPipelineExecutor did.
-            // The orchestrator path now emits new data points that did not exist before. Consider gating
-            // this behind a caller-provided flag or only recording from the agent path.
+            // PipelineRunInstrumentation.Start() is only called from LocalPipelineExecutor.ExecuteAsync()
+            // (the agent-side execution path). PipelineOrchestrationService does not call it.
+            // DecompositionDuration is therefore always emitted from the agent side — the correct
+            // emission path. No caller-provided flag is needed.
             var phase = _runType == PipelineRunType.DecompositionAnalysis ? "analysis" : "creation";
             PipelineTelemetry.DecompositionDuration.Record(_stopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.ProjectIdTag(_projectId),
