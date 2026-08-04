@@ -99,9 +99,9 @@ try
         .WithMetrics(m => m
             .AddHttpClientInstrumentation()
             .AddMeter(PipelineTelemetry.SourceName)
-            // Prometheus requires Cumulative temporality. The OTLP exporter defaults to Delta
-            // for histograms and counters, which causes Grafana Cloud to silently drop histogram
-            // data while gauges continue to export correctly. See orchestrator Program.cs for details.
+            // OTLP exporter defaults to Delta temporality, but Prometheus (and Grafana Cloud's OTLP
+            // receiver) require Cumulative. Without this, histograms and counters are silently dropped
+            // by the Grafana collector. The two-argument overload is only available inside WithMetrics().
             .AddOtlpExporter((_, readerOptions) =>
                 readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative));
 
