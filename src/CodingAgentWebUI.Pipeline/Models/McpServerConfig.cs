@@ -37,4 +37,8 @@ public sealed record McpServerConfig
 
     /// <summary>Tool names to auto-approve (redundant when --trust-all-tools is used, kept for schema compat).</summary>
     [Key(7)] public IReadOnlyList<string> AutoApprove { get; init; } = [];
+
+    /// <summary>HTTP request headers for HTTP-type servers (e.g., Authorization, custom org headers).
+    /// Only used for http transport; ignored for stdio servers.</summary>
+    [Key(8)] public IReadOnlyDictionary<string, string> Headers { get; init; } = new Dictionary<string, string>();
 }

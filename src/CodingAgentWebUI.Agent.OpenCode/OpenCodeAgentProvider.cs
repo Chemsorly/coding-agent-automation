@@ -1000,7 +1000,17 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 if (string.Equals(server.Type, "http", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(server.Type, "sse", StringComparison.OrdinalIgnoreCase))
                 {
-                    config = new McpHttpConfig { Url = server.Url ?? string.Empty };
+                    // TODO: Headers passed to the OpenCode API are not filtered through an equivalent of
+                    // ExcludedEnvKeys. The stdio path explicitly strips sensitive keys (Anthropic, OpenAI,
+                    // OpenRouter API keys, OpenCode server password) before forwarding env vars. The HTTP
+                    // header path has no such guard — a user who sets e.g. Authorization=Bearer <ANTHROPIC_API_KEY>
+                    // will have that value forwarded verbatim to the external HTTP MCP server. Consider applying
+                    // a header-key filter analogous to ExcludedEnvKeys to prevent accidental credential leakage.
+                    config = new McpHttpConfig
+                    {
+                        Url = server.Url ?? string.Empty,
+                        Headers = server.Headers.Count > 0 ? server.Headers : null
+                    };
                 }
                 else
                 {
