@@ -508,6 +508,9 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
     {
         // Arrange: terminal assignment (410 Gone) → lifecycle exits immediately, so the
         // finally block (which calls ForceFlush) runs quickly in the test.
+        // TODO: handler and httpClient are IDisposable but are created without 'using'. Add
+        // 'using var' to both declarations for consistency with the disposal pattern used in
+        // surrounding tests and to prevent resource leaks if the test scaffolding changes.
         var handler = new FakeHandler(System.Net.HttpStatusCode.Gone);
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
         var client = new WorkItemHttpClient(httpClient, _mockLogger.Object);
@@ -524,6 +527,10 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         var stopCalled = new TaskCompletionSource<bool>();
         _mockLifetime.Setup(l => l.StopApplication()).Callback(() => stopCalled.TrySetResult(true));
 
+        // TODO: service is declared as plain 'var' and is not disposed deterministically. Declare with
+        // 'using var service = ...' to ensure Dispose() is called before serviceProvider is disposed.
+        // Without deterministic disposal, the background task could access the already-disposed
+        // serviceProvider after the 'using var serviceProvider' scope exits, causing ObjectDisposedException.
         var service = new WorkItemAgentService(
             "wi-flush-timeout",
             client,
@@ -540,6 +547,10 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         await service.StartAsync(cts.Token);
         var completed = await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(8)));
         completed.Should().Be(stopCalled.Task, "Service should call StopApplication within timeout");
+        // TODO: StopAsync is called with CancellationToken.None. If ExecuteAsync does not exit
+        // (e.g., because AlwaysFailMetricReader.OnCollect blocks for its full timeoutMilliseconds
+        // before returning false), this call will block indefinitely and hang the CI run.
+        // Pass a bounded token (e.g., cts.Token or a fresh short-timeout token) to bound the stop call.
         await service.StopAsync(CancellationToken.None);
 
         // Assert: a Warning was logged because ForceFlush returned false.
@@ -547,6 +558,9 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         // TODO: The predicate was narrowed to "flush timed out" only (removed the || msg.Contains("OTLP")
         // fallback) to avoid false positives from the unrelated "MeterProvider not available" and
         // "TracerProvider not available" warning paths, which also contain "OTLP" in their text.
+        // TODO: Times.AtLeastOnce does not guard against double-emission regressions (e.g., if a
+        // retry path calls ForceFlush a second time, the Warning would be logged twice and the test
+        // would still pass). Consider Times.Once to make the test sensitive to duplicate warnings.
         _mockLogger.Verify(l => l.Warning(
             It.Is<string>(msg => msg.Contains("flush timed out")),
             It.IsAny<string>()),
@@ -576,6 +590,8 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
         // Arrange: capture the TemporalityPreference that the two-argument AddOtlpExporter
         // callback actually sets on the reader options. The SDK invokes this callback when
         // the MeterProvider is first resolved from the DI container.
+        // appliedPreference is captured AFTER the assignment so the assertion is falsifiable:
+        // removing or changing the assignment line causes the captured value to differ from Cumulative.
         var appliedPreference = MetricReaderTemporalityPreference.Delta; // sentinel — must be overwritten
         var callbackInvoked = false;
 
@@ -587,9 +603,11 @@ public class WorkItemAgentServiceTests : IAsyncDisposable
             // Removing or changing this assignment causes the assertion below to fail.
             .AddOtlpExporter((_, readerOptions) =>
             {
-                appliedPreference = readerOptions.TemporalityPreference;
                 callbackInvoked = true;
                 readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative;
+                // Capture AFTER the assignment so the assertion verifies what was written,
+                // not the SDK default that existed at callback entry.
+                appliedPreference = readerOptions.TemporalityPreference;
             }));
 
         // Act: resolve MeterProvider — the SDK invokes the AddOtlpExporter callback here.
