@@ -267,7 +267,19 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             throw;
         }
 
-        // Unreachable — loop exits only via cancellation
+        // Loop exited because timeoutCts was already cancelled when the while-condition was evaluated
+        // (i.e., the timeout fired between iterations rather than inside Task.Delay).
+        // Cleanup is required here too — same as the OperationCanceledException catch path.
+        _logger.Warning(
+            "ChatJobDispatcher: chat pod for {AgentSelector} did not connect within {TimeoutSeconds}s — cleaning up {JobName}",
+            normalized, _options.ChatPodConnectTimeoutSeconds, jobName);
+
+        var timeoutTag = new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue);
+        ChatTelemetry.PodConnectTimeouts.Add(1, timeoutTag);
+
+        activity?.SetStatus(ActivityStatusCode.Error, "Connect timeout");
+
+        await TryCleanupFailedDispatch(jobName, cancellationToken);
         throw new ChatPodTimeoutException(_options.ChatPodConnectTimeoutSeconds);
     }
 
