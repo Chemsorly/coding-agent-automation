@@ -157,7 +157,7 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
 
         _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(
-                It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(),
+                It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(),
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 

@@ -248,17 +248,17 @@ public class AgentCodingPageService : IDisposable
     }
 
     public async Task<(bool Success, string? Error, string? SuccessMessage)> MoveTemplateToProjectAsync(
-        string templateId, string sourceProjectId, string targetProjectId)
+        TemplateId templateId, string sourceProjectId, string targetProjectId)
     {
         try
         {
             var sourceProject = Projects.FirstOrDefault(p => p.Id == sourceProjectId);
             var targetProject = Projects.FirstOrDefault(p => p.Id == targetProjectId);
             if (sourceProject == null || targetProject == null) return (true, null, null);
-            await _projectStore.SaveProjectAsync(sourceProject with { TemplateIds = sourceProject.TemplateIds.Where(id => id != templateId).ToList() }, CancellationToken.None);
-            await _projectStore.SaveProjectAsync(targetProject with { TemplateIds = targetProject.TemplateIds.Append(templateId).ToList() }, CancellationToken.None);
+            await _projectStore.SaveProjectAsync(sourceProject with { TemplateIds = sourceProject.TemplateIds.Where(id => id != templateId.Value).ToList() }, CancellationToken.None);
+            await _projectStore.SaveProjectAsync(targetProject with { TemplateIds = targetProject.TemplateIds.Append(templateId.Value).ToList() }, CancellationToken.None);
             Projects = await _projectStore.LoadProjectsAsync(CancellationToken.None);
-            return (true, null, $"Moved \"{Templates.FirstOrDefault(t => t.Id == templateId)?.Name ?? templateId}\" to {targetProject.Name}.");
+            return (true, null, $"Moved \"{Templates.FirstOrDefault(t => t.Id == templateId.Value)?.Name ?? templateId.Value}\" to {targetProject.Name}.");
         }
         catch (Exception ex) { return (false, $"Failed to move template: {ex.Message}", null); }
     }
@@ -663,9 +663,9 @@ public class AgentCodingPageService : IDisposable
 
     // ── Issue Drawer Orchestration ──
 
-    public async Task<string?> OpenIssueDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    public async Task<string?> OpenIssueDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
-        var template = Templates.FirstOrDefault(t => t.Id == templateId);
+        var template = Templates.FirstOrDefault(t => t.Id == templateId.Value);
         if (template == null) return null;
         HideOtherDrawers(DrawerTabIssue);
         await RefreshActiveIssuesAsync();
@@ -674,7 +674,7 @@ public class AgentCodingPageService : IDisposable
 
     public void CloseIssueDrawer() { _issueDrawer.Close(); DrawerReadiness.Clear(); }
 
-    public Task<string?> SwitchToIssueDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    public Task<string?> SwitchToIssueDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
         HideOtherDrawers(DrawerTabIssue);
         return _issueDrawer.SwitchAsync(templateId, notifyStateChanged,
@@ -693,10 +693,14 @@ public class AgentCodingPageService : IDisposable
 
     // ── PR Drawer Orchestration ──
 
-    public async Task<string?> OpenPrDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    // TODO: Contract change — the prior string overload had an explicit `if (string.IsNullOrEmpty(templateId)) return null;`
+    // guard that was removed when adopting TemplateId. The implicit conversion operator on TemplateId calls
+    // ArgumentException.ThrowIfNullOrEmpty, so callers passing an empty string will now throw instead of getting
+    // a graceful null return. UI call sites are guarded by disabled buttons, but any future non-UI caller
+    // passing an optional/empty template ID must use `TemplateId?` and null-check before calling this method.
+    public async Task<string?> OpenPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
-        if (string.IsNullOrEmpty(templateId)) return null;
-        var template = Templates.FirstOrDefault(t => t.Id == templateId);
+        var template = Templates.FirstOrDefault(t => t.Id == templateId.Value);
         if (template == null) return null;
         HideOtherDrawers(DrawerTabPr);
         return await _prDrawer.OpenAsync(template, notifyStateChanged);
@@ -704,7 +708,7 @@ public class AgentCodingPageService : IDisposable
 
     public void ClosePrDrawer() => _prDrawer.Close();
 
-    public Task<string?> SwitchToPrDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    public Task<string?> SwitchToPrDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
         HideOtherDrawers(DrawerTabPr);
         return _prDrawer.SwitchAsync(templateId, notifyStateChanged,
@@ -722,10 +726,13 @@ public class AgentCodingPageService : IDisposable
 
     // ── Epic Drawer Orchestration ──
 
-    public async Task<string?> OpenEpicDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    // TODO: Same contract change as OpenPrDrawerAsync — the prior string overload had an explicit
+    // `if (string.IsNullOrEmpty(templateId)) return null;` guard that was removed when adopting TemplateId.
+    // Passing an empty string will throw via ArgumentException.ThrowIfNullOrEmpty. Non-UI callers must
+    // use `TemplateId?` and null-check before calling this method.
+    public async Task<string?> OpenEpicDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
-        if (string.IsNullOrEmpty(templateId)) return null;
-        var template = Templates.FirstOrDefault(t => t.Id == templateId);
+        var template = Templates.FirstOrDefault(t => t.Id == templateId.Value);
         if (template == null) return null;
         HideOtherDrawers(DrawerTabEpic);
         return await _epicDrawer.OpenAsync(template, notifyStateChanged);
@@ -733,7 +740,7 @@ public class AgentCodingPageService : IDisposable
 
     public void CloseEpicDrawer() => _epicDrawer.Close();
 
-    public Task<string?> SwitchToEpicDrawerAsync(string templateId, Func<Task>? notifyStateChanged = null)
+    public Task<string?> SwitchToEpicDrawerAsync(TemplateId templateId, Func<Task>? notifyStateChanged = null)
     {
         HideOtherDrawers(DrawerTabEpic);
         return _epicDrawer.SwitchAsync(templateId, notifyStateChanged,
@@ -768,7 +775,7 @@ public class AgentCodingPageService : IDisposable
     /// revert on failure / confirm label on direct dispatch → return result tuple.
     /// </summary>
     private async Task<(bool Success, string? Error, string? SuccessMessage)> DispatchWithOrchestrationAsync(
-        string templateId,
+        TemplateId templateId,
         Func<PipelineProject, Task<JobDistributionRequest?>> prepareAsync,
         string distributionFailedError,
         string queuedMessage,
@@ -809,8 +816,8 @@ public class AgentCodingPageService : IDisposable
     public Task<bool> IsIssueDistributedAsync(string issueIdentifier, string issueProviderConfigId)
         => _workDistributor.IsIssueDistributedAsync(issueIdentifier, issueProviderConfigId, CancellationToken.None);
 
-    public PipelineProject? GetParentProject(string templateId) =>
-        Projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId));
+    public PipelineProject? GetParentProject(TemplateId templateId) =>
+        Projects.FirstOrDefault(p => p.TemplateIds.Contains(templateId.Value));
 
     private bool _disposed;
 

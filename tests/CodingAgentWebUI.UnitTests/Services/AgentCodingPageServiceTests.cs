@@ -205,6 +205,95 @@ public class AgentCodingPageServiceTests
         Assert.Contains("Removable", msg);
     }
 
+    // TODO: Add a test that passes an empty string as templateId to MoveTemplateToProjectAsync and asserts
+    // that ArgumentException is thrown (via TemplateId's implicit conversion operator calling
+    // ArgumentException.ThrowIfNullOrEmpty). This validates the TemplateId type boundary — without it,
+    // the test suite would pass identically if the method signature were reverted to string.
+    [Fact]
+    public async Task MoveTemplateToProjectAsync_MovesTemplateAndReloadsProjects()
+    {
+        // Arrange: two projects, template "t-1" starts in source project
+        var sourceProject = new PipelineProject
+        {
+            Id = "proj-src",
+            Name = "Source",
+            TemplateIds = new List<string> { "t-1", "t-2" }
+        };
+        var targetProject = new PipelineProject
+        {
+            Id = "proj-tgt",
+            Name = "Target",
+            TemplateIds = new List<string>()
+        };
+
+        // Initialize service state via InitializeAsync to populate Projects
+        SetupMinimalInitialize(
+            projects: new List<PipelineProject> { sourceProject, targetProject },
+            templates: new List<PipelineJobTemplate> { MakeTemplate("t-1", "My Template"), MakeTemplate("t-2", "Other") });
+        await _service.InitializeAsync();
+
+        var savedProjects = new List<PipelineProject>();
+        _mockProjectStore
+            .Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Callback<PipelineProject, CancellationToken>((p, _) => savedProjects.Add(p))
+            .Returns(Task.CompletedTask);
+        _mockProjectStore
+            .Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject> { sourceProject, targetProject });
+
+        // Act
+        var (success, error, msg) = await _service.MoveTemplateToProjectAsync("t-1", "proj-src", "proj-tgt");
+
+        // Assert
+        Assert.True(success);
+        Assert.Null(error);
+        Assert.Contains("My Template", msg);
+        Assert.Contains("Target", msg);
+
+        // Source project should have t-1 removed
+        var savedSource = savedProjects.First(p => p.Id == "proj-src");
+        Assert.DoesNotContain("t-1", savedSource.TemplateIds);
+        Assert.Contains("t-2", savedSource.TemplateIds);
+
+        // Target project should have t-1 added
+        var savedTarget = savedProjects.First(p => p.Id == "proj-tgt");
+        Assert.Contains("t-1", savedTarget.TemplateIds);
+
+        _mockProjectStore.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task MoveTemplateToProjectAsync_ReturnsSuccess_WhenSourceOrTargetProjectNotFound()
+    {
+        // Projects is empty (not initialized) — source/target project not found should return (true, null, null)
+        var (success, error, msg) = await _service.MoveTemplateToProjectAsync("t-1", "proj-src", "proj-tgt");
+
+        Assert.True(success);
+        Assert.Null(error);
+        Assert.Null(msg);
+        _mockProjectStore.Verify(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    private void SetupMinimalInitialize(
+        IReadOnlyList<PipelineProject>? projects = null,
+        IReadOnlyList<PipelineJobTemplate>? templates = null)
+    {
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+        _mockConfigStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(templates ?? Array.Empty<PipelineJobTemplate>());
+        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(projects ?? Array.Empty<PipelineProject>());
+        _mockConfigStore.Setup(s => s.LoadQualityGateConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<QualityGateConfiguration>());
+        _mockConfigStore.Setup(s => s.LoadReviewerConfigsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<ReviewerConfiguration>());
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<AgentProfile>());
+    }
+
     [Fact]
     public async Task DispatchIssueAsync_ReturnsError_WhenNoAgents()
     {

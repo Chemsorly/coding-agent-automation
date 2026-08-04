@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using CodingAgentWebUI.Orchestration.Registry;
 using CodingAgentWebUI.Pipeline.Interfaces;
+using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using Microsoft.Extensions.Hosting;
 using OpenTelemetry.Trace;
@@ -225,7 +226,7 @@ public sealed class JobQueueDrainService : BackgroundService
                     var consolidationDispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
                         pendingJob.IssueIdentifier,
                         pendingJob.ConsolidationRunType!.Value,
-                        pendingJob.ConsolidationTemplateId,
+                        string.IsNullOrEmpty(pendingJob.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)pendingJob.ConsolidationTemplateId,
                         pendingJob.ConsolidationWorkspacePath ?? "",
                         agent.AgentId,
                         ct);

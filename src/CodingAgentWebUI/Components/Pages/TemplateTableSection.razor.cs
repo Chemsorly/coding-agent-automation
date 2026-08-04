@@ -36,7 +36,7 @@ public partial class TemplateTableSection
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleReview { get; set; }
     [Parameter] public EventCallback<(PipelineJobTemplate, bool)> OnToggleDecomposition { get; set; }
     [Parameter] public EventCallback<PipelineJobTemplate> OnConfirmRemove { get; set; }
-    [Parameter] public EventCallback<(string TemplateId, string SourceProjectId, string TargetProjectId)> OnMoveTemplate { get; set; }
+    [Parameter] public EventCallback<(TemplateId TemplateId, string SourceProjectId, string TargetProjectId)> OnMoveTemplate { get; set; }
     [Parameter] public EventCallback OnShowAddForm { get; set; }
     [Parameter] public EventCallback OnAddTemplate { get; set; }
     [Parameter] public EventCallback OnCancelAdd { get; set; }
@@ -54,15 +54,15 @@ public partial class TemplateTableSection
     private void ToggleLabelPreview(string templateId) =>
         _expandedPreviewTemplateId = _expandedPreviewTemplateId == templateId ? null : templateId;
 
-    private async Task MoveTemplate(string templateId, string sourceProjectId, string targetProjectId)
+    private async Task MoveTemplate(TemplateId templateId, string sourceProjectId, string targetProjectId)
     {
         _moveMenuTemplateId = null;
         await OnMoveTemplate.InvokeAsync((templateId, sourceProjectId, targetProjectId));
     }
 
-    private ConfigStatusSnapshot? GetTemplateStatus(string templateId)
+    private ConfigStatusSnapshot? GetTemplateStatus(TemplateId templateId)
     {
-        TemplateStatuses.TryGetValue(templateId, out var status);
+        TemplateStatuses.TryGetValue(templateId.Value, out var status);
         return status;
     }
 

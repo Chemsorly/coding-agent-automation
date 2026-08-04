@@ -56,7 +56,7 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
     /// <inheritdoc />
     public async Task<ConsolidationJobPreparationResult> PrepareAsync(
         ConsolidationRunType type,
-        string? templateId,
+        TemplateId? templateId,
         IReadOnlyList<string> agentLabels,
         CancellationToken ct)
     {
@@ -68,7 +68,7 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
         var repoProviderId = "";
         if (templateId is not null)
         {
-            var template = await ResolveTemplateAsync(templateId, ct);
+            var template = await ResolveTemplateAsync(templateId.Value, ct);
             if (template is not null)
                 repoProviderId = await ResolveTemplateProviderConfigsAsync(rawConfigs, template, type, ct);
         }
@@ -191,9 +191,9 @@ public sealed class ConsolidationJobPreparationService : IConsolidationJobPrepar
             rawConfigs, repoProviderId, ct, includeIssuePermission);
     }
 
-    private async Task<PipelineJobTemplate?> ResolveTemplateAsync(string templateId, CancellationToken ct)
+    private async Task<PipelineJobTemplate?> ResolveTemplateAsync(TemplateId templateId, CancellationToken ct)
     {
         var templates = await _projectStore.LoadAllTemplatesAsync(ct);
-        return templates.FirstOrDefault(t => t.Id == templateId);
+        return templates.FirstOrDefault(t => t.Id == templateId.Value);
     }
 }

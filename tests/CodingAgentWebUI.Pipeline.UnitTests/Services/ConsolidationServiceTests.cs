@@ -611,7 +611,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             .Setup(d => d.TryDispatchAsync(
                 It.IsAny<ConsolidationRun>(),
                 It.IsAny<ConsolidationRunType>(),
-                It.IsAny<string?>(),
+                It.IsAny<TemplateId?>(),
                 It.IsAny<string?>(),
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
@@ -637,7 +637,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             .Setup(d => d.TryDispatchAsync(
                 It.IsAny<ConsolidationRun>(),
                 It.IsAny<ConsolidationRunType>(),
-                It.IsAny<string?>(),
+                It.IsAny<TemplateId?>(),
                 It.IsAny<string?>(),
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
@@ -659,7 +659,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             .Setup(d => d.TryDispatchAsync(
                 It.IsAny<ConsolidationRun>(),
                 It.IsAny<ConsolidationRunType>(),
-                It.IsAny<string?>(),
+                It.IsAny<TemplateId?>(),
                 It.IsAny<string?>(),
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
@@ -686,7 +686,7 @@ public sealed class ConsolidationServiceTests : IDisposable
             .Setup(d => d.TryDispatchAsync(
                 It.IsAny<ConsolidationRun>(),
                 It.IsAny<ConsolidationRunType>(),
-                It.IsAny<string?>(),
+                It.IsAny<TemplateId?>(),
                 It.IsAny<string?>(),
                 It.IsAny<string>(),
                 It.IsAny<CancellationToken>()))
@@ -714,7 +714,7 @@ public sealed class ConsolidationServiceTests : IDisposable
         // Arrange: create a queued run and add it to the in-memory tracker via TriggerAsync
         var mockDispatcher = new Mock<IConsolidationDispatchService>();
         mockDispatcher
-            .Setup(d => d.TryDispatchAsync(It.IsAny<ConsolidationRun>(), It.IsAny<ConsolidationRunType>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchAsync(It.IsAny<ConsolidationRun>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(ConsolidationDispatchResult.Queued);
 
         var sut = new ConsolidationService(
