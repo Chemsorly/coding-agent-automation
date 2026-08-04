@@ -211,6 +211,30 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         restored.RetryCount.Should().Be(3);
     }
 
+    // ── Pagination edge cases ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task GetRunHistoryPaged_ExtremelyLargePage_ThrowsOverflowException()
+    {
+        var service = CreateService();
+
+        // page=2_147_485 with pageSize=1000 causes (page-1)*pageSize to overflow int.MaxValue:
+        // (2_147_485 - 1) * 1000 = 2_147_484_000 > int.MaxValue (2_147_483_647)
+        // With unchecked arithmetic this wraps to a negative number and Skip() silently returns page 1.
+        // Both implementations should throw OverflowException instead.
+        // Note: the checked() expression throws before any EF or LINQ operation is invoked,
+        // so the InMemory EF limitation in PostgresPipelineRunHistoryServiceContractTests does not apply.
+        Func<Task> act = () => service.GetRunHistoryAsync(page: 2_147_485, pageSize: 1000);
+
+        await act.Should().ThrowAsync<OverflowException>();
+    }
+
+    // TODO: Add a complementary "boundary does not throw" test for the near-overflow case:
+    // page=2_147_484 with pageSize=1000 gives (2_147_484-1)*1000 = 2_147_483_000, which is just
+    // under int.MaxValue and should succeed without throwing. Without this test the overflow threshold
+    // is not pinned, and an over-eager implementation that throws on any large page value would pass
+    // the test above while being incorrect.
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     /// <summary>
