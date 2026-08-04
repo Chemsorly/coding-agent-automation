@@ -60,6 +60,8 @@ public class WorkItemAgentServiceOtelFlushTests
         using var serviceProvider = services.BuildServiceProvider();
 
         // GET assignment → 410 Gone (terminal state, minimal lifecycle path)
+        // TODO: [WARNING] FakeGoneHandler and HttpClient below are never disposed. Wrap both in 'using'
+        // declarations (or dispose in test teardown) to satisfy IDisposable contract and avoid analyzer warnings.
         var handler = new FakeGoneHandler();
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
         var workItemClient = new WorkItemHttpClient(httpClient, _mockLogger.Object);
@@ -81,12 +83,20 @@ public class WorkItemAgentServiceOtelFlushTests
         // Act
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await service.StartAsync(cts.Token);
+        // TODO: [WARNING] Task.Delay here is not passed a CancellationToken. If StopApplication() fires quickly,
+        // the 5s timer silently holds a timer allocation for the rest of the window after cts is disposed.
+        // Pass 'cts.Token' to Task.Delay to cancel the timer as soon as the stop signal arrives.
         await Task.WhenAny(stopCalled.Task, Task.Delay(TimeSpan.FromSeconds(5)));
         await service.StopAsync(CancellationToken.None);
 
         // Assert: ForceFlush must have been invoked, which triggers an Export on the spy.
         // Without ForceFlush, the spy would never see an Export in the 10ms window between
         // the assignment fetch and host shutdown, so flushCalled would remain false.
+        // TODO: [WARNING] This assertion is weakly coupled to ForceFlush: BaseExportingMetricReader.ForceFlush
+        // may short-circuit Export when there are no pending measurements (empty batch), meaning flushCalled
+        // could remain false even when ForceFlush IS called, or pass vacuously when called on an empty provider.
+        // To make this test airtight, emit at least one measurement on a meter registered with meterProvider
+        // before starting the service, so Export is guaranteed to fire only as a consequence of ForceFlush.
         flushCalled.Should().BeTrue(
             "WorkItemAgentService.ExecuteAsync must call MeterProvider.ForceFlush before triggering " +
             "host shutdown so that quality_gate.* metrics are delivered to the OTLP endpoint before " +
@@ -106,6 +116,8 @@ public class WorkItemAgentServiceOtelFlushTests
         var services = new ServiceCollection();
         using var serviceProvider = services.BuildServiceProvider();
 
+        // TODO: [WARNING] FakeGoneHandler and HttpClient below are never disposed. Wrap both in 'using'
+        // declarations (or dispose in test teardown) to satisfy IDisposable contract and avoid analyzer warnings.
         var handler = new FakeGoneHandler();
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://localhost") };
         var workItemClient = new WorkItemHttpClient(httpClient, _mockLogger.Object);
@@ -148,6 +160,11 @@ public class WorkItemAgentServiceOtelFlushTests
         var sourceCode = File.ReadAllText(
             Path.Combine(GetSourceDirectory(), "src", "CodingAgentWebUI.Agent", "Program.cs"));
 
+        // TODO: [WARNING] This is a source-text scan, not a behavioral test. It would produce a false failure
+        // if the named-argument is renamed (e.g. 'provider: sp') or switched to positional syntax while the
+        // wiring remains semantically correct. The end-to-end flush tests above already exercise the runtime
+        // path; consider replacing or supplementing this with an integration test that verifies a non-null
+        // IServiceProvider is actually passed to WorkItemAgentService at construction time.
         // The DI factory lambda for WorkItemAgentService must pass sp (serviceProvider) to the constructor.
         // This ensures the ForceFlush path in ExecuteAsync can resolve MeterProvider and TracerProvider.
         sourceCode.Should().Contain("serviceProvider: sp",
