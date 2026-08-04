@@ -64,10 +64,6 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
     {
         PipelineTelemetry.QualityGateRetries.Add(1);
 
-        // TODO: [WARNING] FirstOrDefault on a value tuple returns ("", "") when no match is found, so a missing
-        // instrument produces a misleading "expected 'CodingAgent.Pipeline' but found ''" failure instead of
-        // "collection was empty". Consider asserting _observed.Should().Contain(o => o.InstrumentName == "quality_gate.retries")
-        // before checking MeterName, as done in PipelineTelemetryQualityGateTests.
         var entry = _observed.FirstOrDefault(o => o.InstrumentName == "quality_gate.retries");
         entry.MeterName.Should().Be(PipelineTelemetry.SourceName,
             "quality_gate.retries must be defined on the PipelineTelemetry meter. " +
@@ -83,8 +79,6 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
     {
         PipelineTelemetry.QualityGateEvaluations.Add(1);
 
-        // TODO: [WARNING] Same FirstOrDefault-on-value-tuple issue as QualityGateRetries_IsOnPipelineTelemetryMeter:
-        // a missing instrument produces "" instead of a "collection was empty" failure. Assert instrument presence first.
         var entry = _observed.FirstOrDefault(o => o.InstrumentName == "quality_gate.evaluations");
         entry.MeterName.Should().Be(PipelineTelemetry.SourceName,
             "quality_gate.evaluations must be defined on the PipelineTelemetry meter. " +
@@ -100,8 +94,6 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
     {
         PipelineTelemetry.QualityGateDuration.Record(1.0);
 
-        // TODO: [WARNING] Same FirstOrDefault-on-value-tuple issue: a missing instrument returns ("", "") and produces
-        // a misleading empty-string assertion failure instead of "instrument was never observed".
         var entry = _observed.FirstOrDefault(o => o.InstrumentName == "quality_gate.duration");
         entry.MeterName.Should().Be(PipelineTelemetry.SourceName,
             "quality_gate.duration must be defined on the PipelineTelemetry meter. " +
@@ -117,8 +109,6 @@ public sealed class QualityGateMetricsMeterRegistrationTests : IDisposable
     {
         PipelineTelemetry.ExternalCiDuration.Record(1.0);
 
-        // TODO: [WARNING] Same FirstOrDefault-on-value-tuple issue: a missing instrument returns ("", "") and produces
-        // a misleading empty-string assertion failure instead of "instrument was never observed".
         var entry = _observed.FirstOrDefault(o => o.InstrumentName == "quality_gate.external_ci.duration");
         entry.MeterName.Should().Be(PipelineTelemetry.SourceName,
             "quality_gate.external_ci.duration must be defined on the PipelineTelemetry meter. " +
