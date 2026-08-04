@@ -205,6 +205,66 @@ public class LocalPipelineExecutorTests : IDisposable
     }
 
     [Fact]
+    public void McpConfigWriter_HttpServerWithHeaders_SerializesHeadersField()
+    {
+        // Arrange
+        var servers = new List<McpServerConfig>
+        {
+            new()
+            {
+                Name = "sonarqube",
+                Type = "http",
+                Url = "https://api.sonarcloud.io/mcp",
+                Headers = new Dictionary<string, string>
+                {
+                    ["Authorization"] = "Bearer mytoken",
+                    ["SONARQUBE_ORG"] = "chemsorly"
+                }
+            }
+        };
+
+        // Act
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, "mcp.json"), servers);
+
+        // Assert
+        var json = File.ReadAllText(Path.Combine(_tempDir, "mcp.json"));
+        var doc = JsonDocument.Parse(json);
+        var server = doc.RootElement.GetProperty("mcpServers").GetProperty("sonarqube");
+        server.TryGetProperty("headers", out var headers).Should().BeTrue("headers must be present when non-empty");
+        headers.GetProperty("Authorization").GetString().Should().Be("Bearer mytoken");
+        headers.GetProperty("SONARQUBE_ORG").GetString().Should().Be("chemsorly");
+        // TODO: This test does not verify that sibling HTTP fields (type, url, disabled, autoApprove) are still
+        // present in the headers branch. The production code uses two separate anonymous object literals
+        // (conditional on Headers.Count > 0), so a future edit that accidentally drops a field from the
+        // headers branch would not be caught here. Add assertions for server.GetProperty("type"), "url", etc.
+    }
+
+    [Fact]
+    public void McpConfigWriter_HttpServerWithEmptyHeaders_OmitsHeadersField()
+    {
+        // Arrange
+        var servers = new List<McpServerConfig>
+        {
+            new()
+            {
+                Name = "web-search",
+                Type = "http",
+                Url = "https://mcp.example.com/search"
+                // Headers defaults to empty dictionary
+            }
+        };
+
+        // Act
+        McpConfigWriter.WriteConfig(Path.Combine(_tempDir, "mcp.json"), servers);
+
+        // Assert
+        var json = File.ReadAllText(Path.Combine(_tempDir, "mcp.json"));
+        var doc = JsonDocument.Parse(json);
+        var server = doc.RootElement.GetProperty("mcpServers").GetProperty("web-search");
+        server.TryGetProperty("headers", out _).Should().BeFalse("empty headers must be omitted from output");
+    }
+
+    [Fact]
     public void McpConfigWriter_CreatesDirectoryIfNotExists()
     {
         // Arrange
