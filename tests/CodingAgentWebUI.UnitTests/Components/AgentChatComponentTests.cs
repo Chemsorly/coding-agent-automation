@@ -42,6 +42,8 @@ public class AgentChatComponentTests : BunitContext
             .ReturnsAsync(Array.Empty<AgentProfile>());
         _mockStore.Setup(s => s.LoadProviderConfigsAsync(It.IsAny<ProviderKind>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<ProviderConfig>());
+        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
 
         _lifecycle = new PipelineRunLifecycleService(mockHistory.Object, null, mockLogger.Object);
 

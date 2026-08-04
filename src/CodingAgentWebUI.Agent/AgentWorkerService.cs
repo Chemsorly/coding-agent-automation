@@ -56,6 +56,17 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     private readonly bool _isOpenCodeProvider;
     private readonly bool _isChatMode;
 
+    /// <summary>
+    /// Keys of env vars injected from <see cref="ChatPromptMessage.ProjectSecrets"/> on the first
+    /// chat prompt. Cleared in <see cref="RunChatTaskAsync"/>'s finally block.
+    /// </summary>
+    // TODO: Instance field on a singleton BackgroundService. The slot manager prevents concurrent
+    // chat sessions today, so there is no active race. However, there is no memory-model guarantee
+    // between the finally-block clear on one thread and a subsequent injection on a new thread
+    // post-slot-release. A safer design is to pass the keys list through the method chain as a
+    // local variable (captured in the Task.Run closure) rather than storing it as instance state.
+    private List<string> _injectedChatSecretKeys = [];
+
     public AgentWorkerService(AgentWorkerServiceDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
@@ -299,32 +310,47 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         int exitCode = ExitCodes.GeneralFailure;
         string? error = null;
 
-        // Scoped so the batcher is disposed (flushing remaining lines)
-        // BEFORE reporting completion to the orchestrator.
+        try
         {
-            await using var outputBatcher = new OutputBatcher();
-            outputBatcher.OnFlush += async lines =>
+            // Scoped so the batcher is disposed (flushing remaining lines)
+            // BEFORE reporting completion to the orchestrator.
             {
-                try
+                await using var outputBatcher = new OutputBatcher();
+                outputBatcher.OnFlush += async lines =>
                 {
-                    var response = new ChatResponseMessage
+                    try
                     {
-                        SessionId = message.SessionId,
-                        Lines = lines.ToList()
-                    };
-                    await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatResponse, response, CancellationToken.None);
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to send chat response lines");
-                }
-            };
+                        var response = new ChatResponseMessage
+                        {
+                            SessionId = message.SessionId,
+                            Lines = lines.ToList()
+                        };
+                        await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatResponse, response, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Warning(ex, "Failed to send chat response lines");
+                    }
+                };
 
-            (exitCode, error) = await ExecuteChatWithOutputAsync(message, outputBatcher, chatToken);
+                (exitCode, error) = await ExecuteChatWithOutputAsync(message, outputBatcher, chatToken);
+            }
+        }
+        finally
+        {
+            // Always clean up injected secrets — runs even on unexpected exceptions.
+            // In SignalR mode the agent is long-lived: leaked env vars from one session
+            // would bleed into subsequent sessions without this guarantee.
+            CleanupChatSecrets();
         }
 
         await ReportChatCompletedAsync(message.SessionId, exitCode, error);
 
+        // TODO: ReportChatCompletedAsync and ReleaseChatSlot() execute outside the try/finally
+        // block. If ReportChatCompletedAsync throws (e.g. SignalR connection dropped),
+        // ReleaseChatSlot() is never called, leaving the agent permanently stuck in Busy state.
+        // Consider wrapping both in a nested try/finally to guarantee slot release under all
+        // failure conditions (consistent with the CleanupChatSecrets pattern above).
         _slotManager.ReleaseChatSlot();
 
         // Do NOT send AgentReady — the chat session is still active.
@@ -346,6 +372,32 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 WriteMcpConfig(message.McpConfigPath, message.McpServers);
                 await outputBatcher.AddLineAsync(
                     $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}");
+            }
+
+            // Write project steering before dispatching to the provider.
+            // For Kiro CLI, this must precede the warm-up prompt which triggers session init
+            // (and .kiro/steering/ loading). Only written on first prompt (UseResume = false).
+            if (!message.UseResume && !string.IsNullOrEmpty(message.ProjectSteeringContent))
+            {
+                ChatSteeringWriter.Write(message.ProjectSteeringContent, chatWorkspace, _isOpenCodeProvider);
+                await outputBatcher.AddLineAsync("📋 Wrote project steering to workspace");
+            }
+
+            // Inject project secrets as process env vars. Only injected on first prompt.
+            // Cleanup is handled in RunChatTaskAsync's finally block.
+            if (!message.UseResume && message.ProjectSecrets is { Count: > 0 })
+            {
+                // TODO: Environment.SetEnvironmentVariable is process-wide and not thread-safe
+                // per .NET docs. Other concurrent handlers (consolidation, reconnect) or logging
+                // sinks that read env vars during this injection window may observe torn state.
+                // In the current architecture the slot guard prevents concurrent chat tasks, but
+                // non-chat handlers continue to run alongside this loop. If thread-safety becomes
+                // a concern, consider protecting the injection loop with a lock or isolating
+                // secrets via a different mechanism (e.g., per-process launch env for child processes).
+                foreach (var (key, value) in message.ProjectSecrets)
+                    Environment.SetEnvironmentVariable(key, value);
+                _injectedChatSecretKeys = message.ProjectSecrets.Keys.ToList();
+                await outputBatcher.AddLineAsync($"🔐 Injected {message.ProjectSecrets.Count} project secret(s)");
             }
 
             if (_isOpenCodeProvider)
@@ -642,6 +694,21 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     /// </summary>
     private static void WriteMcpConfig(string fullPath, IReadOnlyList<McpServerConfig> mcpServers)
         => McpConfigWriter.WriteConfig(fullPath, mcpServers);
+
+    /// <summary>
+    /// Clears environment variables that were injected from <see cref="ChatPromptMessage.ProjectSecrets"/>.
+    /// Called in <see cref="RunChatTaskAsync"/>'s finally block to guarantee cleanup even on
+    /// unexpected exceptions. In SignalR mode the agent process is long-lived, so leaked env vars
+    /// from one session would otherwise bleed into subsequent sessions.
+    /// </summary>
+    private void CleanupChatSecrets()
+    {
+        if (_injectedChatSecretKeys.Count == 0) return;
+        foreach (var key in _injectedChatSecretKeys)
+            Environment.SetEnvironmentVariable(key, null);
+        _logger.Debug("Cleaned up {Count} injected chat secret key(s)", _injectedChatSecretKeys.Count);
+        _injectedChatSecretKeys.Clear();
+    }
 
     private async Task SignalAgentReadyAsync()
     {
