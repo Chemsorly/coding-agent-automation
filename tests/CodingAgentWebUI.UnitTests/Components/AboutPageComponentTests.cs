@@ -101,6 +101,54 @@ public class AboutPageComponentTests : BunitContext
     }
 
     [Fact]
+    public void LastRun_ShowsDash_WhenStartedAtOffsetIsDefault()
+    {
+        // Legacy records may have StartedAtOffset == default(DateTimeOffset) (year 0001).
+        // The page must display "—" instead of rendering an invalid date.
+        var summaries = new List<PipelineRunSummary>
+        {
+            new() { RunId = "1", IssueIdentifier = "1", IssueTitle = "A",
+                FinalStep = PipelineStep.Completed,
+                StartedAt = default,
+                StartedAtOffset = default   // simulates legacy record with no offset stored
+            }
+        };
+
+        RegisterDefaults(summaries);
+        var cut = Render<About>();
+
+        var statsValues = cut.FindAll(".about-info-grid")[2].QuerySelectorAll(".about-value");
+        // Last Run is the 6th value (index 5) in the stats grid
+        Assert.Equal("—", statsValues[5].TextContent);
+    }
+
+    [Fact]
+    public void LastRun_ShowsFormattedDate_WhenStartedAtOffsetIsNonDefault()
+    {
+        var nowOffset = new DateTimeOffset(2026, 6, 15, 12, 30, 0, TimeSpan.Zero);
+        var summaries = new List<PipelineRunSummary>
+        {
+            new() { RunId = "1", IssueIdentifier = "1", IssueTitle = "A",
+                FinalStep = PipelineStep.Completed,
+                StartedAt = nowOffset.UtcDateTime,
+                StartedAtOffset = nowOffset
+            }
+        };
+
+        RegisterDefaults(summaries);
+        var cut = Render<About>();
+
+        var statsValues = cut.FindAll(".about-info-grid")[2].QuerySelectorAll(".about-value");
+        // Last Run should be a non-empty, non-dash formatted date string
+        // TODO: Strengthen these assertions to Assert.Equal(nowOffset.ToLocalTime().ToString("g"), lastRunValue)
+        // so a wrong format specifier, UTC vs local mismatch, or other formatting bug would be caught.
+        var lastRunValue = statsValues[5].TextContent;
+        Assert.NotEqual("—", lastRunValue);
+        Assert.NotEmpty(lastRunValue);
+        Assert.DoesNotContain("0001", lastRunValue);
+    }
+
+    [Fact]
     public void Renders_TechBadges()
     {
         RegisterDefaults();

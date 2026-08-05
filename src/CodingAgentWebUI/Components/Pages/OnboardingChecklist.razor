@@ -1,3 +1,4 @@
+@implements IAsyncDisposable
 @inject Microsoft.JSInterop.IJSRuntime JS
 
 @if (_initialized && !_dismissed && !AllComplete)
@@ -52,6 +53,7 @@
 @code {
     private bool _initialized;
     private bool _dismissed;
+    private CancellationTokenSource _cts = new();
 
     [Parameter, EditorRequired] public bool HasIssueProvider { get; set; }
     [Parameter, EditorRequired] public bool HasRepoProvider { get; set; }
@@ -83,8 +85,7 @@
         {
             try
             {
-                // TODO(#1775): Pass a CancellationToken to avoid orphaned async operations if component is disposed during JS interop
-                var val = await JS.InvokeAsync<string?>("localStorageGet", "onboarding-checklist-dismissed");
+                var val = await JS.InvokeAsync<string?>("localStorageGet", _cts.Token, "onboarding-checklist-dismissed");
                 if (val == "true")
                 {
                     _dismissed = true;
@@ -100,7 +101,17 @@
     private async Task Dismiss()
     {
         _dismissed = true;
-        try { await JS.InvokeVoidAsync("localStorageSet", "onboarding-checklist-dismissed", "true"); }
+        // TODO: If the component is disposed while a Dismiss click event is in flight, _cts will already
+        // be cancelled/disposed by DisposeAsync. The catch below swallows the resulting ObjectDisposedException
+        // silently, so it doesn't surface as an error, but the pattern is fragile. Consider guarding with
+        // _cts.IsCancellationRequested (or a null check if _cts is nulled out in DisposeAsync) before use.
+        try { await JS.InvokeVoidAsync("localStorageSet", _cts.Token, "onboarding-checklist-dismissed", "true"); }
         catch { /* JS interop not available */ }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
     }
 }
