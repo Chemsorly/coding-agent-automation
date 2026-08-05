@@ -152,9 +152,10 @@
                 : avg.Value.ToString(@"hh\:mm\:ss"))
             : "—";
 
-        // TODO(#1775): Add fallback for legacy records where StartedAtOffset may be default(DateTimeOffset)
         _lastRun = history.Count > 0
-            ? history[0].StartedAtOffset.ToLocalTime().ToString("g")
+            ? (history[0].StartedAtOffset == default
+                ? "—"
+                : history[0].StartedAtOffset.ToLocalTime().ToString("g"))
             : "—";
     }
 }

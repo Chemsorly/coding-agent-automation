@@ -448,12 +448,30 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         var act = () => result.LocalCts.Token;
         act.Should().NotThrow();
 
-        // TODO(#1776): [WARNING] Tautological assertion — `Should().NotBeNull()` only checks that the
-        // required init property is set and will always pass regardless of disposal state.
-        // A meaningful assertion should verify the internal semaphore is still usable via
-        // reflection (as done in PipelineExecutionBuildResultTests.DisposeAsync_DisposesReporter).
-        // Reporter should still be usable (not disposed)
-        result.Reporter.Should().NotBeNull();
+        // Reporter should still be usable (not disposed) — verify by checking the internal
+        // semaphore can be acquired. Mirrors the reflection pattern in Build_FailurePath_DisposesLocalCtsAndReporter.
+        // TODO(#1776): [WARNING] The null-forgiving operator (!) on GetField() and GetValue() yields an opaque
+        // NullReferenceException if '_signalrLock' is ever renamed or removed. Replace with:
+        //   Assert.NotNull(lockField, "Expected private field '_signalrLock' on PipelineSignalRReporter — update this test if the field was renamed.");
+        // to produce a diagnosable failure message.
+        // TODO(#1776): [WARNING] The semaphore WaitAsync(0) returns false if SerializedSendAsync holds the lock
+        // at the instant this runs (e.g., a fire-and-forget in flight), causing a spurious test failure.
+        // The window is narrow with a disconnected connection and no pending work, but the assumption is
+        // undocumented. If this test becomes flaky, add a comment confirming no async work is in flight
+        // or switch to asserting ObjectDisposedException is NOT thrown on semaphore.WaitAsync.
+        var lockField = typeof(PipelineSignalRReporter)
+            .GetField("_signalrLock", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var semaphore = (SemaphoreSlim)lockField.GetValue(result.Reporter)!;
+        var acquired = await semaphore.WaitAsync(0);
+        if (acquired) semaphore.Release();
+        acquired.Should().BeTrue("reporter semaphore should be acquirable when reporter is not disposed");
+        // TODO(#1776): [WARNING] result.DisposeAsync() is intentionally skipped to verify the undisposed state,
+        // but this leaks the PipelineSignalRReporter and its internal SemaphoreSlim (and the CancellationTokenSource)
+        // for the lifetime of the test process. The assertions are already captured above, so calling
+        // 'await result.DisposeAsync()' here would not invalidate them. Consider adding cleanup after
+        // the assertions to avoid the resource leak on every test run.
+        // Note: result.DisposeAsync() is intentionally NOT called here — this test verifies
+        // that Build() leaves resources live on the success path.
     }
 
     private static JobAssignmentMessage CreateTestJobWithProject(string projectId, string projectName)
@@ -689,10 +707,20 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         var config = new PipelineConfiguration();
         var proxy = new OrchestratorProxy(_connection, "job-123");
 
+        // TCS must be declared before Build() so the closure can capture it.
+        // RunContinuationsAsynchronously ensures TrySetResult does not run test
+        // continuations synchronously on the callback's thread-pool thread.
+        var tcs = new TaskCompletionSource<PipelineStep>(TaskCreationOptions.RunContinuationsAsynchronously);
         PipelineStep? transitionedStep = null;
         var buildResult = await builder.Build(
             job, config, mockRepo.Object, mockAgent.Object, null, null,
-            proxy, _connection, _batcher, step => transitionedStep = step, CancellationToken.None);
+            proxy, _connection, _batcher,
+            step =>
+            {
+                transitionedStep = step;
+                if (step.HasValue) tcs.TrySetResult(step.Value);
+            },
+            CancellationToken.None);
 
         var reporter = buildResult.Reporter;
 
@@ -700,11 +728,11 @@ public class PipelineExecutionContextBuilderTests : IAsyncDisposable
         var ctx = builder.CreateStepContext(buildResult.ExecutionContext, reporter, CancellationToken.None);
         ctx.Callbacks.TransitionTo(PipelineStep.AnalyzingCode);
 
-        // Assert — the TransitionTo delegate fires through the reporter which updates onStepChanged
-        // TODO(#1776): Replace Task.Delay(100) with a proper synchronization primitive (e.g., TaskCompletionSource
-        // or ManualResetEventSlim) to avoid flaky failures on loaded CI runners.
-        // Allow a small delay for the fire-and-forget to complete
-        await Task.Delay(100);
+        // Assert — await TCS with timeout instead of Task.Delay:
+        // TransitionTo is fire-and-forget; _onStepChanged fires on the thread-pool thread
+        // inside SerializedSendAsync. The TCS provides deterministic synchronization.
+        var receivedStep = await tcs.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        receivedStep.Should().Be(PipelineStep.AnalyzingCode);
         transitionedStep.Should().Be(PipelineStep.AnalyzingCode);
 
         await buildResult.DisposeAsync();

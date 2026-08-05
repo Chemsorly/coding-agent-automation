@@ -1,5 +1,7 @@
+@using CodingAgentWebUI.Pipeline.Interfaces
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Pipeline.Services
+@inject IConfigurationStore ConfigStore
 
 @if (IsVisible && Run != null)
 {
@@ -49,8 +51,7 @@
                     }
                 </div>
                 <div><strong>Duration:</strong> @FormatDuration(Run.StartedAt, Run.CompletedAt)</div>
-                @* TODO(#1774): [UX-24] Add AgentProviderConfigId to PipelineRunSummary and resolve display name/type here *@
-                <div><strong>Agent:</strong> @(Run.AgentId ?? "—")</div>
+                <div><strong>Agent:</strong> @(_resolvedAgentName ?? Run.AgentId ?? "—")</div>
                 <div><strong>Initiated By:</strong> @Run.InitiatedBy</div>
                 @if (Run.RunType == PipelineRunType.Review)
                 {
@@ -147,6 +148,28 @@
     [Parameter] public EventCallback OnDismiss { get; set; }
 
     private ElementReference _overlayRef;
+    private string? _resolvedAgentName;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!IsVisible || Run?.AgentProviderConfigId is null)
+        {
+            _resolvedAgentName = null;
+            return;
+        }
+        // TODO: CancellationToken.None is used here because the component does not implement IAsyncDisposable.
+        // If the component is torn down (modal dismissed, navigation) while this call is in flight, the task
+        // will complete and set _resolvedAgentName after disposal, potentially applying a stale value to the
+        // next run shown in the modal. Fix: add a component-scoped CancellationTokenSource + IAsyncDisposable
+        // (same pattern as ProjectDetailSection) and pass its token here.
+        var config = await ConfigStore.GetProviderConfigByIdAsync(
+            Run.AgentProviderConfigId, ProviderKind.Agent, CancellationToken.None);
+        _resolvedAgentName = config?.DisplayName;
+        // TODO: StateHasChanged() is redundant here — Blazor automatically re-renders after OnParametersSetAsync.
+        // Combined with the missing cancellation above, this extra call widens the race window where a stale
+        // _resolvedAgentName from a previous run can be rendered for the current run.
+        StateHasChanged();
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {

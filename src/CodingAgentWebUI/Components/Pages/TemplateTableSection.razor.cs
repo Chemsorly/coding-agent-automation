@@ -9,16 +9,17 @@ namespace CodingAgentWebUI.Components.Pages;
 
 public partial class TemplateTableSection
 {
-    // TODO(#1775): These mutable collection parameter types (List<T>, HashSet<T>) should be IReadOnlyList<T>
-    // and IReadOnlySet<T> to prevent child components from accidentally mutating parent state.
-    [Parameter, EditorRequired] public List<PipelineJobTemplate> Templates { get; set; } = [];
+    [Parameter, EditorRequired] public IReadOnlyList<PipelineJobTemplate> Templates { get; set; } = [];
     [Parameter, EditorRequired] public IReadOnlyList<PipelineProject> Projects { get; set; } = [];
+    // TODO: IssueProviders, RepoProviders, BrainProviders, and PipelineProviders should be IReadOnlyList<ProviderConfig>
+    // to prevent child components from accidentally mutating parent state (same rationale as Templates/RecentlyToggled).
+    // Update GetProviderDisplayName and GetLabelPreview signatures at the same time to avoid a compile error.
     [Parameter, EditorRequired] public List<ProviderConfig> IssueProviders { get; set; } = [];
     [Parameter, EditorRequired] public List<ProviderConfig> RepoProviders { get; set; } = [];
     [Parameter, EditorRequired] public List<ProviderConfig> BrainProviders { get; set; } = [];
     [Parameter, EditorRequired] public List<ProviderConfig> PipelineProviders { get; set; } = [];
     [Parameter, EditorRequired] public bool IsLoopActive { get; set; }
-    [Parameter, EditorRequired] public HashSet<string> RecentlyToggled { get; set; } = new();
+    [Parameter, EditorRequired] public IReadOnlySet<string> RecentlyToggled { get; set; } = new HashSet<string>();
     [Parameter, EditorRequired] public IReadOnlyDictionary<string, ConfigStatusSnapshot> TemplateStatuses { get; set; } = new Dictionary<string, ConfigStatusSnapshot>();
     [Parameter, EditorRequired] public IReadOnlyList<QualityGateConfiguration> QualityGateConfigs { get; set; } = [];
     [Parameter, EditorRequired] public IReadOnlyList<ReviewerConfiguration> ReviewerConfigs { get; set; } = [];
@@ -70,6 +71,7 @@ public partial class TemplateTableSection
         !IssueProviders.Any(p => p.Id == template.IssueProviderId)
         || !RepoProviders.Any(p => p.Id == template.RepoProviderId);
 
+    // TODO: Update parameter type to IReadOnlyList<ProviderConfig> when the [Parameter] properties above are converted.
     private static string GetProviderDisplayName(string providerId, List<ProviderConfig> providers)
     {
         var provider = providers.FirstOrDefault(p => p.Id == providerId);

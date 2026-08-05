@@ -322,6 +322,51 @@ public class AgentProviderSectionComponentTests : BunitContext
     }
 
     [Fact]
+    public async Task AgentProviderSection_DeleteFails_ShowsErrorViaOnShowStatus()
+    {
+        // TODO: Add a test asserting that OperationCanceledException from OnDelete does NOT invoke
+        // OnShowStatus (i.e., cancellation is silently suppressed per the catch (OperationCanceledException) { }
+        // guard in AgentProviderSection.ConfirmDeleteAsync). A regression that surfaces cancellation
+        // errors to the user would not be caught by the existing tests.
+        // TODO: Add assertions that after a failed delete: (a) the confirm overlay is no longer
+        // visible (_showDeleteConfirm == false), and (b) the provider card is still rendered in
+        // the component markup (provider was not incorrectly removed from the UI on failure).
+        var providers = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "ap-del-fail",
+                Kind = ProviderKind.Agent,
+                ProviderType = "KiroCli",
+                DisplayName = "Delete Fail",
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.ExecutablePath] = "/usr/bin/kiro-cli",
+                    [ProviderSettingKeys.Timeout] = "30",
+                    [ProviderSettingKeys.Model] = "auto"
+                }
+            }
+        };
+
+        (string Message, bool IsError)? statusResult = null;
+        var component = Render<AgentProviderSection>(parameters => parameters
+            .Add(p => p.Providers, providers)
+            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
+            .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
+
+        var deleteButton = component.Find(".btn-delete");
+        await deleteButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        var confirmButton = component.Find(".agent-detail-confirm .btn-delete");
+        await confirmButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.NotNull(statusResult);
+        Assert.True(statusResult!.Value.IsError);
+        Assert.Contains("DB error", statusResult.Value.Message);
+    }
+
+    [Fact]
     public void AgentProviderSection_FormDefaults_HasKiroCliType()
     {
         var component = RenderSection();

@@ -61,7 +61,8 @@
                         GitLabValidator="GitLabValidator"
                         ProviderFactory="ProviderFactory"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Issue)"
-                        OnSaved="OnIssueProviderSaved" />
+                        OnSaved="OnIssueProviderSaved"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.ProvidersRepository:
                     <RepoProviderSection
@@ -70,7 +71,8 @@
                         GitHubValidator="GitHubValidator"
                         GitLabValidator="GitLabValidator"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Repository)"
-                        OnSaved="OnGitHubProviderSaved" />
+                        OnSaved="OnGitHubProviderSaved"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.ProvidersAgent:
                     <AgentProviderSection
@@ -90,7 +92,8 @@
                         GitHubValidator="GitHubValidator"
                         GitLabValidator="GitLabValidator"
                         OnDelete="id => DeleteProvider(id, ProviderKind.Pipeline)"
-                        OnSaved="OnGitHubProviderSaved" />
+                        OnSaved="OnGitHubProviderSaved"
+                        OnShowStatus="s => ShowStatus(s.Message, s.IsError)" />
                     break;
                 case SettingsNodes.PipelineGeneral:
                     <PipelineGeneralSection

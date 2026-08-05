@@ -94,4 +94,7 @@ public sealed class PipelineRunSummary
 
     /// <summary>Per-phase token/cost breakdown, or null if no phase data was collected (e.g. old runs).</summary>
     public IReadOnlyDictionary<string, PhaseUsage>? PhaseBreakdown { get; init; }
+
+    /// <summary>Agent provider config ID for display name resolution in the UI.</summary>
+    public string? AgentProviderConfigId { get; init; }
 }

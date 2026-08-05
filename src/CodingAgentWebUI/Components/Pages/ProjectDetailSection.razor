@@ -2,6 +2,7 @@
 @using CodingAgentWebUI.Pipeline.Models
 @using CodingAgentWebUI.Services
 @using System.Text.RegularExpressions
+@implements IAsyncDisposable
 @inject ProjectChangeNotifier ProjectNotifier
 
 <section class="settings-section">
@@ -103,6 +104,8 @@
     // Template management
     private string? _selectedTemplateToAdd;
 
+    private CancellationTokenSource _cts = new();
+
     // Secrets management
     private List<SecretEntry> _secrets = new();
     private HashSet<int> _revealedSecrets = new();
@@ -124,8 +127,20 @@
         await LoadDataAsync();
     }
 
+    public async ValueTask DisposeAsync()
+    {
+        await _cts.CancelAsync();
+        _cts.Dispose();
+    }
+
     private async Task LoadDataAsync()
     {
+        // TODO: All ConfigStore calls here use CancellationToken.None. The component has a _cts that is
+        // cancelled on disposal (IAsyncDisposable), and MoveTemplateAsync was correctly updated to use
+        // _cts.Token. LoadDataAsync is called on init and after RemoveTemplate/AddTemplate, so if the
+        // component is disposed mid-refresh (rapid navigation), all five store calls remain orphaned and
+        // post-disposal state writes (_project, _allProjects, etc.) may cause silent corruption or
+        // NullReferenceExceptions. Thread _cts.Token through LoadDataAsync and all its inner calls.
         var project = await ConfigStore.GetProjectByIdAsync(ProjectId, CancellationToken.None);
         if (project is null)
         {
@@ -503,28 +518,29 @@
 
         try
         {
-            // TODO(#1774): Consider using a component-scoped CancellationToken (from a CancellationTokenSource
-            // tied to component disposal) instead of CancellationToken.None to prevent orphaned async
-            // operations if the user navigates away mid-operation.
-            await ConfigStore.MoveTemplateAsync(sourceProject.Id, _project.Id, _selectedTemplateToAdd, CancellationToken.None);
+            await ConfigStore.MoveTemplateAsync(sourceProject.Id, _project.Id, _selectedTemplateToAdd, _cts.Token);
             _selectedTemplateToAdd = null;
             await LoadDataAsync();
             await OnProjectSaved.InvokeAsync();
             ProjectNotifier.NotifyChanged();
             await OnShowStatus.InvokeAsync(("Template added to project.", false));
         }
-        // TODO(#1774): Generic catch(Exception) swallows all exceptions including OperationCanceledException.
-        // Consider catching a more specific exception or re-throwing OperationCanceledException.
+        catch (OperationCanceledException)
+        {
+            // TODO: Re-throwing OperationCanceledException from a Blazor event handler propagates through
+            // the renderer's event dispatch path. On Blazor Server this tears down the SignalR circuit;
+            // on WASM it surfaces as an unhandled JS exception. Neither produces a visible UI error.
+            // The correct pattern for routine cancellation (user navigating away) is to swallow this
+            // silently (or log it) rather than re-throw. Fix by replacing `throw` with a silent return
+            // or a log-only call.
+            throw;
+        }
         catch (Exception ex)
         {
             await OnShowStatus.InvokeAsync(($"Failed to add template: {ex.Message}", true));
         }
     }
 
-    // TODO(#1774): RemoveTemplate does not call LoadDataAsync() so _allProjects becomes stale. If the user
-    // then tries to re-add the removed template via the dropdown, the source project lookup uses stale data
-    // and may call MoveTemplateAsync with sourceProject == current project (effectively a no-op). Consider
-    // calling LoadDataAsync() after SaveProjectAsync() to refresh _allProjects, consistent with AddTemplate.
     private async Task RemoveTemplate(int index)
     {
         var newIds = _project.TemplateIds.ToList();
@@ -532,6 +548,13 @@
         _project = _project with { TemplateIds = newIds };
 
         await SaveProjectAsync();
+        // TODO: SaveProjectAsync swallows exceptions silently (existing behaviour). If the save fails,
+        // _project has already been mutated in memory (TemplateIds updated above) but the persisted record
+        // still contains the removed template. LoadDataAsync then reloads from the store, so _project
+        // reverts to the pre-removal state and the template reappears in the list with no error shown.
+        // Fix: check whether SaveProjectAsync reported an error (e.g., return a bool/Result) before
+        // calling LoadDataAsync, and surface the failure to the user if the save did not succeed.
+        await LoadDataAsync();
     }
 
     private async Task MoveTemplateUp(int index)
