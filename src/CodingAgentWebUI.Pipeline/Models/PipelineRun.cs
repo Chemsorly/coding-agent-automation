@@ -388,7 +388,8 @@ public sealed partial class PipelineRun
         ProjectId = ProjectId,
         ProjectName = ProjectName,
         DecompositionSource = DecompositionSource,
-        IssueProviderConfigId = IssueProviderConfigId
+        IssueProviderConfigId = IssueProviderConfigId,
+        AgentProviderConfigId = AgentProviderConfigId
     };
     #pragma warning restore CS0618
 }

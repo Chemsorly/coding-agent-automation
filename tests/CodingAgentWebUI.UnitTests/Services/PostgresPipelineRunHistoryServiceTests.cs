@@ -438,6 +438,12 @@ public sealed class PostgresPipelineRunHistoryServiceTests : IDisposable
                 StartedAt = ghostSummary.StartedAtOffset,
                 SummaryJson = System.Text.Json.JsonSerializer.Serialize(ghostSummary, PipelineJsonOptions.Default)
             });
+            // TODO: [WARNING] db.SaveChanges() is synchronous in an async test method. EF Core's sync
+            // SaveChanges() can block the thread pool on async-capable providers and is inconsistent
+            // with the await using / SaveChangesAsync pattern used in production code and the contract
+            // test's InsertGhostSummaryDirectlyAsync. Replace with await db.SaveChangesAsync() and
+            // convert the using block to await using to eliminate the potential for deadlock under
+            // single-threaded synchronization contexts (e.g., some xUnit configurations).
             db.SaveChanges();
         }
 

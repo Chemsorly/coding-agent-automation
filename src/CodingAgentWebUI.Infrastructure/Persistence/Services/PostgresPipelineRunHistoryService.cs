@@ -177,6 +177,12 @@ public sealed class PostgresPipelineRunHistoryService : IPipelineRunHistoryServi
         // fallback path (corrupt/null SummaryJson) cannot populate InitiatedBy from entity columns,
         // while new rows carry IssueProviderConfigId in SummaryJson. Using && (AND) is correct:
         // De Morgan — exclude if (A OR B) = keep if (NOT A AND NOT B).
+        // TODO: [WARNING] The InitiatedBy arm of this filter is not independently verified by any test.
+        // Because ToSummary() now populates both discriminators, existing consolidation-exclusion tests
+        // exercise both arms simultaneously. A regression removing the InitiatedBy && clause would not
+        // be caught because the IssueProviderConfigId arm alone would still exclude those rows. Add a
+        // test seeding a SummaryJson with InitiatedBy = ConsolidationConstants.InitiatedBy and no
+        // IssueProviderConfigId key (legacy row) to verify the InitiatedBy arm in isolation.
         return entities
             .Select(DeserializeSummary)
             .Where(s => s is not null

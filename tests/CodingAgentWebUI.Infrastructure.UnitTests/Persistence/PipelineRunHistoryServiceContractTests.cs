@@ -1,5 +1,7 @@
+using System.Text.Json;
 using AwesomeAssertions;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -23,6 +25,23 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
 {
     /// <summary>Create a fresh service instance for isolation between tests.</summary>
     protected abstract IPipelineRunHistoryService CreateService();
+
+    /// <summary>
+    /// When true, the derived class supports direct ghost-entry injection into the backing store,
+    /// bypassing <see cref="IPipelineRunHistoryService.AddRunToHistoryAsync"/>'s write guard.
+    /// This is needed to exercise the read-time dual-discriminator filter independently of the
+    /// write guard. Postgres-backed implementations override this to true and also override
+    /// <see cref="InsertGhostSummaryDirectlyAsync"/>.
+    /// </summary>
+    protected virtual bool SupportsDirectGhostInjection => false;
+
+    /// <summary>
+    /// Inserts a <see cref="PipelineRunSummary"/> directly into the backing store, bypassing
+    /// <see cref="IPipelineRunHistoryService.AddRunToHistoryAsync"/> and its write guard.
+    /// Only called when <see cref="SupportsDirectGhostInjection"/> returns true.
+    /// </summary>
+    protected virtual Task InsertGhostSummaryDirectlyAsync(PipelineRunSummary summary)
+        => Task.CompletedTask; // Base: no-op; override in DB-backed implementations.
 
     /// <summary>Cleanup resources after each test.</summary>
     public virtual void Dispose()
@@ -178,6 +197,15 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         history.Should().BeEmpty();
     }
 
+    // TODO: [WARNING] No contract-level test covers the symmetric discriminator: a run with
+    // InitiatedBy = ConsolidationConstants.InitiatedBy but IssueProviderConfigId = null (legacy row).
+    // The existing AddRun_ConsolidationRun_NotPersisted test sets both discriminators via
+    // ConsolidationConstants.InitiatedBy + ConsolidationConstants.ProviderConfigId, so the InitiatedBy
+    // arm of the read filter is not independently verified. A regression that removes the InitiatedBy
+    // && clause would go undetected at this contract layer. Add an overload of
+    // GetHistory_ExcludesConsolidationRun that uses SupportsDirectGhostInjection to insert a row with
+    // InitiatedBy = ConsolidationConstants.InitiatedBy and IssueProviderConfigId = null to cover this gap.
+
     [Fact]
     public async Task AddRun_PreservesKeyProperties()
     {
@@ -209,6 +237,88 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
         restored.StartedAtOffset.Should().Be(startedAt);
         restored.CompletedAtOffset.Should().Be(new DateTimeOffset(2026, 6, 15, 11, 0, 0, TimeSpan.Zero));
         restored.RetryCount.Should().Be(3);
+    }
+
+    /// <summary>
+    /// Regression test for the dual-discriminator filter fix.
+    /// A consolidation ghost entry with null/missing InitiatedBy (e.g., from a corrupt/fallback
+    /// deserialization path) must still be excluded from pipeline history because its
+    /// IssueProviderConfigId matches the consolidation sentinel.
+    ///
+    /// When <see cref="SupportsDirectGhostInjection"/> is true (Postgres-backed), the ghost entry
+    /// is inserted directly into the backing store, bypassing the write guard — this exercises the
+    /// read-time dual-discriminator filter independently.
+    ///
+    /// When <see cref="SupportsDirectGhostInjection"/> is false (filesystem-backed), the ghost entry
+    /// is submitted via <see cref="IPipelineRunHistoryService.AddRunToHistoryAsync"/>; the write guard
+    /// rejects it, so the test validates write-guard behavior (the entry never reaches the read filter).
+    /// </summary>
+    [Fact]
+    public async Task GetHistory_ExcludesConsolidationRun_WhenInitiatedByIsNullButProviderConfigIdMatches()
+    {
+        var service = CreateService();
+
+        // A normal run — should appear in history
+        var normalRun = CreateCompletedRun(
+            Guid.NewGuid().ToString(),
+            "org/repo#1",
+            "Normal run");
+        await service.AddRunToHistoryAsync(normalRun);
+
+        // Build a ghost summary: IssueProviderConfigId = consolidation sentinel, but InitiatedBy = "manual".
+        // This simulates a row whose SummaryJson was written before InitiatedBy was set, or a corrupt/fallback
+        // deserialization path that produces InitiatedBy=null (serialized as absent, deserialized as "manual").
+        // The old filter only checked InitiatedBy != "consolidation", so this entry would leak through.
+        // The new dual-discriminator filter also checks IssueProviderConfigId != sentinel, closing the gap.
+        var ghostSummary = new PipelineRunSummary
+        {
+            RunId = Guid.NewGuid().ToString(),
+            IssueIdentifier = "ghost-consolidation",
+            IssueTitle = "Ghost consolidation entry",
+            FinalStep = PipelineStep.Completed,
+            StartedAtOffset = DateTimeOffset.UtcNow.AddMinutes(-1),
+            InitiatedBy = "manual", // NOT the consolidation sentinel — old filter would pass this
+            IssueProviderConfigId = ConsolidationConstants.ProviderConfigId // discriminator the new filter must catch
+        };
+
+        if (SupportsDirectGhostInjection)
+        {
+            // Bypass the write guard: insert the ghost entry directly into the backing store so that
+            // only the read-time filter can prevent it from appearing in history.
+            await InsertGhostSummaryDirectlyAsync(ghostSummary);
+        }
+        else
+        {
+            // TODO: [WARNING] Filesystem-backed implementations do not support direct ghost injection,
+            // so this else branch submits the ghost run through AddRunToHistoryAsync, which has its own
+            // write guard that rejects it at write time. The assertion passes because the write guard
+            // prevented storage — not because the read-time dual-discriminator filter worked correctly.
+            // The read-time filter for the new IssueProviderConfigId discriminator is therefore never
+            // exercised on non-Postgres implementations. A regression in the read-time filter would be
+            // invisible for filesystem-backed implementations. To close this gap, either add a direct
+            // injection path to non-Postgres implementations or document that read-time filter coverage
+            // only applies to Postgres-backed tests.
+            // Filesystem-backed: no direct injection path. Submit via the normal API; the write guard
+            // will reject it. The assertion below still verifies the entry is absent, validating the
+            // write guard's IssueProviderConfigId check.
+            var ghostRun = PipelineRun.CreateImplementation(
+                runId: ghostSummary.RunId,
+                issueIdentifier: ghostSummary.IssueIdentifier,
+                issueTitle: ghostSummary.IssueTitle,
+                issueProviderConfigId: ConsolidationConstants.ProviderConfigId,
+                repoProviderConfigId: "rp-1",
+                initiatedBy: "manual");
+            ghostRun.CurrentStep = PipelineStep.Completed;
+            ghostRun.MarkCompleted();
+            await service.AddRunToHistoryAsync(ghostRun);
+        }
+
+        var history = await service.GetRunHistoryAsync();
+
+        // Only the normal run should appear. When SupportsDirectGhostInjection=true, the read-time
+        // dual-discriminator filter must exclude the ghost entry. When false, the write guard does it.
+        history.Should().HaveCount(1, "consolidation run with matching ProviderConfigId must be excluded even when InitiatedBy does not match consolidation sentinel");
+        history[0].IssueIdentifier.Should().Be("org/repo#1");
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -317,6 +427,28 @@ public class PostgresPipelineRunHistoryServiceContractTests : PipelineRunHistory
         ctx.Database.EnsureCreated();
     }
 
+    protected override bool SupportsDirectGhostInjection => true;
+
+    /// <summary>
+    /// Inserts the ghost summary directly into the in-memory EF store, bypassing
+    /// <see cref="PostgresPipelineRunHistoryService.AddRunToHistoryAsync"/> and its write guard.
+    /// This exercises the read-time dual-discriminator filter in isolation.
+    /// </summary>
+    protected override async Task InsertGhostSummaryDirectlyAsync(PipelineRunSummary summary)
+    {
+        await using var db = new InMemoryPipelineDbContext(_dbOptions);
+        db.PipelineRuns.Add(new PipelineRunEntity
+        {
+            RunId = Guid.Parse(summary.RunId),
+            IssueIdentifier = summary.IssueIdentifier,
+            IssueTitle = summary.IssueTitle,
+            FinalStep = summary.FinalStep,
+            StartedAt = summary.StartedAtOffset,
+            SummaryJson = JsonSerializer.Serialize(summary, PipelineJsonOptions.Default)
+        });
+        await db.SaveChangesAsync();
+    }
+
     protected override IPipelineRunHistoryService CreateService()
     {
         var factory = new RunHistoryContractTestDbContextFactory(_dbOptions);
@@ -328,6 +460,43 @@ public class PostgresPipelineRunHistoryServiceContractTests : PipelineRunHistory
         using var db = new PipelineDbContext(_dbOptions);
         db.Database.EnsureDeleted();
         base.Dispose();
+    }
+
+    /// <summary>
+    /// InMemory EF provider does not support concurrency tokens (xmin) or partial indexes.
+    /// This subclass disables them to allow EF model creation against InMemory.
+    /// </summary>
+    private sealed class InMemoryPipelineDbContext : PipelineDbContext
+    {
+        public InMemoryPipelineDbContext(DbContextOptions<PipelineDbContext> options)
+            : base(options) { }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                var rowVersionProp = entityType.FindProperty("RowVersion");
+                if (rowVersionProp != null)
+                {
+                    rowVersionProp.IsConcurrencyToken = false;
+                    rowVersionProp.ValueGenerated = Microsoft.EntityFrameworkCore.Metadata.ValueGenerated.Never;
+                }
+            }
+
+            // Remove partial indexes (not supported by InMemory provider)
+            foreach (var entityType in modelBuilder.Model.GetEntityTypes())
+            {
+                var indexesToRemove = entityType.GetIndexes()
+                    .Where(i => i.GetFilter() != null)
+                    .ToList();
+                foreach (var index in indexesToRemove)
+                    modelBuilder.Entity(entityType.ClrType).HasIndex(
+                        index.Properties.Select(p => p.Name).ToArray())
+                        .HasFilter(null);
+            }
+        }
     }
 }
 
