@@ -629,6 +629,98 @@ public class ProviderSectionComponentTests : BunitContext
         tcs.SetResult(true);
     }
 
+    [Fact]
+    public async Task RepoSection_DeleteFails_ShowsErrorViaOnShowStatus()
+    {
+        // TODO: Add a test asserting that OperationCanceledException from OnDelete does NOT invoke
+        // OnShowStatus (i.e., cancellation is silently suppressed). RepoProviderSection currently
+        // catches all exceptions before OperationCanceledException — a regression that surfaces
+        // cancellation errors to the user would not be caught by the existing tests.
+        // TODO: Add assertions that after a failed delete: (a) the confirm overlay is no longer
+        // visible (_showDeleteConfirm == false), and (b) the provider card is still rendered in
+        // the component markup (provider was not incorrectly removed from the UI on failure).
+        var providers = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "rp-del-fail",
+                Kind = ProviderKind.Repository,
+                ProviderType = "GitHub",
+                DisplayName = "Delete Fail",
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo",
+                    [ProviderSettingKeys.BaseBranch] = "main"
+                }
+            }
+        };
+
+        (string Message, bool IsError)? statusResult = null;
+        var cut = Render<RepoProviderSection>(p => p
+            .Add(s => s.Providers, providers)
+            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.GitHubValidator, _gitHubValidator)
+            .Add(s => s.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
+            .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
+
+        var deleteButton = cut.Find(".btn-delete");
+        await deleteButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        var confirmButton = cut.Find(".agent-detail-confirm .btn-delete");
+        await confirmButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.NotNull(statusResult);
+        Assert.True(statusResult!.Value.IsError);
+        Assert.Contains("DB error", statusResult.Value.Message);
+    }
+
+    [Fact]
+    public async Task IssueSection_DeleteFails_ShowsErrorViaOnShowStatus()
+    {
+        // TODO: Add a test asserting that OperationCanceledException from OnDelete does NOT invoke
+        // OnShowStatus (i.e., cancellation is silently suppressed per the catch (OperationCanceledException) { }
+        // guard in IssueProviderSection.ConfirmDeleteAsync). A regression that surfaces cancellation
+        // errors to the user would not be caught by the existing tests.
+        // TODO: Add assertions that after a failed delete: (a) the confirm overlay is no longer
+        // visible (_showDeleteConfirm == false), and (b) the provider card is still rendered in
+        // the component markup (provider was not incorrectly removed from the UI on failure).
+        var providers = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "ip-del-fail",
+                Kind = ProviderKind.Issue,
+                ProviderType = "GitHub",
+                DisplayName = "Delete Fail",
+                Settings = new Dictionary<string, string>
+                {
+                    [ProviderSettingKeys.Owner] = "org",
+                    [ProviderSettingKeys.Repo] = "repo"
+                }
+            }
+        };
+
+        (string Message, bool IsError)? statusResult = null;
+        var cut = Render<IssueProviderSection>(p => p
+            .Add(s => s.Providers, providers)
+            .Add(s => s.ConfigStore, _mockStore.Object)
+            .Add(s => s.GitHubValidator, _gitHubValidator)
+            .Add(s => s.ProviderFactory, _mockProviderFactory.Object)
+            .Add(s => s.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
+            .Add(s => s.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
+
+        var deleteButton = cut.Find(".btn-delete");
+        await deleteButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        var confirmButton = cut.Find(".agent-detail-confirm .btn-delete");
+        await confirmButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.NotNull(statusResult);
+        Assert.True(statusResult!.Value.IsError);
+        Assert.Contains("DB error", statusResult.Value.Message);
+    }
+
     // ═══ RepoProviderSection — Steering ═══
 
     [Fact]

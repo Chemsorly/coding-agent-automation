@@ -222,6 +222,48 @@ public class PipelineProviderSectionComponentTests : BunitContext
         Assert.Contains("org2/repo2", component.Markup);
     }
 
+    [Fact]
+    public async Task PipelineProviderSection_DeleteFails_ShowsErrorViaOnShowStatus()
+    {
+        // TODO: Add a test asserting the behaviour when OnDelete throws OperationCanceledException.
+        // PipelineProviderSection.ConfirmDeleteAsync is currently missing catch (OperationCanceledException) { }
+        // (see TODO in the production code), so the current behaviour is that OnShowStatus IS invoked
+        // for cancellations — inconsistent with AgentProviderSection and IssueProviderSection. A test
+        // here would pin the current behaviour and flag it if the production TODO is ever resolved.
+        // TODO: Add assertions that after a failed delete: (a) the confirm overlay is no longer
+        // visible (_showDeleteConfirm == false), and (b) the provider card is still rendered in
+        // the component markup (provider was not incorrectly removed from the UI on failure).
+        var providers = new List<ProviderConfig>
+        {
+            new()
+            {
+                Id = "pp-del-fail",
+                Kind = ProviderKind.Pipeline,
+                ProviderType = "GitHub",
+                DisplayName = "Delete Fail",
+                Settings = new Dictionary<string, string> { [ProviderSettingKeys.Owner] = "org", [ProviderSettingKeys.Repo] = "repo" }
+            }
+        };
+
+        (string Message, bool IsError)? statusResult = null;
+        var component = Render<PipelineProviderSection>(parameters => parameters
+            .Add(p => p.Providers, providers)
+            .Add(p => p.ConfigStore, _mockConfigStore.Object)
+            .Add(p => p.GitHubValidator, _gitHubValidator)
+            .Add(p => p.OnDelete, EventCallback.Factory.Create<string>(this, _ => throw new InvalidOperationException("DB error")))
+            .Add(p => p.OnShowStatus, EventCallback.Factory.Create<(string, bool)>(this, result => statusResult = result)));
+
+        var deleteButton = component.Find(".btn-delete");
+        await deleteButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        var confirmButton = component.Find(".agent-detail-confirm .btn-delete");
+        await confirmButton.ClickAsync(new Microsoft.AspNetCore.Components.Web.MouseEventArgs());
+
+        Assert.NotNull(statusResult);
+        Assert.True(statusResult!.Value.IsError);
+        Assert.Contains("DB error", statusResult.Value.Message);
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private IRenderedComponent<PipelineProviderSection> RenderSection(List<ProviderConfig>? providers = null)

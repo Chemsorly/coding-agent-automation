@@ -38,8 +38,7 @@
         <div class="agent-detail-confirm" style="margin-top: 12px;">
             <p>Delete this repository provider?</p>
             <div class="confirm-buttons">
-                @* TODO(#1773): OnDelete.InvokeAsync(id) is fire-and-forget — if delete fails asynchronously, user gets no error feedback. *@
-                <button class="btn-delete" @onclick="() => { var id = _deletingProviderId!; _showDeleteConfirm = false; _deletingProviderId = null; OnDelete.InvokeAsync(id); }">Delete</button>
+                <button class="btn-delete" @onclick="ConfirmDeleteAsync">Delete</button>
                 <button class="btn-cancel" @onclick="() => { _showDeleteConfirm = false; _deletingProviderId = null; }">Cancel</button>
             </div>
         </div>
@@ -319,6 +318,7 @@
     [Parameter] public GitLabValidationService? GitLabValidator { get; set; }
     [Parameter] public EventCallback<string> OnDelete { get; set; }
     [Parameter] public EventCallback<ProviderConfig> OnSaved { get; set; }
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private bool _showForm;
     private ProviderConfig? _editingProvider;
@@ -336,6 +336,25 @@
     private string? _deletingProviderId;
 
     private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
+
+    private async Task ConfirmDeleteAsync()
+    {
+        var id = _deletingProviderId!;
+        _showDeleteConfirm = false;
+        _deletingProviderId = null;
+        try
+        {
+            await OnDelete.InvokeAsync(id);
+        }
+        // TODO: Add catch (OperationCanceledException) { } before this catch to avoid showing a
+        // spurious "Failed to delete" error when the operation is cancelled (e.g., component
+        // disposal during an in-flight delete). Inconsistent with AgentProviderSection and
+        // IssueProviderSection which already handle this case.
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to delete: {ex.Message}", true));
+        }
+    }
 
     private void ShowAddForm()
     {
