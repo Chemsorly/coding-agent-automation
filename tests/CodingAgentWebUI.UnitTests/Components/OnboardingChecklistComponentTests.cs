@@ -120,7 +120,7 @@ public class OnboardingChecklistComponentTests : BunitContext
     [Fact]
     public void Checklist_HiddenWhenDismissedViaLocalStorage()
     {
-        _mockJs.Setup(j => j.InvokeAsync<string?>("localStorageGet", It.IsAny<object[]>()))
+        _mockJs.Setup(j => j.InvokeAsync<string?>("localStorageGet", It.IsAny<CancellationToken>(), It.IsAny<object[]>()))
             .ReturnsAsync("true");
 
         var cut = Render<OnboardingChecklist>(p => p

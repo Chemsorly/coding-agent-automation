@@ -409,10 +409,9 @@
 
         try
         {
-            // TODO(#1775): `new TemplateId(tid)` bypasses ThrowIfNullOrEmpty validation. While `tid`
-            // cannot be null here (pattern match ensures it), an empty-string templateId would
-            // pass through without error. Consider using the implicit conversion with a length check.
-            TemplateId? typedTemplateId = templateId is { } tid ? new TemplateId(tid) : (TemplateId?)null;
+            TemplateId? typedTemplateId = !string.IsNullOrEmpty(templateId)
+                ? (TemplateId)templateId
+                : (TemplateId?)null;
             var run = await ConsolidationService.TriggerAsync(type, typedTemplateId, CancellationToken.None, autoDispatch);
             if (run == null)
             {
