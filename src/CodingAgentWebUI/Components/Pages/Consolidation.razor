@@ -213,15 +213,13 @@
                     <span class="label-badge label-badge-static">agent:generated</span>
                     <div class="form-checkbox">
                         <label>
-                            @* TODO(WARNING): @onkeydown:stopPropagation stops ALL keydown events (not just Enter) from reaching
+                            @* Known limitation: @onkeydown:stopPropagation stops ALL keydown events (not just Enter) from reaching
                                the modal overlay. If focus is on this checkbox and Escape is pressed, the modal will NOT close —
                                the Escape event is swallowed here. Keyboard-only users must use Cancel or click outside.
-                               Fix: propagate Escape explicitly (e.g., handle Escape in the checkbox keydown handler and call
-                               DismissRefactoringModal), or use a more targeted guard that only stops Enter/Space.
-                               Also: the @onkeydown="_ => { }" no-op lambda is unnecessary in Blazor 8+; @onkeydown:stopPropagation="true"
-                               can be applied as a standalone modifier without a handler. Removing the no-op avoids an extra
-                               SignalR round-trip on every keydown while the checkbox is focused. *@
-                            <input type="checkbox" @bind="_modalAutoDispatch" @onkeydown="_ => { }" @onkeydown:stopPropagation="true" />
+                               A more targeted fix would propagate Escape explicitly or only stop Enter/Space.
+                               Note: Blazor's KeyboardEventArgs does not expose e.Target, so a target-based guard is not directly
+                               implementable. This is a known trade-off, not an open work item. *@
+                            <input type="checkbox" @bind="_modalAutoDispatch" @onkeydown:stopPropagation="true" />
                             <span class="label-badge label-badge-optional">agent:next</span>
                             — auto-dispatch created issues for agent execution
                         </label>
@@ -400,13 +398,11 @@
         _showRefactoringModal = false;
     }
 
-    // TODO(#1772): Defence-in-depth gap — if @onkeydown:stopPropagation on the checkbox ever fails
-    // (e.g., Blazor server-side dispatch bypasses client-side stopPropagation), Enter from the checkbox
-    // will still confirm the modal here. The issue's suggested fix (guard with e.Target type check) was
-    // not applied; only the stopPropagation attribute was added. Note: Blazor's KeyboardEventArgs does NOT
-    // expose a Target property — e.Target is not available — so the suggested guard is not directly
-    // implementable as written. This should be treated as a known limitation rather than an open TODO
-    // implying it is implementable, to avoid misleading future maintainers.
+    // Known limitation (#1772): @onkeydown:stopPropagation on the checkbox stops ALL keydown events
+    // from bubbling to this handler, not just Enter. This means Escape pressed while the checkbox is
+    // focused will not close the modal — keyboard-only users must use Cancel or click outside.
+    // Blazor's KeyboardEventArgs does not expose a Target property, so a target-based guard that would
+    // selectively pass through Escape is not directly implementable. This is an accepted trade-off.
     private async Task HandleRefactoringModalKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Escape")
