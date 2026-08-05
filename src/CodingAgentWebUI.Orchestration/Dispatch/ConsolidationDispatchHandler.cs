@@ -315,7 +315,11 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
                     var preparation = await _consolidationJobPreparer.PrepareAsync(
                         request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-                        request.ConsolidationTemplateId,
+                        // TODO: This string→TemplateId? conversion pattern is repeated across ConsolidationDispatchHandler,
+                        // JobQueueDrainService, PendingWorkItemDrainService, and ConsolidationService. Consider adding a
+                        // TemplateId.FromNullable(string?) factory method to encapsulate this in one place so that any
+                        // future validation changes only need updating once.
+                        string.IsNullOrEmpty(request.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)request.ConsolidationTemplateId,
                         agentLabels,
                         ct);
                     vendedConfigs = preparation.ProviderConfigs;

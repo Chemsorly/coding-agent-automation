@@ -36,7 +36,7 @@ public interface IConsolidationDispatchService
     Task<ConsolidationDispatchResult> TryDispatchAsync(
         ConsolidationRun run,
         ConsolidationRunType type,
-        string? templateId,
+        TemplateId? templateId,
         string? feedbackDataJson,
         string workspacePath,
         CancellationToken ct);
@@ -55,7 +55,7 @@ public interface IConsolidationDispatchService
     Task<bool> TryDispatchToAgentAsync(
         string runId,
         ConsolidationRunType type,
-        string? templateId,
+        TemplateId? templateId,
         string workspacePath,
         string agentId,
         CancellationToken ct);

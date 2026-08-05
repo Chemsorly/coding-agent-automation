@@ -34,7 +34,7 @@ public interface IConsolidationJobPreparationService
     /// <returns>Preparation result with vended configs and repo provider ID, or null if template resolution failed.</returns>
     Task<ConsolidationJobPreparationResult> PrepareAsync(
         ConsolidationRunType type,
-        string? templateId,
+        TemplateId? templateId,
         IReadOnlyList<string> agentLabels,
         CancellationToken ct);
 }
