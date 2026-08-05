@@ -24,6 +24,7 @@ public class RepositoryGitOperationsCollectChangesTests : IDisposable
     public void Dispose()
     {
         try { Directory.Delete(_repoPath, recursive: true); } catch { }
+        GC.SuppressFinalize(this);
     }
 
     // ── CollectChangesWithLineStats ──────────────────────────────────────

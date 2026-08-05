@@ -57,7 +57,7 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
-            NullLogger<AgentHubFacade>.Instance,
+            NullLogger<AgentHubFacadeDependencies>.Instance,
             workItemTransition: _transitionService,
             dbFactory: _dbFactory);
     }
@@ -115,7 +115,7 @@ public sealed class AgentHubFacadeTransitionTests : IDisposable
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
-            NullLogger<AgentHubFacade>.Instance);
+            NullLogger<AgentHubFacadeDependencies>.Instance);
 
         var id = Guid.NewGuid();
         var exception = await Record.ExceptionAsync(() =>

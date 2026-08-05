@@ -22,7 +22,7 @@ public sealed record AgentHubFacadeDependencies(
     IPipelineRunHistoryService HistoryService,
     IConfigurationStore ConfigStore,
     IProviderFactory ProviderFactory,
-    ILogger<AgentHubFacade> Logger,
+    ILogger<AgentHubFacadeDependencies> Logger,
     WorkItemTransitionService? WorkItemTransition = null,
     PendingWorkItemDrainService? PendingDrainService = null,
     IDbContextFactory<PipelineDbContext>? DbFactory = null);

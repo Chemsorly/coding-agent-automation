@@ -46,7 +46,7 @@ public class AgentHubFacadeConcurrencyTests
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
-            NullLogger<AgentHubFacade>.Instance);
+            NullLogger<AgentHubFacadeDependencies>.Instance);
     }
 
     /// <summary>

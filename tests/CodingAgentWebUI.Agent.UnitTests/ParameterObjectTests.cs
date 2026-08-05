@@ -199,6 +199,10 @@ public class ParameterObjectTests
         AgentJobRunner.PipelineExecuteDelegate executeFn =
             (_, _, _, _, ct) => Task.FromResult(new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow });
 
+        // TODO: This test uses named arguments (Ct:, CancelledLabel:, RethrowOnSigterm:) which are
+        // position-independent, so it does not verify the CA1068-fixed parameter ordering on the record.
+        // Consider switching to positional arguments for CancelledLabel/Ct/RethrowOnSigterm to ensure
+        // any future revert of the parameter order would cause a compile or runtime failure here.
         var req = new AgentJobExecutionRequest(
             Execute: executeFn,
             Assignment: assignment,
@@ -235,7 +239,7 @@ public class ParameterObjectTests
         AgentJobRunner.PipelineExecuteDelegate executeFn =
             (_, _, _, _, ct) => Task.FromResult(new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow });
 
-        var req = new AgentJobExecutionRequest(executeFn, assignment, null!, new OutputBatcher(), null, CancellationToken.None);
+        var req = new AgentJobExecutionRequest(executeFn, assignment, null!, new OutputBatcher(), null, null, CancellationToken.None);
 
         req.RethrowOnSigterm.Should().Be(default(CancellationToken));
         req.CancelledLabel.Should().BeNull();

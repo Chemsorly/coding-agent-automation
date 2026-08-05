@@ -21,6 +21,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     {
         TryDeleteDir(AgentDefaults.ChatWorkspacePath);
         TryDeleteDir(AgentDefaults.ChatWorkspacesRoot);
+        GC.SuppressFinalize(this);
     }
 
     private static void TryDeleteDir(string path)

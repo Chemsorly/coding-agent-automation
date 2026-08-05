@@ -864,7 +864,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 // session.diff, message.updated) are excluded so the stall monitor can
                 // detect extended LLM thinking/reasoning phases where no visible output
                 // is being produced.
-                await ProcessSseEventAsync(sseEvent, sessionId, onOutputLine, onSseEmitted, ct, workspacePath);
+                await ProcessSseEventAsync(sseEvent, sessionId, onOutputLine, onSseEmitted, workspacePath, ct);
             }
         }
         catch (OperationCanceledException)
@@ -886,8 +886,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         string sessionId,
         Action<string>? onOutputLine,
         Action<bool>? onSseEmitted,
-        CancellationToken ct,
-        string? workspacePath)
+        string? workspacePath,
+        CancellationToken ct)
     {
         switch (sseEvent.Type)
         {

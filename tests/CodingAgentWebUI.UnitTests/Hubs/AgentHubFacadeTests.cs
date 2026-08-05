@@ -25,7 +25,7 @@ public sealed class AgentHubFacadeTests
     private readonly Mock<IProviderFactory> _mockProviderFactory = new();
     private readonly JobQueueDrainService _drainService;
     private readonly AgentHubFacade _facade;
-    private readonly ILogger<AgentHubFacade> _facadeLogger = NullLogger<AgentHubFacade>.Instance;
+    private readonly ILogger<AgentHubFacadeDependencies> _facadeLogger = NullLogger<AgentHubFacadeDependencies>.Instance;
 
     public AgentHubFacadeTests()
     {

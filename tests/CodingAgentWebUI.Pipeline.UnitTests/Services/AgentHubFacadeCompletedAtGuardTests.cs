@@ -58,7 +58,7 @@ public sealed class AgentHubFacadeCompletedAtGuardTests : IDisposable
             Mock.Of<IPipelineRunHistoryService>(),
             Mock.Of<IConfigurationStore>(),
             Mock.Of<IProviderFactory>(),
-            NullLogger<AgentHubFacade>.Instance,
+            NullLogger<AgentHubFacadeDependencies>.Instance,
             transitionService);
     }
 
