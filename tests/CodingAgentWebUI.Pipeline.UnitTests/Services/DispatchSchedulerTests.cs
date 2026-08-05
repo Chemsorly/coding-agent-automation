@@ -270,9 +270,7 @@ public class DispatchSchedulerTests
             CancellationToken.None, CancellationToken.None);
 
         // Assert: issues dispatched successfully
-        // TODO: Strengthen assertion — should be .Be(3) since all 3 issues should dispatch.
-        // BeGreaterThanOrEqualTo(1) would pass even if queue iteration broke after the first item.
-        result.ProcessedCount.Should().BeGreaterThanOrEqualTo(1);
+        result.ProcessedCount.Should().Be(3);
         _issueDispatchCount.Should().Be(3);
     }
 
@@ -363,10 +361,13 @@ public class DispatchSchedulerTests
             CancellationToken.None, CancellationToken.None);
 
         // Assert: exactly 2 dispatched, no more
-        // TODO: Add per-queue-type assertions (e.g., _issueDispatchCount == 1, _prDispatchCount == 1,
-        // _decompDispatchCount == 0) to verify round-robin fairness is maintained under budget pressure.
-        // Without these, a bug dispatching 2 items from one queue type would go undetected.
+        // Per-queue-type assertions verify that round-robin fairness is maintained under budget pressure:
+        // turn order is issue→PR→(budget exhausted), so exactly 1 issue and 1 PR should be dispatched.
+        // A bug dispatching 2 items from a single queue type would fail these per-type checks.
         result.ProcessedCount.Should().Be(2);
+        _issueDispatchCount.Should().Be(1);
+        _prDispatchCount.Should().Be(1);
+        _decompDispatchCount.Should().Be(0);
     }
 
     #endregion
@@ -543,6 +544,11 @@ public class DispatchSchedulerTests
             CancellationToken.None, CancellationToken.None);
 
         // Assert: 2 issues + 1 project-level decomp = 3
+        // TODO: [WARNING] Add assertion for _decompDispatchCount to verify the project-level decomp
+        // was actually dispatched (not just counted). The DispatchProjectLevelEpicAsync extraction
+        // changed how dispatched/failed propagate back to counters — a regression where
+        // additionalDecompDispatches is not incremented but processed still is would not be caught
+        // by ProcessedCount alone. Expected: _decompDispatchCount.Should().Be(1).
         result.ProcessedCount.Should().Be(3);
     }
 

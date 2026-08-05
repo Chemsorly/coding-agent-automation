@@ -100,26 +100,9 @@ internal sealed class DispatchLifecycleService
         var jobName = DispatchService.GenerateJobName(item.Id);
 
         // Select a PVC for kiro agents directly from the available pool (RWO makes label patching unnecessary).
-        string? claimedPvc = null;
-        if (isKiroAgent)
-        {
-            await _pvcSelectLock.WaitAsync(ct);
-            try
-            {
-                claimedPvc = availablePvcs.FirstOrDefault();
-                if (claimedPvc is null)
-                {
-                    Log.Information("DispatchLifecycleService: {LogPrefix}no PVC available for WorkItem {WorkItemId}, skipping",
-                        logPrefix, item.Id);
-                    return;
-                }
-                availablePvcs.Remove(claimedPvc);
-            }
-            finally
-            {
-                _pvcSelectLock.Release();
-            }
-        }
+        var claimedPvc = isKiroAgent ? await SelectPvcAsync(availablePvcs, item.Id, logPrefix, ct) : null;
+        if (isKiroAgent && claimedPvc is null)
+            return;
 
         // Load full WorkItem and run variant-specific preparation.
         WorkItemEntity? workItem;
@@ -188,12 +171,55 @@ internal sealed class DispatchLifecycleService
         workItem.Status = WorkItemStatus.Dispatched;
         workItem.DispatchedAt = DateTimeOffset.UtcNow;
 
+        await FinalizeDispatchAsync(db, workItem, item, logPrefix, concurrencyBySelector, onDispatchSuccess, ct);
+    }
+
+    /// <summary>
+    /// Selects a PVC from the available pool under <see cref="_pvcSelectLock"/> for a kiro agent.
+    /// Returns the claimed PVC name, or null if the pool is empty (caller should return early).
+    /// </summary>
+    private async Task<string?> SelectPvcAsync(
+        List<string> availablePvcs, Guid workItemId, string logPrefix, CancellationToken ct)
+    {
+        await _pvcSelectLock.WaitAsync(ct);
+        try
+        {
+            var claimedPvc = availablePvcs.FirstOrDefault();
+            if (claimedPvc is null)
+            {
+                Log.Information("DispatchLifecycleService: {LogPrefix}no PVC available for WorkItem {WorkItemId}, skipping",
+                    logPrefix, workItemId);
+                return null;
+            }
+            availablePvcs.Remove(claimedPvc);
+            return claimedPvc;
+        }
+        finally
+        {
+            _pvcSelectLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Saves the Dispatched status transition, records metrics, updates concurrency tracking,
+    /// and invokes the variant-specific post-dispatch success callback.
+    /// </summary>
+    private async Task FinalizeDispatchAsync(
+        PipelineDbContext db,
+        WorkItemEntity workItem,
+        PendingWorkItemProjection item,
+        string logPrefix,
+        Dictionary<string, int> concurrencyBySelector,
+        Func<WorkItemEntity, Task>? onDispatchSuccess,
+        CancellationToken ct)
+    {
+        var jobName = workItem.K8sJobName!;
         try
         {
             await db.SaveChangesAsync(ct);
 
             // Record dispatch latency / pending duration metric
-            var latency = (workItem.DispatchedAt.Value - (workItem.OriginalEnqueuedAt ?? workItem.CreatedAt)).TotalSeconds;
+            var latency = (workItem.DispatchedAt!.Value - (workItem.OriginalEnqueuedAt ?? workItem.CreatedAt)).TotalSeconds;
             WorkDistributionTelemetry.DispatchLatency.Record(latency,
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
             WorkDistributionTelemetry.PendingDuration.Record(latency,
@@ -206,7 +232,7 @@ internal sealed class DispatchLifecycleService
 
             Log.Information(
                 "DispatchLifecycleService: {LogPrefix}WorkItem {WorkItemId} dispatched as Job {JobName} (selector={Selector}, pvc={Pvc})",
-                logPrefix, item.Id, jobName, item.AgentSelector, claimedPvc ?? "none");
+                logPrefix, item.Id, jobName, item.AgentSelector, workItem.ClaimedPvcName ?? "none");
 
             // Variant-specific post-dispatch success action
             if (onDispatchSuccess is not null)

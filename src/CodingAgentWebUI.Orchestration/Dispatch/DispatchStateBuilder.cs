@@ -204,34 +204,16 @@ internal sealed class DispatchStateBuilder
             }
 
             // Resolve template — fail immediately if no match (before PVC gating)
-            var template = _templateProvider.Resolve(item.AgentSelector);
-            var effectiveSelector = item.AgentSelector;
+            var (template, effectiveSelector, skipItem) = await ResolveTemplateAsync(
+                item, state.ConcurrencyBySelector, callerName, ct);
+
+            if (skipItem)
+                continue;
+
             if (template is null)
             {
-                // Fallback: AgentSelector might be a subset of the template's label set.
-                // Resolve profile to get the full label set, then retry template lookup.
-                var (fallbackTemplate, resolvedSelector) = await _templateResolver.ResolveTemplateViaProfileAsync(
-                    item.AgentSelector, callerName, ct);
-                if (fallbackTemplate is null)
-                {
-                    await onNoTemplate(item, $"No job template for selector: {item.AgentSelector}", ct);
-                    continue;
-                }
-                template = fallbackTemplate;
-                effectiveSelector = resolvedSelector!;
-
-                // Re-check concurrency limit against the resolved selector (the actual template key)
-                var resolvedMaxConcurrent = template.MaxConcurrent;
-                if (resolvedMaxConcurrent > 0)
-                {
-                    var current = state.ConcurrencyBySelector.GetValueOrDefault(effectiveSelector, 0);
-                    if (current >= resolvedMaxConcurrent)
-                    {
-                        Log.Debug("{CallerName}: resolved selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
-                            callerName, effectiveSelector, current, resolvedMaxConcurrent, item.Id);
-                        continue;
-                    }
-                }
+                await onNoTemplate(item, $"No job template for selector: {item.AgentSelector}", ct);
+                continue;
             }
 
             var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
@@ -246,5 +228,50 @@ internal sealed class DispatchStateBuilder
 
             yield return new DispatchCandidate(item, template, effectiveSelector, isKiroAgent);
         }
+    }
+
+    /// <summary>
+    /// Resolves the job template for a pending work item, applying profile-based fallback when needed.
+    /// Returns (template, effectiveSelector, skip=true) when the item should be skipped due to
+    /// concurrency limit on the resolved selector. Returns (null, selector, skip=false) when no
+    /// template is found and the caller should invoke the onNoTemplate callback.
+    /// </summary>
+    private async Task<(JobTemplate? template, string effectiveSelector, bool skip)> ResolveTemplateAsync(
+        PendingWorkItemProjection item,
+        Dictionary<string, int> concurrencyBySelector,
+        string callerName,
+        CancellationToken ct)
+    {
+        var template = _templateProvider.Resolve(item.AgentSelector);
+        var effectiveSelector = item.AgentSelector;
+
+        if (template is not null)
+            return (template, effectiveSelector, skip: false);
+
+        // Fallback: AgentSelector might be a subset of the template's label set.
+        // Resolve profile to get the full label set, then retry template lookup.
+        var (fallbackTemplate, resolvedSelector) = await _templateResolver.ResolveTemplateViaProfileAsync(
+            item.AgentSelector, callerName, ct);
+
+        if (fallbackTemplate is null)
+            return (null, effectiveSelector, skip: false);
+
+        template = fallbackTemplate;
+        effectiveSelector = resolvedSelector!;
+
+        // Re-check concurrency limit against the resolved selector (the actual template key)
+        var resolvedMaxConcurrent = template.MaxConcurrent;
+        if (resolvedMaxConcurrent > 0)
+        {
+            var current = concurrencyBySelector.GetValueOrDefault(effectiveSelector, 0);
+            if (current >= resolvedMaxConcurrent)
+            {
+                Log.Debug("{CallerName}: resolved selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
+                    callerName, effectiveSelector, current, resolvedMaxConcurrent, item.Id);
+                return (null, effectiveSelector, skip: true);
+            }
+        }
+
+        return (template, effectiveSelector, skip: false);
     }
 }
