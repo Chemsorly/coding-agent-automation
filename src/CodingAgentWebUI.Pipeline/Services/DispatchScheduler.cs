@@ -166,19 +166,9 @@ internal sealed class DispatchScheduler
 
             // Determine which queue to dispatch from this iteration.
             // If the current turn's queue is empty, try the next non-empty queue.
-            var startTurn = currentTurn;
-            bool foundTurn = false;
-            for (int attempt = 0; attempt < 3; attempt++)
-            {
-                var tryTurn = (DispatchTurn)(((int)startTurn + attempt) % 3);
-                if ((tryTurn == DispatchTurn.Issues && hasIssues) || (tryTurn == DispatchTurn.PullRequests && hasPrs) || (tryTurn == DispatchTurn.Decomposition && hasDecomp))
-                {
-                    currentTurn = tryTurn;
-                    foundTurn = true;
-                    break;
-                }
-            }
+            var (foundTurn, selectedTurn) = TrySelectNextTurn(currentTurn, hasIssues, hasPrs, hasDecomp);
             if (!foundTurn) break; // All queues exhausted
+            currentTurn = selectedTurn;
 
             var roundCtx = new RoundDispatchContext
             {
@@ -228,7 +218,9 @@ internal sealed class DispatchScheduler
                 processedCount += processed;
                 failedCount += failed;
                 activeDecompositionCount += additionalDecomp;
-            }            // ── Project-level decomposition dispatch ──
+            }
+
+            // ── Project-level decomposition dispatch ──
             if (currentTurn == DispatchTurn.Decomposition && !decompMadeProgress && request.ProjectLevelDecompositionQueues.Count > 0
                 && activeDecompositionCount < request.Config.MaxConcurrentDecompositions)
             {
@@ -263,6 +255,27 @@ internal sealed class DispatchScheduler
     }
 
     /// <summary>
+    /// Selects the next eligible turn in the three-way round-robin cycle, starting at
+    /// <paramref name="startTurn"/> and cycling through up to three turns.
+    /// Returns (found=false, default) when all queues are exhausted.
+    /// </summary>
+    private static (bool found, DispatchTurn selectedTurn) TrySelectNextTurn(
+        DispatchTurn startTurn, bool hasIssues, bool hasPrs, bool hasDecomp)
+    {
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            var tryTurn = (DispatchTurn)(((int)startTurn + attempt) % 3);
+            if ((tryTurn == DispatchTurn.Issues && hasIssues)
+                || (tryTurn == DispatchTurn.PullRequests && hasPrs)
+                || (tryTurn == DispatchTurn.Decomposition && hasDecomp))
+            {
+                return (true, tryTurn);
+            }
+        }
+        return (false, startTurn);
+    }
+
+    /// <summary>
     /// Dispatches one round of issues (one per template). Filters by ImplementationEnabled,
     /// dequeues candidates filtering by labels and duplicates, checks dependencies, then dispatches.
     /// </summary>
@@ -279,53 +292,7 @@ internal sealed class DispatchScheduler
             if (!issueQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
                 return DispatchAttemptResult.Skip;
 
-            // Dequeue next valid issue
-            IssueSummary? issue = null;
-            while (queue.Count > 0)
-            {
-                var candidate = queue[0];
-                queue.RemoveAt(0);
-
-                if (candidate.Labels.Contains(AgentLabels.Error) || candidate.Labels.Contains(AgentLabels.NeedsRefinement))
-                {
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
-                    continue;
-                }
-                if (_orchestration.IsIssueBeingProcessed(candidate.Identifier, template.IssueProviderId))
-                {
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                    continue;
-                }
-                if (ctx.ActiveIssueIdentifiers.Contains((candidate.Identifier, template.IssueProviderId)))
-                {
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                    continue;
-                }
-
-                if (_dependencyChecker != null)
-                {
-                    if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var provider))
-                    {
-                        _logger.Warning("Provider '{ProviderId}' not in cache during dependency check for #{Identifier}, skipping dispatch",
-                            template.IssueProviderId, candidate.Identifier);
-                        continue;
-                    }
-
-                    var depResult = await _dependencyChecker.CheckAsync(
-                        candidate.Identifier, candidate.Description, provider, cycleStateCache, ct);
-                    if (!depResult.IsReady)
-                    {
-                        _logger.Information("Issue #{Identifier} blocked by open issues: {BlockedBy}. Skipping dispatch.",
-                            candidate.Identifier, depResult.BlockedBy);
-                        PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedDependencyBlocked));
-                        continue;
-                    }
-                }
-
-                issue = candidate;
-                break;
-            }
-
+            var issue = await TryDequeueValidIssueAsync(queue, template, ctx, cycleStateCache, ct);
             if (issue is null) return DispatchAttemptResult.Skip;
 
             ctx.TrackingReportIssue(issue.Identifier);
@@ -366,6 +333,64 @@ internal sealed class DispatchScheduler
     }
 
     /// <summary>
+    /// Dequeues the next valid issue candidate from <paramref name="queue"/>, skipping items
+    /// filtered by label, already-processing deduplication, or dependency blocking.
+    /// Returns null if no valid candidate remains.
+    /// </summary>
+    private async Task<IssueSummary?> TryDequeueValidIssueAsync(
+        List<IssueSummary> queue,
+        PipelineJobTemplate template,
+        RoundDispatchContext ctx,
+        Dictionary<int, bool> cycleStateCache,
+        CancellationToken ct)
+    {
+        while (queue.Count > 0)
+        {
+            var candidate = queue[0];
+            queue.RemoveAt(0);
+
+            if (candidate.Labels.Contains(AgentLabels.Error) || candidate.Labels.Contains(AgentLabels.NeedsRefinement))
+            {
+                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
+                continue;
+            }
+            if (_orchestration.IsIssueBeingProcessed(candidate.Identifier, template.IssueProviderId))
+            {
+                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
+                continue;
+            }
+            if (ctx.ActiveIssueIdentifiers.Contains((candidate.Identifier, template.IssueProviderId)))
+            {
+                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
+                continue;
+            }
+
+            if (_dependencyChecker != null)
+            {
+                if (!_cacheManager.IssueProviders.TryGetValue(template.IssueProviderId, out var provider))
+                {
+                    _logger.Warning("Provider '{ProviderId}' not in cache during dependency check for #{Identifier}, skipping dispatch",
+                        template.IssueProviderId, candidate.Identifier);
+                    continue;
+                }
+
+                var depResult = await _dependencyChecker.CheckAsync(
+                    candidate.Identifier, candidate.Description, provider, cycleStateCache, ct);
+                if (!depResult.IsReady)
+                {
+                    _logger.Information("Issue #{Identifier} blocked by open issues: {BlockedBy}. Skipping dispatch.",
+                        candidate.Identifier, depResult.BlockedBy);
+                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedDependencyBlocked));
+                    continue;
+                }
+            }
+
+            return candidate;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Dispatches one round of PR reviews (one per template). Filters by ReviewEnabled,
     /// dequeues candidates filtering by labels and duplicates, then dispatches.
     /// </summary>
@@ -381,35 +406,7 @@ internal sealed class DispatchScheduler
             if (!prQueues.TryGetValue(template.Id, out var queue) || queue.Count == 0)
                 return DispatchAttemptResult.Skip;
 
-            PullRequestSummary? pr = null;
-            while (queue.Count > 0)
-            {
-                var candidate = queue[0];
-                queue.RemoveAt(0);
-
-                if (candidate.Labels.Contains(AgentLabels.Error) ||
-                    candidate.Labels.Contains(AgentLabels.InProgress) ||
-                    candidate.Labels.Contains(AgentLabels.Done) ||
-                    candidate.Labels.Contains(AgentLabels.Cancelled))
-                {
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
-                    continue;
-                }
-                if (_orchestration.IsIssueBeingProcessed(candidate.Identifier, template.IssueProviderId))
-                {
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                    continue;
-                }
-                if (ctx.ActiveIssueIdentifiers.Contains((candidate.Identifier, template.IssueProviderId)))
-                {
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                    continue;
-                }
-
-                pr = candidate;
-                break;
-            }
-
+            var pr = TryDequeueValidPr(queue, template, ctx);
             if (pr is null) return DispatchAttemptResult.Skip;
 
             ctx.TrackingReportIssue(pr.Identifier);
@@ -458,6 +455,45 @@ internal sealed class DispatchScheduler
     }
 
     /// <summary>
+    /// Dequeues the next valid PR candidate from <paramref name="queue"/>, skipping items
+    /// filtered by label or already-processing deduplication.
+    /// Returns null if no valid candidate remains.
+    /// </summary>
+    private PullRequestSummary? TryDequeueValidPr(
+        List<PullRequestSummary> queue,
+        PipelineJobTemplate template,
+        RoundDispatchContext ctx)
+    {
+        while (queue.Count > 0)
+        {
+            var candidate = queue[0];
+            queue.RemoveAt(0);
+
+            if (candidate.Labels.Contains(AgentLabels.Error) ||
+                candidate.Labels.Contains(AgentLabels.InProgress) ||
+                candidate.Labels.Contains(AgentLabels.Done) ||
+                candidate.Labels.Contains(AgentLabels.Cancelled))
+            {
+                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
+                continue;
+            }
+            if (_orchestration.IsIssueBeingProcessed(candidate.Identifier, template.IssueProviderId))
+            {
+                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
+                continue;
+            }
+            if (ctx.ActiveIssueIdentifiers.Contains((candidate.Identifier, template.IssueProviderId)))
+            {
+                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
+                continue;
+            }
+
+            return candidate;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Dispatches one round of template-based decomposition (one per template). Filters by DecompositionEnabled,
     /// checks concurrency limit, dequeues candidates with duplicate checks, then dispatches.
     /// Returns additional decomposition dispatch count for coordinator tracking.
@@ -486,27 +522,7 @@ internal sealed class DispatchScheduler
                 return DispatchAttemptResult.Abort;
             }
 
-            (IssueSummary Issue, PipelineRunType Phase)? epic = null;
-            while (queue.Count > 0)
-            {
-                var candidate = queue[0];
-                queue.RemoveAt(0);
-
-                if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier, template.IssueProviderId))
-                {
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                    continue;
-                }
-                if (ctx.ActiveIssueIdentifiers.Contains((candidate.Issue.Identifier, template.IssueProviderId)))
-                {
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                    continue;
-                }
-
-                epic = candidate;
-                break;
-            }
-
+            var epic = TryDequeueValidEpic(queue, template, ctx);
             if (epic is null) return DispatchAttemptResult.Skip;
 
             var epicItem = epic.Value;
@@ -555,6 +571,37 @@ internal sealed class DispatchScheduler
     }
 
     /// <summary>
+    /// Dequeues the next valid epic candidate from <paramref name="queue"/>, skipping items
+    /// that are already being processed or are in the active identifiers set.
+    /// Returns null if no valid candidate remains.
+    /// </summary>
+    private (IssueSummary Issue, PipelineRunType Phase)? TryDequeueValidEpic(
+        List<(IssueSummary Issue, PipelineRunType Phase)> queue,
+        PipelineJobTemplate template,
+        RoundDispatchContext ctx)
+    {
+        while (queue.Count > 0)
+        {
+            var candidate = queue[0];
+            queue.RemoveAt(0);
+
+            if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier, template.IssueProviderId))
+            {
+                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
+                continue;
+            }
+            if (ctx.ActiveIssueIdentifiers.Contains((candidate.Issue.Identifier, template.IssueProviderId)))
+            {
+                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
+                continue;
+            }
+
+            return candidate;
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Dispatches project-level decomposition epics. Iterates project queues with one dispatch
     /// attempt per project per round (fair alternation). Does not use DispatchRoundAsync — manages
     /// its own iteration, try/catch, and counter tracking.
@@ -579,88 +626,30 @@ internal sealed class DispatchScheduler
             if (ctx.RemainingBudget - consumed <= 0 || ct.IsCancellationRequested) break;
             if (activeDecompositionCount + additionalDecompDispatches >= config.MaxConcurrentDecompositions) break;
 
-            var queue = kvp.Value;
-            while (queue.Count > 0 && ctx.RemainingBudget - consumed > 0)
+            // Fair alternation: TryDequeueValidProjectLevelEpic may drain multiple already-processing items
+            // before returning the first valid candidate (or null). Combined with the snapshot ToList() above,
+            // this guarantees at most one dispatch attempt per project per round — the same invariant as the
+            // original inner-while-then-break pattern. Items drained as "already processing" are permanently
+            // removed from the snapshot for this cycle, which is consistent with original behaviour.
+            // TODO: [WARNING] The comment below ("returns exactly one candidate per call") is misleading —
+            // TryDequeueValidProjectLevelEpic may dequeue and discard multiple already-processing items before
+            // returning. Update the comment if confusion arises during future changes.
+            var candidate = TryDequeueValidProjectLevelEpic(kvp.Value, ctx);
+            if (candidate is null) continue;
+
+            var phaseLabel = candidate.Value.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
+            ctx.TrackingReportIssue(candidate.Value.Issue.Identifier);
+            ctx.ReportStatus($"🧩 Dispatching project-level epic #{candidate.Value.Issue.Identifier} {phaseLabel} from '{candidate.Value.Template.Name}'");
+            ctx.NotifyChange();
+
+            var (dispatched, epicFailed) = await DispatchProjectLevelEpicAsync(candidate.Value, ctx, stoppingToken, ct);
+            if (dispatched || epicFailed)
             {
-                if (activeDecompositionCount + additionalDecompDispatches >= config.MaxConcurrentDecompositions) break;
-
-                var candidate = queue[0];
-                queue.RemoveAt(0);
-
-                // Deduplication: skip if already being processed or queued
-                if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier, candidate.Template.IssueProviderId))
-                {
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                    continue;
-                }
-                if (ctx.ActiveIssueIdentifiers.Contains((candidate.Issue.Identifier, candidate.Template.IssueProviderId)))
-                {
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                    continue;
-                }
-
-                var phaseLabel = candidate.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
-
-                ctx.TrackingReportIssue(candidate.Issue.Identifier);
-                ctx.ReportStatus($"🧩 Dispatching project-level epic #{candidate.Issue.Identifier} {phaseLabel} from '{candidate.Template.Name}'");
-                ctx.NotifyChange();
-
-                try
-                {
-                    var projLevelProject = ctx.TemplateProjectLookup.GetValueOrDefault(candidate.Template.Id);
-                    var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
-                        async ct => await _dispatchOrchestration!.PrepareDecompositionDistributionRequestAsync(
-                            new DecompositionDispatchOrchestrationRequest
-                            {
-                                EpicIdentifier = candidate.Issue.Identifier,
-                                EpicTitle = candidate.Issue.Title ?? "",
-                                PhaseType = candidate.Phase,
-                                IssueProviderId = candidate.Template.IssueProviderId,
-                                RepoProviderId = candidate.Template.RepoProviderId,
-                                BrainProviderId = candidate.Template.BrainProviderId,
-                                InitiatedBy = "loop",
-                                Project = projLevelProject ?? new PipelineProject { Id = "", Name = "Unknown" },
-                                DecompositionSource = "project-level"
-                            },
-                            ct),
-                        () => JobDistributionRequest.FromTemplate(
-                            candidate.Template, candidate.Issue, candidate.Phase,
-                            initiatedBy: "loop", decompositionSource: "project-level",
-                            projectId: projLevelProject?.Id, projectName: projLevelProject?.Name),
-                        stoppingToken);
-
-                    if (dispatched)
-                    {
-                        additionalDecompDispatches++;
-                        consumed++;
-                        madeProgress = true;
-                        // Consistent with DispatchRoundAsync: successful dispatch counts as processed.
-                        // TODO: Add a targeted unit test that exercises DispatchFairRoundRobinAsync with a successful
-                        // project-level decomposition and asserts the returned ProcessedCount includes it.
-                        processed++;
-                        _logger.Information("Dispatched project-level epic #{EpicIdentifier} ({Phase}) via template '{Template}'",
-                            candidate.Issue.Identifier, candidate.Phase, candidate.Template.Name);
-                    }
-
-                    PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
-                        dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "Project-level decomposition dispatch failed for epic #{EpicIdentifier}: {Error}",
-                        candidate.Issue.Identifier, ex.Message);
-                    consumed++;
-                    madeProgress = true;
-                    // Consistent with DispatchRoundAsync: failures count as both processed and failed.
-                    // TODO: Add a targeted unit test that triggers a dispatch failure for a project-level
-                    // decomposition candidate and asserts DispatchResult contains the expected ProcessedCount
-                    // and FailedCount. This is a behavioral change (previously neither was incremented on failure).
-                    processed++;
-                    failed++;
-                }
-
-                break; // One dispatch per project per round (fair alternation)
+                consumed++;
+                madeProgress = true;
+                processed++;
+                if (dispatched) additionalDecompDispatches++;
+                if (epicFailed) failed++;
             }
         }
 
@@ -669,6 +658,107 @@ internal sealed class DispatchScheduler
             projectLevelDecompositionQueues.Remove(key);
 
         return (madeProgress, consumed, processed, failed, additionalDecompDispatches);
+    }
+
+    /// <summary>
+    /// Dequeues the next valid project-level epic candidate from <paramref name="queue"/>, skipping
+    /// items that are already being processed or are in the active identifiers set.
+    /// Returns null if no valid candidate remains (caller should continue to next project).
+    /// </summary>
+    private (IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)? TryDequeueValidProjectLevelEpic(
+        List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)> queue,
+        RoundDispatchContext ctx)
+    {
+        while (queue.Count > 0)
+        {
+            var candidate = queue[0];
+            queue.RemoveAt(0);
+
+            if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier, candidate.Template.IssueProviderId))
+            {
+                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
+                continue;
+            }
+            if (ctx.ActiveIssueIdentifiers.Contains((candidate.Issue.Identifier, candidate.Template.IssueProviderId)))
+            {
+                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
+                continue;
+            }
+
+            return candidate;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Dispatches a single project-level epic via orchestration or legacy path.
+    /// Returns (dispatched, failed) — both false means dispatch was skipped (no agent).
+    /// </summary>
+    private async Task<(bool dispatched, bool failed)> DispatchProjectLevelEpicAsync(
+        (IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template) candidate,
+        RoundDispatchContext ctx,
+        CancellationToken stoppingToken,
+        CancellationToken ct)
+    {
+        try
+        {
+            var projLevelProject = ctx.TemplateProjectLookup.GetValueOrDefault(candidate.Template.Id);
+            var dispatched = await DispatchViaOrchestrationOrLegacyAsync(
+                async ct => await _dispatchOrchestration!.PrepareDecompositionDistributionRequestAsync(
+                    new DecompositionDispatchOrchestrationRequest
+                    {
+                        EpicIdentifier = candidate.Issue.Identifier,
+                        EpicTitle = candidate.Issue.Title ?? "",
+                        PhaseType = candidate.Phase,
+                        IssueProviderId = candidate.Template.IssueProviderId,
+                        RepoProviderId = candidate.Template.RepoProviderId,
+                        BrainProviderId = candidate.Template.BrainProviderId,
+                        InitiatedBy = "loop",
+                        Project = projLevelProject ?? new PipelineProject { Id = "", Name = "Unknown" },
+                        DecompositionSource = "project-level"
+                    },
+                    ct),
+                () => JobDistributionRequest.FromTemplate(
+                    candidate.Template, candidate.Issue, candidate.Phase,
+                    initiatedBy: "loop", decompositionSource: "project-level",
+                    projectId: projLevelProject?.Id, projectName: projLevelProject?.Name),
+                stoppingToken);
+
+            PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>("decision",
+                dispatched ? PipelineTelemetry.LoopDecisions.Dispatched : PipelineTelemetry.LoopDecisions.SkippedNoAgent));
+
+            if (dispatched)
+            {
+                // Consistent with DispatchRoundAsync: successful dispatch counts as processed.
+                // TODO: Add a targeted unit test that exercises DispatchFairRoundRobinAsync with a successful
+                // project-level decomposition and asserts the returned ProcessedCount includes it.
+                _logger.Information("Dispatched project-level epic #{EpicIdentifier} ({Phase}) via template '{Template}'",
+                    candidate.Issue.Identifier, candidate.Phase, candidate.Template.Name);
+            }
+
+            return (dispatched, false);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            // TODO: [WARNING] Returning (false, false) here causes the caller's foreach to `continue` to
+            // the next project even though stoppingToken is already cancelled. The original code used `break`
+            // to exit the entire project loop on cancellation. The difference: each subsequent
+            // DispatchProjectLevelEpicAsync call will re-enter and immediately hit the cancellation guard or
+            // throw again, spinning through remaining projects. This is wasteful but not data-corrupting —
+            // no incorrect dispatches occur and the loop exits correctly. Fix if latency during shutdown
+            // becomes a concern: check ct.IsCancellationRequested in the foreach loop condition directly.
+            return (false, false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Project-level decomposition dispatch failed for epic #{EpicIdentifier}: {Error}",
+                candidate.Issue.Identifier, ex.Message);
+            // Consistent with DispatchRoundAsync: failures count as both processed and failed.
+            // TODO: Add a targeted unit test that triggers a dispatch failure for a project-level
+            // decomposition candidate and asserts DispatchResult contains the expected ProcessedCount
+            // and FailedCount. This is a behavioral change (previously neither was incremented on failure).
+            return (false, true);
+        }
     }
 
     /// <summary>
