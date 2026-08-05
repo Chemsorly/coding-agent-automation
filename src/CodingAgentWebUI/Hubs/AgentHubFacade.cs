@@ -128,7 +128,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
                 if (await TryDirectTransitionAsync(workItemId, status, errorMessage, failureReason, ct))
                     return;
 
-                if (await TryTwoStepTransitionAsync(workItemId, status, errorMessage, failureReason, ct))
+                if (await TryTwoStepTransitionAsync(workItemId, status, ct))
                     return;
 
                 if (await TryInfrastructureFailureRecoveryAsync(workItemId, status, errorMessage, failureReason, ct))
@@ -180,7 +180,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     }
 
     private async Task<bool> TryTwoStepTransitionAsync(
-        Guid workItemId, WorkItemStatus status, string? _, FailureReason? __, CancellationToken ct)
+        Guid workItemId, WorkItemStatus status, CancellationToken ct)
     {
         // Transition rejected — likely Dispatched → Succeeded/Cancelled (skipped Running).
         // Attempt two-step: Dispatched → Running → terminal status.
