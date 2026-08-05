@@ -67,7 +67,7 @@ public class SignalRWorkDistributorAgentResolverTests
         result.Should().BeNull();
     }
 
-    // TODO: Add idempotency test — ReleaseAgent called twice on the same agent should be a no-op
+    // NOTE: Add idempotency test — ReleaseAgent called twice on the same agent should be a no-op
     //       on the second call (agent already Idle). Verifies no spurious Idle→Idle transition issues.
 
     [Fact]
@@ -162,10 +162,6 @@ public class SignalRWorkDistributorAgentResolverTests
         var result = _resolver.ResolveAgent("dotnet");
 
         result.Should().NotBeNull();
-        // TODO: result.AgentId.Should().BeOfType<AgentId>() is tautological — AgentResolveResult.AgentId
-        // is declared as AgentId (value type), so this assertion can never fail regardless of implementation.
-        // The meaningful check is the value assertion on the next line. Consider removing the type assertion
-        // or collapsing this test into ResolveAgent_WithIdleAgent_ReturnsResultAndMarksAgentBusy.
         result!.AgentId.Should().BeOfType<AgentId>();
         result.AgentId.Value.Should().Be("agent-typed");
     }

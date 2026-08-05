@@ -1,5 +1,8 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
+using MessagePack;
+using MessagePack.Formatters;
+using MessagePack.Resolvers;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 
@@ -14,6 +17,30 @@ public class AgentIdTests
     }
 
     [Fact]
+    public void Constructor_ValidString_SetsValue()
+    {
+        var id = new AgentId("agent-456");
+
+        id.Value.Should().Be("agent-456");
+    }
+
+    [Fact]
+    public void Constructor_NullString_ThrowsArgumentException()
+    {
+        var act = () => new AgentId(null!);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Constructor_EmptyString_ThrowsArgumentException()
+    {
+        var act = () => new AgentId(string.Empty);
+
+        act.Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
     public void ToString_ReturnsInnerValue()
     {
         var id = new AgentId("agent-456");
@@ -22,8 +49,6 @@ public class AgentIdTests
     }
 
     [Fact]
-    // TODO: This test exercises compiler-generated record struct equality rather than custom AgentId logic.
-    // Consider replacing with tests that verify custom behavior (implicit conversion + equality interaction).
     public void Equality_SameValue_AreEqual()
     {
         var id1 = new AgentId("same-agent");
@@ -35,7 +60,6 @@ public class AgentIdTests
     }
 
     [Fact]
-    // TODO: This test exercises compiler-generated record struct inequality — same concern as Equality_SameValue_AreEqual.
     public void Equality_DifferentValues_AreNotEqual()
     {
         var id1 = new AgentId("agent-a");
@@ -71,9 +95,6 @@ public class AgentIdTests
     }
 
     [Fact]
-    // TODO: HashSet tests below exercise compiler-generated GetHashCode/Equals from record struct,
-    // not custom AgentId logic. They document expected collection behavior but wouldn't detect regressions
-    // in custom code.
     public void HashSet_WorksCorrectly()
     {
         var set = new HashSet<AgentId>
@@ -113,5 +134,85 @@ public class AgentIdTests
         var act = () => { AgentId id = string.Empty; };
 
         act.Should().Throw<ArgumentException>();
+    }
+}
+
+/// <summary>
+/// Tests for the MessagePack formatter that serializes <see cref="AgentId"/> as a bare string.
+/// </summary>
+public class AgentIdFormatterTests
+{
+    private static readonly MessagePackSerializerOptions Options =
+        MessagePackSerializerOptions.Standard.WithResolver(
+            CompositeResolver.Create(
+                new IMessagePackFormatter[] { new AgentIdFormatter() },
+                new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
+
+    [Fact]
+    public void RoundTrip_SerializesAsString_DeserializesBackToAgentId()
+    {
+        var original = new AgentId("agent-abc-123");
+
+        var bytes = MessagePackSerializer.Serialize(original, Options);
+        var deserialized = MessagePackSerializer.Deserialize<AgentId>(bytes, Options);
+
+        deserialized.Should().Be(original);
+        deserialized.Value.Should().Be("agent-abc-123");
+    }
+
+    [Fact]
+    public void Serialize_ProducesPlainString_NotMapFormat()
+    {
+        var id = new AgentId("test-agent");
+
+        var bytes = MessagePackSerializer.Serialize(id, Options);
+        // Deserialize as a raw string to prove the wire format is a bare string, not a map
+        var asString = MessagePackSerializer.Deserialize<string>(bytes, Options);
+
+        asString.Should().Be("test-agent");
+    }
+
+    [Fact]
+    public void Serialize_DefaultAgentId_ThrowsMessagePackSerializationException()
+    {
+        // default(AgentId) has Value == null (zero-initialized, bypasses constructor)
+        var defaultId = default(AgentId);
+
+        var act = () => MessagePackSerializer.Serialize(defaultId, Options);
+
+        act.Should().Throw<MessagePackSerializationException>();
+    }
+
+    [Fact]
+    public void Deserialize_FromPlainString_ProducesAgentId()
+    {
+        // Serialize a raw string, then deserialize as AgentId
+        var bytes = MessagePackSerializer.Serialize("raw-agent-id", Options);
+        var deserialized = MessagePackSerializer.Deserialize<AgentId>(bytes, Options);
+
+        deserialized.Value.Should().Be("raw-agent-id");
+    }
+
+    [Fact]
+    public void Deserialize_FromNilToken_ThrowsMessagePackSerializationException()
+    {
+        // Serialize a null string to produce a nil MessagePack token
+        var bytes = MessagePackSerializer.Serialize((string?)null, Options);
+
+        var act = () => MessagePackSerializer.Deserialize<AgentId>(bytes, Options);
+
+        act.Should().Throw<MessagePackSerializationException>();
+    }
+
+    [Fact]
+    public void RoundTrip_GuidFormatAgentId()
+    {
+        var guid = Guid.NewGuid().ToString();
+        var original = new AgentId(guid);
+
+        var bytes = MessagePackSerializer.Serialize(original, Options);
+        var deserialized = MessagePackSerializer.Deserialize<AgentId>(bytes, Options);
+
+        deserialized.Value.Should().Be(guid);
     }
 }

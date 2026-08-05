@@ -126,11 +126,12 @@ public class AgentRegistryServiceExtendedTests
         Assert.Throws<ArgumentException>(() => _registry.Deregister(string.Empty));
     }
 
-    // TODO: The default(AgentId) path (Value == null, bypasses the implicit operator) is not covered for
-    // Deregister, GetByAgentId, UpdateHeartbeat, or TransitionStatus. Passing default(AgentId) reaches
-    // ConcurrentDictionary with a null key and throws ArgumentNullException from the dictionary internals
-    // rather than a clear validation boundary. Tests should be added once a guard is introduced in
-    // AgentRegistryService or the AgentId primary constructor (see AgentId.cs and AgentRegistryService TODOs).
+    [Fact]
+    public void Deregister_DefaultAgentId_ThrowsArgumentException()
+    {
+        // default(AgentId) has Value == null (bypasses constructor); guard in Deregister body throws ArgumentNullException
+        Assert.Throws<ArgumentNullException>(() => _registry.Deregister(default));
+    }
 
     // ── GetByAgentId ────────────────────────────────────────────────────
 
@@ -138,6 +139,12 @@ public class AgentRegistryServiceExtendedTests
     public void GetByAgentId_NonExistent_ReturnsNull()
     {
         _registry.GetByAgentId("non-existent").Should().BeNull();
+    }
+
+    [Fact]
+    public void GetByAgentId_DefaultAgentId_ThrowsArgumentException()
+    {
+        Assert.Throws<ArgumentNullException>(() => _registry.GetByAgentId(default));
     }
 
     // ── GetByConnectionId ───────────────────────────────────────────────
@@ -173,6 +180,12 @@ public class AgentRegistryServiceExtendedTests
     {
         // Should log warning but not throw
         _registry.UpdateHeartbeat("non-existent", DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public void UpdateHeartbeat_DefaultAgentId_ThrowsArgumentException()
+    {
+        Assert.Throws<ArgumentNullException>(() => _registry.UpdateHeartbeat(default, DateTimeOffset.UtcNow));
     }
 
     // ── TransitionStatus ────────────────────────────────────────────────
@@ -241,6 +254,12 @@ public class AgentRegistryServiceExtendedTests
     public void TransitionStatus_NonExistentAgent_DoesNotThrow()
     {
         _registry.TransitionStatus("non-existent", AgentStatus.Idle);
+    }
+
+    [Fact]
+    public void TransitionStatus_DefaultAgentId_ThrowsArgumentException()
+    {
+        Assert.Throws<ArgumentNullException>(() => _registry.TransitionStatus(default, AgentStatus.Idle));
     }
 
     // ── GetIdleAgents ───────────────────────────────────────────────────
