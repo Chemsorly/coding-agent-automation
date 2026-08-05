@@ -18,13 +18,6 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// completes without the CT being cancelled. A scenario where watchTask faults while pollTask is
 /// in a long Task.Delay would now wait until the delay completes rather than being cancelled
 /// immediately. This behavioral change is untested.
-/// TODO: [WARNING] No test coverage for DispatchService.RunLeadershipTermAsync override behavior.
-/// DispatchService is the only subclass that overrides RunLeadershipTermAsync to reset
-/// _startupValidationRun before delegating to base. This is a new behavioral contract introduced
-/// by issue #1758 and is not exercised end-to-end by any test in this class or in
-/// DispatchServiceLifecycleTests/DispatchServiceStartupValidationTests. Add a test that drives
-/// ExecuteAsync through a full leadership loss/re-acquisition cycle and asserts that startup
-/// validation (_agentProfileStore.LoadAgentProfilesAsync) is called again on the second tenure.
 /// </remarks>
 [Trait("Feature", "LeaderElectedPollingService")]
 public class LeaderElectedPollingServiceTests

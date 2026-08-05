@@ -7,11 +7,13 @@ using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using Serilog;
 using System.Reflection;
+using System.Threading;
 using Xunit;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
@@ -278,13 +280,9 @@ public class DispatchServiceStartupValidationTests : IDisposable
         // Verify _startupValidationRun is reset to false in ExecuteAsync at the start of
         // each leadership tenure, so ConfigMap changes between tenures are not missed.
         // We test by inspecting the field via reflection after manually setting it to true.
-        // TODO: [WARNING] This test does not exercise the new RunLeadershipTermAsync override path.
-        // It manually sets _startupValidationRun via reflection rather than invoking the real
-        // RunLeadershipTermAsync execution path. A regression where the reset is dropped from
-        // DispatchService.RunLeadershipTermAsync would leave this test passing. Replace with an
-        // end-to-end test that drives ExecuteAsync through a leadership loss/re-acquisition cycle
-        // and asserts that _agentProfileStore.LoadAgentProfilesAsync is called again on the second
-        // tenure (proving RunLeadershipTermAsync actually resets the flag before the base poll loop).
+        // NOTE: This test exercises the field mechanics via reflection. The end-to-end contract
+        // (that RunLeadershipTermAsync resets it before the poll loop) is exercised by
+        // RunLeadershipTermAsync_OnSecondTenure_RerunsStartupValidation below.
         var service = CreateDispatchService();
 
         var flagField = typeof(DispatchService).GetField("_startupValidationRun",
@@ -324,6 +322,60 @@ public class DispatchServiceStartupValidationTests : IDisposable
 
         missing.Should().ContainSingle().Which.Should().Be("Kiro DotNet",
             "profile with no matching template must be returned by ValidateAgentProfileTemplateMappingAsync");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // End-to-end: RunLeadershipTermAsync reset
+    // ═══════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task RunLeadershipTermAsync_OnSecondTenure_RerunsStartupValidation()
+    {
+        // This test exercises the DispatchService.RunLeadershipTermAsync override end-to-end.
+        // It drives ExecuteAsync through a leadership loss/re-acquisition cycle and asserts
+        // that LoadAgentProfilesAsync (startup validation) is called again on the second tenure,
+        // proving RunLeadershipTermAsync resets _startupValidationRun before the base poll loop.
+        var firstLeaderCts = new CancellationTokenSource();
+        var leaderElection = CreateControllableLeaderElection(firstLeaderCts);
+
+        var agentProfileStore = new CountingAgentProfileStore();
+        var service = CreateDispatchServiceWithLeaderElection(leaderElection, agentProfileStore);
+
+        var hostStopCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var executeTask = InvokeExecuteAsync(service, hostStopCts.Token);
+
+        // Wait for first poll cycle to complete (startup validation runs once)
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline && agentProfileStore.LoadCallCount < 1)
+            await Task.Delay(50);
+
+        agentProfileStore.LoadCallCount.Should().BeGreaterThan(0,
+            "LoadAgentProfilesAsync must be called during the first leadership tenure");
+
+        var countAfterFirstTenure = agentProfileStore.LoadCallCount;
+
+        // Simulate leadership loss
+        firstLeaderCts.Cancel();
+        await Task.Delay(300);
+
+        // Simulate re-acquisition with a new leader CTS
+        var secondLeaderCts = new CancellationTokenSource();
+        SetLeaderState(leaderElection, isLeader: true, secondLeaderCts);
+
+        // Wait for second tenure's startup validation to fire
+        deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline && agentProfileStore.LoadCallCount <= countAfterFirstTenure)
+            await Task.Delay(50);
+
+        agentProfileStore.LoadCallCount.Should().BeGreaterThan(countAfterFirstTenure,
+            "RunLeadershipTermAsync must reset _startupValidationRun so startup validation re-runs on the second tenure");
+
+        hostStopCts.Cancel();
+        await Task.WhenAny(executeTask, Task.Delay(TimeSpan.FromSeconds(2)));
+
+        firstLeaderCts.Dispose();
+        secondLeaderCts.Dispose();
+        hostStopCts.Dispose();
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -371,6 +423,70 @@ public class DispatchServiceStartupValidationTests : IDisposable
 
         var task = (Task)method.Invoke(service, [CancellationToken.None])!;
         await task;
+    }
+
+    private static Task InvokeExecuteAsync(DispatchService service, CancellationToken stoppingToken)
+    {
+        var method = typeof(BackgroundService).GetMethod("ExecuteAsync",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException("ExecuteAsync not found on BackgroundService");
+        var task = (Task)method.Invoke(service, [stoppingToken])!;
+        return task;
+    }
+
+    private DispatchService CreateDispatchServiceWithLeaderElection(
+        LeaderElectionService leaderElection,
+        CountingAgentProfileStore agentProfileStore,
+        JobTemplateStore? templateStore = null)
+    {
+        templateStore ??= BuildTemplateStore(["dotnet,kiro"]);
+
+        var configData = new Dictionary<string, string?>
+        {
+            ["WorkDistribution:Dispatch:PollIntervalSeconds"] = "1",
+            ["WorkDistribution:Dispatch:RateLimitPerSecond"] = "100",
+            ["WorkDistribution:Namespace"] = "default",
+            ["WorkDistribution:OrchestratorUrl"] = "http://orchestrator:8080",
+            ["WorkDistribution:AgentApiKeySecretName"] = "agent-api-key",
+            ["WorkDistribution:AgentServiceAccountName"] = "caa-agent"
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
+
+        var options = new DispatchServiceOptions
+        {
+            PollIntervalSeconds = 1,
+            RateLimitPerSecond = 100,
+            Namespace = "default",
+            OrchestratorUrl = "http://orchestrator:8080",
+            AgentApiKeySecretName = "agent-api-key",
+            AgentServiceAccountName = "caa-agent"
+        };
+
+        return new DispatchService(
+            new DispatchServiceCoreDependencies(_dbFactory,
+                leaderElection,
+                new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, options),
+                AgentProfileStore: agentProfileStore),
+            config,
+            templateStore);
+    }
+
+    private static LeaderElectionService CreateControllableLeaderElection(CancellationTokenSource leaderCts)
+    {
+        var les = new LeaderElectionService(Options.Create(new LeaderElectionOptions()));
+        SetLeaderState(les, isLeader: true, leaderCts);
+        return les;
+    }
+
+    private static void SetLeaderState(LeaderElectionService les, bool isLeader, CancellationTokenSource cts)
+    {
+        var isLeaderField = typeof(LeaderElectionService).GetField("_isLeader",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        isLeaderField!.SetValue(les, isLeader);
+
+        var leaderCtsField = typeof(LeaderElectionService).GetField("_leaderCts",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        leaderCtsField!.SetValue(les, cts);
     }
 
     private static InMemoryAgentProfileStore BuildAgentProfileStore(params AgentProfile[] profiles)
@@ -453,7 +569,38 @@ public class DispatchServiceStartupValidationTests : IDisposable
             throw new NotSupportedException();
     }
 
-    /// <summary>Captures warning messages for assertion.</summary>
+    /// <summary>
+    /// IAgentProfileStore that counts how many times <see cref="LoadAgentProfilesAsync"/> is called.
+    /// Used by <c>RunLeadershipTermAsync_OnSecondTenure_RerunsStartupValidation</c> to verify
+    /// that startup validation re-fires after leadership re-acquisition.
+    /// </summary>
+    private sealed class CountingAgentProfileStore : CodingAgentWebUI.Pipeline.Interfaces.IAgentProfileStore
+    {
+        private int _loadCallCount;
+
+        public int LoadCallCount => _loadCallCount;
+
+        public Task<IReadOnlyList<AgentProfile>> LoadAgentProfilesAsync(CancellationToken ct)
+        {
+            Interlocked.Increment(ref _loadCallCount);
+            IReadOnlyList<AgentProfile> result =
+            [
+                new AgentProfile
+                {
+                    DisplayName = "Kiro DotNet",
+                    MatchLabels = ["dotnet", "kiro"],
+                    AgentProviderConfigId = "cfg-1",
+                    Enabled = true
+                }
+            ];
+            return Task.FromResult(result);
+        }
+
+        public Task SaveAgentProfileAsync(AgentProfile profile, CancellationToken ct) =>
+            throw new NotSupportedException();
+        public Task DeleteAgentProfileAsync(string id, CancellationToken ct) =>
+            throw new NotSupportedException();
+    }
     internal sealed class TestLogger : Serilog.ILogger
     {
         public readonly List<string> Warnings = new();
