@@ -201,7 +201,8 @@ public sealed class AgentConnectionLifecycle : IAsyncDisposable
         {
             if (manager.IsConnected)
             {
-                await manager.Connection.InvokeAsync(HubMethodNames.DeregisterAgent, _agentId);
+                await manager.Connection.InvokeAsync(HubMethodNames.DeregisterAgent, _agentId,
+                    CancellationToken.None); // intentional: ShutdownAsync runs after ApplicationStopping is already signaled; must complete regardless
                 _logger.Information("Agent {AgentId} deregistered from orchestrator", _agentId);
             }
         }
