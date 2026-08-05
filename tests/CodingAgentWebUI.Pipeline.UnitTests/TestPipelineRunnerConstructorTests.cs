@@ -93,8 +93,8 @@ public class TestPipelineRunnerConstructorTests : IDisposable
     public async Task DisposeAsync_DoesNotThrow()
     {
         var runner = CreateRunner();
-        await runner.DisposeAsync();
-        // No exception = pass
+        var act = async () => await runner.DisposeAsync();
+        await act.Should().NotThrowAsync();
     }
 
     [Fact]
