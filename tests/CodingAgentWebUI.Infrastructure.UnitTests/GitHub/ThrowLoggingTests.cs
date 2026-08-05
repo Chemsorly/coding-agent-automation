@@ -39,6 +39,8 @@ public class ThrowLoggingTests : IDisposable
     [Fact]
     public void ParseIssueIdentifier_InvalidIdentifier_LogsWarningBeforeThrowing()
     {
+        _sink.Clear();
+
         var act = () => TestableGitHubProviderForLogging.ExposedParseIssueIdentifier("not-a-number");
 
         act.Should().Throw<ArgumentException>();
@@ -65,6 +67,8 @@ public class ThrowLoggingTests : IDisposable
             new GitHubConnectionInfo("https://api.github.com", "owner", "repo"),
             mockClient.Object);
 
+        _sink.Clear();
+
         var act = () => provider.ValidateAsync(CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>();
@@ -86,6 +90,8 @@ public class ThrowLoggingTests : IDisposable
         var provider = new GitHubIssueProvider(
             new GitHubConnectionInfo("https://api.github.com", "owner", "repo"),
             mockClient.Object);
+
+        _sink.Clear();
 
         var act = () => provider.ValidateAsync(CancellationToken.None);
 
@@ -111,6 +117,8 @@ public class ThrowLoggingTests : IDisposable
             new GitHubConnectionInfo("https://api.github.com", "owner", "repo"),
             mockClient.Object);
 
+        _sink.Clear();
+
         var act = () => provider.ValidateAsync(CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>();
@@ -135,6 +143,8 @@ public class ThrowLoggingTests : IDisposable
             new GitHubConnectionInfo("https://api.github.com", "owner", "repo"),
             mockClient.Object);
 
+        _sink.Clear();
+
         var act = () => provider.ValidateAsync(CancellationToken.None);
 
         await act.Should().ThrowAsync<InvalidOperationException>();
@@ -155,6 +165,8 @@ public class ThrowLoggingTests : IDisposable
         var provider = new GitHubIssueProvider(
             new GitHubConnectionInfo("https://api.github.com", "owner", "repo"),
             mockClient.Object);
+
+        _sink.Clear();
 
         var act = () => provider.UpdateCommentAsync("123", "not-a-number", "body", CancellationToken.None);
 
@@ -178,6 +190,8 @@ public class ThrowLoggingTests : IDisposable
         var response = CreateForbiddenResponse();
         var octokitException = new Octokit.RateLimitExceededException(response.Object);
 
+        _sink.Clear();
+
         var act = () => provider.InvokeWithRateLimitHandlingAsync<string>(
             () => throw octokitException);
 
@@ -196,6 +210,8 @@ public class ThrowLoggingTests : IDisposable
 
         var response = CreateForbiddenResponse(retryAfterSeconds: 60);
         var abuseException = new AbuseException(response.Object);
+
+        _sink.Clear();
 
         var act = () => provider.InvokeWithRateLimitHandlingAsync<string>(
             () => throw abuseException);
@@ -257,6 +273,7 @@ public class ThrowLoggingTests : IDisposable
         private readonly List<LogEvent> _events = new();
         public IReadOnlyList<LogEvent> Events => _events;
         public void Emit(LogEvent logEvent) => _events.Add(logEvent);
+        public void Clear() => _events.Clear();
     }
 
     /// <summary>

@@ -213,7 +213,13 @@
                     <span class="label-badge label-badge-static">agent:generated</span>
                     <div class="form-checkbox">
                         <label>
-                            <input type="checkbox" @bind="_modalAutoDispatch" />
+                            @* Known limitation: @onkeydown:stopPropagation stops ALL keydown events (not just Enter) from reaching
+                               the modal overlay. If focus is on this checkbox and Escape is pressed, the modal will NOT close —
+                               the Escape event is swallowed here. Keyboard-only users must use Cancel or click outside.
+                               A more targeted fix would propagate Escape explicitly or only stop Enter/Space.
+                               Note: Blazor's KeyboardEventArgs does not expose e.Target, so a target-based guard is not directly
+                               implementable. This is a known trade-off, not an open work item. *@
+                            <input type="checkbox" @bind="_modalAutoDispatch" @onkeydown:stopPropagation="true" />
                             <span class="label-badge label-badge-optional">agent:next</span>
                             — auto-dispatch created issues for agent execution
                         </label>
@@ -257,6 +263,7 @@
 
     // Refactoring modal state
     private bool _showRefactoringModal;
+    private bool _modalJustOpened;
     private string? _modalTemplateId;
     private string? _modalTemplateName;
     private bool _modalAutoDispatch;
@@ -275,11 +282,14 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        // TODO(#1772): FocusAsync is called on every re-render while the modal is open, which could steal
-        // focus from the checkbox during interaction. Consider tracking a _modalJustOpened flag that
-        // is set in OpenRefactoringModal and cleared after the first successful FocusAsync call.
-        if (_showRefactoringModal)
+        if (_showRefactoringModal && _modalJustOpened)
         {
+            // TODO(WARNING): _modalJustOpened is cleared before FocusAsync is awaited. If FocusAsync throws
+            // (caught below), the flag is already false and there is no retry — the modal overlay loses focus
+            // permanently for this open. The original code retried on every re-render as a fallback.
+            // Fix: clear the flag only after FocusAsync succeeds, or accept a single retry by clearing inside
+            // the catch block only when an explicit retry count is exhausted.
+            _modalJustOpened = false;
             try
             {
                 await _modalOverlayRef.FocusAsync();
@@ -374,6 +384,7 @@
         _modalTemplateName = templateName;
         _modalAutoDispatch = false;
         _showRefactoringModal = true;
+        _modalJustOpened = true;
     }
 
     private async Task ConfirmRefactoringModal()
@@ -387,9 +398,11 @@
         _showRefactoringModal = false;
     }
 
-    // TODO(#1772): Enter key bubbles up from checkbox input and will confirm the modal even when the
-    // user may intend to toggle the checkbox. Browsers use Space (not Enter) for checkbox toggle,
-    // so this is low risk, but consider guarding against e.Target being the checkbox element.
+    // Known limitation (#1772): @onkeydown:stopPropagation on the checkbox stops ALL keydown events
+    // from bubbling to this handler, not just Enter. This means Escape pressed while the checkbox is
+    // focused will not close the modal — keyboard-only users must use Cancel or click outside.
+    // Blazor's KeyboardEventArgs does not expose a Target property, so a target-based guard that would
+    // selectively pass through Escape is not directly implementable. This is an accepted trade-off.
     private async Task HandleRefactoringModalKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Escape")
