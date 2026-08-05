@@ -18,64 +18,7 @@ using Serilog;
 using Serilog.Enrichers.Span;
 
 // ── CLI command: export-config ──────────────────────────────────────────────
-if (args.Length >= 1 && args[0] == "export-config")
-{
-    var outputArg = args.FirstOrDefault(a => a.StartsWith("--output="))
-        ?? args.FirstOrDefault(a => a == "--output");
-
-    string? outputDir = null;
-    if (outputArg is not null && outputArg.StartsWith("--output="))
-    {
-        outputDir = outputArg["--output=".Length..];
-    }
-    else if (outputArg == "--output")
-    {
-        var idx = Array.IndexOf(args, "--output");
-        if (idx + 1 < args.Length)
-            outputDir = args[idx + 1];
-    }
-
-    if (string.IsNullOrWhiteSpace(outputDir))
-    {
-        await Console.Error.WriteLineAsync("Usage: dotnet run -- export-config --output /path/to/dir");
-        return;
-    }
-
-    // Initialize minimal Serilog for CLI mode
-    Log.Logger = new LoggerConfiguration()
-        .MinimumLevel.Information()
-        .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
-        .CreateLogger();
-
-    var exportConfig = new ConfigurationBuilder()
-        .AddJsonFile("appsettings.json", optional: true)
-        .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production"}.json", optional: true)
-        .AddEnvironmentVariables()
-        .Build();
-
-    var connectionString = CodingAgentWebUI.Services.DatabaseConnectionResolver.Resolve(exportConfig);
-
-    if (string.IsNullOrWhiteSpace(connectionString))
-    {
-        Log.Error("export-config requires Database:Host to be configured");
-        return;
-    }
-
-    var services = new ServiceCollection();
-    services.AddPooledDbContextFactory<PipelineDbContext>(o => o.UseNpgsql(connectionString));
-    services.AddSingleton<ConfigExportService>();
-
-#pragma warning disable ASP0000 // Intentional: CLI command uses isolated DI container, not the web host
-    await using var sp = services.BuildServiceProvider();
-#pragma warning restore ASP0000
-    var exportService = sp.GetRequiredService<ConfigExportService>();
-
-    Directory.CreateDirectory(outputDir);
-    await exportService.ExportAsync(outputDir, CancellationToken.None);
-
-    Log.Information("Export complete: {OutputDir}", outputDir);
-    return;
-}
+if (await ExportConfigCommand.TryExecuteAsync(args)) return;
 
 // Bootstrap logger: captures log output during service registration (before UseSerilog takes over at Build())
 // TODO: Add integration test verifying ResolveApiKey log messages appear in output (review-findings #953)
@@ -152,111 +95,18 @@ builder.Services.AddScoped<CodingAgentWebUI.Services.AgentCodingPageService>();
 builder.Services.AddScoped<CodingAgentWebUI.Services.AgentMonitoringPageService>();
 builder.Services.AddScoped<CodingAgentWebUI.Services.NotificationService>();
 
-// SignalR — hub services with MessagePack protocol
-builder.Services.AddSignalR(options =>
-    {
-        // Agents may send output chunks or large payloads; default 32KB is too restrictive.
-        options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
-    })
-    .AddMessagePackProtocol(options =>
-    {
-        options.SerializerOptions = MessagePack.MessagePackSerializerOptions.Standard
-            .WithResolver(MessagePack.Resolvers.CompositeResolver.Create(
-                new MessagePack.Formatters.IMessagePackFormatter[] { new CodingAgentWebUI.Pipeline.Models.JobIdFormatter() },
-                new MessagePack.IFormatterResolver[] { MessagePack.Resolvers.ContractlessStandardResolverAllowPrivate.Instance }));
-    });
+// SignalR — hub services with MessagePack protocol and agent authorization filter
+builder.Services.AddSignalRServices();
 
-// SignalR — hub filter for agent authorization
-builder.Services.AddSingleton<IHubFilter>(sp => new AgentAuthorizationFilter(
-    sp.GetRequiredService<IAgentRegistryService>(),
-    Serilog.Log.Logger));
-
-// Agent API key authentication — NOT set as default scheme to avoid interfering with Blazor UI.
-// When only one scheme is registered, ASP.NET Core auto-promotes it to the default scheme,
-// causing UseAuthentication() to challenge every request (health checks, Blazor, static files).
-// Explicitly clear the defaults so only endpoints with RequireAuthorization("AgentApiKey") trigger it.
-var agentApiKey = AgentApiKeyAuthHandler.ResolveApiKey(Serilog.Log.Logger);
-builder.Services.AddAuthentication(options =>
-    {
-        options.DefaultAuthenticateScheme = null;
-        options.DefaultChallengeScheme = null;
-    })
-    .AddScheme<AgentApiKeyAuthOptions, AgentApiKeyAuthHandler>(
-        AgentApiKeyDefaults.AuthenticationScheme,
-        options => options.ApiKey = agentApiKey);
-builder.Services.AddAuthorizationBuilder()
-    .AddPolicy("AgentApiKey", policy =>
-        policy.AddAuthenticationSchemes(AgentApiKeyDefaults.AuthenticationScheme)
-              .RequireAuthenticatedUser());
+// Agent API key authentication and authorization
+builder.Services.AddAgentAuthentication(Serilog.Log.Logger);
 
 // Configure Serilog
-var orchestratorLogLevel = LogLevelParser.Parse(
-    Environment.GetEnvironmentVariable("LOG_LEVEL"),
-    Serilog.Events.LogEventLevel.Information);
-var dbLogLevel = LogLevelParser.Parse(
-    Environment.GetEnvironmentVariable("DB_LOG_LEVEL"),
-    Serilog.Events.LogEventLevel.Warning);
-builder.Host.UseSerilog((ctx, lc) => lc
-    .MinimumLevel.Is(orchestratorLogLevel)
-    // Suppress noisy ASP.NET Core framework logging (health checks, static files, Blazor negotiation, auth)
-    .MinimumLevel.Override("Microsoft.AspNetCore", Serilog.Events.LogEventLevel.Warning)
-    // EF Core SQL command logging — controlled separately via DB_LOG_LEVEL env var
-    .MinimumLevel.Override("Microsoft.EntityFrameworkCore.Database.Command", dbLogLevel)
-    // Suppress noisy Npgsql connection open/close logging (Verbose/Trace only)
-    .MinimumLevel.Override("Npgsql", Serilog.Events.LogEventLevel.Warning)
-    .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
-    .Enrich.FromLogContext()
-    .Enrich.WithSpan()
-    .WriteTo.Console(theme: Serilog.Sinks.SystemConsole.Themes.ConsoleTheme.None)
-    .WriteToOtlpIfConfigured("coding-agent-orchestrator", ctx.HostingEnvironment.EnvironmentName));
+builder.Host.ConfigureSerilog();
 
 // Configure OpenTelemetry (tracing + metrics)
-builder.Services.AddOpenTelemetry()
-    .ConfigureResource(r => r.AddService(
-        serviceName: "coding-agent-orchestrator",
-        serviceVersion: typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0"))
-    .WithTracing(t =>
-    {
-        t.AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation()
-            .AddSource(PipelineTelemetry.SourceName)
-            .AddSource("Microsoft.AspNetCore.SignalR.Server")
-            .AddOtlpExporter();
-
-        // DB mode: Npgsql tracing for query spans
-        if (!string.IsNullOrEmpty(dbConnectionString))
-            t.AddSource("Npgsql");
-
-        // Redis backplane: trace Redis commands
-        var redisConn = builder.Configuration.GetValue<string>("SignalR:Redis:ConnectionString");
-        if (!string.IsNullOrEmpty(redisConn))
-            t.AddSource("StackExchange.Redis");
-    })
-    .WithMetrics(m =>
-    {
-        m.AddAspNetCoreInstrumentation()
-            .AddHttpClientInstrumentation()
-            .AddMeter(PipelineTelemetry.SourceName)
-            // Prometheus requires Cumulative temporality. The OTLP exporter defaults to Delta
-            // for histograms and counters, which causes Grafana Cloud to silently drop histogram
-            // data (dispatch_queue_wait_time, pipeline_jobs_duration, etc.) while gauges — which
-            // have no temporality — continue to export correctly. Setting Cumulative here ensures
-            // all instrument types are compatible with the Prometheus remote-write pipeline.
-            .AddOtlpExporter((_, readerOptions) =>
-                readerOptions.TemporalityPreference = MetricReaderTemporalityPreference.Cumulative);
-
-        // TODO [WARNING]: WorkDistributionTelemetry meter is added after AddOtlpExporter above.
-        // In the OTel .NET SDK, AddMeter and AddOtlpExporter both operate on the same MeterProviderBuilder
-        // pipeline — registration order within WithMetrics does not affect which meters are covered by
-        // the exporter. This meter IS exported with Cumulative temporality. However, the ordering may
-        // mislead future maintainers into thinking it is on a separate, unconfigured exporter. Consider
-        // moving AddMeter(WorkDistributionTelemetry.MeterName) inside the fluent chain above, or keep
-        // this comment as a clarification. (DotNetSpecialist / Correctness review finding)
-
-        // Work distribution metrics (035a)
-        if (!string.IsNullOrEmpty(dbConnectionString))
-            m.AddMeter(CodingAgentWebUI.Orchestration.Telemetry.WorkDistributionTelemetry.MeterName);
-    });
+var redisConnectionString = builder.Configuration.GetValue<string>("SignalR:Redis:ConnectionString");
+builder.Services.AddApplicationTelemetry(dbConnectionString, redisConnectionString);
 
 var app = builder.Build();
 

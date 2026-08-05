@@ -505,37 +505,13 @@ internal static class RepositoryGitOperations
             {
                 if (conflict.Theirs != null)
                 {
-                    // Accept the incoming (base/main) version of the file
-                    var blob = repo.Lookup<Blob>(conflict.Theirs.Id);
-                    if (blob != null)
-                    {
-                        var filePath = Path.Combine(workspacePath, conflict.Theirs.Path.Replace('/', Path.DirectorySeparatorChar));
-                        var dir = Path.GetDirectoryName(filePath);
-                        if (dir != null && !Directory.Exists(dir))
-                            Directory.CreateDirectory(dir);
-
-                        using (var contentStream = blob.GetContentStream())
-                        using (var fileStream = File.Create(filePath))
-                        {
-                            contentStream.CopyTo(fileStream);
-                        }
-
-                        Commands.Stage(repo, conflict.Theirs.Path);
+                    if (ApplyTheirsVersion(repo, workspacePath, conflict.Theirs))
                         resolvedCount++;
-                    }
                 }
                 else
                 {
-                    // File was deleted on base (theirs is null) — accept the deletion
-                    var pathToRemove = conflict.Ours?.Path ?? conflict.Ancestor?.Path;
-                    if (pathToRemove != null)
-                    {
-                        var filePath = Path.Combine(workspacePath, pathToRemove.Replace('/', Path.DirectorySeparatorChar));
-                        if (File.Exists(filePath))
-                            File.Delete(filePath);
-                        repo.Index.Remove(pathToRemove);
+                    if (AcceptDeletion(repo, workspacePath, conflict.Ours, conflict.Ancestor))
                         resolvedCount++;
-                    }
                 }
             }
             catch (Exception ex)
@@ -547,6 +523,50 @@ internal static class RepositoryGitOperations
         repo.Index.Write();
         Log.Information("Force-resolved {Count}/{Total} conflict(s) using incoming (main wins)",
             resolvedCount, conflicts.Count);
+    }
+
+    /// <summary>
+    /// Returns true if the file was written and staged; false when the blob lookup returns null
+    /// (e.g. corrupted pack or shallow clone), in which case the conflict is NOT resolved.
+    /// </summary>
+    private static bool ApplyTheirsVersion(Repository repo, WorkspacePath workspacePath, IndexEntry theirs)
+    {
+        // Accept the incoming (base/main) version of the file
+        var blob = repo.Lookup<Blob>(theirs.Id);
+        if (blob is null)
+            return false;
+
+        var filePath = Path.Combine(workspacePath, theirs.Path.Replace('/', Path.DirectorySeparatorChar));
+        var dir = Path.GetDirectoryName(filePath);
+        if (dir != null && !Directory.Exists(dir))
+            Directory.CreateDirectory(dir);
+
+        using (var contentStream = blob.GetContentStream())
+        using (var fileStream = File.Create(filePath))
+        {
+            contentStream.CopyTo(fileStream);
+        }
+
+        Commands.Stage(repo, theirs.Path);
+        return true;
+    }
+
+    /// <summary>
+    /// Returns true if the deletion was accepted (file removed and index updated);
+    /// false when both Ours and Ancestor paths are null, meaning nothing was done.
+    /// </summary>
+    private static bool AcceptDeletion(Repository repo, WorkspacePath workspacePath, IndexEntry? ours, IndexEntry? ancestor)
+    {
+        // File was deleted on base (theirs is null) — accept the deletion
+        var pathToRemove = ours?.Path ?? ancestor?.Path;
+        if (pathToRemove is null)
+            return false;
+
+        var filePath = Path.Combine(workspacePath, pathToRemove.Replace('/', Path.DirectorySeparatorChar));
+        if (File.Exists(filePath))
+            File.Delete(filePath);
+        repo.Index.Remove(pathToRemove);
+        return true;
     }
 
     public static string MapChangeKind(ChangeKind kind) => kind switch

@@ -56,65 +56,85 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
             }
         ).ToListAsync(ct);
 
-        var summaries = rows.Select(r => new ActiveRunSummary
-        {
-            RunId = r.RunId?.ToString() ?? r.WorkItemId.ToString(),
-            IssueIdentifier = r.IssueIdentifier,
-            IssueTitle = r.IssueTitle ?? "",
-            RunType = r.RunType ?? MapTaskTypeToRunType(r.TaskType),
-            AgentId = r.AssignedAgentId ?? r.AgentId,
-            StartedAt = r.DispatchedAt ?? r.CreatedAt,
-            ProjectName = r.ProjectName,
-            CurrentStep = MapStatusToStep(r.Status)
-        }).ToList();
+        var summaries = rows.Select(r => MapRowToSummary(r.RunId, r.WorkItemId, r.IssueIdentifier,
+            r.IssueTitle, r.RunType, r.TaskType, r.AssignedAgentId, r.AgentId,
+            r.DispatchedAt, r.CreatedAt, r.ProjectName, r.Status)).ToList();
 
-        // Enrich with live in-memory state (real-time step transitions, agent assignment)
-        if (_runService is not null)
-        {
-            for (var i = 0; i < summaries.Count; i++)
-            {
-                var liveRun = _runService.GetRun(summaries[i].RunId);
-                if (liveRun is null) continue;
-
-                summaries[i] = summaries[i] with
-                {
-                    CurrentStep = liveRun.CurrentStep,
-                    AgentId = summaries[i].AgentId ?? liveRun.AgentId,
-                    IssueTitle = !string.IsNullOrEmpty(liveRun.IssueTitle) ? liveRun.IssueTitle : summaries[i].IssueTitle,
-                    ProjectName = summaries[i].ProjectName ?? liveRun.ProjectName
-                };
-            }
-
-            // Append in-memory-only runs that have no matching WorkItem in the DB.
-            // This covers runs restored via agent reconnection (RegisterAgent) where
-            // no WorkItem row exists — without this, monitoring shows fewer active runs
-            // than busy agents.
-            var dbRunIds = new HashSet<string>(summaries.Select(s => s.RunId), StringComparer.OrdinalIgnoreCase);
-            foreach (var liveRun in _runService.GetActiveRuns())
-            {
-                if (dbRunIds.Contains(liveRun.RunId))
-                    continue;
-
-                // Skip consolidation ghost runs (should not exist with proper filtering,
-                // but defensive against edge cases)
-                if (liveRun.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
-                    continue;
-
-                summaries.Add(new ActiveRunSummary
-                {
-                    RunId = liveRun.RunId,
-                    IssueIdentifier = liveRun.IssueIdentifier,
-                    IssueTitle = liveRun.IssueTitle ?? "",
-                    RunType = liveRun.RunType,
-                    AgentId = liveRun.AgentId,
-                    StartedAt = liveRun.StartedAtOffset,
-                    ProjectName = liveRun.ProjectName,
-                    CurrentStep = liveRun.CurrentStep
-                });
-            }
-        }
+        EnrichWithLiveState(summaries);
 
         return summaries;
+    }
+
+    private static ActiveRunSummary MapRowToSummary(
+        Guid? runId, Guid workItemId, string issueIdentifier,
+        string? issueTitle, PipelineRunType? runType, WorkItemTaskType taskType,
+        string? assignedAgentId, string? agentId,
+        DateTimeOffset? dispatchedAt, DateTimeOffset createdAt,
+        string? projectName, WorkItemStatus status)
+    {
+        return new ActiveRunSummary
+        {
+            RunId = runId?.ToString() ?? workItemId.ToString(),
+            IssueIdentifier = issueIdentifier,
+            IssueTitle = issueTitle ?? "",
+            RunType = runType ?? MapTaskTypeToRunType(taskType),
+            AgentId = assignedAgentId ?? agentId,
+            StartedAt = dispatchedAt ?? createdAt,
+            ProjectName = projectName,
+            CurrentStep = MapStatusToStep(status)
+        };
+    }
+
+    private void EnrichWithLiveState(List<ActiveRunSummary> summaries)
+    {
+        if (_runService is null) return;
+
+        for (var i = 0; i < summaries.Count; i++)
+        {
+            var liveRun = _runService.GetRun(summaries[i].RunId);
+            if (liveRun is null) continue;
+
+            summaries[i] = summaries[i] with
+            {
+                CurrentStep = liveRun.CurrentStep,
+                AgentId = summaries[i].AgentId ?? liveRun.AgentId,
+                IssueTitle = !string.IsNullOrEmpty(liveRun.IssueTitle) ? liveRun.IssueTitle : summaries[i].IssueTitle,
+                ProjectName = summaries[i].ProjectName ?? liveRun.ProjectName
+            };
+        }
+
+        var dbRunIds = new HashSet<string>(summaries.Select(s => s.RunId), StringComparer.OrdinalIgnoreCase);
+        AppendInMemoryOnlyRuns(summaries, dbRunIds);
+    }
+
+    private void AppendInMemoryOnlyRuns(List<ActiveRunSummary> summaries, HashSet<string> dbRunIds)
+    {
+        // Append in-memory-only runs that have no matching WorkItem in the DB.
+        // This covers runs restored via agent reconnection (RegisterAgent) where
+        // no WorkItem row exists — without this, monitoring shows fewer active runs
+        // than busy agents.
+        foreach (var liveRun in _runService!.GetActiveRuns())
+        {
+            if (dbRunIds.Contains(liveRun.RunId))
+                continue;
+
+            // Skip consolidation ghost runs (should not exist with proper filtering,
+            // but defensive against edge cases)
+            if (liveRun.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
+                continue;
+
+            summaries.Add(new ActiveRunSummary
+            {
+                RunId = liveRun.RunId,
+                IssueIdentifier = liveRun.IssueIdentifier,
+                IssueTitle = liveRun.IssueTitle ?? "",
+                RunType = liveRun.RunType,
+                AgentId = liveRun.AgentId,
+                StartedAt = liveRun.StartedAtOffset,
+                ProjectName = liveRun.ProjectName,
+                CurrentStep = liveRun.CurrentStep
+            });
+        }
     }
 
     /// <summary>

@@ -144,45 +144,16 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
                     continue;
                 }
 
-                // Try to acquire the advisory lock
                 var acquired = await _lockConnection!.TryAcquireLockAsync(_options.LockKey, stoppingToken);
-
-                if (acquired && !IsLeader)
-                {
-                    // Transition to leader — CAS ensures we don't overwrite if StopAsync raced ahead
-                    if (Interlocked.CompareExchange(ref _leaderState, 1, 0) == 0)
-                    {
-                        Log.Information("PostgresLeaderElectionService: Leadership ACQUIRED via advisory lock");
-                        SafeInvokeStartedLeading();
-                    }
-                    else
-                    {
-                        Log.Debug("PostgresLeaderElectionService: Lock acquired but state transition blocked (concurrent stop)");
-                    }
-                }
-                else if (!acquired && IsLeader)
-                {
-                    // Lost leadership (shouldn't normally happen unless connection was recycled)
-                    await HandleLeadershipLostAsync();
-                }
-                else if (!acquired)
-                {
-                    Log.Debug("PostgresLeaderElectionService: Lock not acquired, another replica is leader");
-                }
+                await HandleLockAcquisitionResultAsync(acquired, stoppingToken);
 
                 // If we're the leader, periodically verify the lock is still held
                 if (IsLeader)
                 {
-                    await VerifyLockHeldLoopAsync(stoppingToken);
-                    // If we exit the verify loop, we lost leadership
-                    if (IsLeader)
-                    {
-                        await HandleLeadershipLostAsync();
-                    }
+                    await MaintainLeadershipOrYieldAsync(stoppingToken);
                 }
                 else
                 {
-                    // Not leader — wait before retrying
                     await DelayWithCancellation(_options.RetryDelay, stoppingToken);
                 }
             }
@@ -206,6 +177,46 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
         }
 
         Log.Information("PostgresLeaderElectionService: Election loop exiting");
+    }
+
+    // TODO: [WARNING] `stoppingToken` is accepted but never forwarded to `HandleLeadershipLostAsync()`.
+    // If leadership is lost during a host stop sequence, the cleanup work cannot be short-circuited by
+    // the host's cancellation signal. Either remove the parameter (update the call-site accordingly)
+    // or propagate it into `HandleLeadershipLostAsync` so the cancellation contract is honoured.
+    private async Task HandleLockAcquisitionResultAsync(bool acquired, CancellationToken stoppingToken)
+    {
+        if (acquired && !IsLeader)
+        {
+            // Transition to leader — CAS ensures we don't overwrite if StopAsync raced ahead
+            if (Interlocked.CompareExchange(ref _leaderState, 1, 0) == 0)
+            {
+                Log.Information("PostgresLeaderElectionService: Leadership ACQUIRED via advisory lock");
+                SafeInvokeStartedLeading();
+            }
+            else
+            {
+                Log.Debug("PostgresLeaderElectionService: Lock acquired but state transition blocked (concurrent stop)");
+            }
+        }
+        else if (!acquired && IsLeader)
+        {
+            // Lost leadership (shouldn't normally happen unless connection was recycled)
+            await HandleLeadershipLostAsync();
+        }
+        else if (!acquired)
+        {
+            Log.Debug("PostgresLeaderElectionService: Lock not acquired, another replica is leader");
+        }
+    }
+
+    private async Task MaintainLeadershipOrYieldAsync(CancellationToken stoppingToken)
+    {
+        await VerifyLockHeldLoopAsync(stoppingToken);
+        // If we exit the verify loop, we lost leadership
+        if (IsLeader)
+        {
+            await HandleLeadershipLostAsync();
+        }
     }
 
     /// <summary>

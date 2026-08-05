@@ -104,31 +104,14 @@ public sealed class HeartbeatMonitorService : BackgroundService
         {
             if (agent.Status != AgentStatus.Disconnected)
             {
-                if (agent.Labels?.Any(l => string.Equals(l, "chat=true", StringComparison.OrdinalIgnoreCase)) == true)
-                {
-                    // Chat agents are exempt from heartbeat sweeping (they don't send periodic heartbeats).
-                    // Log a warning if the agent has been registered for an unusually long time —
-                    // this may indicate a leaked registration after a pod crash.
-                    var registeredAge = now - agent.RegisteredAt;
-                    if (registeredAge > TimeSpan.FromHours(4))
-                    {
-                        _logger.Warning(
-                            "Chat agent {AgentId} has been registered for {AgeHours:F1}h — " +
-                            "may be a leaked registration if the pod is no longer running",
-                            agent.AgentId, registeredAge.TotalHours);
-                    }
+                if (HandleChatAgentSweep(agent, now))
                     continue;
-                }
 
                 if (SweepStaleHeartbeats(agent, now, heartbeatTimeout))
-                {
                     continue;
-                }
 
                 if (agent.Status == AgentStatus.Busy)
-                {
                     await SweepBusyAgent(agent, now, gracePeriod, pipelineConfig, ct);
-                }
 
                 continue;
             }
@@ -137,6 +120,32 @@ public sealed class HeartbeatMonitorService : BackgroundService
         }
 
         await SweepOrphanedRuns(now, ct);
+    }
+
+    private static bool IsChatAgent(AgentEntry agent)
+        => agent.Labels?.Any(l => string.Equals(l, "chat=true", StringComparison.OrdinalIgnoreCase)) == true;
+
+    /// <summary>
+    /// Handles the chat-agent sweep exemption block.
+    /// Returns true if the agent is a chat agent (caller should continue to next agent).
+    /// </summary>
+    private bool HandleChatAgentSweep(AgentEntry agent, DateTimeOffset now)
+    {
+        if (!IsChatAgent(agent))
+            return false;
+
+        // Chat agents are exempt from heartbeat sweeping (they don't send periodic heartbeats).
+        // Log a warning if the agent has been registered for an unusually long time —
+        // this may indicate a leaked registration after a pod crash.
+        var registeredAge = now - agent.RegisteredAt;
+        if (registeredAge > TimeSpan.FromHours(4))
+        {
+            _logger.Warning(
+                "Chat agent {AgentId} has been registered for {AgeHours:F1}h — " +
+                "may be a leaked registration if the pod is no longer running",
+                agent.AgentId, registeredAge.TotalHours);
+        }
+        return true;
     }
 
     /// <summary>
@@ -233,13 +242,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         var run = _runService.GetRun(agent.ActiveJobId!);
         if (run is not null)
         {
-            DateTimeOffset referenceTime;
-            if (run.LastStepChangeAt != default)
-                referenceTime = run.LastStepChangeAt;
-            else if (run.StartedAtOffset != default)
-                referenceTime = run.StartedAtOffset;
-            else
-                referenceTime = default;
+            var referenceTime = GetProgressReferenceTime(run);
 
             if (referenceTime == default)
             {
@@ -247,42 +250,23 @@ public sealed class HeartbeatMonitorService : BackgroundService
                     "Run {RunId} has no valid timestamp for progress check " +
                     "(LastStepChangeAt and StartedAtOffset both default) — skipping stall detection",
                     run.RunId);
+                return;
             }
-            else
+
+            var progressTimeout = pipelineConfig.AgentBusyProgressTimeout;
+            var elapsed = now - referenceTime;
+            if (elapsed > progressTimeout)
             {
-                if (run.LastStepChangeAt == default)
-                {
-                    _logger.Warning(
-                        "Run {RunId} has no LastStepChangeAt — using StartedAtOffset as fallback for progress check",
-                        run.RunId);
-                }
+                _logger.Warning(
+                    "Agent {AgentId} stuck in Busy: job {JobId} has not progressed for {Elapsed:F0}s (timeout={Timeout}). " +
+                    "Marking run as Failed and returning agent to Idle.",
+                    agent.AgentId, agent.ActiveJobId, elapsed.TotalSeconds, progressTimeout);
 
-                var progressTimeout = pipelineConfig.AgentBusyProgressTimeout;
-                var elapsed = now - referenceTime;
-                if (elapsed > progressTimeout)
-                {
-                    _logger.Warning(
-                        "Agent {AgentId} stuck in Busy: job {JobId} has not progressed for {Elapsed:F0}s (timeout={Timeout}). " +
-                        "Marking run as Failed and returning agent to Idle.",
-                        agent.AgentId, agent.ActiveJobId, elapsed.TotalSeconds, progressTimeout);
+                var failureReason = $"Agent busy without progress for {elapsed.TotalMinutes:F0} minutes (progress timeout)";
 
-                    var failureReason = $"Agent busy without progress for {elapsed.TotalMinutes:F0} minutes (progress timeout)";
-
-                    // TODO: Pass FailureReason.Timeout as the enum parameter to match
-                    // ReconciliationService's timeout path which explicitly uses FailureReason.Timeout.
-                    var result = await _lifecycleManager.FailRunAsync(agent.ActiveJobId!, failureReason, ct);
-                    if (result is null)
-                    {
-                        // Race lost — another path already processed the run.
-                        // Clear agent state defensively.
-                        lock (agent.SyncRoot)
-                        {
-                            agent.ActiveJobId = null;
-                            agent.OrphanRestoredAt = null;
-                        }
-                        _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-                    }
-                }
+                // TODO: Pass FailureReason.Timeout as the enum parameter to match
+                // ReconciliationService's timeout path which explicitly uses FailureReason.Timeout.
+                await FailStuckProgressRunAsync(agent, agent.ActiveJobId!, failureReason, ct);
             }
         }
         else
@@ -294,6 +278,38 @@ public sealed class HeartbeatMonitorService : BackgroundService
             }
 
             SweepBusySinceGracePeriod(agent, now);
+        }
+    }
+
+    private DateTimeOffset GetProgressReferenceTime(PipelineRun run)
+    {
+        if (run.LastStepChangeAt != default)
+            return run.LastStepChangeAt;
+
+        if (run.StartedAtOffset != default)
+        {
+            _logger.Warning(
+                "Run {RunId} has no LastStepChangeAt — using StartedAtOffset as fallback for progress check",
+                run.RunId);
+            return run.StartedAtOffset;
+        }
+
+        return default;
+    }
+
+    private async Task FailStuckProgressRunAsync(AgentEntry agent, string jobId, string failureReason, CancellationToken ct)
+    {
+        var result = await _lifecycleManager.FailRunAsync(jobId, failureReason, ct);
+        if (result is null)
+        {
+            // Race lost — another path already processed the run.
+            // Clear agent state defensively.
+            lock (agent.SyncRoot)
+            {
+                agent.ActiveJobId = null;
+                agent.OrphanRestoredAt = null;
+            }
+            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
     }
 

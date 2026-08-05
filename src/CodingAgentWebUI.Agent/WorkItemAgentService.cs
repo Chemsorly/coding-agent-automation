@@ -161,66 +161,76 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
             // have exported the counters recorded by PipelineRunInstrumentation.Dispose().
             // The host's own shutdown sequence also flushes, but is subject to SIGKILL race
             // if the K8s pod's terminationGracePeriodSeconds expires during shutdown.
-            if (_serviceProvider is not null)
-            {
-                try
-                {
-                    var sw = Stopwatch.StartNew();
-                    var meterProvider = _serviceProvider.GetService<MeterProvider>();
-                    if (meterProvider is not null)
-                    {
-                        var metricsFlushed = meterProvider.ForceFlush(timeoutMilliseconds: 5000);
-                        if (!metricsFlushed)
-                        {
-                            _logger.Warning(
-                                "OTLP metrics flush timed out for work item {WorkItemId} — some metrics (e.g. pipeline_decomposition_duration_seconds) " +
-                                "may be missing from Grafana. Verify OTEL_EXPORTER_OTLP_ENDPOINT is set and the otel-headers Secret key exists in the cluster.",
-                                _workItemId);
-                        }
-                    }
-                    else
-                    {
-                        _logger.Warning("MeterProvider not available in DI container — OTLP metrics will not be flushed before exit. " +
-                            "Ensure OpenTelemetry is configured via AddOpenTelemetry().WithMetrics() in Program.cs");
-                    }
-
-                    var remaining = Math.Max(500, 2000 - (int)sw.ElapsedMilliseconds);
-                    // TODO: The metrics flush timeout was increased to 5000ms but the traces budget
-                    // is still calculated as Math.Max(500, 2000 - sw.ElapsedMilliseconds). If the
-                    // metrics flush actually times out (taking ~5000ms), this clamps the traces window
-                    // to 500ms. Consider using a separate stopwatch for the traces budget, or increasing
-                    // the total window to (metricsTimeout + tracesTimeout) with independent budgets.
-                    var tracerProvider = _serviceProvider.GetService<TracerProvider>();
-                    if (tracerProvider is not null)
-                    {
-                        // TODO: TracerProvider.ForceFlush() also returns bool (true = success, false = timeout).
-                        // For consistency with the metrics flush, capture the return value and log a Warning
-                        // when it returns false so that trace export failures are observable in pod logs.
-                        tracerProvider.ForceFlush(timeoutMilliseconds: remaining);
-                    }
-                    else
-                    {
-                        _logger.Warning("TracerProvider not available in DI container — OTLP traces will not be flushed before exit");
-                    }
-                }
-                catch (ObjectDisposedException ex)
-                {
-                    _logger.Warning(ex, "OpenTelemetry provider already disposed during flush — metrics from this run may be lost");
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Failed to flush OpenTelemetry providers before shutdown");
-                }
-            }
-            else
-            {
-                _logger.Warning("ServiceProvider is null — cannot flush OpenTelemetry providers before exit");
-            }
+            await FlushTelemetryProvidersAsync();
 
             // Set the process exit code and stop the host
             Environment.ExitCode = exitCode;
             _lifetime.StopApplication();
         }
+    }
+
+    private async Task FlushTelemetryProvidersAsync()
+    {
+        if (_serviceProvider is null)
+        {
+            _logger.Warning("ServiceProvider is null — cannot flush OpenTelemetry providers before exit");
+            return;
+        }
+
+        try
+        {
+            var sw = Stopwatch.StartNew();
+            var meterProvider = _serviceProvider.GetService<MeterProvider>();
+            if (meterProvider is not null)
+            {
+                var metricsFlushed = meterProvider.ForceFlush(timeoutMilliseconds: 5000);
+                if (!metricsFlushed)
+                {
+                    _logger.Warning(
+                        "OTLP metrics flush timed out for work item {WorkItemId} — some metrics (e.g. pipeline_decomposition_duration_seconds) " +
+                        "may be missing from Grafana. Verify OTEL_EXPORTER_OTLP_ENDPOINT is set and the otel-headers Secret key exists in the cluster.",
+                        _workItemId);
+                }
+            }
+            else
+            {
+                _logger.Warning("MeterProvider not available in DI container — OTLP metrics will not be flushed before exit. " +
+                    "Ensure OpenTelemetry is configured via AddOpenTelemetry().WithMetrics() in Program.cs");
+            }
+
+            var remaining = Math.Max(500, 2000 - (int)sw.ElapsedMilliseconds);
+            // TODO: The metrics flush timeout was increased to 5000ms but the traces budget
+            // is still calculated as Math.Max(500, 2000 - sw.ElapsedMilliseconds). If the
+            // metrics flush actually times out (taking ~5000ms), this clamps the traces window
+            // to 500ms. Consider using a separate stopwatch for the traces budget, or increasing
+            // the total window to (metricsTimeout + tracesTimeout) with independent budgets.
+            var tracerProvider = _serviceProvider.GetService<TracerProvider>();
+            if (tracerProvider is not null)
+            {
+                // TODO: TracerProvider.ForceFlush() also returns bool (true = success, false = timeout).
+                // For consistency with the metrics flush, capture the return value and log a Warning
+                // when it returns false so that trace export failures are observable in pod logs.
+                tracerProvider.ForceFlush(timeoutMilliseconds: remaining);
+            }
+            else
+            {
+                _logger.Warning("TracerProvider not available in DI container — OTLP traces will not be flushed before exit");
+            }
+        }
+        catch (ObjectDisposedException ex)
+        {
+            _logger.Warning(ex, "OpenTelemetry provider already disposed during flush — metrics from this run may be lost");
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to flush OpenTelemetry providers before shutdown");
+        }
+        // TODO: [WARNING] This method is declared `async Task` but contains no genuine await — it ends with
+        // `await Task.CompletedTask` solely to satisfy the compiler. The async modifier causes an unnecessary
+        // state-machine to be generated and can mislead callers into thinking cancellation or true async I/O
+        // is involved. Consider converting to a synchronous method returning `Task.CompletedTask` directly,
+        // or switching to truly async flush APIs (e.g. MeterProvider does not currently expose async ForceFlush).
+        await Task.CompletedTask; // Preserve async signature for future async flush APIs
     }
 
     private async Task<int> RunWorkItemLifecycleAsync(CancellationToken ct)

@@ -573,39 +573,8 @@ public sealed class ReconciliationService : LeaderElectedPollingService
 
         if (activeItems.Count == 0) return;
 
-        // List all managed Jobs from K8s
-        V1JobList? jobList;
-        try
-        {
-            jobList = await _kubeClient.BatchV1.ListNamespacedJobAsync(
-                _options.Namespace,
-                labelSelector: $"{ManagedByLabel}={ManagedByValue}",
-                cancellationToken: ct);
-        }
-        catch (Exception ex) when (!ct.IsCancellationRequested)
-        {
-            Log.Error(ex, "ReconciliationService: failed to list K8s Jobs for stuck WorkItem detection");
-            return;
-        }
-
-        if (jobList?.Items is null) return;
-
-        // Build lookup: JobName → V1Job (only Complete Jobs)
-        var completedJobCandidates = jobList.Items
-            .Where(j => j.Metadata?.Name is not null &&
-                        j.Status?.Conditions?.Any(c => c.Type == "Complete" && c.Status == "True") == true)
-            .ToList();
-
-        var completedJobs = completedJobCandidates
-            .DistinctBy(j => j.Metadata!.Name)
-            .ToDictionary(j => j.Metadata!.Name, StringComparer.Ordinal);
-
-        if (completedJobs.Count != completedJobCandidates.Count)
-            Log.Warning(
-                "ReconciliationService: K8s API returned duplicate job names ({Total} jobs, {Unique} unique) — using first occurrence",
-                completedJobCandidates.Count, completedJobs.Count);
-
-        if (completedJobs.Count == 0) return;
+        var completedJobs = await ListCompletedJobsDictionaryAsync(ct);
+        if (completedJobs is null || completedJobs.Count == 0) return;
 
         var gracePeriod = TimeSpan.FromSeconds(CompleteJobGracePeriodSeconds);
         var now = DateTimeOffset.UtcNow;
@@ -625,23 +594,63 @@ public sealed class ReconciliationService : LeaderElectedPollingService
                 "ReconciliationService: [poll] Job {JobName} completed at {CompletionTime} but WorkItem {WorkItemId} still non-terminal — failing",
                 item.K8sJobName, completionTime, item.Id);
 
-            // TODO: Check return value of TransitionAsync — if false (item already transitioned), skip cleanup for efficiency and log as no-op.
-            await _transitionService.TransitionAsync(item.Id, WorkItemStatus.Failed,
-                entity =>
-                {
-                    entity.CompletedAt = DateTimeOffset.UtcNow;
-                    entity.FailureReason = FailureReason.InfrastructureFailure;
-                    entity.ErrorMessage = "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure";
-                }, ct: ct);
+            await FailStuckWorkItemAsync(item.Id, item.K8sJobName!, ct);
+        }
+    }
 
-            LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
+    private async Task<Dictionary<string, V1Job>?> ListCompletedJobsDictionaryAsync(CancellationToken ct)
+    {
+        V1JobList? jobList;
+        try
+        {
+            jobList = await _kubeClient.BatchV1.ListNamespacedJobAsync(
+                _options.Namespace,
+                labelSelector: $"{ManagedByLabel}={ManagedByValue}",
+                cancellationToken: ct);
+        }
+        catch (Exception ex) when (!ct.IsCancellationRequested)
+        {
+            Log.Error(ex, "ReconciliationService: failed to list K8s Jobs for stuck WorkItem detection");
+            return null;
+        }
 
-            // Release PVC and delete Job
-            await ReleasePvcForWorkItemAsync(item.Id, ct);
-            if (!string.IsNullOrEmpty(item.K8sJobName))
+        if (jobList?.Items is null) return null;
+
+        var completedJobCandidates = jobList.Items
+            .Where(j => j.Metadata?.Name is not null &&
+                        j.Status?.Conditions?.Any(c => c.Type == "Complete" && c.Status == "True") == true)
+            .ToList();
+
+        var completedJobs = completedJobCandidates
+            .DistinctBy(j => j.Metadata!.Name)
+            .ToDictionary(j => j.Metadata!.Name, StringComparer.Ordinal);
+
+        if (completedJobs.Count != completedJobCandidates.Count)
+            Log.Warning(
+                "ReconciliationService: K8s API returned duplicate job names ({Total} jobs, {Unique} unique) — using first occurrence",
+                completedJobCandidates.Count, completedJobs.Count);
+
+        return completedJobs;
+    }
+
+    private async Task FailStuckWorkItemAsync(Guid workItemId, string jobName, CancellationToken ct)
+    {
+        // TODO: Check return value of TransitionAsync — if false (item already transitioned), skip cleanup for efficiency and log as no-op.
+        await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
+            entity =>
             {
-                await TryDeleteJobAsync(item.K8sJobName, ct);
-            }
+                entity.CompletedAt = DateTimeOffset.UtcNow;
+                entity.FailureReason = FailureReason.InfrastructureFailure;
+                entity.ErrorMessage = "K8s Job completed (exit 0) but agent never reported terminal status — likely startup crash or POST failure";
+            }, ct: ct);
+
+        LogTerminalTransition(workItemId, WorkItemStatus.Failed, FailureReason.InfrastructureFailure);
+
+        // Release PVC and delete Job
+        await ReleasePvcForWorkItemAsync(workItemId, ct);
+        if (!string.IsNullOrEmpty(jobName))
+        {
+            await TryDeleteJobAsync(jobName, ct);
         }
     }
 
@@ -668,13 +677,10 @@ public sealed class ReconciliationService : LeaderElectedPollingService
         {
             if (ct.IsCancellationRequested) break;
 
-            // Progress-aware anchor: use LastProgressAt when available (updated by heartbeats/step transitions).
-            // Falls back to DispatchedAt → CreatedAt for items that haven't reported progress yet.
             var anchor = item.LastProgressAt ?? item.DispatchedAt ?? item.CreatedAt;
             if (!IsTimedOut(anchor, item.TimeoutSeconds, now))
                 continue;
 
-            // Canary invariant: refuse to timeout items with suspiciously low execution age.
             var executionAge = (now - anchor).TotalSeconds;
             if (!ShouldEnforceTimeout(anchor, item.TimeoutSeconds, now))
             {
@@ -687,63 +693,81 @@ public sealed class ReconciliationService : LeaderElectedPollingService
                 continue;
             }
 
-            // Record execution age at timeout for canary alerting
             WorkDistributionTelemetry.TimeoutExecutionAge.Record(executionAge);
 
             Log.Warning("ReconciliationService: timeout — WorkItem {WorkItemId} exceeded {Timeout}s",
                 item.Id, item.TimeoutSeconds);
 
-            var timeoutReason = $"Timeout exceeded: {item.TimeoutSeconds}s";
+            await TimeoutSingleWorkItemAsync(item.Id, item.DispatchedAt, item.IssueIdentifier, item.IssueProviderConfigId, item.K8sJobName, item.TimeoutSeconds, now, ct);
+        }
+    }
 
-            // Try full lifecycle cleanup first (label swap, history, dedup, agent state).
-            // FailRunAsync uses the in-memory PipelineRun — returns null if not in memory (e.g., different replica).
-            var lifecycleHandled = false;
-            if (_lifecycleManager is not null)
+    private async Task TimeoutSingleWorkItemAsync(
+        Guid workItemId, DateTimeOffset? dispatchedAt,
+        string issueIdentifier, string issueProviderConfigId,
+        string? k8sJobName, int timeoutSeconds,
+        DateTimeOffset now, CancellationToken ct)
+    {
+        var timeoutReason = $"Timeout exceeded: {timeoutSeconds}s";
+
+        var lifecycleHandled = await TryLifecycleFailAsync(workItemId.ToString(), timeoutReason, ct);
+
+        if (!lifecycleHandled)
+        {
+            await DirectTimeoutFallbackAsync(workItemId, issueIdentifier, issueProviderConfigId, timeoutReason, ct);
+        }
+
+        LogTerminalTransition(workItemId, WorkItemStatus.Failed, FailureReason.Timeout,
+            dispatchedAt: dispatchedAt);
+
+        // Always delete the K8s Job (FailRunAsync does NOT handle this)
+        if (!string.IsNullOrEmpty(k8sJobName))
+        {
+            await TryDeleteJobAsync(k8sJobName, ct);
+        }
+    }
+
+    private async Task<bool> TryLifecycleFailAsync(string jobId, string timeoutReason, CancellationToken ct)
+    {
+        // Try full lifecycle cleanup first (label swap, history, dedup, agent state).
+        // FailRunAsync uses the in-memory PipelineRun — returns null if not in memory (e.g., different replica).
+        if (_lifecycleManager is null)
+            return false;
+
+        var result = await _lifecycleManager.FailRunAsync(jobId, timeoutReason, ct, FailureReason.Timeout);
+        return result is not null;
+    }
+
+    private async Task DirectTimeoutFallbackAsync(
+        Guid workItemId, string issueIdentifier, string issueProviderConfigId,
+        string timeoutReason, CancellationToken ct)
+    {
+        // Fallback: direct DB transition + best-effort label swap + dedup release
+        await _transitionService.TransitionAsync(workItemId, WorkItemStatus.Failed,
+            w =>
             {
-                var result = await _lifecycleManager.FailRunAsync(item.Id.ToString(), timeoutReason, ct, FailureReason.Timeout);
-                lifecycleHandled = result is not null;
+                w.CompletedAt = DateTimeOffset.UtcNow;
+                w.FailureReason = FailureReason.Timeout;
+                w.ErrorMessage = timeoutReason;
+            }, ct: ct);
+
+        // Best-effort label swap to agent:error (prevents stale agent:in-progress on GitHub)
+        if (_labelService is not null)
+        {
+            try
+            {
+                await _labelService.SwapLabelAsync(
+                    issueProviderConfigId, issueIdentifier,
+                    AgentLabels.Error, LabelTargetKind.Issue, ct);
             }
-
-            // Fallback: if no lifecycle manager or run wasn't in memory, do direct DB transition
-            // plus best-effort label swap and dedup release (prevents stale labels and permanent dispatch blocking)
-            if (!lifecycleHandled)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                await _transitionService.TransitionAsync(item.Id, WorkItemStatus.Failed,
-                    w =>
-                    {
-                        w.CompletedAt = DateTimeOffset.UtcNow;
-                        w.FailureReason = FailureReason.Timeout;
-                        w.ErrorMessage = timeoutReason;
-                    }, ct: ct);
-
-                // Best-effort label swap to agent:error (prevents stale agent:in-progress on GitHub)
-                if (_labelService is not null)
-                {
-                    try
-                    {
-                        await _labelService.SwapLabelAsync(
-                            item.IssueProviderConfigId, item.IssueIdentifier,
-                            AgentLabels.Error, LabelTargetKind.Issue, ct);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        Log.Warning(ex, "ReconciliationService: label swap to agent:error failed for WorkItem {WorkItemId} (non-fatal)", item.Id);
-                    }
-                }
-
-                // Release dedup guard (prevents issue from being permanently blocked from re-dispatch)
-                _dedupGuard?.MarkIssueComplete(item.IssueIdentifier, item.IssueProviderConfigId);
-            }
-
-            LogTerminalTransition(item.Id, WorkItemStatus.Failed, FailureReason.Timeout,
-                dispatchedAt: item.DispatchedAt);
-
-            // Always delete the K8s Job (FailRunAsync does NOT handle this)
-            if (!string.IsNullOrEmpty(item.K8sJobName))
-            {
-                await TryDeleteJobAsync(item.K8sJobName, ct);
+                Log.Warning(ex, "ReconciliationService: label swap to agent:error failed for WorkItem {WorkItemId} (non-fatal)", workItemId);
             }
         }
+
+        // Release dedup guard (prevents issue from being permanently blocked from re-dispatch)
+        _dedupGuard?.MarkIssueComplete(issueIdentifier, issueProviderConfigId);
     }
 
     /// <summary>

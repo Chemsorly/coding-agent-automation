@@ -46,17 +46,9 @@ internal class CodeReviewOrchestrator
 
         for (var i = 0; i < maxIterations; i++)
         {
-            using var iterationActivity = PipelineTelemetry.ActivitySource.StartActivity("CodeReview.Iteration");
-            iterationActivity?.SetTag("pipeline.run_id", run.RunId);
-            iterationActivity?.SetTag("pipeline.issue", run.IssueIdentifier);
-            iterationActivity?.SetTag("code_review.iteration", i + 1);
-            iterationActivity?.SetTag("code_review.max_iterations", maxIterations);
-            iterationActivity?.SetTag("code_review.parallel", useParallel);
-
-            run.CodeReviewIterationInProgress = i + 1;
-            context.Callbacks.TransitionTo(PipelineStep.ReviewingCode);
-            _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
-                run.RunId, i + 1, maxIterations);
+            // The Activity must span the entire iteration (agents + fix prompt), not just the setup call.
+            // We own the lifetime here and dispose it at the end of the loop body.
+            using var iterationActivity = SetupIterationTelemetry(context, run, i, maxIterations, useParallel);
 
             context.Callbacks.EmitOutputLine(useParallel
                 ? $"🔍 Starting code review iteration {i + 1}/{maxIterations} — parallel (agents: {string.Join(", ", agents.Select(a => a.Name))})"
@@ -83,18 +75,8 @@ internal class CodeReviewOrchestrator
 
             try
             {
-                if (useParallel)
-                {
-                    iterationCriticalCount = await ExecuteReviewAgentsParallelAsync(
-                        context, agents, i,
-                        iterationFindings, agentsRun, ct);
-                }
-                else
-                {
-                    iterationCriticalCount = await ExecuteReviewAgentsSequentialAsync(
-                        context, agents, i,
-                        iterationFindings, agentsRun, ct);
-                }
+                iterationCriticalCount = await DispatchReviewAgentsAsync(
+                    context, agents, i, useParallel, iterationFindings, agentsRun, ct);
 
                 run.CodeReviewAgentsRun = agentsRun;
                 var iterationFindingsText = iterationFindings.ToString();
@@ -111,40 +93,9 @@ internal class CodeReviewOrchestrator
                 context.Callbacks.EmitOutputLine($"📝 Code review: {run.CodeReviewCriticalCount} critical, {run.CodeReviewWarningCount} warning, {run.CodeReviewSuggestionCount} suggestion");
 
                 var decision = AgentPhaseExecutor.DetermineFixPromptAction(skipFixPrompt, config.CodeReview.FixPrompt, iterationCriticalCount, iterationFindingsText);
-                switch (decision)
-                {
-                    case AgentPhaseExecutor.FixPromptDecision.SendFixAndContinue:
-                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: {Critical} CRITICAL findings detected across {AgentCount} agent(s), sending fix prompt",
-                            run.RunId, i + 1, iterationCriticalCount, agents.Count);
-                        context.Callbacks.EmitOutputLine($"📝 Code review: {iterationCriticalCount} critical findings — sending fix prompt");
-
-                        await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
-                            $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes", ct);
-                        break;
-
-                    case AgentPhaseExecutor.FixPromptDecision.SendFixAndBreak:
-                        // No critical findings but warnings/suggestions exist — send fix prompt then exit.
-                        // Warnings are actionable (TODO comments per fixPrompt instructions) but don't
-                        // warrant another full review cycle since no code logic changes.
-                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings but warnings present, sending fix prompt then exiting review loop",
-                            run.RunId, i + 1);
-                        context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
-
-                        await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
-                            $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", ct);
-                        return; // Exit the loop — replaces goto exitLoop
-
-                    case AgentPhaseExecutor.FixPromptDecision.NoFindingsBreak:
-                        _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no findings, exiting review loop",
-                            run.RunId, i + 1);
-
-                        // Early exit: no findings at all — re-reviewing won't produce different results.
-                        return; // Exit the loop — replaces goto exitLoop
-
-                    case AgentPhaseExecutor.FixPromptDecision.Skip:
-                        // skipFixPrompt=true or no FixPrompt configured — continue to next iteration
-                        break;
-                }
+                var shouldContinue = await HandleIterationDecisionAsync(context, decision, i, iterationFindingsText, config, run, ct);
+                if (!shouldContinue)
+                    return;
             }
             catch (OperationCanceledException) when (context.OrchestratorCts?.IsCancellationRequested == true)
             {
@@ -164,6 +115,79 @@ internal class CodeReviewOrchestrator
                 context.Callbacks.NotifyChange();
                 break;
             }
+        }
+    }
+
+    /// <summary>
+    /// Starts the OpenTelemetry Activity for this review iteration and sets initial tags/state.
+    /// The caller is responsible for disposing the returned Activity at the end of the iteration,
+    /// so that all child spans (agent execution, fix prompt) are recorded inside it.
+    /// </summary>
+    private System.Diagnostics.Activity? SetupIterationTelemetry(AgentPhaseContext context, PipelineRun run, int i, int maxIterations, bool useParallel)
+    {
+        var iterationActivity = PipelineTelemetry.ActivitySource.StartActivity("CodeReview.Iteration");
+        iterationActivity?.SetTag("pipeline.run_id", run.RunId);
+        iterationActivity?.SetTag("pipeline.issue", run.IssueIdentifier);
+        iterationActivity?.SetTag("code_review.iteration", i + 1);
+        iterationActivity?.SetTag("code_review.max_iterations", maxIterations);
+        iterationActivity?.SetTag("code_review.parallel", useParallel);
+
+        run.CodeReviewIterationInProgress = i + 1;
+        context.Callbacks.TransitionTo(PipelineStep.ReviewingCode);
+        _logger.Information("Pipeline {RunId} starting code review iteration {Iteration}/{MaxIterations}",
+            run.RunId, i + 1, maxIterations);
+
+        return iterationActivity;
+    }
+
+    private async Task<int> DispatchReviewAgentsAsync(
+        AgentPhaseContext context,
+        IReadOnlyList<ReviewAgentConfig> agents,
+        int iterationIndex,
+        bool useParallel,
+        System.Text.StringBuilder iterationFindings,
+        List<string> agentsRun,
+        CancellationToken ct)
+    {
+        if (useParallel)
+            return await ExecuteReviewAgentsParallelAsync(context, agents, iterationIndex, iterationFindings, agentsRun, ct);
+        else
+            return await ExecuteReviewAgentsSequentialAsync(context, agents, iterationIndex, iterationFindings, agentsRun, ct);
+    }
+
+    /// <summary>
+    /// Processes the fix prompt decision for one iteration.
+    /// Returns false when the loop should exit early, true to continue.
+    /// </summary>
+    private async Task<bool> HandleIterationDecisionAsync(
+        AgentPhaseContext context, AgentPhaseExecutor.FixPromptDecision decision,
+        int i, string iterationFindingsText, PipelineConfiguration config, PipelineRun run, CancellationToken ct)
+    {
+        switch (decision)
+        {
+            case AgentPhaseExecutor.FixPromptDecision.SendFixAndContinue:
+                _logger.Information("Pipeline {RunId} code review iteration {Iteration}: CRITICAL findings detected, sending fix prompt",
+                    run.RunId, i + 1);
+                context.Callbacks.EmitOutputLine($"📝 Code review: critical findings — sending fix prompt");
+                await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
+                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied CRITICAL fixes", ct);
+                return true;
+
+            case AgentPhaseExecutor.FixPromptDecision.SendFixAndBreak:
+                _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no CRITICAL findings but warnings present, sending fix prompt then exiting",
+                    run.RunId, i + 1);
+                context.Callbacks.EmitOutputLine($"📝 Code review: no critical findings, applying warning fixes then completing review");
+                await SendFixPromptAsync(context, run, config, i, iterationFindingsText,
+                    $"[Code review fix {i + 1}/{config.CodeReview.MaxIterations}] Applied WARNING fixes (TODO comments)", ct);
+                return false; // Exit the loop
+
+            case AgentPhaseExecutor.FixPromptDecision.NoFindingsBreak:
+                _logger.Information("Pipeline {RunId} code review iteration {Iteration}: no findings, exiting review loop",
+                    run.RunId, i + 1);
+                return false; // Exit the loop — re-reviewing won't produce different results
+
+            default: // Skip
+                return true;
         }
     }
 
