@@ -42,19 +42,15 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     /// <inheritdoc />
     public void ReleaseAgent(AgentId agentId)
     {
-        // TODO: The ThrowIfNull guard removed here was a no-op for a struct, but there is no
-        // replacement guard for default(AgentId) (Value == null). If a null-Value AgentId is passed,
-        // _registry.GetByAgentId will silently look up null in the ConcurrentDictionary. Consider
-        // adding ArgumentException.ThrowIfNullOrEmpty(agentId.Value) for defense-in-depth.
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
         var entry = _registry.GetByAgentId(agentId);
         if (entry is not null)
         {
             lock (entry.SyncRoot)
             {
                 entry.ActiveJobId = null;
-                // TODO: Add test coverage for BusySince being cleared on assignment failure.
-                // Without this, agents retain stale BusySince values that could grant undeserved
-                // grace periods and mask legitimately stuck agents on subsequent transitions.
+                // NOTE: BusySince is cleared here to prevent stale values from granting undeserved
+                // grace periods and masking legitimately stuck agents on subsequent transitions.
                 entry.BusySince = null;
             }
         }
@@ -65,8 +61,7 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     /// <inheritdoc />
     public void AssignJob(AgentId agentId, string jobId)
     {
-        // TODO: Same default(AgentId) / null-Value concern as ReleaseAgent above — no guard for
-        // null-Value AgentId after removal of the (vacuous) ThrowIfNull struct check.
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
         ArgumentNullException.ThrowIfNull(jobId);
 
         var entry = _registry.GetByAgentId(agentId);

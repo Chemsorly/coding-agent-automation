@@ -72,8 +72,8 @@ public sealed class AgentRegistryService : IAgentRegistryService
                         {
                             // Agent reconnected with active job — restore to Busy (REQ-3.6)
                             existing.Status = AgentStatus.Busy;
-                            // TODO: Add test coverage for BusySince being set during re-registration with active job.
-                            // Without this, a reconnecting agent could be spuriously reset by HeartbeatMonitor.
+                            // NOTE: BusySince is set here to prevent HeartbeatMonitor from spuriously resetting
+                            // a reconnecting agent that has an active job.
                             existing.BusySince = DateTimeOffset.UtcNow;
                             _logger.Information(
                                 "Agent {AgentId} re-registered after disconnect with active job {JobId}, status restored to Busy",
@@ -110,9 +110,7 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// </summary>
     public bool Deregister(AgentId agentId)
     {
-        // TODO: ThrowIfNull was removed (vacuous for a struct) but no replacement guard for
-        // default(AgentId) (Value == null) was added. A null Value causes ConcurrentDictionary
-        // to throw ArgumentNullException from TryRemove. Consider ArgumentException.ThrowIfNullOrEmpty(agentId.Value).
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
         if (_agents.TryRemove(agentId.Value, out var removed))
         {
             _connectionIndex.TryRemove(removed.ConnectionId, out AgentEntry? _);
@@ -128,7 +126,7 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// </summary>
     public AgentEntry? GetByAgentId(AgentId agentId)
     {
-        // TODO: Same default(AgentId) / null-Value concern — no guard after struct ThrowIfNull removal.
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
         return _agents.TryGetValue(agentId.Value, out var entry) ? entry : null;
     }
 
@@ -147,7 +145,7 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// </summary>
     public void UpdateHeartbeat(AgentId agentId, DateTimeOffset timestamp)
     {
-        // TODO: Same default(AgentId) / null-Value concern — no guard after struct ThrowIfNull removal.
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
         if (_agents.TryGetValue(agentId.Value, out var entry))
         {
             lock (entry.SyncRoot)
@@ -167,7 +165,7 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// </summary>
     public void TransitionStatus(AgentId agentId, AgentStatus newStatus)
     {
-        // TODO: Same default(AgentId) / null-Value concern — no guard after struct ThrowIfNull removal.
+        ArgumentException.ThrowIfNullOrEmpty(agentId.Value);
         if (_agents.TryGetValue(agentId.Value, out var entry))
         {
             lock (entry.SyncRoot)

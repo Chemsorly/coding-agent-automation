@@ -66,10 +66,8 @@ public interface IAgentHubClient
     Task CancelChat(string sessionId);
     Task ForceDisconnect();
     Task RequestFetchModels(FetchModelsRequest request);
-    // TODO: This client-side method retains `string agentId` for wire compatibility with existing agent clients.
+    // NOTE: This client-side method retains `string agentId` for wire compatibility with existing agent clients.
     // IAgentCommunication.AssignConsolidationJobAsync (server-side) now uses AgentId and unwraps to .Value before
-    // calling here. If a future caller passes AgentId directly to IAgentHubClient (e.g., via a test double or
-    // direct hub client call), the implicit conversion will fire on the string side. Consider updating this
-    // to AgentId once all agent clients have adopted the AgentIdFormatter.
+    // calling here. Update to AgentId once all agent clients have adopted the AgentIdFormatter.
     Task AssignConsolidationJob(string agentId, ConsolidationJobMessage job);
 }

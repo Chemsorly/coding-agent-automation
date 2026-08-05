@@ -9,11 +9,22 @@ namespace CodingAgentWebUI.Pipeline.Models;
 /// (e.g., IAgentCancellationSender.SendCancelJobAsync has agentId and runId as consecutive string params).
 /// Used as the canonical agent identifier type throughout the system (DI registration, constructor injection).
 /// </summary>
-// TODO: The primary constructor does not validate its input — new AgentId(null!) or default(AgentId)
-// produces an instance with Value == null, bypassing the validation in the implicit conversion operator.
-// Consider adding a constructor guard or a factory method to ensure Value is never null/empty.
-public readonly record struct AgentId(string Value)
+public readonly record struct AgentId
 {
+    /// <summary>
+    /// The underlying string value. Never null or empty for a valid instance.
+    /// </summary>
+    public string Value { get; }
+
+    /// <summary>
+    /// Constructs an <see cref="AgentId"/> with validation. Throws if <paramref name="value"/> is null or empty.
+    /// </summary>
+    public AgentId(string value)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(value);
+        Value = value;
+    }
+
     public static implicit operator AgentId(string value)
     {
         ArgumentException.ThrowIfNullOrEmpty(value);

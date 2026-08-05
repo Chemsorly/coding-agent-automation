@@ -44,11 +44,11 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
     {
         if (agent is not null)
         {
-            // TODO: agent.AgentId is a plain string (AgentEntry.AgentId is declared as string). The implicit
+            // NOTE: agent.AgentId is a plain string (AgentEntry.AgentId is declared as string). The implicit
             // conversion operator (string → AgentId) fires here and will throw ArgumentException if the
             // registered agent somehow has an empty AgentId. Registration validates the incoming message
             // via AgentHub.RegisterAgent, but there is no compile-time guarantee at this call site.
-            // Consider changing AgentEntry.AgentId to AgentId to move the validation to registration time.
+            // Changing AgentEntry.AgentId to AgentId would move the validation to registration time.
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Busy);
             _logger.Information("Agent {AgentId} accepted job {JobId}", agent.AgentId, jobId.Value);
             _changeNotifier.NotifyChange();
@@ -89,8 +89,8 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         {
             agent.ActiveJobId = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
-            // TODO: Same implicit conversion (string AgentEntry.AgentId → AgentId) applies here and at all
-            // other agent.AgentId call sites in this file. See HandleJobAcceptedAsync TODO above.
+            // NOTE: Same implicit conversion (string AgentEntry.AgentId → AgentId) applies here and at all
+            // other agent.AgentId call sites in this file. See HandleJobAcceptedAsync NOTE above.
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
             // Signal drain service — agent is idle and may pick up a different job
@@ -207,7 +207,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             agent.ActiveJobId = null;
             agent.OrphanRestoredAt = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
-            // TODO: Same implicit conversion (string AgentEntry.AgentId → AgentId) applies here. See HandleJobAcceptedAsync TODO.
+            // NOTE: Same implicit conversion (string AgentEntry.AgentId → AgentId) applies here. See HandleJobAcceptedAsync NOTE.
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
 
@@ -265,7 +265,7 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             agent.ActiveJobId = null;
             agent.OrphanRestoredAt = null;
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
-            // TODO: Same implicit conversion (string AgentEntry.AgentId → AgentId) applies here. See HandleJobAcceptedAsync TODO.
+            // NOTE: Same implicit conversion (string AgentEntry.AgentId → AgentId) applies here. See HandleJobAcceptedAsync NOTE.
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
 

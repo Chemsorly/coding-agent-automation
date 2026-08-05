@@ -161,12 +161,9 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// </summary>
     public Task DeregisterAgent(AgentId agentId)
     {
-        // TODO: If a malicious or buggy client sends a nil payload, MessagePack deserializes to
-        // default(AgentId) with Value == null (primary constructor bypasses the implicit operator guard).
-        // The ownership check below safely rejects such calls (callerAgent.AgentId is never null),
-        // but if that check were removed, _facade.Deregister(agentId) would throw ArgumentNullException
-        // from ConcurrentDictionary.TryRemove(null). Consider adding a guard in AgentId's primary constructor.
-        // See: AgentId.cs TODO and DotNetSpecialist review finding.
+        // NOTE: AgentId's primary constructor now validates the value, so a nil payload from MessagePack
+        // will throw MessagePackSerializationException in AgentIdFormatter.Deserialize before reaching this
+        // method. The ownership check below also independently rejects unrecognized agentId values.
 
         // Security: verify caller owns this agentId (prevents cross-agent deregistration)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
@@ -238,9 +235,9 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// </summary>
     public Task AgentReady(AgentId agentId)
     {
-        // TODO: Same default(AgentId) / null-Value concern as DeregisterAgent above — the ownership
-        // check guards the downstream path, but a primary constructor guard in AgentId would make this
-        // more robust. See: AgentId.cs TODO and DotNetSpecialist review finding.
+        // NOTE: AgentId's primary constructor validates the value; a nil payload will be rejected
+        // by AgentIdFormatter.Deserialize before reaching this method. The ownership check below
+        // also independently rejects unrecognized agentId values.
 
         // Security: verify caller owns this agentId (prevents spurious drain signals)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
