@@ -51,7 +51,8 @@ jobs:
             /o:"chemsorly" `
             /d:sonar.token="$env:SONAR_TOKEN" `
             "/d:sonar.cs.cobertura.reportsPaths=**/TestResults/**/coverage.cobertura.xml" `
-            /s:"${{ github.workspace }}\SonarQube.Analysis.xml"
+            /s:"${{ github.workspace }}\SonarQube.Analysis.xml" `
+            /d:sonar.qualitygate.wait=true
           dotnet build --no-incremental
           dotnet test tests/CodingAgentWebUI.Pipeline.UnitTests/ `
             --no-build `
