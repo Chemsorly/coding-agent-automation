@@ -38,8 +38,7 @@
         <div class="agent-detail-confirm" style="margin-top: 12px;">
             <p>Delete this issue provider?</p>
             <div class="confirm-buttons">
-                @* TODO(#1773): OnDelete.InvokeAsync(id) is fire-and-forget — if delete fails asynchronously, user gets no error feedback. *@
-                <button class="btn-delete" @onclick="() => { var id = _deletingProviderId!; _showDeleteConfirm = false; _deletingProviderId = null; OnDelete.InvokeAsync(id); }">Delete</button>
+                <button class="btn-delete" @onclick="ConfirmDeleteAsync">Delete</button>
                 <button class="btn-cancel" @onclick="() => { _showDeleteConfirm = false; _deletingProviderId = null; }">Cancel</button>
             </div>
         </div>
@@ -121,6 +120,7 @@
     [Parameter] public GitLabValidationService? GitLabValidator { get; set; }
     [Parameter] public EventCallback<string> OnDelete { get; set; }
     [Parameter] public EventCallback<ProviderConfig> OnSaved { get; set; }
+    [Parameter] public EventCallback<(string Message, bool IsError)> OnShowStatus { get; set; }
 
     private CancellationTokenSource _cts = new();
     private bool _showForm;
@@ -169,6 +169,22 @@
         {
             _initializingProviderId = null;
             if (!_cts.IsCancellationRequested) StateHasChanged();
+        }
+    }
+
+    private async Task ConfirmDeleteAsync()
+    {
+        var id = _deletingProviderId!;
+        _showDeleteConfirm = false;
+        _deletingProviderId = null;
+        try
+        {
+            await OnDelete.InvokeAsync(id);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            await OnShowStatus.InvokeAsync(($"Failed to delete: {ex.Message}", true));
         }
     }
 

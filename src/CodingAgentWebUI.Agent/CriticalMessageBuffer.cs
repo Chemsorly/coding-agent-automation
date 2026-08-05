@@ -14,44 +14,39 @@ namespace CodingAgentWebUI.Agent;
 /// </remarks>
 public sealed class CriticalMessageBuffer
 {
-    private readonly ConcurrentQueue<BufferedCriticalMessage> _queue = new();
-    private int _count;
+    private readonly Queue<BufferedCriticalMessage> _queue = new();
+    private readonly object _lock = new();
 
     /// <summary>Maximum number of buffered messages. Oldest are dropped on overflow.</summary>
     public const int MaxCapacity = 10;
 
     /// <summary>Whether the buffer contains messages awaiting replay.</summary>
-    public bool HasPendingMessages => Volatile.Read(ref _count) > 0;
+    public bool HasPendingMessages
+    {
+        get { lock (_lock) return _queue.Count > 0; }
+    }
 
     /// <summary>Current number of buffered messages.</summary>
-    public int Count => Volatile.Read(ref _count);
+    public int Count
+    {
+        get { lock (_lock) return _queue.Count; }
+    }
 
     /// <summary>
     /// Enqueues a critical message for later replay. If the buffer is at capacity,
     /// the oldest message is dropped first (oldest-dropped-first overflow policy).
     /// </summary>
-    // TODO: Race condition in _count tracking between Enqueue and DrainAll. If DrainAll
-    // dequeues a newly-enqueued item before Interlocked.Increment executes, _count can
-    // transiently go negative. HasPendingMessages (checks > 0) still returns correct results
-    // and the final state converges. Consider defensive clamping in Count property.
     public void Enqueue(BufferedCriticalMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
 
-        _queue.Enqueue(message);
-        var newCount = Interlocked.Increment(ref _count);
-
-        // Overflow: drop oldest messages until within capacity
-        while (newCount > MaxCapacity)
+        lock (_lock)
         {
-            if (_queue.TryDequeue(out _))
-            {
-                newCount = Interlocked.Decrement(ref _count);
-            }
-            else
-            {
-                break; // Concurrent drain emptied the queue
-            }
+            _queue.Enqueue(message);
+
+            // Overflow: drop oldest messages until within capacity
+            while (_queue.Count > MaxCapacity)
+                _queue.Dequeue();
         }
     }
 
@@ -61,13 +56,12 @@ public sealed class CriticalMessageBuffer
     /// </summary>
     public IReadOnlyList<BufferedCriticalMessage> DrainAll()
     {
-        var messages = new List<BufferedCriticalMessage>();
-        while (_queue.TryDequeue(out var msg))
+        lock (_lock)
         {
-            Interlocked.Decrement(ref _count);
-            messages.Add(msg);
+            var messages = _queue.ToList();
+            _queue.Clear();
+            return messages;
         }
-        return messages;
     }
 }
 
