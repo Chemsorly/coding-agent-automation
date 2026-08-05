@@ -47,7 +47,8 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
 
         lock (_lock)
         {
-            var items = _runHistory.Skip((page - 1) * pageSize).Take(pageSize + 1).ToList();
+            var skip = checked((page - 1) * pageSize);
+            var items = _runHistory.Skip(skip).Take(pageSize + 1).ToList();
             var hasMore = items.Count > pageSize;
             if (hasMore)
                 items = items.Take(pageSize).ToList();
