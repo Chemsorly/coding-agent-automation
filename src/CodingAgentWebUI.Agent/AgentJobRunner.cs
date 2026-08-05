@@ -80,7 +80,7 @@ public static class AgentJobRunner
         CancellationToken rethrowOnSigterm = default,
         string? cancelledLabel = null,
         CancellationToken ct = default)
-        => ExecuteAsync(new AgentJobExecutionRequest(execute, assignment, connection, outputBatcher, onStepChanged, ct, rethrowOnSigterm, cancelledLabel));
+        => ExecuteAsync(new AgentJobExecutionRequest(execute, assignment, connection, outputBatcher, onStepChanged, cancelledLabel, ct, rethrowOnSigterm));
 
     /// <summary>Convenience overload accepting <see cref="IPipelineExecutor"/> directly.</summary>
     public static Task<JobCompletionPayload> ExecuteAsync(
@@ -135,6 +135,6 @@ public sealed record AgentJobExecutionRequest(
     HubConnection Connection,
     OutputBatcher OutputBatcher,
     Action<PipelineStep?>? OnStepChanged,
-    CancellationToken Ct,
-    CancellationToken RethrowOnSigterm = default,
-    string? CancelledLabel = null);
+    string? CancelledLabel = null,
+    CancellationToken Ct = default,
+    CancellationToken RethrowOnSigterm = default);

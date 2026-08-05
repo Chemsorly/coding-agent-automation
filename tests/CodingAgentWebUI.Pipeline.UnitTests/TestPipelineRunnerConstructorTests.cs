@@ -15,7 +15,11 @@ public class TestPipelineRunnerConstructorTests : IDisposable
 {
     private TestPipelineRunner? _runner;
 
-    public void Dispose() => _runner?.Dispose();
+    public void Dispose()
+    {
+        _runner?.Dispose();
+        GC.SuppressFinalize(this);
+    }
 
     // ── Construction ─────────────────────────────────────────────────────
 

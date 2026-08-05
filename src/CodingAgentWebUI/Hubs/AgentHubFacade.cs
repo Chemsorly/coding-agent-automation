@@ -30,7 +30,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
     private readonly WorkItemTransitionService? _workItemTransition;
     private readonly PendingWorkItemDrainService? _pendingDrainService;
     private readonly IDbContextFactory<PipelineDbContext>? _dbFactory;
-    private readonly ILogger<AgentHubFacade> _logger;
+    private readonly ILogger<AgentHubFacadeDependencies> _logger;
 
     public AgentHubFacade(AgentHubFacadeDependencies deps)
     {
@@ -66,7 +66,7 @@ public sealed class AgentHubFacade : IAgentHubFacade
         IPipelineRunHistoryService historyService,
         IConfigurationStore configStore,
         IProviderFactory providerFactory,
-        ILogger<AgentHubFacade> logger,
+        ILogger<AgentHubFacadeDependencies> logger,
         WorkItemTransitionService? workItemTransition = null,
         PendingWorkItemDrainService? pendingDrainService = null,
         IDbContextFactory<PipelineDbContext>? dbFactory = null)

@@ -28,7 +28,7 @@ public static partial class ServiceCollectionExtensions
             sp.GetRequiredService<IPipelineRunHistoryService>(),
             sp.GetRequiredService<IConfigurationStore>(),
             sp.GetRequiredService<IProviderFactory>(),
-            sp.GetRequiredService<ILogger<AgentHubFacade>>(),
+            sp.GetRequiredService<ILogger<AgentHubFacadeDependencies>>(),
             sp.GetService<WorkItemTransitionService>(),
             sp.GetService<PendingWorkItemDrainService>(),
             sp.GetService<IDbContextFactory<PipelineDbContext>>()));
