@@ -39,16 +39,6 @@ internal sealed record AgentStartupConfig
         var agentId = Environment.GetEnvironmentVariable(AgentDefaults.EnvAgentId)
             ?? Environment.MachineName;
 
-        // TODO: Dead code — the `string.IsNullOrEmpty(orchestratorUrl)` check can never be true here
-        // because the null-coalescing throw on line above already throws when orchestratorUrl is null,
-        // and an empty string would also have been caught there. This was pre-existing in Program.cs.
-        if (!isK8sMode && string.IsNullOrEmpty(orchestratorUrl))
-        {
-            throw new InvalidOperationException(
-                "Agent startup mode cannot be determined. Provide --work-item-id={id} for K8s mode, " +
-                "or set ORCHESTRATOR_URL + AGENT_API_KEY for SignalR mode.");
-        }
-
         return new AgentStartupConfig
         {
             AgentApiKey = agentApiKey,

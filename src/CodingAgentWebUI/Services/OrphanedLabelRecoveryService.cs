@@ -228,7 +228,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
             "Orphaned label recovery: issue {Identifier} on provider {ProviderId} is orphaned — swapping to agent:error",
             issue.Identifier, providerConfigId);
 
-        return await TrySwapToErrorAsync(issue, issueProvider, providerConfigId, ct);
+        return await TrySwapToErrorAsync(issue, providerConfigId, ct);
     }
 
     private async Task<bool> IsOrphanedIssueAsync(
@@ -272,7 +272,7 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
     }
 
     private async Task<bool> TrySwapToErrorAsync(
-        IssueSummary issue, IIssueProvider issueProvider, string providerConfigId, CancellationToken ct)
+        IssueSummary issue, string providerConfigId, CancellationToken ct)
     {
         try
         {
