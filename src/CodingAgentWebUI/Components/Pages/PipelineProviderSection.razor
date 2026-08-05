@@ -135,10 +135,7 @@
         {
             await OnDelete.InvokeAsync(id);
         }
-        // TODO: Add catch (OperationCanceledException) { } before this catch to avoid showing a
-        // spurious "Failed to delete" error when the operation is cancelled (e.g., component
-        // disposal during an in-flight delete). Inconsistent with AgentProviderSection and
-        // IssueProviderSection which already handle this case.
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             await OnShowStatus.InvokeAsync(($"Failed to delete: {ex.Message}", true));
