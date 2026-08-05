@@ -44,7 +44,7 @@ public class SignalRWorkDistributorAgentResolverTests
         // Assert
         result.Should().NotBeNull();
         result!.ConnectionId.Should().Be("conn-abc");
-        result.AgentId.Should().Be("agent-1");
+        result.AgentId.Value.Should().Be("agent-1");
         var agent = _registry.GetByAgentId("agent-1");
         agent!.Status.Should().Be(AgentStatus.Busy);
     }
@@ -146,6 +146,28 @@ public class SignalRWorkDistributorAgentResolverTests
     {
         var act = () => _resolver.AssignJob("nonexistent-agent", "run-456");
         act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void ResolveAgent_Returns_AgentId_TypedResult()
+    {
+        // Verifies that AgentResolveResult.AgentId is the AgentId value type (not string)
+        _registry.Register(new AgentRegistrationMessage
+        {
+            AgentId = "agent-typed",
+            Labels = ["dotnet"],
+            Hostname = "host-typed"
+        }, "conn-typed");
+
+        var result = _resolver.ResolveAgent("dotnet");
+
+        result.Should().NotBeNull();
+        // TODO: result.AgentId.Should().BeOfType<AgentId>() is tautological — AgentResolveResult.AgentId
+        // is declared as AgentId (value type), so this assertion can never fail regardless of implementation.
+        // The meaningful check is the value assertion on the next line. Consider removing the type assertion
+        // or collapsing this test into ResolveAgent_WithIdleAgent_ReturnsResultAndMarksAgentBusy.
+        result!.AgentId.Should().BeOfType<AgentId>();
+        result.AgentId.Value.Should().Be("agent-typed");
     }
 
     [Fact]

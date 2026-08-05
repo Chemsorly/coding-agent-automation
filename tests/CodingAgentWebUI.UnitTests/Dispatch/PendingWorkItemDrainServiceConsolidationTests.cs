@@ -148,7 +148,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         item.CompletedAt.Should().NotBeNull();
 
         _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -179,7 +179,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 
         // Dispatch was never attempted
         _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -244,7 +244,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
             c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()),
             Times.Once);
         _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -426,7 +426,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
         using var cts = new CancellationTokenSource();
         _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, (TemplateId?)"template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
-            .Returns((string _, ConsolidationRunType _, TemplateId? _, string _, string _, CancellationToken _) =>
+            .Returns((string _, ConsolidationRunType _, TemplateId? _, string _, AgentId _, CancellationToken _) =>
             {
                 cts.Cancel(); // Simulate graceful shutdown — token is now cancelled
                 throw new OperationCanceledException(cts.Token);

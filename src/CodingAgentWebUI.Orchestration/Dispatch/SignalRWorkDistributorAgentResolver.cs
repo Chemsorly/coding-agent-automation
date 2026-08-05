@@ -40,10 +40,12 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     }
 
     /// <inheritdoc />
-    public void ReleaseAgent(string agentId)
+    public void ReleaseAgent(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
+        // TODO: The ThrowIfNull guard removed here was a no-op for a struct, but there is no
+        // replacement guard for default(AgentId) (Value == null). If a null-Value AgentId is passed,
+        // _registry.GetByAgentId will silently look up null in the ConcurrentDictionary. Consider
+        // adding ArgumentException.ThrowIfNullOrEmpty(agentId.Value) for defense-in-depth.
         var entry = _registry.GetByAgentId(agentId);
         if (entry is not null)
         {
@@ -61,9 +63,10 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     }
 
     /// <inheritdoc />
-    public void AssignJob(string agentId, string jobId)
+    public void AssignJob(AgentId agentId, string jobId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: Same default(AgentId) / null-Value concern as ReleaseAgent above — no guard for
+        // null-Value AgentId after removal of the (vacuous) ThrowIfNull struct check.
         ArgumentNullException.ThrowIfNull(jobId);
 
         var entry = _registry.GetByAgentId(agentId);

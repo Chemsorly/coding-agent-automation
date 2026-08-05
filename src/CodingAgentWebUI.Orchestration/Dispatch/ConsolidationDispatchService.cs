@@ -172,12 +172,11 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         ConsolidationRunType type,
         TemplateId? templateId,
         string workspacePath,
-        string agentId,
+        AgentId agentId,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(runId);
         ArgumentNullException.ThrowIfNull(workspacePath);
-        ArgumentNullException.ThrowIfNull(agentId);
 
         // Cancel-during-dispatch race check via run store
         var existingRun = await _runStore.GetByIdAsync(runId, ct);

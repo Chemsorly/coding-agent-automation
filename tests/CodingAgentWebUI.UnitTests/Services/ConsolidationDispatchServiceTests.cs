@@ -64,7 +64,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
             .ReturnsAsync(new DistributionResult(true, null, null, Queued: true));
 
         // Default: AssignConsolidationJobAsync completes successfully
-        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
+        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
     }
 
@@ -306,7 +306,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(new List<ProviderConfig>());
 
-        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
+        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Connection lost"));
 
         var svc = CreateService();
@@ -545,8 +545,8 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
 
         ConsolidationJobMessage? capturedMessage = null;
-        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg);
+        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<string, AgentId, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg);
 
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(new List<ProviderConfig>());
@@ -583,8 +583,8 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
 
         ConsolidationJobMessage? capturedMessage = null;
-        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg);
+        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<string, AgentId, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg);
 
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(new List<ProviderConfig>());
@@ -632,8 +632,8 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
 
         ConsolidationJobMessage? capturedMessage = null;
-        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg);
+        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<string, AgentId, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg);
 
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(new List<ProviderConfig>());
@@ -662,8 +662,8 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
             .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
 
         ConsolidationJobMessage? capturedMessage = null;
-        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg);
+        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<string, AgentId, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg);
 
         _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
             .ReturnsAsync(new List<ProviderConfig>());
@@ -857,8 +857,8 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 
         ConsolidationJobMessage? capturedMessage = null;
         _mockAgentComm
-            .Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg)
+            .Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<string, AgentId, ConsolidationJobMessage, CancellationToken>((_, _, msg, _) => capturedMessage = msg)
             .Returns(Task.CompletedTask);
 
         var svc = CreateService(staleStartupConfig);

@@ -10,13 +10,13 @@ public interface IAgentHub
 {
     // Registration
     Task RegisterAgent(AgentRegistrationMessage message);
-    Task DeregisterAgent(string agentId);
+    Task DeregisterAgent(AgentId agentId);
 
     // Job lifecycle
     Task JobAccepted(JobId jobId);
     Task JobRejected(JobId jobId, string reason);
     Task ReportJobCompleted(JobId jobId, JobCompletionPayload payload);
-    Task AgentReady(string agentId);
+    Task AgentReady(AgentId agentId);
 
     // Real-time status
     Task ReportStepTransition(JobId jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata = null);
@@ -66,5 +66,10 @@ public interface IAgentHubClient
     Task CancelChat(string sessionId);
     Task ForceDisconnect();
     Task RequestFetchModels(FetchModelsRequest request);
+    // TODO: This client-side method retains `string agentId` for wire compatibility with existing agent clients.
+    // IAgentCommunication.AssignConsolidationJobAsync (server-side) now uses AgentId and unwraps to .Value before
+    // calling here. If a future caller passes AgentId directly to IAgentHubClient (e.g., via a test double or
+    // direct hub client call), the implicit conversion will fire on the string side. Consider updating this
+    // to AgentId once all agent clients have adopted the AgentIdFormatter.
     Task AssignConsolidationJob(string agentId, ConsolidationJobMessage job);
 }

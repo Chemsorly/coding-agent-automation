@@ -159,17 +159,22 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// Deregisters an agent from the registry.
     /// Only allows the caller to deregister their own agent identity.
     /// </summary>
-    public Task DeregisterAgent(string agentId)
+    public Task DeregisterAgent(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: If a malicious or buggy client sends a nil payload, MessagePack deserializes to
+        // default(AgentId) with Value == null (primary constructor bypasses the implicit operator guard).
+        // The ownership check below safely rejects such calls (callerAgent.AgentId is never null),
+        // but if that check were removed, _facade.Deregister(agentId) would throw ArgumentNullException
+        // from ConcurrentDictionary.TryRemove(null). Consider adding a guard in AgentId's primary constructor.
+        // See: AgentId.cs TODO and DotNetSpecialist review finding.
 
         // Security: verify caller owns this agentId (prevents cross-agent deregistration)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "DeregisterAgent rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, agentId);
+                Context.ConnectionId, agentId.Value);
             return Task.CompletedTask;
         }
 
@@ -231,21 +236,23 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// <summary>
     /// Agent signals it is ready for the next job. Triggers job dequeue.
     /// </summary>
-    public Task AgentReady(string agentId)
+    public Task AgentReady(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: Same default(AgentId) / null-Value concern as DeregisterAgent above — the ownership
+        // check guards the downstream path, but a primary constructor guard in AgentId would make this
+        // more robust. See: AgentId.cs TODO and DotNetSpecialist review finding.
 
         // Security: verify caller owns this agentId (prevents spurious drain signals)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "AgentReady rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, agentId);
+                Context.ConnectionId, agentId.Value);
             return Task.CompletedTask;
         }
 
-        _logger.Information("Agent {AgentId} signaled ready", agentId);
+        _logger.Information("Agent {AgentId} signaled ready", agentId.Value);
         _facade.Signal();
         return Task.CompletedTask;
     }

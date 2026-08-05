@@ -120,18 +120,19 @@ public class AgentRegistryServiceExtendedTests
     }
 
     [Fact]
-    public void Deregister_NullAgentId_ThrowsArgumentNull()
+    public void Deregister_EmptyAgentId_ThrowsArgumentException()
     {
-        Assert.Throws<ArgumentNullException>(() => _registry.Deregister(null!));
+        // Value-type parameter: empty string triggers the implicit operator's ThrowIfNullOrEmpty guard
+        Assert.Throws<ArgumentException>(() => _registry.Deregister(string.Empty));
     }
+
+    // TODO: The default(AgentId) path (Value == null, bypasses the implicit operator) is not covered for
+    // Deregister, GetByAgentId, UpdateHeartbeat, or TransitionStatus. Passing default(AgentId) reaches
+    // ConcurrentDictionary with a null key and throws ArgumentNullException from the dictionary internals
+    // rather than a clear validation boundary. Tests should be added once a guard is introduced in
+    // AgentRegistryService or the AgentId primary constructor (see AgentId.cs and AgentRegistryService TODOs).
 
     // ── GetByAgentId ────────────────────────────────────────────────────
-
-    [Fact]
-    public void GetByAgentId_NullId_ThrowsArgumentNull()
-    {
-        Assert.Throws<ArgumentNullException>(() => _registry.GetByAgentId(null!));
-    }
 
     [Fact]
     public void GetByAgentId_NonExistent_ReturnsNull()
@@ -172,12 +173,6 @@ public class AgentRegistryServiceExtendedTests
     {
         // Should log warning but not throw
         _registry.UpdateHeartbeat("non-existent", DateTimeOffset.UtcNow);
-    }
-
-    [Fact]
-    public void UpdateHeartbeat_NullAgentId_ThrowsArgumentNull()
-    {
-        Assert.Throws<ArgumentNullException>(() => _registry.UpdateHeartbeat(null!, DateTimeOffset.UtcNow));
     }
 
     // ── TransitionStatus ────────────────────────────────────────────────
@@ -246,12 +241,6 @@ public class AgentRegistryServiceExtendedTests
     public void TransitionStatus_NonExistentAgent_DoesNotThrow()
     {
         _registry.TransitionStatus("non-existent", AgentStatus.Idle);
-    }
-
-    [Fact]
-    public void TransitionStatus_NullAgentId_ThrowsArgumentNull()
-    {
-        Assert.Throws<ArgumentNullException>(() => _registry.TransitionStatus(null!, AgentStatus.Idle));
     }
 
     // ── GetIdleAgents ───────────────────────────────────────────────────

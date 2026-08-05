@@ -57,7 +57,7 @@ public interface IConsolidationDispatchService
         ConsolidationRunType type,
         TemplateId? templateId,
         string workspacePath,
-        string agentId,
+        AgentId agentId,
         CancellationToken ct);
 
     /// <summary>
