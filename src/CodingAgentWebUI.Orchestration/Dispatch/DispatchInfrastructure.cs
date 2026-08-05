@@ -153,17 +153,9 @@ public sealed class DispatchInfrastructure
         // These are needed so the agent can clone secondary repos for code exploration.
         if (additionalRepoProviderIds is not null)
         {
-            var addedIds = new HashSet<string> { repoProviderId }; // primary already added
-            foreach (var additionalId in additionalRepoProviderIds)
-            {
-                if (string.IsNullOrEmpty(additionalId) || !addedIds.Add(additionalId))
-                    continue; // skip null/empty or duplicates
-
-                var additionalConfig = await ProviderConfigResolver.ResolveAsync(
-                    Resolution.ConfigStore, additionalId, ProviderKind.Repository, repoConfigs, required: false, logger, ct);
-                if (additionalConfig is not null)
-                    configs.Add(additionalConfig);
-            }
+            var additionalConfigs = await ResolveAdditionalRepoConfigsAsync(
+                repoProviderId, additionalRepoProviderIds, repoConfigs, logger, ct);
+            configs.AddRange(additionalConfigs);
         }
 
         var agentConfigs = await Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Agent, ct);
@@ -171,24 +163,55 @@ public sealed class DispatchInfrastructure
             Resolution.ConfigStore, agentProviderId, ProviderKind.Agent, agentConfigs, required: true, logger, ct);
         configs.Add(agentConfig!);
 
-        if (!string.IsNullOrEmpty(brainProviderId))
-        {
-            var brainConfig = await ProviderConfigResolver.ResolveAsync(
-                Resolution.ConfigStore, brainProviderId, ProviderKind.Repository, repoConfigs, required: false, logger, ct);
-            if (brainConfig is not null)
-                configs.Add(brainConfig);
-        }
+        var brainConfig = await ResolveOptionalProviderConfigAsync(brainProviderId, ProviderKind.Repository, repoConfigs, logger, ct);
+        if (brainConfig is not null)
+            configs.Add(brainConfig);
 
         if (!string.IsNullOrEmpty(pipelineProviderId))
         {
             var pipelineConfigs = await Resolution.ConfigStore.LoadProviderConfigsAsync(ProviderKind.Pipeline, ct);
-            var pipelineConfig = await ProviderConfigResolver.ResolveAsync(
-                Resolution.ConfigStore, pipelineProviderId, ProviderKind.Pipeline, pipelineConfigs, required: false, logger, ct);
+            var pipelineConfig = await ResolveOptionalProviderConfigAsync(pipelineProviderId, ProviderKind.Pipeline, pipelineConfigs, logger, ct);
             if (pipelineConfig is not null)
                 configs.Add(pipelineConfig);
         }
 
         return configs.AsReadOnly();
+    }
+
+    private async Task<IReadOnlyList<ProviderConfig>> ResolveAdditionalRepoConfigsAsync(
+        string primaryId,
+        IEnumerable<string> additionalRepoProviderIds,
+        IReadOnlyList<ProviderConfig> repoConfigs,
+        ILogger logger,
+        CancellationToken ct)
+    {
+        var configs = new List<ProviderConfig>();
+        var addedIds = new HashSet<string> { primaryId }; // primary already added
+
+        foreach (var additionalId in additionalRepoProviderIds)
+        {
+            if (string.IsNullOrEmpty(additionalId) || !addedIds.Add(additionalId))
+                continue; // skip null/empty or duplicates
+
+            var additionalConfig = await ProviderConfigResolver.ResolveAsync(
+                Resolution.ConfigStore, additionalId, ProviderKind.Repository, repoConfigs, required: false, logger, ct);
+            if (additionalConfig is not null)
+                configs.Add(additionalConfig);
+        }
+
+        return configs;
+    }
+
+    private async Task<ProviderConfig?> ResolveOptionalProviderConfigAsync(
+        string? providerId, ProviderKind kind,
+        IReadOnlyList<ProviderConfig> existingConfigs,
+        ILogger logger, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(providerId))
+            return null;
+
+        return await ProviderConfigResolver.ResolveAsync(
+            Resolution.ConfigStore, providerId, kind, existingConfigs, required: false, logger, ct);
     }
 
     // ── Issue Context Building (inlined from IssueContextBuilder) ─────────────────

@@ -52,137 +52,8 @@ public static class JobSpecBuilder
         var isKiroAgent = IsKiroAgent(template.ProviderType);
         var isOpencodeAgent = IsOpencodeAgent(template.ProviderType);
 
-        // ── Env vars ────────────────────────────────────────────────────────
-        var envVars = new List<V1EnvVar>
-        {
-            new() { Name = "ORCHESTRATOR_URL", Value = ctx.OrchestratorUrl },
-            new() { Name = "AGENT_API_KEY_FILE", Value = "/var/run/secrets/agent-api-key/agent-api-key" },            new()
-            {
-                Name = "AGENT_ID",
-                ValueFrom = new V1EnvVarSource
-                {
-                    FieldRef = new V1ObjectFieldSelector { FieldPath = "metadata.name" }
-                }
-            }
-        };
-
-        var otelEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
-        if (!string.IsNullOrEmpty(otelEndpoint))
-            envVars.Add(new V1EnvVar { Name = "OTEL_EXPORTER_OTLP_ENDPOINT", Value = otelEndpoint });
-
-        var otelProtocol = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL");
-        if (!string.IsNullOrEmpty(otelProtocol))
-            envVars.Add(new V1EnvVar { Name = "OTEL_EXPORTER_OTLP_PROTOCOL", Value = otelProtocol });
-
-        // OTEL headers may contain auth tokens — read from Secret rather than propagating plaintext
-        envVars.Add(new V1EnvVar
-        {
-            Name = "OTEL_EXPORTER_OTLP_HEADERS",
-            ValueFrom = new V1EnvVarSource
-            {
-                SecretKeyRef = new V1SecretKeySelector
-                {
-                    Name = ctx.AgentApiKeySecretName,
-                    Key = "otel-headers",
-                    Optional = true
-                }
-            }
-        });
-
-        var otelResourceAttrs = Environment.GetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES");
-        if (!string.IsNullOrEmpty(otelResourceAttrs))
-            envVars.Add(new V1EnvVar { Name = "OTEL_RESOURCE_ATTRIBUTES", Value = otelResourceAttrs });
-
-        // Per-job service name for trace/metric attribution
-        envVars.Add(new V1EnvVar { Name = "OTEL_SERVICE_NAME", Value = $"coding-agent-worker-{ctx.JobName}" });
-
-        // Propagate log level so worker pods use the same verbosity as the orchestrator
-        var logLevel = Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel);
-        if (!string.IsNullOrEmpty(logLevel))
-            envVars.Add(new V1EnvVar { Name = AgentDefaults.EnvLogLevel, Value = logLevel });
-
-        // Propagate agent labels from the template so WorkItemAgentService can read them
-        if (!string.IsNullOrEmpty(template.Labels))
-            envVars.Add(new V1EnvVar { Name = AgentDefaults.EnvAgentLabels, Value = template.Labels });
-
-        // ── Volumes & mounts ────────────────────────────────────────────────
-        var volumeMounts = new List<V1VolumeMount>
-        {
-            new()
-            {
-                Name = AgentApiKeyVolumeName,
-                MountPath = "/var/run/secrets/agent-api-key",
-                ReadOnlyProperty = true
-            }
-        };
-
-        var volumes = new List<V1Volume>
-        {
-            new()
-            {
-                Name = AgentApiKeyVolumeName,
-                Secret = new V1SecretVolumeSource
-                {
-                    SecretName = ctx.AgentApiKeySecretName,
-                    Items = [new V1KeyToPath { Key = AgentApiKeyVolumeName, Path = AgentApiKeyVolumeName }]
-                }
-            }
-        };
-
-        if (isKiroAgent && ctx.ClaimedPvc is not null)
-        {
-            volumeMounts.Add(new V1VolumeMount
-            {
-                Name = "kiro-cli-data",
-                MountPath = "/home/ubuntu/.local/share/kiro-cli"
-            });
-            volumes.Add(new V1Volume
-            {
-                Name = "kiro-cli-data",
-                PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource
-                {
-                    ClaimName = ctx.ClaimedPvc
-                }
-            });
-        }
-
-        if (isOpencodeAgent && !string.IsNullOrEmpty(ctx.OpencodeConfigSecretName))
-        {
-            volumeMounts.Add(new V1VolumeMount
-            {
-                Name = "opencode-config",
-                MountPath = "/home/ubuntu/.config/opencode",
-                ReadOnlyProperty = true
-            });
-            volumes.Add(new V1Volume
-            {
-                Name = "opencode-config",
-                Secret = new V1SecretVolumeSource
-                {
-                    SecretName = ctx.OpencodeConfigSecretName
-                }
-            });
-        }
-
-        if (ctx.WorkItemId.HasValue && ctx.ProjectSecrets is not null && ctx.ProjectSecrets.Count > 0)
-        {
-            var secretName = $"caa-secrets-{ctx.WorkItemId.Value.ToString("N")[..8]}";
-            volumeMounts.Add(new V1VolumeMount
-            {
-                Name = "project-secrets",
-                MountPath = "/var/run/secrets/project-secrets",
-                ReadOnlyProperty = true
-            });
-            volumes.Add(new V1Volume
-            {
-                Name = "project-secrets",
-                Secret = new V1SecretVolumeSource
-                {
-                    SecretName = secretName,
-                    Optional = true
-                }
-            });
-        }
+        var envVars = BuildEnvVars(template, ctx);
+        var (volumeMounts, volumes) = BuildVolumeMountsAndVolumes(isKiroAgent, isOpencodeAgent, ctx);
 
         // ── Container ───────────────────────────────────────────────────────
         var container = new V1Container
@@ -271,6 +142,157 @@ public static class JobSpecBuilder
                 }
             }
         };
+    }
+
+    /// <summary>
+    /// Builds the environment variable list for the agent container.
+    /// Includes static orchestrator/agent vars, OTEL propagation, log level, and agent labels.
+    /// </summary>
+    private static List<V1EnvVar> BuildEnvVars(JobTemplate template, BuildContext ctx)
+    {
+        var envVars = new List<V1EnvVar>
+        {
+            new() { Name = "ORCHESTRATOR_URL", Value = ctx.OrchestratorUrl },
+            new() { Name = "AGENT_API_KEY_FILE", Value = "/var/run/secrets/agent-api-key/agent-api-key" },
+            new()
+            {
+                Name = "AGENT_ID",
+                ValueFrom = new V1EnvVarSource
+                {
+                    FieldRef = new V1ObjectFieldSelector { FieldPath = "metadata.name" }
+                }
+            }
+        };
+
+        var otelEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT");
+        if (!string.IsNullOrEmpty(otelEndpoint))
+            envVars.Add(new V1EnvVar { Name = "OTEL_EXPORTER_OTLP_ENDPOINT", Value = otelEndpoint });
+
+        var otelProtocol = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_PROTOCOL");
+        if (!string.IsNullOrEmpty(otelProtocol))
+            envVars.Add(new V1EnvVar { Name = "OTEL_EXPORTER_OTLP_PROTOCOL", Value = otelProtocol });
+
+        // OTEL headers may contain auth tokens — read from Secret rather than propagating plaintext
+        envVars.Add(new V1EnvVar
+        {
+            Name = "OTEL_EXPORTER_OTLP_HEADERS",
+            ValueFrom = new V1EnvVarSource
+            {
+                SecretKeyRef = new V1SecretKeySelector
+                {
+                    Name = ctx.AgentApiKeySecretName,
+                    Key = "otel-headers",
+                    Optional = true
+                }
+            }
+        });
+
+        var otelResourceAttrs = Environment.GetEnvironmentVariable("OTEL_RESOURCE_ATTRIBUTES");
+        if (!string.IsNullOrEmpty(otelResourceAttrs))
+            envVars.Add(new V1EnvVar { Name = "OTEL_RESOURCE_ATTRIBUTES", Value = otelResourceAttrs });
+
+        // Per-job service name for trace/metric attribution
+        envVars.Add(new V1EnvVar { Name = "OTEL_SERVICE_NAME", Value = $"coding-agent-worker-{ctx.JobName}" });
+
+        // Propagate log level so worker pods use the same verbosity as the orchestrator
+        var logLevel = Environment.GetEnvironmentVariable(AgentDefaults.EnvLogLevel);
+        if (!string.IsNullOrEmpty(logLevel))
+            envVars.Add(new V1EnvVar { Name = AgentDefaults.EnvLogLevel, Value = logLevel });
+
+        // Propagate agent labels from the template so WorkItemAgentService can read them
+        if (!string.IsNullOrEmpty(template.Labels))
+            envVars.Add(new V1EnvVar { Name = AgentDefaults.EnvAgentLabels, Value = template.Labels });
+
+        return envVars;
+    }
+
+    /// <summary>
+    /// Builds the volume mounts and volumes for the agent container.
+    /// Includes the always-present API-key secret, optional kiro PVC, optional opencode config secret,
+    /// and optional project-secrets secret.
+    /// </summary>
+    private static (List<V1VolumeMount> mounts, List<V1Volume> volumes) BuildVolumeMountsAndVolumes(
+        bool isKiroAgent, bool isOpencodeAgent, BuildContext ctx)
+    {
+        var volumeMounts = new List<V1VolumeMount>
+        {
+            new()
+            {
+                Name = AgentApiKeyVolumeName,
+                MountPath = "/var/run/secrets/agent-api-key",
+                ReadOnlyProperty = true
+            }
+        };
+
+        var volumes = new List<V1Volume>
+        {
+            new()
+            {
+                Name = AgentApiKeyVolumeName,
+                Secret = new V1SecretVolumeSource
+                {
+                    SecretName = ctx.AgentApiKeySecretName,
+                    Items = [new V1KeyToPath { Key = AgentApiKeyVolumeName, Path = AgentApiKeyVolumeName }]
+                }
+            }
+        };
+
+        if (isKiroAgent && ctx.ClaimedPvc is not null)
+        {
+            volumeMounts.Add(new V1VolumeMount
+            {
+                Name = "kiro-cli-data",
+                MountPath = "/home/ubuntu/.local/share/kiro-cli"
+            });
+            volumes.Add(new V1Volume
+            {
+                Name = "kiro-cli-data",
+                PersistentVolumeClaim = new V1PersistentVolumeClaimVolumeSource
+                {
+                    ClaimName = ctx.ClaimedPvc
+                }
+            });
+        }
+
+        if (isOpencodeAgent && !string.IsNullOrEmpty(ctx.OpencodeConfigSecretName))
+        {
+            volumeMounts.Add(new V1VolumeMount
+            {
+                Name = "opencode-config",
+                MountPath = "/home/ubuntu/.config/opencode",
+                ReadOnlyProperty = true
+            });
+            volumes.Add(new V1Volume
+            {
+                Name = "opencode-config",
+                Secret = new V1SecretVolumeSource
+                {
+                    SecretName = ctx.OpencodeConfigSecretName
+                }
+            });
+        }
+
+        if (ctx.WorkItemId.HasValue && ctx.ProjectSecrets is not null && ctx.ProjectSecrets.Count > 0)
+        {
+            var secretName = $"caa-secrets-{ctx.WorkItemId.Value.ToString("N")[..8]}";
+            volumeMounts.Add(new V1VolumeMount
+            {
+                Name = "project-secrets",
+                MountPath = "/var/run/secrets/project-secrets",
+                ReadOnlyProperty = true
+            });
+            volumes.Add(new V1Volume
+            {
+                Name = "project-secrets",
+                Secret = new V1SecretVolumeSource
+                {
+                    SecretName = secretName,
+                    Optional = true
+                }
+            });
+        }
+
+        return (volumeMounts, volumes);
     }
 
     /// <summary>

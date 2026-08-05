@@ -72,6 +72,8 @@ public class DecompositionTemplatePropertyTests
                 new() { Id = repoProviderId, Kind = ProviderKind.Repository, ProviderType = "GitHub", DisplayName = "Test" }
             });
 
+        // Use a TCS to signal the first poll completion rather than relying on wall-clock delay.
+        var pollSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var decompositionPolled = false;
         var mockFactory = new Mock<IProviderFactory>();
         mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
@@ -88,6 +90,8 @@ public class DecompositionTemplatePropertyTests
                         {
                             decompositionPolled = true;
                         }
+                        // Signal that at least one poll cycle has executed
+                        pollSignal.TrySetResult();
                         return Task.FromResult(new PagedResult<IssueSummary>
                         {
                             Items = new List<IssueSummary>(),
@@ -111,10 +115,20 @@ public class DecompositionTemplatePropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        // Wait for at least one poll cycle (generous delay for CI ARM runners under load)
-        await Task.Delay(800);
+        if (enabled)
+        {
+            // Wait for the signal that the provider was called (poll cycle ran), with a generous
+            // timeout that won't flake even on heavily loaded CI runners.
+            await Task.WhenAny(pollSignal.Task, Task.Delay(3000));
+        }
+        else
+        {
+            // When the template is disabled no polling occurs at all; wait briefly to confirm silence.
+            await Task.Delay(300);
+        }
+
         svc.StopLoop();
-        await Task.Delay(200);
+        await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 
@@ -184,6 +198,8 @@ public class DecompositionTemplatePropertyTests
         mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Repository, It.IsAny<CancellationToken>()))
             .ReturnsAsync(repoConfigs);
 
+        // Use a TCS to signal the first poll completion rather than relying on wall-clock delay.
+        var pollSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var decompositionPolled = false;
         var mockFactory = new Mock<IProviderFactory>();
         mockFactory.Setup(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()))
@@ -198,6 +214,8 @@ public class DecompositionTemplatePropertyTests
                         {
                             decompositionPolled = true;
                         }
+                        // Signal that at least one poll cycle has executed
+                        pollSignal.TrySetResult();
                         return Task.FromResult(new PagedResult<IssueSummary>
                         {
                             Items = new List<IssueSummary>(),
@@ -221,10 +239,19 @@ public class DecompositionTemplatePropertyTests
         var started = await svc.StartLoopAsync();
         if (!started) { cts.Cancel(); try { await svc.StopAsync(CancellationToken.None); } catch { } return; }
 
-        // Wait for at least one poll cycle (generous delay for CI environments under load)
-        await Task.Delay(800);
+        if (issueProviderExists && repoProviderExists)
+        {
+            // Both providers present — wait for a real poll cycle to fire, with a generous timeout.
+            await Task.WhenAny(pollSignal.Task, Task.Delay(3000));
+        }
+        else
+        {
+            // Missing a provider — no poll will occur; wait briefly to confirm silence.
+            await Task.Delay(300);
+        }
+
         svc.StopLoop();
-        await Task.Delay(200);
+        await Task.Delay(50);
         cts.Cancel();
         try { await svc.StopAsync(CancellationToken.None); } catch { }
 

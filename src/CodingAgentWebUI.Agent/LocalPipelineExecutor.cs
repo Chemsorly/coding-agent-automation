@@ -53,11 +53,11 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
     public LocalPipelineExecutor(LocalPipelineExecutorDependencies deps)
     {
         ArgumentNullException.ThrowIfNull(deps);
-        ArgumentNullException.ThrowIfNull(deps.Orchestrator, nameof(deps.Orchestrator));
-        ArgumentNullException.ThrowIfNull(deps.HttpClientFactory, nameof(deps.HttpClientFactory));
-        ArgumentNullException.ThrowIfNull(deps.DefaultPipelineConfig, nameof(deps.DefaultPipelineConfig));
-        ArgumentNullException.ThrowIfNull(deps.QualityGateValidator, nameof(deps.QualityGateValidator));
-        ArgumentNullException.ThrowIfNull(deps.Logger, nameof(deps.Logger));
+        ArgumentNullException.ThrowIfNull(deps.Orchestrator);
+        ArgumentNullException.ThrowIfNull(deps.HttpClientFactory);
+        ArgumentNullException.ThrowIfNull(deps.DefaultPipelineConfig);
+        ArgumentNullException.ThrowIfNull(deps.QualityGateValidator);
+        ArgumentNullException.ThrowIfNull(deps.Logger);
 
         _orchestrator = deps.Orchestrator;
         _httpClientFactory = deps.HttpClientFactory;

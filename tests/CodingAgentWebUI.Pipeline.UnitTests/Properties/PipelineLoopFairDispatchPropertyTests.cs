@@ -15,6 +15,17 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Properties;
 /// Tests budget ceiling, fairness, starvation prevention, provider failure isolation,
 /// and idempotent empty-cycle behavior.
 /// </summary>
+/// <remarks>
+/// TODO: [WARNING] Properties 1, 2, 3, and 5 simulate the round-robin algorithm using test-internal
+/// helpers (duplicate <c>DispatchTurn</c> enum and <c>NextTurn</c>/<c>SimulateThreeWayDispatch</c>
+/// logic) rather than calling <c>DispatchFairRoundRobinAsync</c> directly. After the extract-method
+/// refactoring introduced <c>TrySelectNextTurn</c>, these properties exercise a re-implementation,
+/// not the production method. A bug in <c>TrySelectNextTurn</c> (e.g., off-by-one in the modulo,
+/// wrong condition order) would replicate identically in the simulation and the tests would still
+/// pass. Only Property 4 (<c>ProviderFailureIsolation</c>) exercises the real service.
+/// Fix: refactor Properties 1–3 and 5 to call <c>DispatchFairRoundRobinAsync</c> via the service
+/// harness (similar to Property 4) so regressions in the production code are caught directly.
+/// </remarks>
 public class PipelineLoopFairDispatchPropertyTests
 {
     // ══════════════════════════════════════════════════════════════════════

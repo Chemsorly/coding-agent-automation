@@ -885,17 +885,18 @@ public class QualityGateValidatorTests
         //   - Both WaitAsync calls start at t=0
         //   - stderrTask completes at ~t=2s (pipe closes when short-lived grandchild exits)
         //   - stdoutTask never completes (grandchild sleeps forever)
-        //   - CTS fires at t=10s → Task.WhenAll throws OperationCanceledException
+        //   - CTS fires at t=20s → Task.WhenAll throws OperationCanceledException
         //   - Fallback: stderrTask.IsCompletedSuccessfully=true → stderr preserved ✓
         //
         // With hypothetical sequential per-pipe try/catch (the old bug pattern):
-        //   - await stdoutTask.WaitAsync(cts) → CTS fires at t=10s → stdout = string.Empty
+        //   - await stdoutTask.WaitAsync(cts) → CTS fires at t=20s → stdout = string.Empty
         //   - await stderrTask.WaitAsync(cts) → CTS already cancelled → immediate throw → stderr = string.Empty
         //   - Both lost!
         //
-        // Key: the test uses a 10s timeout, and the method must complete in ~10s (not ~20s which
-        // would indicate sequential per-pipe timeouts).
-        var pipeDrainTimeout = TimeSpan.FromSeconds(10);
+        // Key: the test uses a 20s timeout (generous to avoid flakiness on slow CI where bash
+        // process startup and grandchild fork/exec can add several seconds of overhead), and the
+        // method must complete in ~20s (not ~40s which would indicate sequential per-pipe timeouts).
+        var pipeDrainTimeout = TimeSpan.FromSeconds(20);
         var validator = new ProcessExposingValidator(pipeDrainTimeout);
 
         // Script: 

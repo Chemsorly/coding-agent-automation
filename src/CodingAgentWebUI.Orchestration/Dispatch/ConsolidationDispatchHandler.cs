@@ -190,28 +190,44 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
             if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
                 break;
 
-            using var lease = await _rateLimiter.AcquireAsync(1, ct);
-            if (!lease.IsAcquired)
-            {
-                Log.Warning("ConsolidationDispatchHandler: rate limit hit, stopping dispatch cycle");
+            if (!await ProcessConsolidationItemAsync(db, item, concurrencyBySelector, availablePvcs, ct))
                 break;
-            }
-
-            var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
-
-            // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
-            switch (result.Outcome)
-            {
-                case EligibilityOutcome.AtConcurrencyLimit:
-                case EligibilityOutcome.NoPvcAvailable:
-                    continue;
-                case EligibilityOutcome.NoTemplate:
-                    await FailConsolidationWorkItemAsync(item.Id, result.ErrorMessage!, item.IssueIdentifier, ct);
-                    continue;
-            }
-
-            await DispatchConsolidationItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
         }
+    }
+
+    /// <summary>
+    /// Processes a single consolidation work item: rate-limit check, eligibility gating, and dispatch.
+    /// Returns false if the dispatch loop should stop (rate limit hit).
+    /// </summary>
+    private async Task<bool> ProcessConsolidationItemAsync(
+        PipelineDbContext db,
+        PendingWorkItemProjection item,
+        Dictionary<string, int> concurrencyBySelector,
+        List<string> availablePvcs,
+        CancellationToken ct)
+    {
+        using var lease = await _rateLimiter.AcquireAsync(1, ct);
+        if (!lease.IsAcquired)
+        {
+            Log.Warning("ConsolidationDispatchHandler: rate limit hit, stopping dispatch cycle");
+            return false;
+        }
+
+        var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
+
+        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
+        switch (result.Outcome)
+        {
+            case EligibilityOutcome.AtConcurrencyLimit:
+            case EligibilityOutcome.NoPvcAvailable:
+                return true;
+            case EligibilityOutcome.NoTemplate:
+                await FailConsolidationWorkItemAsync(item.Id, result.ErrorMessage!, item.IssueIdentifier, ct);
+                return true;
+        }
+
+        await DispatchConsolidationItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
+        return true;
     }
 
     /// <summary>
@@ -272,64 +288,19 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
             new DispatchLifecycleContext(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, "consolidation "),
             async workItem =>
             {
-                // Deserialize payload to extract consolidation fields
-                JobDistributionRequest? request = null;
-                if (!string.IsNullOrEmpty(workItem.Payload))
-                {
-                    try
-                    {
-                        request = JsonSerializer.Deserialize<JobDistributionRequest>(workItem.Payload, PipelineJsonOptions.Default);
-                    }
-                    catch (JsonException ex)
-                    {
-                        Log.Warning(ex, "ConsolidationDispatchHandler: failed to deserialize consolidation WorkItem {WorkItemId} payload", item.Id);
-                    }
-                }
-
+                var request = DeserializeConsolidationPayload(workItem.Payload, item.Id);
                 if (request is null)
                 {
                     await FailConsolidationWorkItemAsync(item.Id, "Consolidation WorkItem has no valid payload", item.IssueIdentifier, ct);
                     return (false, null);
                 }
 
-                // Build provider configs and vend tokens at dispatch time
-                IReadOnlyList<ProviderConfig>? vendedConfigs = null;
-                string repoProviderId = "";
-                PipelineConfiguration? pipelineConfig = null;
-
+                IReadOnlyList<ProviderConfig>? vendedConfigs;
+                string repoProviderId;
+                PipelineConfiguration? pipelineConfig;
                 try
                 {
-                    // Parse agent labels from selector string
-                    var agentLabels = (item.AgentSelector ?? "")
-                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                        .ToList()
-                        .AsReadOnly();
-
-                    // Delegate config resolution and token vending to shared preparer
-                    if (_consolidationJobPreparer is null)
-                    {
-                        Log.Error("ConsolidationDispatchHandler: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
-                        await FailConsolidationWorkItemAsync(item.Id, "IConsolidationJobPreparationService not registered", item.IssueIdentifier, ct);
-                        return (false, null);
-                    }
-
-                    var preparation = await _consolidationJobPreparer.PrepareAsync(
-                        request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-                        // TODO: This string→TemplateId? conversion pattern is repeated across ConsolidationDispatchHandler,
-                        // JobQueueDrainService, PendingWorkItemDrainService, and ConsolidationService. Consider adding a
-                        // TemplateId.FromNullable(string?) factory method to encapsulate this in one place so that any
-                        // future validation changes only need updating once.
-                        string.IsNullOrEmpty(request.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)request.ConsolidationTemplateId,
-                        agentLabels,
-                        ct);
-                    vendedConfigs = preparation.ProviderConfigs;
-                    repoProviderId = preparation.RepoProviderConfigId;
-
-                    // Load pipeline configuration for the agent
-                    if (_pipelineConfigStore is not null)
-                    {
-                        pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
-                    }
+                    (vendedConfigs, repoProviderId, pipelineConfig) = await ResolveProviderConfigsAsync(item, request, ct);
                 }
                 catch (Exception ex)
                 {
@@ -349,18 +320,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
                 // Load project secrets if project has them (resolve project from template if needed)
                 Dictionary<string, string>? projectSecrets = null;
-                string? resolvedProjectId = item.ProjectId;
-                if (string.IsNullOrEmpty(resolvedProjectId) && _projectStore is not null
-                    && !string.IsNullOrEmpty(request.ConsolidationTemplateId))
-                {
-                    var projects = await _projectStore.LoadProjectsAsync(ct);
-                    if (projects is not null)
-                    {
-                        var ownerProject = projects.FirstOrDefault(p =>
-                            p.Enabled && p.TemplateIds.Contains(request.ConsolidationTemplateId));
-                        resolvedProjectId = ownerProject?.Id;
-                    }
-                }
+                var resolvedProjectId = await ResolveProjectIdAsync(item, request, ct);
 
                 if (!string.IsNullOrEmpty(resolvedProjectId))
                 {
@@ -382,6 +342,90 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
                 if (item.IssueIdentifier is not null)
                     await CascadeFailureAsync(item.IssueIdentifier, errorMessage, ct);
             });
+    }
+
+    /// <summary>
+    /// Deserializes the consolidation work item payload to a <see cref="JobDistributionRequest"/>.
+    /// Returns null if the payload is missing or unparseable.
+    /// </summary>
+    private static JobDistributionRequest? DeserializeConsolidationPayload(string? payload, Guid workItemId)
+    {
+        if (string.IsNullOrEmpty(payload))
+            return null;
+
+        try
+        {
+            return JsonSerializer.Deserialize<JobDistributionRequest>(payload, PipelineJsonOptions.Default);
+        }
+        catch (JsonException ex)
+        {
+            Log.Warning(ex, "ConsolidationDispatchHandler: failed to deserialize consolidation WorkItem {WorkItemId} payload", workItemId);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Resolves provider configs and pipeline configuration for a consolidation dispatch.
+    /// Throws on failure; callers should catch and handle.
+    /// </summary>
+    private async Task<(IReadOnlyList<ProviderConfig>? vendedConfigs, string repoProviderId, PipelineConfiguration? pipelineConfig)>
+        ResolveProviderConfigsAsync(PendingWorkItemProjection item, JobDistributionRequest request, CancellationToken ct)
+    {
+        // Parse agent labels from selector string
+        var agentLabels = (item.AgentSelector ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToList()
+            .AsReadOnly();
+
+        // Delegate config resolution and token vending to shared preparer
+        if (_consolidationJobPreparer is null)
+        {
+            Log.Error("ConsolidationDispatchHandler: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
+            // Throw without calling FailConsolidationWorkItemAsync here: the caller's catch (Exception ex) block
+            // will call FailConsolidationWorkItemAsync exactly once. Calling it here AND throwing would cause a
+            // double-fail — the same work item would be transitioned to Failed twice with two different messages.
+            // TODO: [WARNING] The caller's catch block passes `ct` to FailConsolidationWorkItemAsync, which means the
+            // failure-recording DB write respects graceful shutdown cancellation — this matches the original behaviour.
+            throw new InvalidOperationException("IConsolidationJobPreparationService not registered");
+        }
+
+        var preparation = await _consolidationJobPreparer.PrepareAsync(
+            request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
+            // TODO: This string→TemplateId? conversion pattern is repeated across ConsolidationDispatchHandler,
+            // JobQueueDrainService, PendingWorkItemDrainService, and ConsolidationService. Consider adding a
+            // TemplateId.FromNullable(string?) factory method to encapsulate this in one place so that any
+            // future validation changes only need updating once.
+            string.IsNullOrEmpty(request.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)request.ConsolidationTemplateId,
+            agentLabels,
+            ct);
+
+        PipelineConfiguration? pipelineConfig = null;
+        if (_pipelineConfigStore is not null)
+            pipelineConfig = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
+
+        return (preparation.ProviderConfigs, preparation.RepoProviderConfigId, pipelineConfig);
+    }
+
+    /// <summary>
+    /// Resolves the project ID for a consolidation work item.
+    /// Uses the item's direct project ID if set; falls back to a template-based lookup via the project store.
+    /// </summary>
+    private async Task<string?> ResolveProjectIdAsync(
+        PendingWorkItemProjection item, JobDistributionRequest request, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(item.ProjectId))
+            return item.ProjectId;
+
+        if (_projectStore is null || string.IsNullOrEmpty(request.ConsolidationTemplateId))
+            return null;
+
+        var projects = await _projectStore.LoadProjectsAsync(ct);
+        if (projects is null)
+            return null;
+
+        var ownerProject = projects.FirstOrDefault(p =>
+            p.Enabled && p.TemplateIds.Contains(request.ConsolidationTemplateId));
+        return ownerProject?.Id;
     }
 
     // ── Failure Handling ────────────────────────────────────────────────

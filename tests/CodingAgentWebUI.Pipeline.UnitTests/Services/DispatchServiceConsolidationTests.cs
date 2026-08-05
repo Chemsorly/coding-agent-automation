@@ -25,6 +25,18 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// Tests for ConsolidationDispatchHandler handling of consolidation WorkItems (TaskType=Consolidation).
 /// Validates: Issue #1086 — K8s mode creates K8s Jobs for consolidation items.
 /// </summary>
+/// <remarks>
+/// TODO: [WARNING] No test covers the <c>_consolidationJobPreparer is null</c> path in
+/// <c>ResolveProviderConfigsAsync</c>. After the extract-method refactoring, when
+/// <c>_consolidationJobPreparer</c> is null the method throws <c>InvalidOperationException</c>,
+/// which is caught by the caller's catch block and results in exactly one call to
+/// <c>FailConsolidationWorkItemAsync</c>. Without a test for this path, a future regression
+/// (e.g., accidentally re-introducing the double-fail) would go undetected.
+/// Add a test: construct <c>ConsolidationDispatchHandler</c> without a
+/// <c>IConsolidationJobPreparationService</c>, enqueue a pending consolidation item, call
+/// <c>PollAndDispatchConsolidationAsync</c>, and assert the work item transitions to Failed
+/// exactly once with the expected error message.
+/// </remarks>
 [Trait("Feature", "K8sConsolidationDispatch")]
 public class DispatchServiceConsolidationTests : IDisposable
 {

@@ -55,7 +55,7 @@ public class AgentWorkerServiceTests : IDisposable
         var mockOrchestrator = new Mock<KiroCliLib.Core.IKiroCliOrchestrator>();
 
         var act = () => new AgentWorkerService(new AgentWorkerServiceDependencies(null!, new AgentJobSlotManager(() => Task.CompletedTask), new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object));
-        act.Should().Throw<ArgumentNullException>().WithParameterName("ConnectionLifecycle");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.ConnectionLifecycle");
     }
 
     [Fact]
@@ -67,7 +67,7 @@ public class AgentWorkerServiceTests : IDisposable
 
         var act = () => new AgentWorkerService(
             new AgentWorkerServiceDependencies(lifecycle, slotManager, new AgentId("test-agent"), null!, CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), mockLogger.Object));
-        act.Should().Throw<ArgumentNullException>().WithParameterName("Executor");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Executor");
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public class AgentWorkerServiceTests : IDisposable
 
         var act = () => new AgentWorkerService(
             new AgentWorkerServiceDependencies(lifecycle, slotManager, new AgentId("test-agent"), CreateMockExecutor(), CreateMockConsolidationExecutor(), Mock.Of<IJobCompletionReporter>(), mockOrchestrator.Object, Mock.Of<IHttpClientFactory>(), Mock.Of<IHostApplicationLifetime>(), null!));
-        act.Should().Throw<ArgumentNullException>().WithParameterName("Logger");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
     }
 
     [Fact]

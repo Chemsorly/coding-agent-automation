@@ -56,6 +56,8 @@ public class RepositoryGitOperationsThrowLoggingTests : IDisposable
             repo.Network.Remotes.Add("origin", "https://example.com/repo.git");
         }
 
+        _sink.Clear();
+
         var act = () => RepositoryGitOperations.CheckoutRemoteBranch(_tempDir, "nonexistent-branch");
 
         act.Should().Throw<InvalidOperationException>();
@@ -83,6 +85,8 @@ public class RepositoryGitOperationsThrowLoggingTests : IDisposable
             repo.Commit("init", sig, sig, new LibGit2Sharp.CommitOptions());
         }
 
+        _sink.Clear();
+
         var act = () => RepositoryGitOperations.CommitAll(
             _tempDir, "test commit", blacklistedPaths: null, allowEmpty: false);
 
@@ -103,6 +107,7 @@ public class RepositoryGitOperationsThrowLoggingTests : IDisposable
         private readonly List<LogEvent> _events = new();
         public IReadOnlyList<LogEvent> Events => _events;
         public void Emit(LogEvent logEvent) => _events.Add(logEvent);
+        public void Clear() => _events.Clear();
     }
 
     #endregion

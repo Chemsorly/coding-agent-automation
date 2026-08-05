@@ -30,71 +30,79 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
     /// <inheritdoc />
     public async Task<TokenRefreshResponse> RefreshTokenAsync(string jobId, ProviderKind providerKind, CancellationToken ct)
     {
-        // Resolve provider config IDs — from PipelineRun (SignalR mode) or WorkItem payload (K8s mode)
-        string? repoProviderConfigId;
-        string? brainProviderConfigId;
+        var (repoProviderConfigId, brainProviderConfigId) = await ResolveProviderConfigIdsAsync(jobId, ct);
 
+        var targetConfig = await ResolveTargetConfigAsync(jobId, providerKind, repoProviderConfigId, brainProviderConfigId, ct);
+
+        return await VendTokenAsync(jobId, providerKind, targetConfig, ct);
+    }
+
+    private async Task<(string? repoId, string? brainId)> ResolveProviderConfigIdsAsync(
+        string jobId, CancellationToken ct)
+    {
         var run = _facade.GetRun(jobId);
         if (run is not null)
-        {
-            repoProviderConfigId = run.RepoProviderConfigId;
-            brainProviderConfigId = run.BrainProviderConfigId;
-        }
-        else
-        {
-            // K8s mode fallback: resolve from WorkItem payload in DB
-            var configIds = await _facade.GetWorkItemProviderConfigIdsAsync(jobId, ct);
-            if (configIds is null)
-            {
-                _logger.Warning("No active run or work item found for job {JobId}", jobId);
-                throw new HubException($"No active run or work item found for job {jobId}");
-            }
+            return (run.RepoProviderConfigId, run.BrainProviderConfigId);
 
-            repoProviderConfigId = configIds.Value.RepoProviderConfigId;
-            brainProviderConfigId = configIds.Value.BrainProviderConfigId;
-
-            if (string.IsNullOrEmpty(repoProviderConfigId))
-            {
-                _logger.Warning("WorkItem {JobId} has no repoProviderConfigId in payload", jobId);
-                throw new HubException($"WorkItem {jobId} has no repoProviderConfigId in payload");
-            }
+        // K8s mode fallback: resolve from WorkItem payload in DB
+        var configIds = await _facade.GetWorkItemProviderConfigIdsAsync(jobId, ct);
+        if (configIds is null)
+        {
+            _logger.Warning("No active run or work item found for job {JobId}", jobId);
+            throw new HubException($"No active run or work item found for job {jobId}");
         }
 
+        if (string.IsNullOrEmpty(configIds.Value.RepoProviderConfigId))
+        {
+            _logger.Warning("WorkItem {JobId} has no repoProviderConfigId in payload", jobId);
+            throw new HubException($"WorkItem {jobId} has no repoProviderConfigId in payload");
+        }
+
+        return (configIds.Value.RepoProviderConfigId, configIds.Value.BrainProviderConfigId);
+    }
+
+    private async Task<ProviderConfig> ResolveTargetConfigAsync(
+        string jobId, ProviderKind providerKind,
+        string? repoProviderConfigId, string? brainProviderConfigId,
+        CancellationToken ct)
+    {
         // Resolve the correct provider config based on the requested kind.
         // Brain repos need their own scoped token (different repository scope).
         // Brain config lookup uses ProviderKind.Repository as storage kind — brain provider configs
         // are stored as Repository kind with RepositoryRole.Brain.
-        ProviderConfig? targetConfig;
-
         if (providerKind == ProviderKind.Brain)
         {
             if (string.IsNullOrEmpty(brainProviderConfigId))
             {
-                _logger.Warning("Brain token refresh for job {JobId}: brainProviderConfigId is null/empty " +
-                    "(run in memory: {RunFound}). Brain sync will be disabled.",
-                    jobId, run is not null);
+                _logger.Warning("Brain token refresh for job {JobId}: brainProviderConfigId is null/empty. Brain sync will be disabled.", jobId);
                 throw new HubException($"Brain provider config ID not available for job {jobId}. " +
                     "Brain sync cannot be performed.");
             }
 
-            targetConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId, ProviderKind.Repository, ct);
-            if (targetConfig is null)
+            var brainConfig = await _facade.GetProviderConfigByIdAsync(brainProviderConfigId, ProviderKind.Repository, ct);
+            if (brainConfig is null)
             {
                 _logger.Warning("Brain token refresh for job {JobId}: config {BrainConfigId} not found in store",
                     jobId, brainProviderConfigId);
                 throw new HubException($"Brain provider config '{brainProviderConfigId}' not found for job {jobId}");
             }
+            return brainConfig;
         }
         else
         {
-            targetConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId, ProviderKind.Repository, ct);
-            if (targetConfig is null)
+            var repoConfig = await _facade.GetProviderConfigByIdAsync(repoProviderConfigId!, ProviderKind.Repository, ct);
+            if (repoConfig is null)
             {
                 _logger.Warning("Provider config not found for job {JobId} (kind: {ProviderKind})", jobId, providerKind);
                 throw new HubException($"Provider config not found for job {jobId} (kind: {providerKind})");
             }
+            return repoConfig;
         }
+    }
 
+    private async Task<TokenRefreshResponse> VendTokenAsync(
+        string jobId, ProviderKind providerKind, ProviderConfig targetConfig, CancellationToken ct)
+    {
         // GitHub App auth: generate a short-lived scoped token via JWT exchange
         if (targetConfig.Settings.ContainsKey(ProviderSettingKeys.PrivateKeyBase64))
         {
@@ -113,7 +121,6 @@ internal sealed class AgentTokenRefreshService : IAgentTokenRefreshService
             _logger.Information("Returning static access token for job {JobId} (kind: {ProviderKind})",
                 jobId, providerKind);
 
-            // Use a far-future expiry since PATs don't expire through this mechanism
             return new TokenRefreshResponse { Token = accessToken, ExpiresAt = DateTimeOffset.UtcNow.AddHours(1) };
         }
 
