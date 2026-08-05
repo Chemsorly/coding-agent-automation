@@ -4,10 +4,8 @@ using CodingAgentWebUI.Models;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
-using CodingAgentWebUI.TestUtilities;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
-using Serilog;
 
 namespace CodingAgentWebUI.UnitTests.Components;
 
