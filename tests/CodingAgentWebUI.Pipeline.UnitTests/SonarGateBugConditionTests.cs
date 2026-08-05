@@ -15,7 +15,7 @@ namespace CodingAgentWebUI.Pipeline.UnitTests;
 ///   1. sonar.yml has no `dotnet test --collect` step → new_coverage = 0%
 ///   2. Test methods have zero assertions → new_reliability_rating = C
 /// </summary>
-public class SonarGateBugConditionTests
+public partial class SonarGateBugConditionTests
 {
     // Resolve repo root from the test assembly location (bin/Debug/net10.0 → up 5 levels)
     private static string RepoRoot { get; } = GetRepoRoot();
@@ -24,7 +24,7 @@ public class SonarGateBugConditionTests
     {
         // Walk up from the executing assembly until we find the .sln file
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !dir.GetFiles("*.sln").Any())
+        while (dir != null && dir.GetFiles("*.sln").Length == 0)
         {
             dir = dir.Parent;
         }
@@ -127,9 +127,6 @@ public class SonarGateBugConditionTests
 
         // Pattern: any Assert.*, FluentAssertions .Should(), Moq .Verify(), or AwesomeAssertions Should*
         // SonarQube S2699 recognizes all of these as valid assertions.
-        var assertionPattern = new Regex(
-            @"\bAssert\.|\.Should\b|\.Verify\b",
-            RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         var failures = new List<string>();
 
@@ -153,7 +150,7 @@ public class SonarGateBugConditionTests
                 continue;
             }
 
-            var hasAssertion = assertionPattern.IsMatch(methodBody);
+            var hasAssertion = AssertionPattern().IsMatch(methodBody);
             if (!hasAssertion)
             {
                 failures.Add($"  NO ASSERTION: {description}\n    Method body:\n{IndentBody(methodBody)}");
@@ -231,4 +228,12 @@ public class SonarGateBugConditionTests
         var bodyLines = body.Split('\n');
         return string.Join('\n', bodyLines.Select(l => "    " + l));
     }
+
+    // TODO: The original new Regex(...) used RegexOptions.Compiled | RegexOptions.IgnoreCase.
+    // [GeneratedRegex] does not accept RegexOptions.Compiled (it emits SYSLIB1040 and is
+    // redundant — source-generated regexes are compiled at build time by design). RegexOptions.Compiled
+    // is intentionally omitted here. Matching behavior is identical; only the flag literal differs
+    // from the acceptance criterion wording. See: SYSLIB1040.
+    [GeneratedRegex(@"\bAssert\.|\.Should\b|\.Verify\b", RegexOptions.IgnoreCase)]
+    private static partial Regex AssertionPattern();
 }
