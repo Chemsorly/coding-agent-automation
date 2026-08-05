@@ -716,10 +716,12 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             {
                 break;
             }
+#pragma warning disable S108 // Intentional: diagnostic polling is best-effort; failures must not affect agent execution.
             catch
             {
                 // Intentional: diagnostic polling is best-effort; failures must not affect agent execution.
             }
+#pragma warning restore S108
 
             try { await Task.Delay(10_000, ct); } catch (OperationCanceledException) { break; }
         }

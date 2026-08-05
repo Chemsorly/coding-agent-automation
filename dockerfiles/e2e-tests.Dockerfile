@@ -51,13 +51,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends libvips42 wget 
     && apt-get update && apt-get install -y --no-install-recommends powershell \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Playwright Chromium + system dependencies using the bundled script
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN pwsh tests/CodingAgentWebUI.E2ETests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium
-
-# Create a non-root user for running tests
+# Install Playwright Chromium + system dependencies using the bundled script,
+# then create a non-root user for running tests.
 # TestResults directory is mounted as a volume; ensure the non-root user can write to it.
-RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN pwsh tests/CodingAgentWebUI.E2ETests/bin/Debug/net10.0/playwright.ps1 install --with-deps chromium \
+    && addgroup --system appgroup && adduser --system --ingroup appgroup appuser \
     && mkdir -p /src/TestResults && chown -R appuser:appgroup /src/TestResults \
     && chown -R appuser:appgroup /ms-playwright
 USER appuser

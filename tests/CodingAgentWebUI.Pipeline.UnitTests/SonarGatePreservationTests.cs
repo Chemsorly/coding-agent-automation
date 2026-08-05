@@ -21,7 +21,7 @@ public class SonarGatePreservationTests
     private static string GetRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null && !dir.GetFiles("*.sln").Any())
+        while (dir != null && dir.GetFiles("*.sln").Length == 0)
         {
             dir = dir.Parent;
         }
