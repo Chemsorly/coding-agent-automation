@@ -1,3 +1,4 @@
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.Registry;
@@ -279,41 +280,47 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
             if (!result && status is WorkItemStatus.Succeeded or WorkItemStatus.Failed or WorkItemStatus.Cancelled)
             {
-                // Two-step fallback: Dispatched → Running → terminal
-                var intermediate = await _workItemTransition.TransitionAsync(workItemId, WorkItemStatus.Running, ct: ct);
-                if (intermediate)
-                {
-                    await _workItemTransition.TransitionAsync(workItemId, status, item =>
-                    {
-                        item.CompletedAt = DateTimeOffset.UtcNow;
-                        if (status == WorkItemStatus.Failed)
-                        {
-                            item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
-                            item.FailureReason ??= failureReason ?? FailureReason.AgentError;
-                        }
-                    }, ct: ct);
-                }
-                else
-                {
-                    // Third fallback: recover from infrastructure-failure-induced Failed state
-                    var recovered = await _workItemTransition.TryRecoverFromInfrastructureFailureAsync(
-                        workItemId, status, item =>
-                        {
-                            item.CompletedAt = DateTimeOffset.UtcNow;
-                            if (status == WorkItemStatus.Failed)
-                            {
-                                item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
-                                item.FailureReason ??= failureReason ?? FailureReason.AgentError;
-                            }
-                        }, ct);
-                    if (recovered)
-                        _logger.Warning("Recovered WorkItem {RunId} from delivery-timeout Failed to {Status} via lifecycle manager", runId, status);
-                }
+                await TryFallbackTransitionAsync(workItemId, status, errorMessage, failureReason, runId, ct);
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.Warning(ex, "RunLifecycleManager: WorkItem {RunId} transition to {Status} failed (non-fatal)", runId, status);
+        }
+    }
+
+    private static Action<WorkItemEntity> BuildTerminalMutationAction(
+        WorkItemStatus status, string? errorMessage, FailureReason? failureReason)
+        => item =>
+        {
+            item.CompletedAt = DateTimeOffset.UtcNow;
+            if (status == WorkItemStatus.Failed)
+            {
+                item.ErrorMessage = errorMessage ?? "Job failed without specific error information";
+                item.FailureReason ??= failureReason ?? FailureReason.AgentError;
+            }
+        };
+
+    private async Task TryFallbackTransitionAsync(
+        Guid workItemId, WorkItemStatus status,
+        string? errorMessage, FailureReason? failureReason,
+        RunId runId, CancellationToken ct)
+    {
+        var mutationAction = BuildTerminalMutationAction(status, errorMessage, failureReason);
+
+        // Two-step fallback: Dispatched → Running → terminal
+        var intermediate = await _workItemTransition!.TransitionAsync(workItemId, WorkItemStatus.Running, ct: ct);
+        if (intermediate)
+        {
+            await _workItemTransition.TransitionAsync(workItemId, status, mutationAction, ct: ct);
+        }
+        else
+        {
+            // Third fallback: recover from infrastructure-failure-induced Failed state
+            var recovered = await _workItemTransition.TryRecoverFromInfrastructureFailureAsync(
+                workItemId, status, mutationAction, ct);
+            if (recovered)
+                _logger.Warning("Recovered WorkItem {RunId} from delivery-timeout Failed to {Status} via lifecycle manager", runId, status);
         }
     }
 

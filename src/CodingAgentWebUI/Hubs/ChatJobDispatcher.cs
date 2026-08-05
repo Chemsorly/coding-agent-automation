@@ -89,18 +89,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         ArgumentNullException.ThrowIfNull(agentSelector);
         using var activity = PipelineTelemetry.ActivitySource.StartActivity("Chat.Dispatch");
 
-        if (!_leaderElection.IsLeader)
-            throw new InvalidOperationException(
-                "This orchestrator replica is not the leader and cannot dispatch chat pods.");
-
-        var normalized = JobTemplateStore.NormalizeLabels(agentSelector);
-        var selectorLabelValue = normalized.Replace(',', '_');
-
-        if (!K8sLabelValuePattern().IsMatch(selectorLabelValue))
-            throw new ArgumentException(
-                $"Agent selector '{agentSelector}' produces an invalid k8s label value '{selectorLabelValue}'. " +
-                "Label values must match [a-zA-Z0-9._-] and be ≤63 characters.");
-
+        var (normalized, selectorLabelValue) = ValidateAndNormalizeSelector(agentSelector);
         activity?.SetTag(TagAgentSelector, normalized);
 
         // Query all active chat jobs — used for both double-dispatch guard and PVC availability.
@@ -113,7 +102,53 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             .Where(j => !IsTerminal(j))
             .ToList() ?? [];
 
-        // Double-dispatch guard: reject if a non-terminal job already exists for this selector
+        CheckForExistingJob(activeChatJobs, selectorLabelValue, normalized);
+
+        var template = _templateStore.Resolve(normalized)
+            ?? throw new InvalidOperationException($"No template for selector '{normalized}'");
+
+        var jobName = $"caa-chat-{Guid.NewGuid().ToString("N")[..8]}";
+        var dispatchId = Guid.NewGuid();
+        var dispatchStart = DateTimeOffset.UtcNow;
+
+        var claimedPvc = ClaimPvcForKiroAgent(template.ProviderType, activeChatJobs);
+
+        await BuildAndSubmitChatJobAsync(normalized, selectorLabelValue, model, effort, jobName, dispatchId, claimedPvc, template, cancellationToken);
+
+        _logger.Information(
+            "ChatJobDispatcher: dispatched chat pod {JobName} for selector {AgentSelector} (dispatchId={DispatchId}, pvc={Pvc})",
+            jobName, normalized, dispatchId, claimedPvc ?? "none");
+
+        activity?.SetTag("dispatch_id", dispatchId.ToString());
+        activity?.SetTag("job_name", jobName);
+        activity?.SetTag("model", model ?? "auto");
+        activity?.SetTag("effort", effort ?? "auto");
+        activity?.SetTag("provider_type", template.ProviderType);
+
+        return await PollForAgentConnectionAsync(
+            dispatchId, jobName, claimedPvc, normalized, selectorLabelValue,
+            dispatchStart, activity, cancellationToken);
+    }
+
+    private (string normalized, string selectorLabelValue) ValidateAndNormalizeSelector(string agentSelector)
+    {
+        if (!_leaderElection.IsLeader)
+            throw new InvalidOperationException(
+                "This orchestrator replica is not the leader and cannot dispatch chat pods.");
+
+        var normalized = JobTemplateStore.NormalizeLabels(agentSelector);
+        var selectorLabelValue = normalized.Replace(',', '_');
+
+        if (!K8sLabelValuePattern().IsMatch(selectorLabelValue))
+            throw new ArgumentException(
+                $"Agent selector '{agentSelector}' produces an invalid k8s label value '{selectorLabelValue}'. " +
+                "Label values must match [a-zA-Z0-9._-] and be ≤63 characters.");
+
+        return (normalized, selectorLabelValue);
+    }
+
+    private void CheckForExistingJob(List<V1Job> activeChatJobs, string selectorLabelValue, string normalized)
+    {
         var existingForSelector = activeChatJobs.FirstOrDefault(j =>
         {
             var labels = j.Metadata?.Labels;
@@ -127,34 +162,35 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 normalized, existingName);
             throw new ChatAlreadyActiveException(existingName);
         }
+    }
 
-        // Step 3: get template
-        var template = _templateStore.Resolve(normalized)
-            ?? throw new InvalidOperationException($"No template for selector '{normalized}'");
+    private string? ClaimPvcForKiroAgent(string providerType, List<V1Job> activeChatJobs)
+    {
+        if (!IsKiroAgent(providerType))
+            return null;
 
-        var jobName = $"caa-chat-{Guid.NewGuid().ToString("N")[..8]}";
-        var dispatchId = Guid.NewGuid();
-        var dispatchStart = DateTimeOffset.UtcNow;
+        var claimedByActiveJobs = activeChatJobs
+            .Select(j =>
+            {
+                var labels = j.Metadata?.Labels;
+                return labels is not null && labels.TryGetValue("caa/claimed-pvc", out var p) ? p : null;
+            })
+            .Where(p => p is not null)
+            .ToHashSet(StringComparer.Ordinal)!;
 
-        // Step 5: PVC claim for kiro agents — replica-safe: read from k8s labels, not in-memory dict
-        string? claimedPvc = null;
-        if (IsKiroAgent(template.ProviderType))
-        {
-            var claimedByActiveJobs = activeChatJobs
-                .Select(j =>
-                {
-                    var labels = j.Metadata?.Labels;
-                    return labels is not null && labels.TryGetValue("caa/claimed-pvc", out var p) ? p : null;
-                })
-                .Where(p => p is not null)
-                .ToHashSet(StringComparer.Ordinal)!;
+        var claimedPvc = _options.KiroPvcPool.FirstOrDefault(p => !claimedByActiveJobs.Contains(p));
+        if (claimedPvc is null)
+            throw new NoPvcAvailableException();
 
-            claimedPvc = _options.KiroPvcPool.FirstOrDefault(p => !claimedByActiveJobs.Contains(p));
-            if (claimedPvc is null)
-                throw new NoPvcAvailableException();
-        }
+        return claimedPvc;
+    }
 
-        // Step 6: build context
+    private async Task BuildAndSubmitChatJobAsync(
+        string normalized, string selectorLabelValue, string? model, string? effort,
+        string jobName, Guid dispatchId, string? claimedPvc,
+        JobTemplate template,
+        CancellationToken cancellationToken)
+    {
         var ctx = new JobSpecBuilder.BuildContext
         {
             WorkItemId = null,
@@ -171,10 +207,8 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
             ProjectSecrets = null
         };
 
-        // Step 7: build job
         var job = JobSpecBuilder.Build(template, ctx);
 
-        // Post-build: inject env vars
         var container = job.Spec.Template.Spec.Containers[0];
         container.Env ??= new List<V1EnvVar>();
         container.Env.Add(new V1EnvVar { Name = AgentDefaults.EnvChatMode, Value = "true" });
@@ -191,31 +225,23 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 _logger.Warning("ChatJobDispatcher: invalid effort value rejected: {Effort}", effort);
         }
 
-        // Post-build: set labels
         job.Metadata.Labels[LabelChatSessionId] = dispatchId.ToString();
         job.Metadata.Labels["caa/chat-selector"] = selectorLabelValue;
         if (claimedPvc is not null)
             job.Metadata.Labels["caa/claimed-pvc"] = claimedPvc;
 
-        // Post-build: override spec fields
         job.Spec.BackoffLimit = 0;
         job.Spec.ActiveDeadlineSeconds = _options.ChatSessionMaxDurationSeconds;
         job.Spec.Template.Spec.TerminationGracePeriodSeconds = _options.ChatTerminationGracePeriodSeconds;
 
-        // Step 8: create job
         await _jobClient.CreateJobAsync(job, _options.Namespace, cancellationToken);
+    }
 
-        _logger.Information(
-            "ChatJobDispatcher: dispatched chat pod {JobName} for selector {AgentSelector} (dispatchId={DispatchId}, pvc={Pvc})",
-            jobName, normalized, dispatchId, claimedPvc ?? "none");
-
-        activity?.SetTag("dispatch_id", dispatchId.ToString());
-        activity?.SetTag("job_name", jobName);
-        activity?.SetTag("model", model ?? "auto");
-        activity?.SetTag("effort", effort ?? "auto");
-        activity?.SetTag("provider_type", template.ProviderType);
-
-        // Step 9: poll for agent connection
+    private async Task<string> PollForAgentConnectionAsync(
+        Guid dispatchId, string jobName, string? claimedPvc, string normalized,
+        string selectorLabelValue, DateTimeOffset dispatchStart,
+        System.Diagnostics.Activity? activity, CancellationToken cancellationToken)
+    {
         using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeoutCts.CancelAfter(TimeSpan.FromSeconds(_options.ChatPodConnectTimeoutSeconds));
 
@@ -234,7 +260,6 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
                     RegisterSession(dispatchId, jobName, connected.AgentId, claimedPvc, normalized);
 
-                    // Record dispatch latency metric
                     var tag = new KeyValuePair<string, object?>(TagAgentSelector, selectorLabelValue);
                     ChatTelemetry.DispatchLatency.Record(elapsed, tag);
 
@@ -336,41 +361,13 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
                 return;
             }
 
-            V1Job? job = null;
-            try
-            {
-                job = await _jobClient.ReadJobAsync(jobName, _options.Namespace, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(
-                    "ChatJobDispatcher: transient ReadJobAsync failure for {JobName} (will retry): {ErrorMessage}",
-                    jobName, ex.Message);
-                continue;
-            }
+            var (job, readError) = await TryReadJobAsync(jobName);
+            if (readError)
+                continue; // Transient failure — retry next iteration
 
             if (job is null || IsTerminal(job))
             {
-                if (job is null)
-                {
-                    _logger.Warning(
-                        "ChatJobDispatcher: job {JobName} not found (externally deleted) — releasing PVC {Pvc}",
-                        jobName, claimedPvc ?? "none");
-                }
-                else
-                {
-                    var isFailed = job.Status?.Conditions?.Any(
-                        c => c.Type == "Failed" && c.Status == "True") == true;
-
-                    if (isFailed)
-                        _logger.Warning(
-                            "ChatJobDispatcher: job {JobName} failed — PVC {Pvc} released",
-                            jobName, claimedPvc ?? "none");
-                    else
-                        _logger.Information(
-                            "ChatJobDispatcher: job {JobName} completed — PVC {Pvc} released, duration=n/a",
-                            jobName, claimedPvc ?? "none");
-                }
+                LogJobTermination(job, jobName, claimedPvc);
 
                 // Release PVC + update metrics — gated inside TryRemove to prevent
                 // double-decrement if TerminateChatSessionAsync already did cleanup.
@@ -378,27 +375,72 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
 
                 if (_sessions.TryRemove(jobName, out var removed))
                 {
-                    if (removed.ClaimedPvc is not null)
-                        ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
-
-                    ChatTelemetry.SessionsActive.Add(-1, selectorTag);
-
-                    var duration = (DateTimeOffset.UtcNow - removed.ConnectedAt).TotalSeconds;
-                    ChatTelemetry.SessionDuration.Record(
-                        duration,
-                        selectorTag,
-                        new KeyValuePair<string, object?>(TagOutcome, "completed"));
-
-                    if (!string.IsNullOrEmpty(removed.AgentId))
-                        _agentIdToJobName.TryRemove(removed.AgentId, out _);
-
-                    try { removed.WatcherCts.Dispose(); } catch { /* Intentional: CTS may already be disposed if watcher exited concurrently. */ }
+                    CleanupTerminatedSession(removed, selectorTag);
                 }
 
                 return;
             }
         }
         // Cancellation path: caller (StopAsync) releases PVC
+    }
+
+    private async Task<(V1Job? job, bool readError)> TryReadJobAsync(string jobName)
+    {
+        try
+        {
+            var job = await _jobClient.ReadJobAsync(jobName, _options.Namespace, CancellationToken.None);
+            return (job, false);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(
+                "ChatJobDispatcher: transient ReadJobAsync failure for {JobName} (will retry): {ErrorMessage}",
+                jobName, ex.Message);
+            return (null, true);
+        }
+    }
+
+    private void LogJobTermination(V1Job? job, string jobName, string? claimedPvc)
+    {
+        if (job is null)
+        {
+            _logger.Warning(
+                "ChatJobDispatcher: job {JobName} not found (externally deleted) — releasing PVC {Pvc}",
+                jobName, claimedPvc ?? "none");
+        }
+        else
+        {
+            var isFailed = job.Status?.Conditions?.Any(
+                c => c.Type == "Failed" && c.Status == "True") == true;
+
+            if (isFailed)
+                _logger.Warning(
+                    "ChatJobDispatcher: job {JobName} failed — PVC {Pvc} released",
+                    jobName, claimedPvc ?? "none");
+            else
+                _logger.Information(
+                    "ChatJobDispatcher: job {JobName} completed — PVC {Pvc} released, duration=n/a",
+                    jobName, claimedPvc ?? "none");
+        }
+    }
+
+    private void CleanupTerminatedSession(ChatSession removed, KeyValuePair<string, object?> selectorTag)
+    {
+        if (removed.ClaimedPvc is not null)
+            ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
+
+        ChatTelemetry.SessionsActive.Add(-1, selectorTag);
+
+        var duration = (DateTimeOffset.UtcNow - removed.ConnectedAt).TotalSeconds;
+        ChatTelemetry.SessionDuration.Record(
+            duration,
+            selectorTag,
+            new KeyValuePair<string, object?>(TagOutcome, "completed"));
+
+        if (!string.IsNullOrEmpty(removed.AgentId))
+            _agentIdToJobName.TryRemove(removed.AgentId, out _);
+
+        try { removed.WatcherCts.Dispose(); } catch { /* Intentional: CTS may already be disposed if watcher exited concurrently. */ }
     }
 
     // ─── IHostedService ───────────────────────────────────────────────────────
@@ -537,25 +579,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         activity?.SetTag("job_name", jobName);
 
         // 1. Send CancelChat — best-effort
-        var agentEntry = _registry.GetByAgentId(agentId);
-        if (agentEntry is not null)
-        {
-            try
-            {
-                await _hubContext.Clients.Client(agentEntry.ConnectionId)
-                    .CancelChat(session.DispatchId.ToString());
-
-                _logger.Information(
-                    "ChatJobDispatcher: CancelChat sent to agent {AgentId} for job {JobName}",
-                    agentId, jobName);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(
-                    "ChatJobDispatcher: CancelChat to agent {AgentId} failed (will await watcher): {ErrorMessage}",
-                    agentId, ex.Message);
-            }
-        }
+        await TrySendCancelChatAsync(agentId, session, jobName, cancellationToken);
 
         // 2. Wait up to 10s for the watcher to confirm terminal
         using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -568,47 +592,76 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
-            // Cancel watcher first so it exits without running its own cleanup
-            try { await session.WatcherCts.CancelAsync(); } catch (OperationCanceledException) { }
-
-            _logger.Warning(
-                "ChatJobDispatcher: grace period expired for {JobName} — force deleting job",
-                jobName);
-
             activity?.SetTag(TagOutcome, "force_delete");
+            await ForceDeleteAndCleanupAsync(agentId, jobName, session, cancellationToken);
+        }
+    }
 
-            try
-            {
-                await _jobClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex,
-                    "ChatJobDispatcher: force delete failed for {JobName}: {ErrorMessage}",
-                    jobName, ex.Message);
-            }
+    private async Task TrySendCancelChatAsync(
+        string agentId, ChatSession session, string jobName, CancellationToken ct)
+    {
+        var agentEntry = _registry.GetByAgentId(agentId);
+        if (agentEntry is null)
+            return;
 
-            // Gate all cleanup + metrics inside TryRemove — prevents double-decrement
-            // if WatchJobUntilTerminalAsync fired terminal cleanup concurrently
-            if (_sessions.TryRemove(jobName, out var removed))
-            {
-                _agentIdToJobName.TryRemove(agentId, out _);
+        try
+        {
+            await _hubContext.Clients.Client(agentEntry.ConnectionId)
+                .CancelChat(session.DispatchId.ToString());
 
-                var selectorTag = new KeyValuePair<string, object?>(
-                    TagAgentSelector, removed.NormalizedSelector.Replace(',', '_'));
-                ChatTelemetry.PodForceTerminations.Add(1, selectorTag);
-                ChatTelemetry.SessionsActive.Add(-1, selectorTag);
-                if (removed.ClaimedPvc is not null)
-                    ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
+            _logger.Information(
+                "ChatJobDispatcher: CancelChat sent to agent {AgentId} for job {JobName}",
+                agentId, jobName);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(
+                "ChatJobDispatcher: CancelChat to agent {AgentId} failed (will await watcher): {ErrorMessage}",
+                agentId, ex.Message);
+        }
+    }
 
-                var duration = (DateTimeOffset.UtcNow - removed.ConnectedAt).TotalSeconds;
-                ChatTelemetry.SessionDuration.Record(
-                    duration,
-                    selectorTag,
-                    new KeyValuePair<string, object?>(TagOutcome, "force_deleted"));
+    private async Task ForceDeleteAndCleanupAsync(
+        string agentId, string jobName, ChatSession session, CancellationToken cancellationToken)
+    {
+        // Cancel watcher first so it exits without running its own cleanup
+        try { await session.WatcherCts.CancelAsync(); } catch (OperationCanceledException) { }
 
-                try { removed.WatcherCts.Dispose(); } catch { /* Intentional: CTS may already be disposed if watcher fired concurrently during force-delete path. */ }
-            }
+        _logger.Warning(
+            "ChatJobDispatcher: grace period expired for {JobName} — force deleting job",
+            jobName);
+
+        try
+        {
+            await _jobClient.DeleteJobAsync(jobName, _options.Namespace, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex,
+                "ChatJobDispatcher: force delete failed for {JobName}: {ErrorMessage}",
+                jobName, ex.Message);
+        }
+
+        // Gate all cleanup + metrics inside TryRemove — prevents double-decrement
+        // if WatchJobUntilTerminalAsync fired terminal cleanup concurrently
+        if (_sessions.TryRemove(jobName, out var removed))
+        {
+            _agentIdToJobName.TryRemove(agentId, out _);
+
+            var selectorTag = new KeyValuePair<string, object?>(
+                TagAgentSelector, removed.NormalizedSelector.Replace(',', '_'));
+            ChatTelemetry.PodForceTerminations.Add(1, selectorTag);
+            ChatTelemetry.SessionsActive.Add(-1, selectorTag);
+            if (removed.ClaimedPvc is not null)
+                ChatTelemetry.PvcUtilization.Add(-1, new KeyValuePair<string, object?>("pool", "kiro"));
+
+            var duration = (DateTimeOffset.UtcNow - removed.ConnectedAt).TotalSeconds;
+            ChatTelemetry.SessionDuration.Record(
+                duration,
+                selectorTag,
+                new KeyValuePair<string, object?>(TagOutcome, "force_deleted"));
+
+            try { removed.WatcherCts.Dispose(); } catch { /* Intentional: CTS may already be disposed if watcher fired concurrently during force-delete path. */ }
         }
     }
 
