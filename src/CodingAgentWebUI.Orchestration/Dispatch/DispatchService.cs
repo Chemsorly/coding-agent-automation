@@ -8,7 +8,6 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
 using Serilog;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
@@ -20,7 +19,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Rate-limited: default 10 Jobs/s. Skips items whose selector group is at concurrency limit.
 /// Consolidation items are handled by <see cref="ConsolidationDispatchHandler"/>.
 /// </summary>
-public sealed class DispatchService : BackgroundService
+public sealed class DispatchService : LeaderElectedPollingService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<DispatchService>();
 
@@ -28,7 +27,6 @@ public sealed class DispatchService : BackgroundService
     internal const string DefaultJobTemplatesPath = "/app/config/job-templates.yaml";
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly JobTemplateStore _templateProvider;
@@ -38,6 +36,9 @@ public sealed class DispatchService : BackgroundService
     private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly TokenBucketRateLimiter _rateLimiter;
     private volatile bool _startupValidationRun;
+
+    protected override string ServiceName => "DispatchService";
+    protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
 
     internal DispatchService(
         DispatchServiceCoreDependencies coreDeps,
@@ -53,9 +54,9 @@ public sealed class DispatchService : BackgroundService
         DispatchServiceCoreDependencies coreDeps,
         IConfiguration configuration,
         JobTemplateStore templateProvider)
+        : base(coreDeps.LeaderElection)
     {
         _dbFactory = coreDeps.DbFactory;
-        _leaderElection = coreDeps.LeaderElection;
         _lifecycle = coreDeps.Lifecycle;
         _labelService = coreDeps.LabelService;
         _agentProfileStore = coreDeps.AgentProfileStore;
@@ -82,64 +83,15 @@ public sealed class DispatchService : BackgroundService
         return provider;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override async Task RunLeadershipTermAsync(CancellationToken ct)
     {
-        Log.Information("DispatchService started — waiting for leader election");
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            // Wait for leadership
-            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-            }
-
-            if (stoppingToken.IsCancellationRequested) break;
-
-            Log.Information("DispatchService: leader acquired, entering poll loop");
-
-            // Reset so validation re-runs on each leadership tenure.
-            // Allows detection of ConfigMap changes during leadership loss/re-acquisition.
-            _startupValidationRun = false;
-
-            // Create linked token: cancels on EITHER host stop OR leadership loss
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken, _leaderElection.LeaderToken);
-            var ct = linked.Token;
-
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    await PollAndDispatchAsync(ct);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "DispatchService: unhandled error in poll cycle");
-                }
-
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
-
-            if (!stoppingToken.IsCancellationRequested)
-            {
-                Log.Information("DispatchService: leadership lost, re-entering wait loop");
-            }
-        }
-
-        Log.Information("DispatchService: exiting (stopping)");
+        // Reset so validation re-runs on each leadership tenure.
+        // Allows detection of ConfigMap changes during leadership loss/re-acquisition.
+        _startupValidationRun = false;
+        await base.RunLeadershipTermAsync(ct);
     }
+
+    protected override Task OnPollCycleAsync(CancellationToken ct) => PollAndDispatchAsync(ct);
 
     /// <inheritdoc/>
     public override void Dispose()
@@ -216,7 +168,7 @@ public sealed class DispatchService : BackgroundService
         List<string> availablePvcs,
         CancellationToken ct)
     {
-        if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
+        if (ct.IsCancellationRequested || !LeaderElection.IsLeader)
             return false;
 
         using var lease = await _rateLimiter.AcquireAsync(1, ct);

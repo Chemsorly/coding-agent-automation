@@ -340,6 +340,12 @@ public class DispatchServiceLifecycleTests : IDisposable
     public async Task ExecuteAsync_LeadershipLostAndReacquired_ResumesDispatching()
     {
         // Arrange: create a service with controllable leader election
+        // TODO: [WARNING] This test verifies dispatch resumes after re-acquisition but does not
+        // assert that startup validation (_startupValidationRun) was re-run during the second
+        // tenure. A regression where the _startupValidationRun reset is dropped from
+        // DispatchService.RunLeadershipTermAsync would leave this test passing while silently
+        // skipping per-tenure validation. Extend this test (or add a sibling) to assert that
+        // _agentProfileStore.LoadAgentProfilesAsync is called again after leadership re-acquisition.
         var leaderCts = new CancellationTokenSource();
         var leaderElection = CreateLeaderElectionWithCts(leaderCts);
 

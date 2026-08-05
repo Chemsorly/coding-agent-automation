@@ -10,7 +10,6 @@ using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
 using Serilog;
 
 namespace CodingAgentWebUI.Orchestration.Dispatch;
@@ -21,12 +20,11 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// Extracted from DispatchService to separate consolidation-specific concerns (run status transitions,
 /// provider config resolution, cascade failure) from regular issue dispatch.
 /// </summary>
-internal sealed class ConsolidationDispatchHandler : BackgroundService
+internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
 {
     private static readonly ILogger Log = Serilog.Log.ForContext<ConsolidationDispatchHandler>();
 
     private readonly IDbContextFactory<PipelineDbContext> _dbFactory;
-    private readonly ILeaderElectionService _leaderElection;
     private readonly DispatchLifecycleService _lifecycle;
     private readonly DispatchServiceOptions _options;
     private readonly WorkItemTransitionService _transitionService;
@@ -37,6 +35,9 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     private readonly IProjectStore? _projectStore;
     private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly TokenBucketRateLimiter _rateLimiter;
+
+    protected override string ServiceName => "ConsolidationDispatchHandler";
+    protected override int PollIntervalSeconds => _options.PollIntervalSeconds;
 
     public ConsolidationDispatchHandler(
         IDbContextFactory<PipelineDbContext> dbFactory,
@@ -51,9 +52,13 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         IPipelineConfigStore? pipelineConfigStore = null,
         IProjectStore? projectStore = null,
         IAgentProfileStore? agentProfileStore = null)
+        // TODO: [WARNING] Add ArgumentNullException.ThrowIfNull(leaderElection) before this call.
+        // A null ILeaderElectionService would be stored by the base class and cause a
+        // NullReferenceException at the first LeaderElection.IsLeader access (e.g. line 135)
+        // rather than at construction time, making the root cause harder to diagnose.
+        : base(leaderElection)
     {
         _dbFactory = dbFactory;
-        _leaderElection = leaderElection;
         _lifecycle = lifecycle;
         _transitionService = transitionService;
         _consolidationRunStore = consolidationRunStore;
@@ -82,9 +87,9 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         IPipelineConfigStore? pipelineConfigStore = null,
         IProjectStore? projectStore = null,
         IAgentProfileStore? agentProfileStore = null)
+        : base(leaderElection)
     {
         _dbFactory = dbFactory;
-        _leaderElection = leaderElection;
         _lifecycle = lifecycle;
         _transitionService = transitionService;
         _consolidationRunStore = consolidationRunStore;
@@ -97,60 +102,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         _rateLimiter = RateLimiterFactory.CreateTokenBucket(_options.RateLimitPerSecond);
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        Log.Information("ConsolidationDispatchHandler started — waiting for leader election");
-
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            // Wait for leadership
-            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-            }
-
-            if (stoppingToken.IsCancellationRequested) break;
-
-            Log.Information("ConsolidationDispatchHandler: leader acquired, entering poll loop");
-
-            // Create linked token: cancels on EITHER host stop OR leadership loss
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken, _leaderElection.LeaderToken);
-            var ct = linked.Token;
-
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    await PollAndDispatchConsolidationAsync(ct);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "ConsolidationDispatchHandler: unhandled error in poll cycle");
-                }
-
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
-
-            if (!stoppingToken.IsCancellationRequested)
-            {
-                Log.Information("ConsolidationDispatchHandler: leadership lost, re-entering wait loop");
-            }
-        }
-
-        Log.Information("ConsolidationDispatchHandler: exiting (stopping)");
-    }
+    protected override Task OnPollCycleAsync(CancellationToken ct) => PollAndDispatchConsolidationAsync(ct);
 
     /// <inheritdoc/>
     public override void Dispose()
@@ -187,7 +139,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
         foreach (var item in pendingItems)
         {
-            if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
+            if (ct.IsCancellationRequested || !LeaderElection.IsLeader)
                 break;
 
             if (!await ProcessConsolidationItemAsync(db, item, concurrencyBySelector, availablePvcs, ct))

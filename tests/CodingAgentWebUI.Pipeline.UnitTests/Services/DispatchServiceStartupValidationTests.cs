@@ -278,6 +278,13 @@ public class DispatchServiceStartupValidationTests : IDisposable
         // Verify _startupValidationRun is reset to false in ExecuteAsync at the start of
         // each leadership tenure, so ConfigMap changes between tenures are not missed.
         // We test by inspecting the field via reflection after manually setting it to true.
+        // TODO: [WARNING] This test does not exercise the new RunLeadershipTermAsync override path.
+        // It manually sets _startupValidationRun via reflection rather than invoking the real
+        // RunLeadershipTermAsync execution path. A regression where the reset is dropped from
+        // DispatchService.RunLeadershipTermAsync would leave this test passing. Replace with an
+        // end-to-end test that drives ExecuteAsync through a leadership loss/re-acquisition cycle
+        // and asserts that _agentProfileStore.LoadAgentProfilesAsync is called again on the second
+        // tenure (proving RunLeadershipTermAsync actually resets the flag before the base poll loop).
         var service = CreateDispatchService();
 
         var flagField = typeof(DispatchService).GetField("_startupValidationRun",
