@@ -133,7 +133,7 @@ public class CriticalMessageBufferReplayTests
         // Slot is NOT released by DrainBufferAsync when buffer was already empty
         // (DrainBufferAsync returns early — the release logic only fires after actual drain)
         GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("drain-job");
-        // TODO(#1776): [WARNING] Add assertion that buffer.HasPendingMessages is still false after
+        // TODO(#1776): Add assertion that buffer.HasPendingMessages is still false after
         // DrainBufferAsync completes, to catch any regression where DrainBufferAsync mistakenly
         // enqueues a message on the empty-buffer early-return path.
     }
@@ -462,13 +462,6 @@ public class CriticalMessageBufferReplayTests
         McpServers = [],
         InitiatedBy = "test-user"
     };
-
-    private static MethodInfo GetPrivateMethod(object obj, string methodName)
-    {
-        return obj.GetType().GetMethod(methodName,
-            BindingFlags.NonPublic | BindingFlags.Instance)
-            ?? throw new InvalidOperationException($"Method '{methodName}' not found");
-    }
 
     private static void SetPrivateField(object obj, string fieldName, object? value)
     {

@@ -15,11 +15,10 @@ namespace CodingAgentWebUI.E2ETests.Tests;
 /// these tests assert that every persisted field is correctly populated — catching
 /// regressions like #1154 (ModelName null), #1270 (ProjectId empty), #1276 (non-terminal finalStep).
 /// </summary>
-// TODO(#1776): [WARNING] Add negative/error-path test cases to strengthen regression coverage:
-// (a) Agent completes with PipelineStep.Failed — verify FinalStep is still terminal
-// (b) Agent provider with no Model setting — verify ModelName handling (#1154 scenario)
-// (c) Dispatch without a project configured — verify ProjectId behavior (#1270 scenario)
-// These are the exact conditions that produced bugs #1154, #1270, and #1276.
+// TODO(#1776): Add remaining negative/error-path test cases:
+// (a) Agent provider with no Model setting — verify ModelName handling (#1154 scenario)
+// (b) Dispatch without a project configured — verify ProjectId behavior (#1270 scenario)
+// These are the exact conditions that produced bugs #1154 and #1270.
 [Trait("Category", "E2E")]
 [Trait("Feature", "DbMode")]
 public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<DbModeE2EFixture>
@@ -160,7 +159,7 @@ public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<
         // a non-terminal FinalStep in the persisted PipelineRunSummary).
 
         // Arrange: use issue "43" (distinct from happy-path "42") to avoid cross-test interference
-        // TODO(#1776): [WARNING] Fixture.IssueProvider.Issues.Add(...) mutates shared IClassFixture state.
+        // TODO(#1776): Fixture.IssueProvider.Issues.Add(...) mutates shared IClassFixture state.
         // xUnit runs tests within a class sequentially, so issue "43" persists for any later test that
         // enumerates all issues. Confirm that DispatchIssueAsync dispatches by identifier (not by scanning
         // all agent:next issues), or isolate issue providers per test to prevent cross-test interference.
@@ -201,7 +200,7 @@ public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<
         var workItemId = Guid.Parse(result.WorkItemId!);
 
         var assignment = await agent.JobAssigned.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        // TODO(#1776): [WARNING] Assert that the received assignment is for issue "43" to catch any
+        // TODO(#1776): Assert that the received assignment is for issue "43" to catch any
         // unexpected dispatch of the shared fixture state (e.g., another issue picked up by this agent).
         // Add: Assert.Equal("43", assignment.IssueIdentifier)
         await agent.AcceptAndCompleteJobAsync(assignment.JobId, PipelineStep.Failed);
@@ -218,7 +217,7 @@ public sealed class DbModeDataIntegrityTests : DbModeE2ETestBase, IClassFixture<
         // Verify JSON round-trip correctness — this is the exact scenario that produced #1276
         var summaryJson = JsonSerializer.Serialize(history, PipelineJsonOptions.Default);
         var deserialized = JsonSerializer.Deserialize<PipelineRunSummary>(summaryJson, PipelineJsonOptions.Default);
-        // TODO(#1776): [WARNING] If WaitForHistoryAsync times out, 'history' will be null (or throw), causing
+        // TODO(#1776): If WaitForHistoryAsync times out, 'history' will be null (or throw), causing
         // JsonSerializer.Serialize to produce "null" and Deserialize to return null, which causes
         // Assert.NotNull(deserialized) to fail with an uninformative message rather than pointing to the
         // timeout. Add: Assert.NotNull(history, "WaitForHistoryAsync timed out — history record not found for issue 43");
