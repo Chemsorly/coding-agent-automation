@@ -722,7 +722,12 @@ public class ConsolidationPageComponentTests : BunitContext
         // Trigger additional re-renders (StateHasChanged equivalent: toggle checkbox to cause re-render)
         // TODO(WARNING): Whether bUnit triggers OnAfterRenderAsync after each .Change() call depends on
         // bUnit's rendering model (it calls render synchronously, but async lifecycle hooks may not be
-        // fully awaited). If the lifecycle is not awaited, re-renders may not exercise the guard path.
+        // fully awaited). If the lifecycle is not awaited, re-renders may not exercise the guard path —
+        // the assertion VerifyFocusAsyncInvoke(calledTimes: 1) passes trivially because no second
+        // FocusAsync attempt was ever made, meaning this test cannot reliably distinguish a correct
+        // implementation from one where _modalJustOpened is never cleared. Consider using
+        // cut.InvokeAsync(() => ...) to force an awaited render cycle, or replace with an integration
+        // test that exercises the actual Blazor lifecycle.
         var checkbox = cut.Find(".modal-card input[type='checkbox']");
         checkbox.Change(true);
         checkbox.Change(false);
@@ -766,6 +771,14 @@ public class ConsolidationPageComponentTests : BunitContext
     /// the overlay; here, TriggerEvent on the checkbox fires only on the checkbox's own handlers (not on
     /// the overlay), so the assertion that TriggerAsync is not called is the correct bUnit-level proxy.
     /// </summary>
+    /// <remarks>
+    /// TODO(WARNING): This test does NOT actually verify the stopPropagation fix. bUnit does not simulate
+    /// DOM event bubbling — firing TriggerEvent("onkeydown", ...) on the checkbox never reaches the modal
+    /// overlay regardless of whether @onkeydown:stopPropagation is present or absent. This test would pass
+    /// identically against the unfixed code. It tests bUnit's lack of bubbling simulation, not the fix.
+    /// AC2 has no executable regression test that would fail if the stopPropagation attribute were removed.
+    /// A true regression guard would require a Playwright/E2E test that runs in a real browser.
+    /// </remarks>
     [Fact]
     public void EnterKey_OnCheckbox_DoesNotConfirmModal()
     {
@@ -858,4 +871,13 @@ public class ConsolidationPageComponentTests : BunitContext
         _mockConsolidationService.Verify(s => s.TriggerAsync(
             It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
     }
+
+    // TODO(WARNING): The BrainConsolidation_PassesCorrectTemplateIdValue_ToTriggerAsync test (issue #1775)
+    // was deleted during the #1772 changes and not replaced. That test verified that TriggerConsolidation
+    // passes the TemplateId via implicit conversion (enforcing non-empty) rather than the raw constructor —
+    // an integration-level assertion NOT covered by TemplateIdTests.cs (which only tests the model).
+    // Also deleted: the TODO comment about testing the empty-string templateId guard (when templateId is "",
+    // TriggerAsync should receive null — not a TemplateId constructed from ""). These regression guards
+    // should be restored in a follow-up: add BrainConsolidation_PassesCorrectTemplateIdValue_ToTriggerAsync
+    // and BrainConsolidation_WithEmptyTemplateId_PassesNullToTriggerAsync.
 }
