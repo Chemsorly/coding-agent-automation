@@ -415,9 +415,9 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
                     ct);
                 Log.Information("ConsolidationDispatchHandler: cascaded failure to ConsolidationRun {RunId} via IConsolidationService", runId);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException ex)
             {
-                Log.Debug("ConsolidationDispatchHandler: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
+                Log.Debug(ex, "ConsolidationDispatchHandler: cascade to ConsolidationRun {RunId} cancelled (shutdown)", runId);
             }
             catch (Exception ex)
             {
@@ -445,9 +445,9 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
                 Log.Information("ConsolidationDispatchHandler: cascaded failure to ConsolidationRun {RunId} (direct store)", runId);
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            Log.Debug("ConsolidationDispatchHandler: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
+            Log.Debug(ex, "ConsolidationDispatchHandler: cascade to ConsolidationRun {RunId} cancelled during shutdown (fallback path)", runId);
         }
         catch (Exception ex)
         {
