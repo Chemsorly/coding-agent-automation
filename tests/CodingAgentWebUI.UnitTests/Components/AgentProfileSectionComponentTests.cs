@@ -11,6 +11,8 @@ namespace CodingAgentWebUI.UnitTests.Components;
 /// </summary>
 public class AgentProfileSectionComponentTests : BunitContext
 {
+    private static readonly string[] s_dotnetMatchLabels = ["dotnet"];
+
     private readonly Mock<IConfigurationStore> _mockStore;
     private readonly List<ProviderConfig> _agentProviders;
 
@@ -54,7 +56,7 @@ public class AgentProfileSectionComponentTests : BunitContext
         _mockStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new List<AgentProfile>
             {
-                new() { Id = "p-1", DisplayName = "DotNet Profile", AgentProviderConfigId = "ap-1", MatchLabels = new[] { "dotnet" } }
+                new() { Id = "p-1", DisplayName = "DotNet Profile", AgentProviderConfigId = "ap-1", MatchLabels = s_dotnetMatchLabels }
             });
 
         var cut = Render<AgentProfileSection>(p =>
@@ -254,7 +256,7 @@ public class AgentProfileSectionComponentTests : BunitContext
                 new()
                 {
                     Id = "p-1", DisplayName = "K8s Profile", AgentProviderConfigId = "ap-1",
-                    MatchLabels = new[] { "dotnet" }, Enabled = true, Priority = 1
+                    MatchLabels = s_dotnetMatchLabels, Enabled = true, Priority = 1
                 }
             });
 
