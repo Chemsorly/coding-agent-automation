@@ -336,16 +336,14 @@ public class LocalPipelineExecutorTests : IDisposable
             InitiatedBy = "test-user"
         };
 
-        var connection = CreateDisconnectedHubConnection();
-        var batcher = new OutputBatcher();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
 
         // Act & Assert — missing repo config throws InvalidOperationException with failure reason
         var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
 
         var ex = await act.Should().ThrowAsync<InvalidOperationException>();
         ex.WithMessage("*non-existent-repo-config*");
-
-        await connection.DisposeAsync();
     }
 
     [Fact]
@@ -380,16 +378,14 @@ public class LocalPipelineExecutorTests : IDisposable
             InitiatedBy = "test-user"
         };
 
-        var connection = CreateDisconnectedHubConnection();
-        var batcher = new OutputBatcher();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
 
         // Act & Assert — missing agent config throws InvalidOperationException with failure reason
         var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
 
         var ex = await act.Should().ThrowAsync<InvalidOperationException>();
         ex.WithMessage("*non-existent-agent-config*");
-
-        await connection.DisposeAsync();
     }
 
     // ── BuildCompletionPayload ───────────────────────────────────────────
@@ -654,8 +650,8 @@ public class LocalPipelineExecutorTests : IDisposable
             InitiatedBy = "test-user"
         };
 
-        var connection = CreateDisconnectedHubConnection();
-        var batcher = new OutputBatcher();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
 
         // Act — ValidateAsync on the real GitHubRepositoryProvider will fail
         // because the token is fake and it can't reach the API
@@ -663,9 +659,6 @@ public class LocalPipelineExecutorTests : IDisposable
 
         // Assert — should throw (validation failure propagates)
         await act.Should().ThrowAsync<Exception>();
-
-        await batcher.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     // ── ExecuteAsync — Cancellation ─────────────────────────────────────
@@ -720,16 +713,13 @@ public class LocalPipelineExecutorTests : IDisposable
         using var cts = new CancellationTokenSource();
         cts.Cancel(); // Cancel immediately
 
-        var connection = CreateDisconnectedHubConnection();
-        var batcher = new OutputBatcher();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
 
         // Act — should throw OperationCanceledException since token is already cancelled
         var act = () => executor.ExecuteAsync(job, connection, batcher, null, cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
-
-        await batcher.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     // ── ExecuteAsync — Null OutputBatcher ────────────────────────────────
@@ -741,13 +731,11 @@ public class LocalPipelineExecutorTests : IDisposable
             _mockOrchestrator.Object, _mockHttpClientFactory.Object, _defaultConfig,
             _mockQualityGateValidator.Object, _mockLogger.Object, agentIdentity: new AgentId("test-agent"));
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
 
         var act = () => executor.ExecuteAsync(job, connection, null!, null, CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentNullException>().WithParameterName("outputBatcher");
-
-        await connection.DisposeAsync();
     }
 
     // ── ExecuteAsync — Blacklist Override ────────────────────────────────
@@ -803,8 +791,8 @@ public class LocalPipelineExecutorTests : IDisposable
             InitiatedBy = "test-user"
         };
 
-        var connection = CreateDisconnectedHubConnection();
-        var batcher = new OutputBatcher();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
 
         // Act — will fail at provider validation (fake token), but the blacklist
         // override code path is exercised before that point
@@ -813,9 +801,6 @@ public class LocalPipelineExecutorTests : IDisposable
         // The exception proves we got past the blacklist override (which doesn't throw)
         // and into provider validation
         await act.Should().ThrowAsync<Exception>();
-
-        await batcher.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     // ── ExecuteAsync — Brain Provider Path ──────────────────────────────
@@ -884,17 +869,14 @@ public class LocalPipelineExecutorTests : IDisposable
             InitiatedBy = "test-user"
         };
 
-        var connection = CreateDisconnectedHubConnection();
-        var batcher = new OutputBatcher();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
 
         // Act — brain provider validation will fail (fake token), but it's caught
         // and execution continues to repo provider validation (which also fails)
         var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
 
         await act.Should().ThrowAsync<Exception>();
-
-        await batcher.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     [Fact]
@@ -945,17 +927,14 @@ public class LocalPipelineExecutorTests : IDisposable
             InitiatedBy = "test-user"
         };
 
-        var connection = CreateDisconnectedHubConnection();
-        var batcher = new OutputBatcher();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
 
         // Act — brain config not found in list, so brain provider is skipped.
         // Execution continues to repo validation (which fails with fake token).
         var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
 
         await act.Should().ThrowAsync<Exception>();
-
-        await batcher.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     [Fact]
@@ -1020,16 +999,13 @@ public class LocalPipelineExecutorTests : IDisposable
             InitiatedBy = "test-user"
         };
 
-        var connection = CreateDisconnectedHubConnection();
-        var batcher = new OutputBatcher();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
 
         // Act — pipeline provider is created, then repo validation fails
         var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
 
         await act.Should().ThrowAsync<Exception>();
-
-        await batcher.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     [Fact]
@@ -1080,16 +1056,13 @@ public class LocalPipelineExecutorTests : IDisposable
             InitiatedBy = "test-user"
         };
 
-        var connection = CreateDisconnectedHubConnection();
-        var batcher = new OutputBatcher();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
 
         // Act — pipeline config not found, skipped. Repo validation fails.
         var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
 
         await act.Should().ThrowAsync<Exception>();
-
-        await batcher.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     [Fact]
@@ -1141,16 +1114,13 @@ public class LocalPipelineExecutorTests : IDisposable
             InitiatedBy = "test-user"
         };
 
-        var connection = CreateDisconnectedHubConnection();
-        var batcher = new OutputBatcher();
+        await using var connection = CreateDisconnectedHubConnection();
+        await using var batcher = new OutputBatcher();
 
         // Act — empty brain/pipeline config IDs are treated as "not set"
         var act = () => executor.ExecuteAsync(job, connection, batcher, null, CancellationToken.None);
 
         await act.Should().ThrowAsync<Exception>();
-
-        await batcher.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     // ── BuildAgentStepPipeline ─────────────────────────────────────────
@@ -1162,21 +1132,20 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task BuildAgentStepPipeline_Returns16Steps()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps.Should().HaveCount(16);
-        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task BuildAgentStepPipeline_StartsWithCloneAndEndsWithQualityGates()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
@@ -1184,35 +1153,32 @@ public class LocalPipelineExecutorTests : IDisposable
 
         steps[0].Should().BeOfType<CloneRepositoryStep>();
         steps[^1].Should().BeOfType<RunQualityGatesStep>();
-        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task BuildAgentStepPipeline_IncludesWriteMcpConfigStep()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps[2].Should().BeOfType<WriteMcpConfigStep>();
-        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task BuildAgentStepPipeline_IncludesDownloadIssueImagesStep()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = AgentStepPipelineBuilder.BuildAgentStepPipeline(job, proxy, repoConfig);
 
         steps.Should().ContainItemsAssignableTo<DownloadIssueImagesStep>();
-        await connection.DisposeAsync();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────
@@ -1430,16 +1396,14 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task TransitionToInternalAsync_UpdatesCurrentStepAndHighWaterMark()
     {
         var run = CreateMinimalRun();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
 
         await reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.AnalyzingCode);
         run.HighWaterMark.Should().Be(PipelineStep.AnalyzingCode);
-        await reporter.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     [Fact]
@@ -1447,32 +1411,28 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         var run = CreateMinimalRun();
         run.HighWaterMark = PipelineStep.AnalyzingCode;
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
 
         await reporter.TransitionToInternalAsync(PipelineStep.Failed, CancellationToken.None);
 
         run.CurrentStep.Should().Be(PipelineStep.Failed);
         run.HighWaterMark.Should().Be(PipelineStep.AnalyzingCode);
-        await reporter.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task TransitionToInternalAsync_InvokesOnStepChanged()
     {
         var run = CreateMinimalRun();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
         PipelineStep? received = null;
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, s => received = s, _mockLogger.Object);
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, s => received = s, _mockLogger.Object);
 
         await reporter.TransitionToInternalAsync(PipelineStep.GeneratingCode, CancellationToken.None);
 
         received.Should().Be(PipelineStep.GeneratingCode);
-        await reporter.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     [Fact]
@@ -1480,15 +1440,13 @@ public class LocalPipelineExecutorTests : IDisposable
     {
         // Disconnected connection will fail SendAsync — should be swallowed
         var run = CreateMinimalRun();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
 
         var act = () => reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
 
         await act.Should().NotThrowAsync();
-        await reporter.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     // ── EmitOutputLineInternalAsync (PipelineSignalRReporter) ────────────
@@ -1497,32 +1455,28 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task EmitOutputLineInternalAsync_EnqueuesLineToRun()
     {
         var run = CreateMinimalRun();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
 
         await reporter.EmitOutputLineInternalAsync("hello", CancellationToken.None);
 
         run.OutputLines.Should().Contain("hello");
-        await reporter.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task EmitOutputLineInternalAsync_CancelledToken_DoesNotThrow()
     {
         var run = CreateMinimalRun();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
 
         var act = () => reporter.EmitOutputLineInternalAsync("line", cts.Token);
 
         await act.Should().NotThrowAsync();
-        await reporter.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     // ── ReportQualityGateResultInternalAsync (PipelineSignalRReporter) ───
@@ -1531,9 +1485,9 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task ReportQualityGateResultInternalAsync_SignalRFailure_DoesNotThrow()
     {
         var run = CreateMinimalRun();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "build", Passed = true },
@@ -1543,8 +1497,6 @@ public class LocalPipelineExecutorTests : IDisposable
         var act = () => reporter.ReportQualityGateResultInternalAsync(report, CancellationToken.None);
 
         await act.Should().NotThrowAsync();
-        await reporter.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     // ── SerializedSendAsync ordering (PipelineSignalRReporter) ──────────
@@ -1564,16 +1516,14 @@ public class LocalPipelineExecutorTests : IDisposable
         listener.Start();
 
         var run = CreateMinimalRun();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
         measurements.Clear();
 
         await reporter.TransitionToInternalAsync(PipelineStep.AnalyzingCode, CancellationToken.None);
 
         measurements.Should().Contain("agent.signalr.failures");
-        await reporter.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     [Fact]
@@ -1591,9 +1541,9 @@ public class LocalPipelineExecutorTests : IDisposable
         listener.Start();
 
         var run = CreateMinimalRun();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         await using var batcher = new OutputBatcher();
-        var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
+        await using var reporter = new PipelineSignalRReporter(connection, batcher, "job-1", run, null, _mockLogger.Object);
         var report = new QualityGateReport
         {
             Compilation = new GateResult { GateName = "build", Passed = true },
@@ -1604,8 +1554,6 @@ public class LocalPipelineExecutorTests : IDisposable
         await reporter.ReportQualityGateResultInternalAsync(report, CancellationToken.None);
 
         measurements.Should().Contain("agent.signalr.failures");
-        await reporter.DisposeAsync();
-        await connection.DisposeAsync();
     }
 
     [Fact]
@@ -1754,21 +1702,20 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task BuildReviewStepPipeline_IncludesWriteMcpConfigStep()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
-        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task BuildReviewStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
@@ -1779,42 +1726,39 @@ public class LocalPipelineExecutorTests : IDisposable
         mcpIndex.Should().BeGreaterThanOrEqualTo(0, "WriteMcpConfigStep should be present");
         steeringIndex.Should().BeGreaterThanOrEqualTo(0, "WriteSteeringStep should be present");
         mcpIndex.Should().BeLessThan(steeringIndex, "WriteMcpConfigStep should come before WriteSteeringStep");
-        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task BuildReviewStepPipeline_StartsWithCloneRepository()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
 
         steps[0].Should().BeOfType<CloneRepositoryStep>();
-        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task BuildReviewStepPipeline_IncludesDownloadIssueImagesStep()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = AgentStepPipelineBuilder.BuildReviewStepPipeline(job, proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(DownloadIssueImagesStep));
-        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task BuildReviewStepPipeline_DownloadIssueImagesStep_AfterSyncBrainPreRun_BeforeExtractLinkedIssues()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
@@ -1828,7 +1772,6 @@ public class LocalPipelineExecutorTests : IDisposable
         extractIndex.Should().BeGreaterThanOrEqualTo(0);
         downloadIndex.Should().BeGreaterThan(syncIndex, "DownloadIssueImagesStep should come after SyncBrainPreRunStep");
         downloadIndex.Should().BeLessThan(extractIndex, "DownloadIssueImagesStep should come before ExtractLinkedIssuesStep");
-        await connection.DisposeAsync();
     }
 
     // ── BuildDecompositionAnalysisStepPipeline ───────────────────────────
@@ -1837,21 +1780,20 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task BuildDecompositionAnalysisStepPipeline_IncludesWriteMcpConfigStep()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = AgentStepPipelineBuilder.BuildDecompositionAnalysisStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
-        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task BuildDecompositionAnalysisStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
@@ -1862,7 +1804,6 @@ public class LocalPipelineExecutorTests : IDisposable
         mcpIndex.Should().BeGreaterThanOrEqualTo(0);
         steeringIndex.Should().BeGreaterThanOrEqualTo(0);
         mcpIndex.Should().BeLessThan(steeringIndex);
-        await connection.DisposeAsync();
     }
 
     // ── BuildDecompositionStepPipeline ───────────────────────────────────
@@ -1871,21 +1812,20 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task BuildDecompositionStepPipeline_IncludesWriteMcpConfigStep()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
         var steps = AgentStepPipelineBuilder.BuildDecompositionStepPipeline(job, Mock.Of<IOpenIssueContextWriter>(), proxy, repoConfig);
 
         steps.Should().Contain(s => s.GetType() == typeof(WriteMcpConfigStep));
-        await connection.DisposeAsync();
     }
 
     [Fact]
     public async Task BuildDecompositionStepPipeline_WriteMcpConfigStep_BeforeWriteSteeringStep()
     {
         var job = CreateMinimalJobAssignment();
-        var connection = CreateDisconnectedHubConnection();
+        await using var connection = CreateDisconnectedHubConnection();
         var proxy = new OrchestratorProxy(connection, "test-job");
         var repoConfig = CreateMinimalRepoConfig();
 
@@ -1896,6 +1836,5 @@ public class LocalPipelineExecutorTests : IDisposable
         mcpIndex.Should().BeGreaterThanOrEqualTo(0);
         steeringIndex.Should().BeGreaterThanOrEqualTo(0);
         mcpIndex.Should().BeLessThan(steeringIndex);
-        await connection.DisposeAsync();
     }
 }
