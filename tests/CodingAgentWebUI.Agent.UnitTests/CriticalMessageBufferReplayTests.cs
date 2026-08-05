@@ -111,12 +111,11 @@ public class CriticalMessageBufferReplayTests
     }
 
     [Fact]
-    public async Task JobSlot_Released_AfterSuccessfulDrain_WhenBufferEmpty()
+    public async Task JobSlot_NotReleased_WhenDrainCalledOnEmptyBuffer()
     {
-        // TODO(#1776): Misleading test name — this actually tests the early-return path (buffer already
-        // empty), not slot release after a successful drain of actual messages. There is no test
-        // verifying the slot IS released after draining a non-empty buffer via a live connection.
-        // After buffer is drained and becomes empty, job slot should be released
+        // Tests the early-return path: when DrainBufferAsync is called on an empty buffer,
+        // it returns immediately without attempting any replay. Since no drain loop runs,
+        // the conditional slot-release at the end is never reached, and the slot stays held.
         var service = CreateService();
         var buffer = GetBuffer(service);
 
@@ -134,6 +133,9 @@ public class CriticalMessageBufferReplayTests
         // Slot is NOT released by DrainBufferAsync when buffer was already empty
         // (DrainBufferAsync returns early — the release logic only fires after actual drain)
         GetPrivateField<string?>(GetSlotManager(service), "_activeJobId").Should().Be("drain-job");
+        // TODO(#1776): [WARNING] Add assertion that buffer.HasPendingMessages is still false after
+        // DrainBufferAsync completes, to catch any regression where DrainBufferAsync mistakenly
+        // enqueues a message on the empty-buffer early-return path.
     }
 
     // ── Drain Attempt Tracking ───────────────────────────────────────────
@@ -155,23 +157,22 @@ public class CriticalMessageBufferReplayTests
     }
 
     [Fact]
-    public void DrainBuffer_MaxAttemptsExceeded_MessageShouldBeDropped()
+    public void DrainAll_ReturnsMessageWithExhaustedAttempts_WithoutFiltering()
     {
-        // TODO(#1776): This test does not actually validate the drop logic. It only verifies what
-        // was put in (DrainAttempts >= 3) rather than that DrainBufferAsync drops it.
-        // The actual drop logic is tested in DrainBufferAsync_DropsMessagesExceedingMaxAttempts.
-        // Consider removing this test or rewriting to test something meaningful.
+        // DrainAll is a raw dequeue — it returns all messages regardless of DrainAttempts count.
+        // This verifies that DrainAll does not filter by attempt count (filtering is the job of
+        // DrainBufferAsync, which is tested in DrainBufferAsync_DropsMessagesExceedingMaxAttempts).
         var buffer = new CriticalMessageBuffer();
         var exhausted = new BufferedJobCompleted("job-exhausted", CreatePayload(), DateTimeOffset.UtcNow, DrainAttempts: 3);
 
         buffer.Enqueue(exhausted);
         var drained = buffer.DrainAll();
 
-        // The message is drained from the queue (DrainAll doesn't filter),
-        // but DrainBufferAsync in AgentWorkerService will skip it.
-        // Test the logic: DrainAttempts >= 3 means it should be dropped
+        // DrainAll returns exactly the messages that were enqueued — no filtering
+        drained.Should().HaveCount(1);
         var msg = (BufferedJobCompleted)drained[0];
-        msg.DrainAttempts.Should().BeGreaterThanOrEqualTo(3);
+        msg.JobId.Should().Be("job-exhausted");
+        msg.DrainAttempts.Should().Be(3);
     }
 
     [Fact]
@@ -198,16 +199,15 @@ public class CriticalMessageBufferReplayTests
     }
 
     [Fact]
-    public async Task DrainBufferAsync_DropsNonJobCompletedSubtype_WhenMaxAttemptsExceeded()
+    public async Task DrainBufferAsync_DropsBaseTypeMessage_WhenDrainAttemptsExhausted()
     {
-        // TODO(#1776): This test only validates the drop guard (DrainAttempts >= max), not
-        // the increment. Since the production switch has no case for non-BufferedJobCompleted
-        // subtypes, they fall through without throwing, so the catch block's increment path
-        // is never reached for these subtypes. This test would pass even with the old code.
         // Exercises the production DrainBufferAsync code path with a non-BufferedJobCompleted
         // subtype to verify the max-attempts guard works on the base type. This proves the
         // refactoring (incrementing DrainAttempts on the base type) prevents infinite retries
         // for ANY future subtype, not just BufferedJobCompleted.
+        // Note: since the production switch has no case for non-BufferedJobCompleted subtypes,
+        // they fall through without throwing, so this test covers only the drop guard path,
+        // not the catch block's re-buffer increment path.
         var service = CreateService();
         var buffer = GetBuffer(service);
 
