@@ -52,12 +52,9 @@ internal sealed class ConsolidationDispatchHandler : LeaderElectedPollingService
         IPipelineConfigStore? pipelineConfigStore = null,
         IProjectStore? projectStore = null,
         IAgentProfileStore? agentProfileStore = null)
-        // TODO: [WARNING] Add ArgumentNullException.ThrowIfNull(leaderElection) before this call.
-        // A null ILeaderElectionService would be stored by the base class and cause a
-        // NullReferenceException at the first LeaderElection.IsLeader access (e.g. line 135)
-        // rather than at construction time, making the root cause harder to diagnose.
         : base(leaderElection)
     {
+        ArgumentNullException.ThrowIfNull(leaderElection);
         _dbFactory = dbFactory;
         _lifecycle = lifecycle;
         _transitionService = transitionService;
