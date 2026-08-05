@@ -55,9 +55,9 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.IssueIdentifier);
-        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value, nameof(request.IssueProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value, nameof(request.RepoProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value, nameof(request.AgentProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value);
 
         var issueProviderId = request.IssueProviderId;
         var issueIdentifier = request.IssueIdentifier;
@@ -105,9 +105,9 @@ public class DispatchRunCreationService : IDispatchRunCreator, IAsyncDisposable,
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(request.IssueIdentifier);
-        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value, nameof(request.IssueProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value, nameof(request.RepoProviderId));
-        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value, nameof(request.AgentProviderId));
+        ArgumentException.ThrowIfNullOrEmpty(request.IssueProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.RepoProviderId.Value);
+        ArgumentException.ThrowIfNullOrEmpty(request.AgentProviderId.Value);
 
         var issueProviderId = request.IssueProviderId;
         var issueIdentifier = request.IssueIdentifier;
