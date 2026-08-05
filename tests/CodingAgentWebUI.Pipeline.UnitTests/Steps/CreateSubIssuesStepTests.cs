@@ -6,6 +6,7 @@ using CodingAgentWebUI.Pipeline.Services;
 using CodingAgentWebUI.Pipeline.Services.Steps;
 using CodingAgentWebUI.Pipeline.Telemetry;
 using Moq;
+using Xunit;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Steps;
 
@@ -14,6 +15,13 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Steps;
 /// Tests timeout enforcement, retry behavior, cap enforcement, and partial failure handling.
 /// Feature: 027-epic-decomposition-pipeline, Requirements: 4.6, 4.12, 10.3, 10.4
 /// </summary>
+/// <remarks>
+/// Placed in the "Metrics" collection to prevent parallel cross-talk through the static
+/// <see cref="CodingAgentWebUI.Pipeline.Telemetry.PipelineTelemetry.Meter"/> singleton.
+/// The <c>IncrementsSubIssuesCreatedCounter</c> test uses a process-wide <see cref="MeterListener"/>
+/// and would receive spurious increments from other tests running concurrently.
+/// </remarks>
+[Collection("Metrics")]
 public class CreateSubIssuesStepTests : IDisposable
 {
     private readonly Mock<IPipelineCallbacks> _callbacks = new();
