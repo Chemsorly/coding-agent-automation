@@ -213,4 +213,41 @@ public class PipelineRunSummaryTests
 
         summary.FinalStep.Should().Be(PipelineStep.Completed);
     }
+
+    [Fact]
+    public void AgentProviderConfigId_WhenSet_MapsToSummary()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow,
+            AgentProviderConfigId = "agent-provider-cfg-01"
+        };
+
+        var summary = run.ToSummary();
+
+        summary.AgentProviderConfigId.Should().Be("agent-provider-cfg-01");
+    }
+
+    [Fact]
+    public void AgentProviderConfigId_WhenNull_MapsNullToSummary()
+    {
+        var run = new PipelineRun
+        {
+            RunId = "r1",
+            IssueIdentifier = "42",
+            IssueTitle = "Test Issue",
+            IssueProviderConfigId = "ip",
+            RepoProviderConfigId = "rp",
+            StartedAt = DateTime.UtcNow
+        };
+
+        var summary = run.ToSummary();
+
+        summary.AgentProviderConfigId.Should().BeNull();
+    }
 }
