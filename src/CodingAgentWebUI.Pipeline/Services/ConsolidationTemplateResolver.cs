@@ -19,7 +19,7 @@ public sealed class ConsolidationTemplateResolver
     /// <summary>
     /// Resolves a template by ID from projects via IProjectStore.
     /// </summary>
-    public async Task<PipelineJobTemplate?> ResolveTemplateAsync(string templateId, CancellationToken ct)
+    public async Task<PipelineJobTemplate?> ResolveTemplateAsync(TemplateId templateId, CancellationToken ct)
     {
         var (template, _) = await ResolveTemplateWithProjectAsync(templateId, ct);
         return template;
@@ -29,14 +29,14 @@ public sealed class ConsolidationTemplateResolver
     /// Resolves a template by ID and returns both the template and the owning project's display name.
     /// </summary>
     public async Task<(PipelineJobTemplate? Template, string? ProjectName)> ResolveTemplateWithProjectAsync(
-        string templateId, CancellationToken ct)
+        TemplateId templateId, CancellationToken ct)
     {
         var projects = await _projectStore.LoadProjectsAsync(ct);
         var templateLookup = (await _projectStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
 
         foreach (var project in projects.Where(p => p.Enabled))
         {
-            if (project.TemplateIds.Contains(templateId) && templateLookup.TryGetValue(templateId, out var template))
+            if (project.TemplateIds.Contains(templateId.Value) && templateLookup.TryGetValue(templateId.Value, out var template))
                 return (template, project.Name);
         }
 

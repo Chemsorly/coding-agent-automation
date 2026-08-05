@@ -224,7 +224,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
         {
             try
             {
-                await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportOutputLines, message.JobId, lines);
+                await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportOutputLines, message.JobId, lines,
+                    CancellationToken.None); // intentional: fire-and-forget flush callback; no ambient token available
             }
             catch (Exception ex)
             {
@@ -371,7 +372,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             {
                 WriteMcpConfig(message.McpConfigPath, message.McpServers);
                 await outputBatcher.AddLineAsync(
-                    $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}");
+                    $"🔌 Wrote MCP config with {message.McpServers.Count} server(s) to {message.McpConfigPath}",
+                    chatToken);
             }
 
             // Write project steering before dispatching to the provider.
@@ -380,7 +382,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             if (!message.UseResume && !string.IsNullOrEmpty(message.ProjectSteeringContent))
             {
                 ChatSteeringWriter.Write(message.ProjectSteeringContent, chatWorkspace, _isOpenCodeProvider);
-                await outputBatcher.AddLineAsync("📋 Wrote project steering to workspace");
+                await outputBatcher.AddLineAsync("📋 Wrote project steering to workspace", chatToken);
             }
 
             // Inject project secrets as process env vars. Only injected on first prompt.
@@ -397,7 +399,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 foreach (var (key, value) in message.ProjectSecrets)
                     Environment.SetEnvironmentVariable(key, value);
                 _injectedChatSecretKeys = message.ProjectSecrets.Keys.ToList();
-                await outputBatcher.AddLineAsync($"🔐 Injected {message.ProjectSecrets.Count} project secret(s)");
+                await outputBatcher.AddLineAsync($"🔐 Injected {message.ProjectSecrets.Count} project secret(s)", chatToken);
             }
 
             if (_isOpenCodeProvider)
@@ -430,7 +432,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 ExitCode = exitCode,
                 Error = error
             };
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatCompleted, completed);
+            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportChatCompleted, completed,
+                CancellationToken.None); // intentional: completion report must reach orchestrator even when chatToken is cancelled
         }
         catch (Exception ex)
         {
@@ -453,7 +456,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 Timeout = PipelineConstants.DefaultAgentTimeout
             },
             ct,
-            onOutputLine: async line => await outputBatcher.AddLineAsync(line));
+            onOutputLine: async line => await outputBatcher.AddLineAsync(line, ct));
 
         var exitCode = result.ExitCode;
 
@@ -494,7 +497,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
             onOutputLine: async line =>
             {
                 var clean = KiroCliLib.Core.AnsiStripper.Strip(line);
-                await outputBatcher.AddLineAsync(clean);
+                await outputBatcher.AddLineAsync(clean, ct);
             });
 
         return (exitCode, null);
@@ -516,7 +519,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
 
         if (chatTask is not null)
         {
-            var completed = await Task.WhenAny(chatTask, Task.Delay(TimeSpan.FromSeconds(10)));
+            var completed = await Task.WhenAny(chatTask, Task.Delay(TimeSpan.FromSeconds(10), _hostApplicationLifetime.ApplicationStopping));
             if (completed != chatTask)
                 _logger.Warning("Chat task did not complete within timeout after cancellation for session {SessionId}", sessionId);
         }
@@ -582,11 +585,15 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 }
             }
 
+            // TODO: timeoutCts.Token may already be cancelled here if WaitForExitAsync consumed the full
+            // timeout budget. In that case InvokeAsync throws OperationCanceledException immediately and
+            // the orchestrator never receives the result. Consider using CancellationToken.None (or a
+            // fresh token) for this InvokeAsync call since the process has already exited successfully.
             await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportFetchModelsResult, new FetchModelsResponse
             {
                 RequestId = request.RequestId,
                 Models = models
-            });
+            }, timeoutCts.Token);
         }
         catch (Exception ex)
         {
@@ -604,7 +611,7 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 RequestId = requestId,
                 Models = [],
                 Error = error
-            });
+            }, CancellationToken.None); // intentional: error report must reach orchestrator regardless of cancellation
         }
         catch (Exception ex)
         {
@@ -680,7 +687,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
                 Success = false,
                 ErrorMessage = errorMessage
             };
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, failResult);
+            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.ReportConsolidationComplete, failResult,
+                CancellationToken.None); // intentional: failure report must reach orchestrator even when jobToken is cancelled
         }
         catch (Exception reportEx)
         {
@@ -714,7 +722,8 @@ public sealed class AgentWorkerService : BackgroundService, IAgentService
     {
         try
         {
-            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.AgentReady, _agentId);
+            await _connectionLifecycle.Connection.InvokeAsync(HubMethodNames.AgentReady, _agentId,
+                _hostApplicationLifetime.ApplicationStopping);
         }
         catch (Exception ex)
         {

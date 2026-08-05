@@ -84,7 +84,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     public async Task<ConsolidationDispatchResult> TryDispatchAsync(
         ConsolidationRun run,
         ConsolidationRunType type,
-        string? templateId,
+        TemplateId? templateId,
         string? feedbackDataJson,
         string workspacePath,
         CancellationToken ct)
@@ -123,7 +123,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
                 AgentSelector = string.Join(",", agentSelectorLabels.OrderBy(l => l, StringComparer.Ordinal)),
                 TimeoutSeconds = (int)liveConfig.AgentTimeout.TotalSeconds,
                 ConsolidationRunType = type,
-                ConsolidationTemplateId = templateId,
+                ConsolidationTemplateId = templateId?.Value,
                 ConsolidationWorkspacePath = workspacePath,
                 RunId = run.RunId,
                 AutoDispatch = run.AutoDispatch
@@ -170,7 +170,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     public async Task<bool> TryDispatchToAgentAsync(
         string runId,
         ConsolidationRunType type,
-        string? templateId,
+        TemplateId? templateId,
         string workspacePath,
         string agentId,
         CancellationToken ct)
@@ -255,7 +255,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     private async Task DispatchToAgentAsync(
         ConsolidationRun run,
         ConsolidationRunType type,
-        string? templateId,
+        TemplateId? templateId,
         string? feedbackDataJson,
         string workspacePath,
         AgentEntry agent,
@@ -273,7 +273,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         {
             JobId = run.RunId,
             Type = type,
-            TemplateId = templateId,
+            TemplateId = templateId?.Value,
             TemplateName = run.TemplateName,
             ProviderConfigs = preparation.ProviderConfigs,
             PipelineConfiguration = liveConfig,
@@ -384,12 +384,12 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     /// Resolves required agent labels for the given template.
     /// Uses project-based template lookup via IProjectStore.
     /// </summary>
-    internal async Task<IReadOnlyList<string>> ResolveRequiredLabelsAsync(string? templateId, PipelineConfiguration config, CancellationToken ct)
+    internal async Task<IReadOnlyList<string>> ResolveRequiredLabelsAsync(TemplateId? templateId, PipelineConfiguration config, CancellationToken ct)
     {
         if (templateId is null)
             return JobDeduplicationGuardService.ResolveRequiredLabels(null, config);
 
-        var template = await ResolveTemplateAsync(templateId, ct);
+        var template = await ResolveTemplateAsync(templateId.Value, ct);
         if (template is null)
             return JobDeduplicationGuardService.ResolveRequiredLabels(null, config);
 
@@ -432,12 +432,12 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     /// </summary>
     private async Task<DateTimeOffset?> GetLastSuccessfulRunUtcAsync(
         ConsolidationRunType type,
-        string? templateId,
+        TemplateId? templateId,
         CancellationToken ct)
     {
         var allRuns = await _runStore.LoadAllRunsAsync(ct);
         return allRuns
-            .Where(r => r.Type == type && r.TemplateId == templateId
+            .Where(r => r.Type == type && r.TemplateId == templateId?.Value
                 && r.Status == ConsolidationRunStatus.Succeeded && r.CompletedAtUtc.HasValue)
             .Max(r => r.CompletedAtUtc);
     }
@@ -446,14 +446,14 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     /// Resolves a template by ID from projects via IProjectStore.
     /// Flattens all enabled projects' templates and finds the matching template.
     /// </summary>
-    private async Task<PipelineJobTemplate?> ResolveTemplateAsync(string templateId, CancellationToken ct)
+    private async Task<PipelineJobTemplate?> ResolveTemplateAsync(TemplateId templateId, CancellationToken ct)
     {
         var projects = await _projectStore.LoadProjectsAsync(ct);
         var templateLookup = (await _projectStore.LoadAllTemplatesAsync(ct)).ToDictionary(t => t.Id);
 
         foreach (var project in projects.Where(p => p.Enabled))
         {
-            if (project.TemplateIds.Contains(templateId) && templateLookup.TryGetValue(templateId, out var template))
+            if (project.TemplateIds.Contains(templateId.Value) && templateLookup.TryGetValue(templateId.Value, out var template))
                 return template;
         }
 

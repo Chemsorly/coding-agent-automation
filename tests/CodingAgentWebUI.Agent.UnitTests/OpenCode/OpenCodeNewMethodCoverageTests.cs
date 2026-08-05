@@ -178,9 +178,8 @@ public class OpenCodeNewMethodCoverageTests
         var provider = new OpenCodeAgentProvider(factory, new Mock<ILogger>().Object);
 
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-        await provider.ConnectAndProcessSseAsync("sess-null-status", null, cts.Token);
-
-        // No exception = status null was handled gracefully
+        var act = async () => await provider.ConnectAndProcessSseAsync("sess-null-status", null, cts.Token);
+        await act.Should().NotThrowAsync("null Status field must not throw");
     }
 
     /// <summary>

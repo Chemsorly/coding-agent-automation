@@ -174,7 +174,7 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
             var workspacePath = _workspaceManager.GetWorkspacePath(run.RunId);
 
             var result = await _dispatcher.TryDispatchAsync(
-                run, type, run.TemplateId, feedbackDataJson, workspacePath, ct);
+                run, type, string.IsNullOrEmpty(run.TemplateId) ? (TemplateId?)null : (TemplateId)run.TemplateId, feedbackDataJson, workspacePath, ct);
 
             if (result == ConsolidationDispatchResult.Queued)
             {
