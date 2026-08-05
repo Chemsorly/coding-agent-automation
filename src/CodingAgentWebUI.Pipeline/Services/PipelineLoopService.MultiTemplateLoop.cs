@@ -126,7 +126,7 @@ public sealed partial class PipelineLoopService
         var config = await _pipelineConfigStore.LoadPipelineConfigAsync(ct);
 
         var (projects, flattenedTemplates, enabledTemplates, pollableTemplates, templateLookup) =
-            await LoadAndFlattenTemplatesAsync(config, ct);
+            await LoadAndFlattenTemplatesAsync(ct);
 
         CurrentCycleTemplateCount = enabledTemplates.Count;
 
@@ -153,7 +153,7 @@ public sealed partial class PipelineLoopService
         List<PipelineJobTemplate> EnabledTemplates,
         List<PipelineJobTemplate> PollableTemplates,
         Dictionary<string, PipelineJobTemplate> TemplateLookup)>
-        LoadAndFlattenTemplatesAsync(PipelineConfiguration _, CancellationToken ct)
+        LoadAndFlattenTemplatesAsync(CancellationToken ct)
     {
         var projects = await _projectStore.LoadProjectsAsync(ct) ?? (IReadOnlyList<PipelineProject>)[];
         var allTemplates = await _projectStore.LoadAllTemplatesAsync(ct);

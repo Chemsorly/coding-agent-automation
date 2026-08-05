@@ -150,17 +150,7 @@ public sealed class DispatchService : BackgroundService
 
     private async Task PollAndDispatchAsync(CancellationToken ct)
     {
-        // Run once per leadership tenure: warn about enabled AgentProfiles with no matching JobTemplate.
-        // K8s mode only — templates are static for the pod lifetime, so no false positives.
-        if (!_startupValidationRun)
-        {
-            _startupValidationRun = true;
-            if (_agentProfileStore is not null)
-            {
-                var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
-                await ValidateAgentProfileTemplateMappingAsync(profiles, _templateProvider, Log);
-            }
-        }
+        await RunStartupValidationIfNeededAsync(ct);
 
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
 
@@ -192,33 +182,65 @@ public sealed class DispatchService : BackgroundService
 
         foreach (var item in pendingItems)
         {
-            if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
+            if (!await ProcessDispatchCandidateAsync(db, item, concurrencyBySelector, availablePvcs, ct))
                 break;
-
-            using var lease = await _rateLimiter.AcquireAsync(1, ct);
-            if (!lease.IsAcquired)
-            {
-                Log.Warning("DispatchService: rate limit hit, stopping dispatch cycle");
-                break;
-            }
-
-            var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
-
-            // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
-            switch (result.Outcome)
-            {
-                case EligibilityOutcome.AtConcurrencyLimit:
-                case EligibilityOutcome.NoPvcAvailable:
-                    continue;
-                case EligibilityOutcome.NoTemplate:
-                    await _lifecycle.FailWorkItemAsync(item.Id, result.ErrorMessage!, ct);
-                    continue;
-            }
-
-            await DispatchSingleItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
         }
 
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+    }
+
+    /// <summary>
+    /// Runs startup validation once per leadership tenure: warns about enabled AgentProfiles
+    /// with no matching JobTemplate. K8s mode only — templates are static for the pod lifetime.
+    /// </summary>
+    private async Task RunStartupValidationIfNeededAsync(CancellationToken ct)
+    {
+        if (_startupValidationRun)
+            return;
+        _startupValidationRun = true;
+        if (_agentProfileStore is not null)
+        {
+            var profiles = await _agentProfileStore.LoadAgentProfilesAsync(ct);
+            await ValidateAgentProfileTemplateMappingAsync(profiles, _templateProvider, Log);
+        }
+    }
+
+    /// <summary>
+    /// Processes a single pending work item through eligibility checks and dispatch.
+    /// Returns false if the dispatch loop should stop (rate limit hit or cancellation).
+    /// </summary>
+    private async Task<bool> ProcessDispatchCandidateAsync(
+        PipelineDbContext db,
+        PendingWorkItemProjection item,
+        Dictionary<string, int> concurrencyBySelector,
+        List<string> availablePvcs,
+        CancellationToken ct)
+    {
+        if (ct.IsCancellationRequested || !_leaderElection.IsLeader)
+            return false;
+
+        using var lease = await _rateLimiter.AcquireAsync(1, ct);
+        if (!lease.IsAcquired)
+        {
+            Log.Warning("DispatchService: rate limit hit, stopping dispatch cycle");
+            return false;
+        }
+
+        var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
+
+        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
+        switch (result.Outcome)
+        {
+            case EligibilityOutcome.AtConcurrencyLimit:
+            case EligibilityOutcome.NoPvcAvailable:
+                return true;
+            case EligibilityOutcome.NoTemplate:
+                await _lifecycle.FailWorkItemAsync(item.Id, result.ErrorMessage!, ct);
+                return true;
+        }
+
+        await DispatchSingleItemAsync(db, item, result.Template!, result.IsKiroAgent, availablePvcs, concurrencyBySelector, ct);
+        return true;
     }
 
     /// <summary>

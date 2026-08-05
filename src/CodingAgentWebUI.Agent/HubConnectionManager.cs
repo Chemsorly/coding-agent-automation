@@ -179,73 +179,81 @@ public sealed class HubConnectionManager : IAsyncDisposable
     /// <summary>Registers all client-side handlers for Orchestrator → Agent messages.</summary>
     private void RegisterClientHandlers()
     {
-        _connection.On<JobAssignmentMessage>("AssignJob", async message =>
-        {
-            _logger.Information("Received job assignment {JobId} for issue {IssueIdentifier}",
-                message.JobId, message.IssueIdentifier);
-            if (OnAssignJob is not null)
-                await OnAssignJob(message);
-        });
+        _connection.On<JobAssignmentMessage>("AssignJob", HandleAssignJobAsync);
+        _connection.On<JobId>("CancelJob", HandleCancelJobAsync);
+        _connection.On<ChatPromptMessage>("AssignChatPrompt", HandleAssignChatPromptAsync);
+        _connection.On<string>("CancelChat", HandleCancelChatAsync);
+        _connection.On<FetchModelsRequest>("RequestFetchModels", HandleRequestFetchModelsAsync);
+        _connection.On<string, ConsolidationJobMessage>("AssignConsolidationJob", HandleAssignConsolidationJobAsync);
+        _connection.On("ForceDisconnect", HandleForceDisconnectAsync);
+    }
 
-        _connection.On<JobId>("CancelJob", async jobId =>
-        {
-            _logger.Information("Received cancellation request for job {JobId}", jobId.Value);
-            if (OnCancelJob is not null)
-                await OnCancelJob(jobId.Value);
-        });
+    private async Task HandleAssignJobAsync(JobAssignmentMessage message)
+    {
+        _logger.Information("Received job assignment {JobId} for issue {IssueIdentifier}",
+            message.JobId, message.IssueIdentifier);
+        if (OnAssignJob is not null)
+            await OnAssignJob(message);
+    }
 
-        _connection.On<ChatPromptMessage>("AssignChatPrompt", async message =>
-        {
-            _logger.Information("Received chat prompt for session {SessionId}", message.SessionId);
-            if (OnAssignChatPrompt is not null)
-                await OnAssignChatPrompt(message);
-        });
+    private async Task HandleCancelJobAsync(JobId jobId)
+    {
+        _logger.Information("Received cancellation request for job {JobId}", jobId.Value);
+        if (OnCancelJob is not null)
+            await OnCancelJob(jobId.Value);
+    }
 
-        _connection.On<string>("CancelChat", async sessionId =>
-        {
-            _logger.Information("Received chat cancellation for session {SessionId}", sessionId);
-            if (OnCancelChat is not null)
-                await OnCancelChat(sessionId);
-        });
+    private async Task HandleAssignChatPromptAsync(ChatPromptMessage message)
+    {
+        _logger.Information("Received chat prompt for session {SessionId}", message.SessionId);
+        if (OnAssignChatPrompt is not null)
+            await OnAssignChatPrompt(message);
+    }
 
-        _connection.On<FetchModelsRequest>("RequestFetchModels", async request =>
-        {
-            _logger.Information("Received FetchModels request {RequestId}", request.RequestId);
-            if (OnFetchModels is not null)
-                await OnFetchModels(request);
-        });
+    private async Task HandleCancelChatAsync(string sessionId)
+    {
+        _logger.Information("Received chat cancellation for session {SessionId}", sessionId);
+        if (OnCancelChat is not null)
+            await OnCancelChat(sessionId);
+    }
 
-        _connection.On<string, ConsolidationJobMessage>("AssignConsolidationJob", async (agentId, message) =>
-        {
-            _logger.Information("Received consolidation job assignment {JobId} of type {Type}",
-                message.JobId, message.Type);
-            if (OnAssignConsolidationJob is not null)
-                await OnAssignConsolidationJob(message);
-        });
+    private async Task HandleRequestFetchModelsAsync(FetchModelsRequest request)
+    {
+        _logger.Information("Received FetchModels request {RequestId}", request.RequestId);
+        if (OnFetchModels is not null)
+            await OnFetchModels(request);
+    }
 
-        _connection.On("ForceDisconnect", async () =>
+    private async Task HandleAssignConsolidationJobAsync(string agentId, ConsolidationJobMessage message)
+    {
+        _logger.Information("Received consolidation job assignment {JobId} of type {Type}",
+            message.JobId, message.Type);
+        if (OnAssignConsolidationJob is not null)
+            await OnAssignConsolidationJob(message);
+    }
+
+    private async Task HandleForceDisconnectAsync()
+    {
+        _logger.Warning("Received ForceDisconnect from orchestrator, stopping connection");
+        if (OnForceDisconnect is not null)
         {
-            _logger.Warning("Received ForceDisconnect from orchestrator, stopping connection");
-            if (OnForceDisconnect is not null)
-            {
-                try
-                {
-                    await OnForceDisconnect();
-                }
-                catch (Exception ex)
-                {
-                    _logger.Error(ex, "OnForceDisconnect handler failed");
-                }
-            }
             try
             {
-                await _connection.StopAsync();
+                await OnForceDisconnect();
             }
             catch (Exception ex)
             {
-                _logger.Error(ex, "Failed to stop connection after ForceDisconnect");
+                _logger.Error(ex, "OnForceDisconnect handler failed");
             }
-        });
+        }
+        try
+        {
+            await _connection.StopAsync();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to stop connection after ForceDisconnect");
+        }
     }
 
     /// <summary>

@@ -34,6 +34,13 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
 
     // ── CreateDispatchedRunAsync validation ──
 
+    // TODO: The ParamName assertions below (and in ReserveRunIdAsync tests) check for "request.IssueProviderId.Value"
+    // (and analogous RepoProviderId/AgentProviderId variants) — the [CallerArgumentExpression]-derived text of the
+    // first argument to ThrowIfNullOrEmpty. The original explicit nameof(...) used "IssueProviderId" (the containing
+    // property), which was more descriptive and hid the ProviderConfigId.Value implementation detail from callers.
+    // If the production code is ever refactored to use a helper that captures only "request.IssueProviderId", these
+    // tests will fail even though the behavior improved. Consider whether locking in the ".Value" expression text
+    // is the right contract to enforce here. (Review finding: TestQualityReviewer [WARNING])
     [Fact]
     public async Task CreateDispatchedRunAsync_DefaultIssueProviderId_ThrowsArgumentException()
     {
@@ -44,7 +51,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "IssueProviderId");
+            .Where(e => e.ParamName == "request.IssueProviderId.Value");
     }
 
     [Fact]
@@ -57,7 +64,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "RepoProviderId");
+            .Where(e => e.ParamName == "request.RepoProviderId.Value");
     }
 
     [Fact]
@@ -70,7 +77,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "AgentProviderId");
+            .Where(e => e.ParamName == "request.AgentProviderId.Value");
     }
 
     [Fact]
@@ -83,7 +90,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "IssueProviderId");
+            .Where(e => e.ParamName == "request.IssueProviderId.Value");
     }
 
     [Fact]
@@ -96,7 +103,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "RepoProviderId");
+            .Where(e => e.ParamName == "request.RepoProviderId.Value");
     }
 
     [Fact]
@@ -109,7 +116,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "AgentProviderId");
+            .Where(e => e.ParamName == "request.AgentProviderId.Value");
     }
 
     // ── ReserveRunIdAsync validation ──
@@ -124,7 +131,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "IssueProviderId");
+            .Where(e => e.ParamName == "request.IssueProviderId.Value");
     }
 
     [Fact]
@@ -137,7 +144,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "RepoProviderId");
+            .Where(e => e.ParamName == "request.RepoProviderId.Value");
     }
 
     [Fact]
@@ -150,7 +157,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "AgentProviderId");
+            .Where(e => e.ParamName == "request.AgentProviderId.Value");
     }
 
     [Fact]
@@ -163,7 +170,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "IssueProviderId");
+            .Where(e => e.ParamName == "request.IssueProviderId.Value");
     }
 
     [Fact]
@@ -176,7 +183,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "RepoProviderId");
+            .Where(e => e.ParamName == "request.RepoProviderId.Value");
     }
 
     [Fact]
@@ -189,7 +196,7 @@ public class DispatchRunCreationServiceValidationTests : IAsyncDisposable
             CancellationToken.None);
 
         await act.Should().ThrowAsync<ArgumentException>()
-            .Where(e => e.ParamName == "AgentProviderId");
+            .Where(e => e.ParamName == "request.AgentProviderId.Value");
     }
 
     public async ValueTask DisposeAsync()

@@ -24,7 +24,7 @@ public partial class AgentPhaseExecutor
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(issueComments);
 
-        var (existingAnalysis, _) = DetermineExistingAnalysis(context.Run, issueComments, forceRefreshFromDispatch);
+        var (existingAnalysis, _) = DetermineExistingAnalysis(issueComments, forceRefreshFromDispatch);
 
         await WriteIssueContextFileAsync(context, issueComments, ct);
 
@@ -49,7 +49,6 @@ public partial class AgentPhaseExecutor
     /// Returns (existingAnalysis, forceRefresh) where existingAnalysis is null if agent must re-run.
     /// </summary>
     private static (string? ExistingAnalysis, bool ForceRefresh) DetermineExistingAnalysis(
-        PipelineRun _,
         IReadOnlyList<IssueComment> issueComments,
         bool forceRefreshFromDispatch)
     {

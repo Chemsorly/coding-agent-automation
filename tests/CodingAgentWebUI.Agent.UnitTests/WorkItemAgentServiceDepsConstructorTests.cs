@@ -46,7 +46,7 @@ public class WorkItemAgentServiceDepsConstructorTests
     {
         var deps = CreateValidDeps() with { WorkItemId = null! };
         var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("WorkItemId");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.WorkItemId");
     }
 
     [Fact]
@@ -54,7 +54,7 @@ public class WorkItemAgentServiceDepsConstructorTests
     {
         var deps = CreateValidDeps() with { WorkItemClient = null! };
         var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("WorkItemClient");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.WorkItemClient");
     }
 
     [Fact]
@@ -62,7 +62,7 @@ public class WorkItemAgentServiceDepsConstructorTests
     {
         var deps = CreateValidDeps() with { ConnectionManager = null! };
         var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("ConnectionManager");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.ConnectionManager");
     }
 
     [Fact]
@@ -70,7 +70,7 @@ public class WorkItemAgentServiceDepsConstructorTests
     {
         var deps = CreateValidDeps() with { WorkItemExecutor = null! };
         var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("WorkItemExecutor");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.WorkItemExecutor");
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public class WorkItemAgentServiceDepsConstructorTests
     {
         var deps = CreateValidDeps() with { CompletionReporter = null! };
         var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("CompletionReporter");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.CompletionReporter");
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public class WorkItemAgentServiceDepsConstructorTests
     {
         var deps = CreateValidDeps() with { Lifetime = null! };
         var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("Lifetime");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Lifetime");
     }
 
     [Fact]
@@ -94,7 +94,7 @@ public class WorkItemAgentServiceDepsConstructorTests
     {
         var deps = CreateValidDeps() with { Logger = null! };
         var act = () => new WorkItemAgentService(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("Logger");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
     }
 
     // ── Valid construction ───────────────────────────────────────────────

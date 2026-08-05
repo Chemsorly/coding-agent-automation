@@ -49,7 +49,7 @@ public class LocalPipelineExecutorDepsConstructorTests
     {
         var deps = CreateValidDeps() with { Orchestrator = null! };
         var act = () => new LocalPipelineExecutor(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("Orchestrator");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Orchestrator");
     }
 
     [Fact]
@@ -57,7 +57,7 @@ public class LocalPipelineExecutorDepsConstructorTests
     {
         var deps = CreateValidDeps() with { HttpClientFactory = null! };
         var act = () => new LocalPipelineExecutor(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("HttpClientFactory");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.HttpClientFactory");
     }
 
     [Fact]
@@ -65,7 +65,7 @@ public class LocalPipelineExecutorDepsConstructorTests
     {
         var deps = CreateValidDeps() with { DefaultPipelineConfig = null! };
         var act = () => new LocalPipelineExecutor(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("DefaultPipelineConfig");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.DefaultPipelineConfig");
     }
 
     [Fact]
@@ -73,7 +73,7 @@ public class LocalPipelineExecutorDepsConstructorTests
     {
         var deps = CreateValidDeps() with { QualityGateValidator = null! };
         var act = () => new LocalPipelineExecutor(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("QualityGateValidator");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.QualityGateValidator");
     }
 
     [Fact]
@@ -81,7 +81,7 @@ public class LocalPipelineExecutorDepsConstructorTests
     {
         var deps = CreateValidDeps() with { Logger = null! };
         var act = () => new LocalPipelineExecutor(deps);
-        act.Should().Throw<ArgumentNullException>().WithParameterName("Logger");
+        act.Should().Throw<ArgumentNullException>().WithParameterName("deps.Logger");
     }
 
     // ── Valid construction ───────────────────────────────────────────────

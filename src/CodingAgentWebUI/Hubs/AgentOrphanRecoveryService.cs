@@ -82,90 +82,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
 
         if (!inHistory)
         {
-            // Skip restoration for consolidation runs — they have their own
-            // completion path (ReportConsolidationComplete) and should not
-            // enter pipeline run tracking or history.
-            if (activeJob.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
-            {
-                _logger.Information(
-                    "Agent {AgentId} reported active consolidation job {RunId} — skipping pipeline run restoration (handled by ReportConsolidationComplete)",
-                    agentId, activeJob.RunId);
-
-                // Still mark agent as busy with this job so it's tracked correctly
-                var consolEntry = _facade.GetByAgentId(agentId);
-                if (consolEntry is not null)
-                {
-                    consolEntry.ActiveJobId = activeJob.RunId;
-                    _facade.TransitionStatus(agentId, AgentStatus.Busy);
-                }
-
-                _changeNotifier.NotifyChange();
-            }
-            else
-            {
-                var restoredRun = activeJob.RunType switch
-                {
-                    PipelineRunType.Review => PipelineRun.CreateReview(
-                        runId: activeJob.RunId,
-                        issueIdentifier: activeJob.IssueIdentifier,
-                        issueTitle: activeJob.IssueTitle,
-                        issueProviderConfigId: activeJob.IssueProviderConfigId,
-                        repoProviderConfigId: activeJob.RepoProviderConfigId,
-                        reviewPrBranchName: string.Empty,
-                        reviewPrTargetBranch: string.Empty,
-                        startedAt: activeJob.StartedAt,
-                        initiatedBy: activeJob.InitiatedBy,
-                        agentId: agentId,
-                        agentProviderConfigId: activeJob.AgentProviderConfigId,
-                        brainProviderConfigId: activeJob.BrainProviderConfigId),
-                    PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
-                        runId: activeJob.RunId,
-                        issueIdentifier: activeJob.IssueIdentifier,
-                        issueTitle: activeJob.IssueTitle,
-                        issueProviderConfigId: activeJob.IssueProviderConfigId,
-                        repoProviderConfigId: activeJob.RepoProviderConfigId,
-                        phaseType: activeJob.RunType,
-                        startedAt: activeJob.StartedAt,
-                        initiatedBy: activeJob.InitiatedBy,
-                        agentId: agentId,
-                        agentProviderConfigId: activeJob.AgentProviderConfigId,
-                        brainProviderConfigId: activeJob.BrainProviderConfigId),
-                    _ => PipelineRun.CreateImplementation(
-                        runId: activeJob.RunId,
-                        issueIdentifier: activeJob.IssueIdentifier,
-                        issueTitle: activeJob.IssueTitle,
-                        issueProviderConfigId: activeJob.IssueProviderConfigId,
-                        repoProviderConfigId: activeJob.RepoProviderConfigId,
-                        startedAt: activeJob.StartedAt,
-                        initiatedBy: activeJob.InitiatedBy,
-                        agentId: agentId,
-                        agentProviderConfigId: activeJob.AgentProviderConfigId,
-                        brainProviderConfigId: activeJob.BrainProviderConfigId)
-                };
-                restoredRun.CurrentStep = activeJob.CurrentStep;
-                restoredRun.PipelineProviderConfigId = activeJob.PipelineProviderConfigId;
-                restoredRun.ResolvedProfileId = activeJob.ResolvedProfileId;
-                restoredRun.ProjectId = activeJob.ProjectId;
-                restoredRun.ProjectName = activeJob.ProjectName;
-                restoredRun.RepositoryName = activeJob.RepositoryName;
-                restoredRun.ModelName = activeJob.ModelName;
-
-                _facade.AddRun(restoredRun);
-
-                // Set agent as busy with this job
-                var restoredEntry = _facade.GetByAgentId(agentId);
-                if (restoredEntry is not null)
-                {
-                    restoredEntry.ActiveJobId = activeJob.RunId;
-                    _facade.TransitionStatus(agentId, AgentStatus.Busy);
-                }
-
-                _logger.Information(
-                    "Restored active run {RunId} for agent {AgentId} (issue {IssueIdentifier}, step {Step}) — orchestrator state recovery",
-                    activeJob.RunId, agentId, activeJob.IssueIdentifier, activeJob.CurrentStep);
-
-                _changeNotifier.NotifyChange();
-            }
+            await RestoreNewRunAsync(agentId, activeJob);
         }
         else
         {
@@ -173,6 +90,115 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
                 "Agent {AgentId} reported active job {RunId} but it's already in history — ignoring stale state",
                 agentId, activeJob.RunId);
         }
+    }
+
+    private async Task RestoreNewRunAsync(string agentId, ActiveJobState activeJob)
+    {
+        // Skip restoration for consolidation runs — they have their own
+        // completion path (ReportConsolidationComplete) and should not
+        // enter pipeline run tracking or history.
+        if (activeJob.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
+        {
+            RestoreConsolidationTracking(agentId, activeJob);
+        }
+        else
+        {
+            RestorePipelineRun(agentId, activeJob);
+        }
+        // TODO: [WARNING] This method is declared `async Task` but contains no genuine await — it delegates
+        // synchronously to `RestoreConsolidationTracking` or `RestorePipelineRun` and ends with
+        // `await Task.CompletedTask`. This creates an unnecessary state-machine on every agent reconnect.
+        // Consider removing the `async` modifier and returning `Task.CompletedTask` directly, or calling
+        // the two inner synchronous methods directly from the caller (HandleOrphanedRunAsync).
+        await Task.CompletedTask; // Preserved async signature for future use
+    }
+
+    private void RestoreConsolidationTracking(string agentId, ActiveJobState activeJob)
+    {
+        _logger.Information(
+            "Agent {AgentId} reported active consolidation job {RunId} — skipping pipeline run restoration (handled by ReportConsolidationComplete)",
+            agentId, activeJob.RunId);
+
+        // Still mark agent as busy with this job so it's tracked correctly
+        var consolEntry = _facade.GetByAgentId(agentId);
+        if (consolEntry is not null)
+        {
+            consolEntry.ActiveJobId = activeJob.RunId;
+            _facade.TransitionStatus(agentId, AgentStatus.Busy);
+        }
+
+        _changeNotifier.NotifyChange();
+    }
+
+    private void RestorePipelineRun(string agentId, ActiveJobState activeJob)
+    {
+        var restoredRun = CreateRestoredPipelineRun(agentId, activeJob);
+        restoredRun.CurrentStep = activeJob.CurrentStep;
+        restoredRun.PipelineProviderConfigId = activeJob.PipelineProviderConfigId;
+        restoredRun.ResolvedProfileId = activeJob.ResolvedProfileId;
+        restoredRun.ProjectId = activeJob.ProjectId;
+        restoredRun.ProjectName = activeJob.ProjectName;
+        restoredRun.RepositoryName = activeJob.RepositoryName;
+        restoredRun.ModelName = activeJob.ModelName;
+
+        _facade.AddRun(restoredRun);
+
+        // Set agent as busy with this job
+        var restoredEntry = _facade.GetByAgentId(agentId);
+        if (restoredEntry is not null)
+        {
+            restoredEntry.ActiveJobId = activeJob.RunId;
+            _facade.TransitionStatus(agentId, AgentStatus.Busy);
+        }
+
+        _logger.Information(
+            "Restored active run {RunId} for agent {AgentId} (issue {IssueIdentifier}, step {Step}) — orchestrator state recovery",
+            activeJob.RunId, agentId, activeJob.IssueIdentifier, activeJob.CurrentStep);
+
+        _changeNotifier.NotifyChange();
+    }
+
+    private static PipelineRun CreateRestoredPipelineRun(string agentId, ActiveJobState activeJob)
+    {
+        return activeJob.RunType switch
+        {
+            PipelineRunType.Review => PipelineRun.CreateReview(
+                runId: activeJob.RunId,
+                issueIdentifier: activeJob.IssueIdentifier,
+                issueTitle: activeJob.IssueTitle,
+                issueProviderConfigId: activeJob.IssueProviderConfigId,
+                repoProviderConfigId: activeJob.RepoProviderConfigId,
+                reviewPrBranchName: string.Empty,
+                reviewPrTargetBranch: string.Empty,
+                startedAt: activeJob.StartedAt,
+                initiatedBy: activeJob.InitiatedBy,
+                agentId: agentId,
+                agentProviderConfigId: activeJob.AgentProviderConfigId,
+                brainProviderConfigId: activeJob.BrainProviderConfigId),
+            PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition => PipelineRun.CreateDecomposition(
+                runId: activeJob.RunId,
+                issueIdentifier: activeJob.IssueIdentifier,
+                issueTitle: activeJob.IssueTitle,
+                issueProviderConfigId: activeJob.IssueProviderConfigId,
+                repoProviderConfigId: activeJob.RepoProviderConfigId,
+                phaseType: activeJob.RunType,
+                startedAt: activeJob.StartedAt,
+                initiatedBy: activeJob.InitiatedBy,
+                agentId: agentId,
+                agentProviderConfigId: activeJob.AgentProviderConfigId,
+                brainProviderConfigId: activeJob.BrainProviderConfigId),
+            _ => PipelineRun.CreateImplementation(
+                runId: activeJob.RunId,
+                issueIdentifier: activeJob.IssueIdentifier,
+                issueTitle: activeJob.IssueTitle,
+                issueProviderConfigId: activeJob.IssueProviderConfigId,
+                repoProviderConfigId: activeJob.RepoProviderConfigId,
+                startedAt: activeJob.StartedAt,
+                initiatedBy: activeJob.InitiatedBy,
+                agentId: agentId,
+                agentProviderConfigId: activeJob.AgentProviderConfigId,
+                brainProviderConfigId: activeJob.BrainProviderConfigId)
+        };
     }
 
     private void LinkAgentToExistingRun(

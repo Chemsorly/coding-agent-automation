@@ -737,6 +737,10 @@ public class RefactoringExecutorTests : IDisposable
     // TODO: This test verifies each criterion appears as a checkbox but does not assert positional ordering
     // (i.e., that criteria appear under the "## Acceptance Criteria" heading and before "---"). A section-
     // ordering bug could cause criteria to render in the wrong section without failing this test.
+    // TODO: [WARNING] After the S3776 refactoring (#1790), AppendAcceptanceCriteria returns without appending
+    // the footer (`---` separator + attribution line); the footer is now appended by the calling method after
+    // AppendAcceptanceCriteria returns. A regression that re-orders footer-before-criteria would not be caught
+    // by this test. Consider adding an assertion that the `---` separator appears *after* the last criterion.
     [Fact]
     public void FormatIssueBody_WithPopulatedAcceptanceCriteria_RendersAllItemsAsCheckboxes()
     {
