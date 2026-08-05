@@ -133,7 +133,8 @@ public sealed class AgentConnectionManager : IAgentConnectionManager
             if (_hubManager.IsConnected)
             {
                 await _hubManager.Connection.InvokeAsync(
-                    HubMethodNames.DeregisterAgent, _agentId.Value);
+                    HubMethodNames.DeregisterAgent, _agentId.Value,
+                    CancellationToken.None); // intentional: best-effort deregistration on dispose; _heartbeatCts is null after StopHeartbeatAsync()
                 _logger.Information("Agent {AgentId} deregistered from orchestrator", _agentId.Value);
             }
         }

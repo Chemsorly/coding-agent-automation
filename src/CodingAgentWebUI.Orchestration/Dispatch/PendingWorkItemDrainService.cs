@@ -202,7 +202,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
                         runId,
                         request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-                        request.ConsolidationTemplateId,
+                        string.IsNullOrEmpty(request.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)request.ConsolidationTemplateId,
                         request.ConsolidationWorkspacePath ?? "",
                         agentId,
                         ct);

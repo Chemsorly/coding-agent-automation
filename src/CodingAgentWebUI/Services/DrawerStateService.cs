@@ -72,7 +72,7 @@ public class DrawerStateService<TItem> : IDisposable
     /// The hasData func is evaluated after HideOtherDrawers (called externally) to avoid stale reads.
     /// </summary>
     public async Task<string?> SwitchAsync(
-        string templateId,
+        TemplateId templateId,
         Func<Task>? notifyStateChanged,
         Func<bool> hasDataCache,
         Func<string, Func<Task>?, Task<PipelineJobTemplate?>> resolveTemplateAsync)
@@ -82,7 +82,7 @@ public class DrawerStateService<TItem> : IDisposable
             IsOpen = true;
             return null;
         }
-        var template = await resolveTemplateAsync(templateId, notifyStateChanged);
+        var template = await resolveTemplateAsync(templateId.Value, notifyStateChanged);
         if (template == null) return null;
         return await OpenAsync(template, notifyStateChanged);
     }

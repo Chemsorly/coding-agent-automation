@@ -209,7 +209,7 @@ public partial class AgentCoding : IDisposable
         _ = ClearSuccessAfterDelay();
     }
 
-    private async Task MoveTemplateToProject((string TemplateId, string SourceProjectId, string TargetProjectId) args)
+    private async Task MoveTemplateToProject((TemplateId TemplateId, string SourceProjectId, string TargetProjectId) args)
     {
         var (success, error, successMessage) = await PageService.MoveTemplateToProjectAsync(args.TemplateId, args.SourceProjectId, args.TargetProjectId);
         if (!success) { _errorMessage = error; return; }
@@ -465,7 +465,7 @@ public partial class AgentCoding : IDisposable
 
     // ── Helpers ──
 
-    private PipelineProject? GetParentProject(string templateId) => PageService.GetParentProject(templateId);
+    private PipelineProject? GetParentProject(TemplateId templateId) => PageService.GetParentProject(templateId);
 
     /// <summary>
     /// Synchronous check against the preloaded active issues set.
