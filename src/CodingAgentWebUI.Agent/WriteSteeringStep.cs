@@ -19,7 +19,8 @@ internal sealed class WriteSteeringStep : IPipelineStep
 
     private static readonly Regex SteeringBlockRegex = new(
         @"^" + Regex.Escape(BeginMarker) + @"\r?\n.*?" + Regex.Escape(EndMarker) + @"\r?\n?",
-        RegexOptions.Singleline | RegexOptions.Multiline | RegexOptions.Compiled);
+        RegexOptions.Singleline | RegexOptions.Multiline | RegexOptions.Compiled,
+        matchTimeout: TimeSpan.FromSeconds(5));
 
     private readonly JobAssignmentMessage _job;
     private readonly ILogger _logger;

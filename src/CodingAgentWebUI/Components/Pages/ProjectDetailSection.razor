@@ -109,7 +109,7 @@
     // Secrets management
     private List<SecretEntry> _secrets = new();
     private HashSet<int> _revealedSecrets = new();
-    private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
+    private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled, matchTimeout: TimeSpan.FromSeconds(1));
 
     // MCP Servers management
     private List<McpServerFormModel> _mcpServers = new();

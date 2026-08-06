@@ -19,7 +19,7 @@ public static class GitProcessRunner
         using var process = new Process();
         process.StartInfo = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = OperatingSystem.IsWindows() ? "git.exe" : "/usr/bin/git",
             Arguments = arguments,
             WorkingDirectory = workingDirectory,
             RedirectStandardOutput = true,

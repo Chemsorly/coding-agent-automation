@@ -335,7 +335,7 @@
     private bool _showDeleteConfirm;
     private string? _deletingProviderId;
 
-    private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled);
+    private static readonly Regex SecretKeyPattern = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.Compiled, matchTimeout: TimeSpan.FromSeconds(1));
 
     private async Task ConfirmDeleteAsync()
     {

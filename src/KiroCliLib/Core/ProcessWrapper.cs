@@ -80,7 +80,9 @@ public class ProcessWrapper : IProcessWrapper
 
         var startInfo = new ProcessStartInfo
         {
-            FileName = _useWsl ? "wsl" : _config.KiroCliPath,
+            FileName = _useWsl
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe")
+                : _config.KiroCliPath,
             Arguments = _useWsl ? $"{_config.KiroCliPath} {kiroArgs}" : kiroArgs,
             WorkingDirectory = workspaceDirectory,
             RedirectStandardInput = true,
@@ -151,7 +153,8 @@ public class ProcessWrapper : IProcessWrapper
                     {
                         StartInfo = new ProcessStartInfo
                         {
-                            FileName = "wsl", Arguments = "pkill -9 -f kiro-cli",
+                            FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe"),
+                            Arguments = "pkill -9 -f kiro-cli",
                             UseShellExecute = false, CreateNoWindow = true,
                             RedirectStandardOutput = true, RedirectStandardError = true
                         }

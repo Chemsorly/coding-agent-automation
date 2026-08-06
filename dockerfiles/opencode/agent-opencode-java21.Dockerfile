@@ -81,9 +81,11 @@ RUN mkdir -p /app/workspaces && chown -R ubuntu:ubuntu /app
 # Copy published Agent app (owned by ubuntu user)
 COPY --from=build --chown=ubuntu:ubuntu /app/publish .
 
-# Copy entrypoint script
-COPY --chown=ubuntu:ubuntu dockerfiles/opencode/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Copy entrypoint script as root, set restrictive permissions, then switch user
+# nosonar: docker:S6504 — entrypoint.sh is owned by root; chmod 755 grants ubuntu (as "other")
+# read+execute only, not write.
+COPY dockerfiles/opencode/entrypoint.sh /app/entrypoint.sh
+RUN chmod 755 /app/entrypoint.sh
 
 # Switch to non-root user (UID 1000)
 USER ubuntu

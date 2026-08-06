@@ -20,38 +20,45 @@ public class OutputParser : IOutputParser
         ArgumentNullException.ThrowIfNull(line);
         if (string.IsNullOrWhiteSpace(line)) return;
 
-        var newState = DetectState(line);
-        if (newState.HasValue && newState.Value != _currentState)
+        try
         {
-            _currentState = newState.Value;
-            StateChanged?.Invoke(this, _currentState);
-        }
+            var newState = DetectState(line);
+            if (newState.HasValue && newState.Value != _currentState)
+            {
+                _currentState = newState.Value;
+                StateChanged?.Invoke(this, _currentState);
+            }
 
-        var testResult = DetectTestResults(line);
-        if (testResult != null)
+            var testResult = DetectTestResults(line);
+            if (testResult != null)
+            {
+                _testResults = testResult;
+            }
+        }
+        catch (RegexMatchTimeoutException)
         {
-            _testResults = testResult;
+            // Line contains adversarial content that caused a timeout — skip state/test detection for this line.
         }
     }
 
     private KiroState? DetectState(string line)
     {
-        if (Regex.IsMatch(line, @"^[✓✔]|^\s*Done\b|^\s*Completed\b|^\s*Success\b", RegexOptions.IgnoreCase))
+        if (Regex.IsMatch(line, @"^[✓✔]|^\s*Done\b|^\s*Completed\b|^\s*Success\b", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)))
             return KiroState.Completed;
 
-        if (Regex.IsMatch(line, @"^[✗✘]|^\s*Error:\s|^\s*Failed:\s|^\s*Exception:\s", RegexOptions.IgnoreCase))
+        if (Regex.IsMatch(line, @"^[✗✘]|^\s*Error:\s|^\s*Failed:\s|^\s*Exception:\s", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)))
             return KiroState.Error;
 
-        if (Regex.IsMatch(line, @"^\s*\?\s+\S|^\s*Please provide\b|^\s*Clarification needed\b|^\s*Waiting for input\b", RegexOptions.IgnoreCase))
+        if (Regex.IsMatch(line, @"^\s*\?\s+\S|^\s*Please provide\b|^\s*Clarification needed\b|^\s*Waiting for input\b", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)))
             return KiroState.NeedsInput;
 
-        if (Regex.IsMatch(line, @"\bresearch(?:ing)?\s+phase\b|\bstarting\s+research\b", RegexOptions.IgnoreCase))
+        if (Regex.IsMatch(line, @"\bresearch(?:ing)?\s+phase\b|\bstarting\s+research\b", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)))
             return KiroState.ResearchPhase;
-        if (Regex.IsMatch(line, @"\bplan(?:ning)?\s+phase\b|\bcreating\s+plan\b", RegexOptions.IgnoreCase))
+        if (Regex.IsMatch(line, @"\bplan(?:ning)?\s+phase\b|\bcreating\s+plan\b", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)))
             return KiroState.PlanPhase;
-        if (Regex.IsMatch(line, @"\bimplement(?:ation|ing)?\s+phase\b|\bimplementing\s+\w+\b", RegexOptions.IgnoreCase))
+        if (Regex.IsMatch(line, @"\bimplement(?:ation|ing)?\s+phase\b|\bimplementing\s+\w+\b", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)))
             return KiroState.ImplementPhase;
-        if (Regex.IsMatch(line, @"\btest(?:ing)?\s+phase\b|\brunning\s+tests\b", RegexOptions.IgnoreCase))
+        if (Regex.IsMatch(line, @"\btest(?:ing)?\s+phase\b|\brunning\s+tests\b", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1)))
             return KiroState.TestPhase;
 
         return null;
@@ -59,7 +66,7 @@ public class OutputParser : IOutputParser
 
     private TestResult? DetectTestResults(string line)
     {
-        var testMatch = Regex.Match(line, @"Tests?:\s*(\d+)\s+passed(?:,\s*(\d+)\s+failed)?", RegexOptions.IgnoreCase);
+        var testMatch = Regex.Match(line, @"Tests?:\s*(\d+)\s+passed(?:,\s*(\d+)\s+failed)?", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
         if (testMatch.Success)
         {
             var passed = int.Parse(testMatch.Groups[1].Value);
@@ -67,7 +74,7 @@ public class OutputParser : IOutputParser
             return new TestResult { TotalTests = passed + failed, PassedTests = passed, FailedTests = failed };
         }
 
-        var simpleTestMatch = Regex.Match(line, @"[✓✔]\s*(\d+)\s+tests?", RegexOptions.IgnoreCase);
+        var simpleTestMatch = Regex.Match(line, @"[✓✔]\s*(\d+)\s+tests?", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
         if (simpleTestMatch.Success)
         {
             var total = int.Parse(simpleTestMatch.Groups[1].Value);
