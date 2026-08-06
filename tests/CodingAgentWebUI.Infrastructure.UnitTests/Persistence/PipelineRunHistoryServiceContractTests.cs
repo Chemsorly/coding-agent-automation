@@ -239,8 +239,6 @@ public abstract class PipelineRunHistoryServiceContractTests : IDisposable
 
     /// <summary>
     /// Creates a completed <see cref="PipelineRun"/> with terminal step.
-    /// Uses terminal steps exclusively to avoid BUG-12 divergence
-    /// (Postgres forces non-terminal to Failed; filesystem does not).
     /// </summary>
     private static PipelineRun CreateCompletedRun(
         string runId,
