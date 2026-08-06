@@ -124,7 +124,10 @@ internal static class RepositoryGitOperations
             Log.Debug("CommitAllAsync status: {FilePath} = {State}", entry.FilePath, entry.State);
         }
 
-        var stagedAny = StageAllWorkingTreeChanges(repo, preStatus);
+        // Snapshot entries before staging to prevent "collection was modified during enumeration"
+        // exceptions — RepositoryStatus is a live view and mutates when Index.Add/Remove is called.
+        var preStatusSnapshot = preStatus.ToList();
+        var stagedAny = StageAllWorkingTreeChanges(repo, preStatusSnapshot);
 
         if (stagedAny)
             repo.Index.Write();
@@ -163,7 +166,7 @@ internal static class RepositoryGitOperations
         return unstaged.ToList();
     }
 
-    private static bool StageAllWorkingTreeChanges(Repository repo, RepositoryStatus preStatus)
+    private static bool StageAllWorkingTreeChanges(Repository repo, IReadOnlyList<StatusEntry> preStatus)
     {
         var stagedAny = false;
         foreach (var entry in preStatus)
