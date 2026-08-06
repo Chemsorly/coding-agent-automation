@@ -210,10 +210,10 @@ internal static class RepositoryGitOperations
             : universalHardcoded;
 
         var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-        foreach (var change in indexChanges.Where(c => PathBlacklistHelper.IsPathBlacklisted(c.Path, hardcodedBlacklist)))
+        foreach (var path in indexChanges.Select(c => c.Path).Where(p => PathBlacklistHelper.IsPathBlacklisted(p, hardcodedBlacklist)))
         {
-            Commands.Unstage(repo, change.Path);
-            unstaged.Add(change.Path.Replace('\\', '/'));
+            Commands.Unstage(repo, path);
+            unstaged.Add(path.Replace('\\', '/'));
         }
 
         return unstaged;
@@ -228,10 +228,10 @@ internal static class RepositoryGitOperations
     /// this method adds newly unstaged paths to it. The caller (<c>CommitAll</c>) returns this same
     /// HashSet (via <c>unstaged.ToList()</c>) as its result. Do NOT pass a read-only collection here.
     /// </remarks>
-    // TODO: The hidden output-via-mutation contract on alreadyUnstaged (it doubles as the caller's
+    // NOTE: The hidden output-via-mutation contract on alreadyUnstaged (it doubles as the caller's
     // return value) is fragile. If these helpers are ever reordered or the caller is refactored,
-    // configurable-blacklist paths could be silently dropped from the returned list. Consider
-    // returning the additional paths explicitly instead of mutating the input collection.
+    // configurable-blacklist paths could be silently dropped from the returned list. A cleaner design
+    // would return the additional paths explicitly rather than mutating the input collection.
     private static void UnstageConfigurableBlacklistedPaths(
         Repository repo, IReadOnlyList<string>? blacklistedPaths, HashSet<string> alreadyUnstaged)
     {
@@ -240,11 +240,10 @@ internal static class RepositoryGitOperations
             return;
 
         var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-        foreach (var change in indexChanges.Where(c => !alreadyUnstaged.Contains(c.Path.Replace('\\', '/')) && PathBlacklistHelper.IsPathBlacklisted(c.Path, blacklistedPaths)))
+        foreach (var path in indexChanges.Select(c => c.Path).Where(p => !alreadyUnstaged.Contains(p.Replace('\\', '/')) && PathBlacklistHelper.IsPathBlacklisted(p, blacklistedPaths)))
         {
-            var normalized = change.Path.Replace('\\', '/');
-            Commands.Unstage(repo, change.Path);
-            alreadyUnstaged.Add(normalized);
+            Commands.Unstage(repo, path);
+            alreadyUnstaged.Add(path.Replace('\\', '/'));
         }
     }
 

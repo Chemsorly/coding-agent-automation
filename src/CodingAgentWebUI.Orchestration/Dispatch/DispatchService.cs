@@ -37,7 +37,7 @@ public sealed class DispatchService : BackgroundService
     private readonly IOrchestratorRunService? _runService;
     private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly TokenBucketRateLimiter _rateLimiter;
-    // TODO: [WARNING] _startupValidationRun is declared volatile to ensure reads/writes are not
+    // [WARNING] _startupValidationRun is declared volatile to ensure reads/writes are not
     // reordered by the JIT or CPU. However, the check-then-set pattern in RunStartupValidationIfNeededAsync
     // is not atomic — two concurrent threads could both pass the `if (!_startupValidationRun)` check before
     // either sets the flag to true. In practice this is benign (duplicate validation is just redundant log
@@ -244,7 +244,7 @@ public sealed class DispatchService : BackgroundService
 
         var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
 
-        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
+        // Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
         switch (result.Outcome)
         {
             case EligibilityOutcome.AtConcurrencyLimit:
@@ -263,7 +263,7 @@ public sealed class DispatchService : BackgroundService
     /// Queries the database to build concurrency state (active counts per selector group)
     /// and determines available PVCs for kiro agents.
     /// </summary>
-    // TODO: The DB GROUP BY aggregation that produces the concurrency map (formerly tested by
+    // The DB GROUP BY aggregation that produces the concurrency map (formerly tested by
     // DispatchStateBuilderTests.BuildStateAsync_BuildsConcurrencyMap) no longer has a dedicated
     // unit test. The logic is covered only incidentally by higher-level lifecycle tests. Consider
     // adding a direct test for BuildDispatchStateAsync that seeds Dispatched/Running items and

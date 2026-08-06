@@ -54,7 +54,7 @@ public sealed class JobQueueDrainService : BackgroundService
     /// Non-consolidation jobs are not subject to this limit.
     /// </summary>
     /// <remarks>
-    /// TODO: This is currently a <c>const</c>. If runtime configurability is needed in the future
+    /// This is currently a <c>const</c>. If runtime configurability is needed in the future
     /// (e.g., via appsettings or <see cref="PipelineConfiguration"/>), promote to an
     /// <c>IAppSettings</c>-backed property or a constructor-injected configuration object.
     /// </remarks>
@@ -219,7 +219,7 @@ public sealed class JobQueueDrainService : BackgroundService
     /// Dispatches a consolidation job to an agent. Handles the cancel race guard,
     /// dispatch call, and failure handling. Returns true if dispatched successfully.
     /// </summary>
-    // TODO: The DrainAsync_ConsolidationJob_DispatchThrows_ReEnqueues test covers the exception
+    // The DrainAsync_ConsolidationJob_DispatchThrows_ReEnqueues test covers the exception
     // path via QueueLength assertion, which is sufficient. However, the test predates this
     // extraction and tests at DrainAsync level. If this method's exception handling is ever
     // changed (e.g., retry logic added), update or add a test targeting DispatchConsolidationJobAsync
@@ -232,7 +232,7 @@ public sealed class JobQueueDrainService : BackgroundService
             // Cancel-during-dispatch race guard
             if (_consolidationRunStore is not null)
             {
-                // TODO: [WARNING] The cancel-race guard path (run is null || Cancelled || Failed) has no
+                // [WARNING] The cancel-race guard path (run is null || Cancelled || Failed) has no
                 // direct unit test. The existing DrainAsync_ConsolidationJob_DispatchThrows_ReEnqueues test
                 // covers the exception path but not this guard. A future regression (e.g., forgetting to call
                 // MarkIssueComplete on the cancelled path) would go undetected. Add a test that seeds a
@@ -374,7 +374,7 @@ public sealed class JobQueueDrainService : BackgroundService
     /// from the in-memory queue, and a storage failure should not re-enqueue it indefinitely.
     /// </summary>
     /// <remarks>
-    /// TODO: This method performs a read-modify-write (GetById → mutate → SaveRun) without
+    /// This method performs a read-modify-write (GetById → mutate → SaveRun) without
     /// optimistic concurrency control. A concurrent cancellation handler or admin cancel could
     /// modify <c>ConsolidationRun.Status</c> between the read and save, and this write would
     /// silently overwrite that change with <c>Failed</c>. Consider a CAS pattern or compare

@@ -122,7 +122,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             if (shouldStop) break;
         }
 
-        WorkDistributionTelemetry.DispatcherPollCount.Add(1); // TODO: placed at end — see comment in original for metric inconsistency risk
+        WorkDistributionTelemetry.DispatcherPollCount.Add(1); // Placed at end — see comment in original for metric inconsistency risk
     }
 
     /// <summary>
@@ -138,7 +138,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             if (string.IsNullOrWhiteSpace(item.AgentSelector))
             {
                 _logger.LogDebug("PendingWorkItemDrainService: no idle agents at all, stopping drain");
-                // TODO: No test asserts the early-break contract: an item with a null/whitespace
+                // No test asserts the early-break contract: an item with a null/whitespace
                 // AgentSelector + null resolver result must return true (stop the loop), not false
                 // (continue). The return value is the only mechanism preventing the loop from
                 // spinning indefinitely. Add a test that verifies the outer drain loop stops when
@@ -263,12 +263,12 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 // Dispatch failed — revert to Pending for next cycle.
                 // Uses ct intentionally: the catch block below serves as the safety net, retrying
                 // the revert with CancellationToken.None if this call throws during shutdown.
-                // TODO: This inline revert lambda duplicates the logic in TryRevertToPendingAsync (consolidation
+                // This inline revert duplicates the logic in TryRevertToPendingAsync (consolidation
                 // false-return path). The difference is intentional: this path uses `ct` so that a cancellation
                 // during the soft-failure revert is caught by the surrounding try/catch and handled by
                 // TryRevertToPendingAsync(CancellationToken.None). Consider unifying once the ct-vs-None
                 // distinction is no longer needed (acceptance criterion: "revert logic in exactly one location").
-                // TODO: If the TransitionAsync below throws (e.g., OperationCanceledException during shutdown),
+                // If the TransitionAsync below throws (e.g., OperationCanceledException during shutdown),
                 // the catch block calls ReleaseAgent(agentId) again — a potential double-release. Whether this
                 // is harmful depends on ReleaseAgent idempotency. Investigate and either document idempotency
                 // or restructure to avoid calling ReleaseAgent before the TransitionAsync completes.
@@ -404,7 +404,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             // If TransitionAsync(Dispatched) itself failed, the item was already Pending and the
             // idempotent path above skipped the mutate callback — RetryCount was NOT incremented.
             // Perform a direct DB update to prevent infinite retry loops.
-            // TODO: If a concurrent process (e.g., stuck-item detector) also increments RetryCount
+            // If a concurrent process (e.g., stuck-item detector) also increments RetryCount
             // between the exception and this update, a double-increment could occur. Risk is low
             // because the drain service is the sole owner of dispatch for a given item, and an extra
             // increment only accelerates retry exhaustion (safe direction). Consider adding a

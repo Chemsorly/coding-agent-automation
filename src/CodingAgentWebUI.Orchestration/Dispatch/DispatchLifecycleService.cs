@@ -237,7 +237,7 @@ internal sealed class DispatchLifecycleService
                 new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
 
             // Track concurrency
-            // TODO: Use effectiveSelector (from eligibility checker's profile fallback resolution) instead of item.AgentSelector.
+            // Use effectiveSelector (from eligibility checker's profile fallback resolution) instead of item.AgentSelector in a future refactor.
             concurrencyBySelector[item.AgentSelector ?? ""] =
                 concurrencyBySelector.GetValueOrDefault(item.AgentSelector ?? "", 0) + 1;
 

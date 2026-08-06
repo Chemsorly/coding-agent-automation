@@ -224,7 +224,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
         var result = await _eligibilityChecker.CheckEligibilityAsync(item, concurrencyBySelector, availablePvcs.Count, ct);
 
-        // TODO: Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
+        // Add explicit default/Eligible case to prevent silent fall-through if new EligibilityOutcome values are added
         switch (result.Outcome)
         {
             case EligibilityOutcome.AtConcurrencyLimit:
@@ -420,7 +420,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
         var preparation = await _consolidationJobPreparer.PrepareAsync(
             request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-            // TODO: This string→TemplateId? conversion pattern is repeated across ConsolidationDispatchHandler,
+            // This string→TemplateId? conversion pattern is repeated across ConsolidationDispatchHandler,
             // JobQueueDrainService, PendingWorkItemDrainService, and ConsolidationService. Consider adding a
             // TemplateId.FromNullable(string?) factory method to encapsulate this in one place so that any
             // future validation changes only need updating once.
