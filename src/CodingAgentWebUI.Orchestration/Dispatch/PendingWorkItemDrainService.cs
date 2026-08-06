@@ -121,61 +121,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         foreach (var item in pendingItems)
         {
             if (ct.IsCancellationRequested) break;
-
-            var resolveResult = _agentResolver.ResolveAgent(item.AgentSelector ?? "");
-            if (resolveResult is null)
-            {
-                if (string.IsNullOrWhiteSpace(item.AgentSelector))
-                {
-                    _logger.LogDebug("PendingWorkItemDrainService: no idle agents at all, stopping drain");
-                    break;
-                }
-                _logger.LogDebug(
-                    "PendingWorkItemDrainService: no agent for selector '{Selector}', skipping WorkItem {WorkItemId}",
-                    item.AgentSelector, item.Id);
-                continue;
-            }
-
-            var (request, skip) = ResolveAndValidateRequest(item);
-            if (skip)
-            {
-                _agentResolver.ReleaseAgent(resolveResult.AgentId);
-                continue;
-            }
-
-            var connectionId = resolveResult.ConnectionId;
-            var agentId = resolveResult.AgentId;
-
-            // --- Consolidation items ---
-            if (item.TaskType == WorkItemTaskType.Consolidation)
-            {
-                await HandleConsolidationItemAsync(item, request!, agentId, ct);
-                // TODO: HandleConsolidationItemAsync does not return a result, so SwapLabelWithRetryAsync
-                // and the success log below are never reached for consolidation items. This matches the
-                // original behavior (original consolidation block also ended with `continue`), so there
-                // is no behavioral regression — but it means label-swap is consolidation-only skipped.
-                // (review-findings: Correctness WARNING)
-                continue;
-            }
-
-            // --- Pipeline items ---
-            var result = await HandlePipelineItemAsync(item, request!, agentId, connectionId, ct);
-
-            // If TransitionAsync(Dispatched) itself failed, perform direct RetryCount increment
-            if (!result.FullyCompleted && !result.DispatchedSuccessfully)
-            {
-                await IncrementRetryCountDirectAsync(item.Id);
-            }
-
-            if (!result.FullyCompleted)
-                continue;
-
-            // Swap label to agent:in-progress now that an agent is actually working on it (#997)
-            await SwapLabelWithRetryAsync(item.Id, request!, ct);
-
-            _logger.LogInformation(
-                "PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
-                item.Id, item.IssueIdentifier, agentId);
+            var shouldBreak = await ProcessPendingItemAsync(item, ct);
+            if (shouldBreak) break;
         }
 
         // TODO: DispatcherPollCount is placed at end-of-method rather than start-of-call. If an unhandled exception
@@ -183,6 +130,83 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         // does not increment, creating metric inconsistency. Matches K8s DispatchService pattern but deviates from
         // the stated requirement text. Low risk due to inner try-catch coverage.
         WorkDistributionTelemetry.DispatcherPollCount.Add(1);
+    }
+
+    /// <summary>
+    /// Processes a single pending work item in the drain loop.
+    /// Returns true if the outer loop should break (no more agents available).
+    /// </summary>
+    private async Task<bool> ProcessPendingItemAsync(WorkItemEntity item, CancellationToken ct)
+    {
+        var resolveResult = _agentResolver.ResolveAgent(item.AgentSelector ?? "");
+        if (resolveResult is null)
+        {
+            if (string.IsNullOrWhiteSpace(item.AgentSelector))
+            {
+                _logger.LogDebug("PendingWorkItemDrainService: no idle agents at all, stopping drain");
+                return true; // break
+            }
+            _logger.LogDebug(
+                "PendingWorkItemDrainService: no agent for selector '{Selector}', skipping WorkItem {WorkItemId}",
+                item.AgentSelector, item.Id);
+            return false; // continue
+        }
+
+        var (request, skip) = ResolveAndValidateRequest(item);
+        if (skip)
+        {
+            _agentResolver.ReleaseAgent(resolveResult.AgentId);
+            return false; // continue
+        }
+
+        var connectionId = resolveResult.ConnectionId;
+        var agentId = resolveResult.AgentId;
+
+        // --- Consolidation items ---
+        if (item.TaskType == WorkItemTaskType.Consolidation)
+        {
+            await HandleConsolidationItemAsync(item, request!, agentId, ct);
+            // TODO: HandleConsolidationItemAsync does not return a result, so SwapLabelWithRetryAsync
+            // and the success log below are never reached for consolidation items. This matches the
+            // original behavior (original consolidation block also ended with `continue`), so there
+            // is no behavioral regression — but it means label-swap is consolidation-only skipped.
+            // (review-findings: Correctness WARNING)
+            return false; // continue
+        }
+
+        // --- Pipeline items ---
+        await DispatchPipelineItemAsync(item, request!, agentId, connectionId, ct);
+        return false;
+    }
+
+    /// <summary>
+    /// Dispatches a pipeline (non-consolidation) work item, handles retry counting,
+    /// label swap, and success logging.
+    /// </summary>
+    private async Task DispatchPipelineItemAsync(
+        WorkItemEntity item,
+        JobDistributionRequest request,
+        string agentId,
+        string connectionId,
+        CancellationToken ct)
+    {
+        var result = await HandlePipelineItemAsync(item, request, agentId, connectionId, ct);
+
+        // If TransitionAsync(Dispatched) itself failed, perform direct RetryCount increment
+        if (!result.FullyCompleted && !result.DispatchedSuccessfully)
+        {
+            await IncrementRetryCountDirectAsync(item.Id);
+        }
+
+        if (!result.FullyCompleted)
+            return;
+
+        // Swap label to agent:in-progress now that an agent is actually working on it (#997)
+        await SwapLabelWithRetryAsync(item.Id, request, ct);
+
+        _logger.LogInformation(
+            "PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
+            item.Id, item.IssueIdentifier, agentId);
     }
 
     /// <summary>

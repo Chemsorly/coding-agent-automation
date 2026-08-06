@@ -123,21 +123,8 @@ internal sealed class DispatchLifecycleService
         if (claimedPvc is not null)
             workItem.ClaimedPvcName = claimedPvc;
 
-        try
-        {
-            await db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            Log.Warning("DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
-            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+        if (!await PreSaveJobNameAsync(db, item, claimedPvc, availablePvcs, logPrefix, ct))
             return;
-        }
-        catch
-        {
-            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
-            throw;
-        }
 
         // Create K8s Job via JobSpecBuilder
         if (!await CreateK8sJobAsync(db, item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, logPrefix, onFailure, ct))
@@ -218,6 +205,36 @@ internal sealed class DispatchLifecycleService
         finally
         {
             _pvcSelectLock.Release();
+        }
+    }
+
+    /// <summary>
+    /// Saves the pre-written K8sJobName (and optionally ClaimedPvcName) to the database.
+    /// Returns false and releases the PVC on concurrency conflict or general exception.
+    /// </summary>
+    private static async Task<bool> PreSaveJobNameAsync(
+        PipelineDbContext db,
+        PendingWorkItemProjection item,
+        string? claimedPvc,
+        List<string> availablePvcs,
+        string logPrefix,
+        CancellationToken ct)
+    {
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            Log.Warning("DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
+            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+            return false;
+        }
+        catch
+        {
+            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+            throw;
         }
     }
 
