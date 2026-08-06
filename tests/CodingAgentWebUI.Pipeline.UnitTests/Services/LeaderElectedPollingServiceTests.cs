@@ -39,7 +39,8 @@ public class LeaderElectedPollingServiceTests
 
         // Now grant leadership
         SetLeaderState(leaderElection, isLeader: true, new CancellationTokenSource());
-        await Task.Delay(3000); // Wait for leader wait loop (2s) + one poll cycle
+        // Wait long enough for: up to 2s leader-wait poll tick + poll cycle execution + CI overhead
+        await Task.Delay(5000);
 
         service.PollCycleCount.Should().BeGreaterThan(0, "should poll after leadership is acquired");
 
@@ -74,7 +75,8 @@ public class LeaderElectedPollingServiceTests
         // Grant leadership again
         var newLeaderCts = new CancellationTokenSource();
         SetLeaderState(leaderElection, isLeader: true, newLeaderCts);
-        await Task.Delay(3000); // 2s wait + poll
+        // Wait long enough for: up to 2s leader-wait poll tick + poll cycle execution + CI overhead
+        await Task.Delay(5000);
 
         service.PollCycleCount.Should().BeGreaterThan(countAfterLoss,
             "should resume polling after leadership reacquired");
