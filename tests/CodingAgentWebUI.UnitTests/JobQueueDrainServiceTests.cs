@@ -205,8 +205,12 @@ public class JobQueueDrainServiceTests
     public void Signal_MultipleCallsDoNotThrow()
     {
         // Signal is safe to call multiple times
-        for (var i = 0; i < 100; i++)
-            _service.Signal();
+        var act = () =>
+        {
+            for (var i = 0; i < 100; i++)
+                _service.Signal();
+        };
+        act.Should().NotThrow();
     }
 
     [Fact]
