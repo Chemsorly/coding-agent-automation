@@ -278,6 +278,9 @@ public class KiroCliAgentProviderTests
     {
         // _provider already has model=null
         await _provider.ApplyCliSettingsAsync(CancellationToken.None);
+
+        // Early return path — no warning should be logged
+        _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object>()), Times.Never);
     }
 
     [Fact]
@@ -287,6 +290,9 @@ public class KiroCliAgentProviderTests
             _mockOrchestrator.Object, _mockLogger.Object, model: "auto",
             "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
         await provider.ApplyCliSettingsAsync(CancellationToken.None);
+
+        // Early return path — no warning should be logged
+        _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object>()), Times.Never);
     }
 
     [Fact]
@@ -296,6 +302,9 @@ public class KiroCliAgentProviderTests
             _mockOrchestrator.Object, _mockLogger.Object, model: "Auto",
             "/usr/bin/fake-kiro-cli", AgentEffortLevel.High, _mockProcessStarter.Object);
         await provider.ApplyCliSettingsAsync(CancellationToken.None);
+
+        // Early return path — no warning should be logged
+        _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object>()), Times.Never);
     }
 
     [Fact]
