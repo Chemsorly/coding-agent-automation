@@ -59,6 +59,8 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
 
         await using var provider = CreateProvider();
         await provider.ValidateAsync(CancellationToken.None);
+
+        Server.LogEntries.Should().NotBeEmpty("a GET request to the repo endpoint should have been made");
     }
 
     [Fact]
@@ -231,6 +233,15 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
         await provider.UpdatePullRequestAsync(42, "body", true, CancellationToken.None);
 
         // Should complete without error — no GraphQL call needed for non-draft PR
+        // Verify at least one HTTP request was made (the PATCH)
+        Server.LogEntries.Should().NotBeEmpty("a PATCH request should have been sent to update the PR");
+#pragma warning disable CS8602 // WireMock ILogEntry.RequestMessage is always populated in test stubs
+        var graphqlCalls = Server.LogEntries.Where(e =>
+            e.RequestMessage != null &&
+            e.RequestMessage.Method == "POST" &&
+            (e.RequestMessage.Path ?? "").Contains("graphql")).ToList();
+#pragma warning restore CS8602
+        graphqlCalls.Should().BeEmpty("GraphQL must not be called when the PR is not a draft");
     }
 
     [Fact]
@@ -245,7 +256,8 @@ public class GitHubRepositoryProviderWireMockTests : WireMockTestBase
 
         await using var provider = CreateProvider();
         // Should not throw — GraphQL failure is non-fatal
-        await provider.UpdatePullRequestAsync(42, "body", true, CancellationToken.None);
+        var act = () => provider.UpdatePullRequestAsync(42, "body", true, CancellationToken.None);
+        await act.Should().NotThrowAsync("GraphQL failure must be caught and not propagate");
     }
 
     [Fact]

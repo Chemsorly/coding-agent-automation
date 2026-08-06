@@ -176,8 +176,10 @@ public class ReviewerConfigurationStoreTests : IDisposable
     [Fact]
     public async Task DeleteReviewerConfig_NonExistentId_DoesNotThrow()
     {
-        // Should not throw when deleting a non-existent config
+        // Should not throw when deleting a non-existent config — result remains empty
         await _store.DeleteReviewerConfigAsync("does-not-exist", CancellationToken.None);
+        var configs = await _store.LoadReviewerConfigsAsync(CancellationToken.None);
+        Assert.Empty(configs);
     }
 
     [Fact]

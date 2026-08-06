@@ -24,8 +24,29 @@ public class PipelineRunHistoryServiceTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_tempDir))
-            Directory.Delete(_tempDir, recursive: true);
+        if (!Directory.Exists(_tempDir))
+            return;
+
+        // Retry loop: AtomicFileWriter background tasks may still hold the .tmp file
+        // open briefly after the last WaitForFileAsync completes. Retry up to 10 times
+        // with 100ms gaps before giving up (total max wait: ~1s).
+        // Also catches UnauthorizedAccessException which Windows Defender can transiently
+        // produce when accessing freshly-written temp files.
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            try
+            {
+                Directory.Delete(_tempDir, recursive: true);
+                return;
+            }
+            catch (Exception ex) when ((ex is IOException || ex is UnauthorizedAccessException) && attempt < 9)
+            {
+                Thread.Sleep(100);
+            }
+        }
+
+        // Last attempt — let any exception propagate
+        Directory.Delete(_tempDir, recursive: true);
     }
 
     private static async Task WaitForFileAsync(string path, int timeoutMs = 5000)
@@ -479,5 +500,11 @@ public class PipelineRunHistoryServiceTests : IDisposable
         history.Should().HaveCount(1);
         history[0].FinalStep.Should().Be(PipelineStep.Cancelled,
             "terminal CurrentStep must be preserved as-is");
+
+        // Wait for the background persist task to finish writing before Dispose() runs
+        // Directory.Delete. Without this, the AtomicFileWriter's .tmp file may still be
+        // open when the test fixture tears down, causing an IOException on Windows.
+        var expectedFile = Path.Combine(_tempDir, $"{runId}.json");
+        await WaitForFileAsync(expectedFile, timeoutMs: 15000);
     }
 }

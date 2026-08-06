@@ -156,6 +156,8 @@ public class GitHubIssueProviderWireMockTests : WireMockTestBase
 
         await using var provider = CreateProvider();
         await provider.ValidateAsync(CancellationToken.None);
+
+        Server.LogEntries.Should().NotBeEmpty("at least one request should have been made to the stub server");
     }
 
     // --- Error paths ---

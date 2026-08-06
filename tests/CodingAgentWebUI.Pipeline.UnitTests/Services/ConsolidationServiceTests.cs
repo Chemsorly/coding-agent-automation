@@ -476,9 +476,13 @@ public sealed class ConsolidationServiceTests : IDisposable
         // Arrange
         var sut = CreateSut();
         Directory.CreateDirectory(_runsDir);
+        var nonExistentRunId = Guid.NewGuid().ToString();
 
-        // Act & Assert — no exception
-        await sut.DeletePersistedRunAsync(Guid.NewGuid().ToString());
+        // Act & Assert — no exception, and run is confirmed absent
+        await sut.Invoking(s => s.DeletePersistedRunAsync(nonExistentRunId))
+            .Should().NotThrowAsync();
+        var history = await sut.GetRunHistoryAsync(CancellationToken.None);
+        history.Should().NotContain(r => r.RunId == nonExistentRunId);
     }
 
     [Fact]

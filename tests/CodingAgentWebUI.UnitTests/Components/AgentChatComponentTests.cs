@@ -130,7 +130,12 @@ public class AgentChatComponentTests : BunitContext
     public void AgentChat_DisposesWithoutError()
     {
         var cut = Render<AgentChat>();
+        // Capture some markup before disposal to prove the component was live
+        var markupBeforeDispose = cut.Markup;
         cut.Dispose();
+        // After disposal, the component is no longer renderable — markup is inaccessible
+        Assert.True(cut.IsDisposed);
+        Assert.Contains("Agent Chat", markupBeforeDispose);
     }
 
     [Fact]

@@ -649,7 +649,8 @@ public class PipelineStepTests
     {
         var context = BuildContext();
         await PipelineStepRunner.ExecuteAsync([], context, CancellationToken.None);
-        // No exception = success
+        // No steps executed — run step should remain at its initial value (Created)
+        context.Run.CurrentStep.Should().Be(PipelineStep.Created);
     }
 
     [Fact]

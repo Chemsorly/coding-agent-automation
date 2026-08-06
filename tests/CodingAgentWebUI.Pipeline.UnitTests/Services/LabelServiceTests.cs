@@ -260,6 +260,7 @@ public class LabelServiceTests
         var swapper = CreateLabelService();
 
         // Should not throw — errors are caught and logged
-        await swapper.SwapLabelAsync("ip-1", "42", AgentLabels.Error, LabelTargetKind.Issue, CancellationToken.None);
+        var act = () => swapper.SwapLabelAsync("ip-1", "42", AgentLabels.Error, LabelTargetKind.Issue, CancellationToken.None);
+        await act.Should().NotThrowAsync();
     }
 }

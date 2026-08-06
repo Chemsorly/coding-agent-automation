@@ -197,8 +197,13 @@ public class JobQueueDrainServiceTests
     [Fact]
     public void Signal_DoesNotThrow()
     {
+        // Signal() wakes the drain loop — calling it with no queued jobs should be safe
+        _dispatcher.EnqueueJob(CreateJob("issue-signal-test"));
+        var queueLengthBefore = _dispatcher.QueueLength;
         var act = () => _service.Signal();
         act.Should().NotThrow();
+        // Signal() must not alter the queue itself — draining is async and not triggered here
+        _dispatcher.QueueLength.Should().Be(queueLengthBefore, "Signal() must not synchronously drain the queue");
     }
 
     [Fact]

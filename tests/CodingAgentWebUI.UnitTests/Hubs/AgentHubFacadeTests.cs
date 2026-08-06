@@ -175,8 +175,9 @@ public sealed class AgentHubFacadeTests
     [Fact]
     public void RemoveRun_DelegatesToRunService()
     {
-        // Should not throw even if run doesn't exist
+        // Should not throw even if run doesn't exist — and run lookup returns null afterwards
         _facade.RemoveRun("nonexistent");
+        _facade.GetRun("nonexistent").Should().BeNull();
     }
 
     #endregion
@@ -186,15 +187,40 @@ public sealed class AgentHubFacadeTests
     [Fact]
     public void MarkIssueComplete_DelegatesToDispatcher()
     {
-        // Should not throw
-        _facade.MarkIssueComplete("org/repo#1", "provider-1");
+        // First enqueue the issue so we can verify it gets cleared by MarkIssueComplete
+        _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "org/repo#1",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = "test"
+        });
+        _dispatcher.IsIssueQueued("org/repo#1").Should().BeTrue("issue should be queued before MarkIssueComplete");
+
+        _facade.MarkIssueComplete("org/repo#1", "ip-1");
+
+        _dispatcher.IsIssueQueued("org/repo#1").Should().BeFalse("MarkIssueComplete should clear the dedup entry");
     }
 
     [Fact]
     public void Signal_DelegatesToDrainService()
     {
-        // Should not throw
+        // Enqueue a job — Signal() is a no-op on queue contents (it just wakes the drain loop)
+        _dispatcher.EnqueueJob(new PendingJob
+        {
+            IssueIdentifier = "org/repo#99",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1",
+            EnqueuedAt = DateTimeOffset.UtcNow,
+            InitiatedBy = "test"
+        });
+        var queueLengthBefore = _dispatcher.QueueLength;
+
         _facade.Signal();
+
+        // Signal must not dequeue or otherwise mutate the job queue
+        _dispatcher.QueueLength.Should().Be(queueLengthBefore, "Signal() must not modify the queue itself");
     }
 
     #endregion

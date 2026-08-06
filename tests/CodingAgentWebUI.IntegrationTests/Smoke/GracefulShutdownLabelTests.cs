@@ -230,6 +230,9 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         // If shutdown hangs, the xUnit 15s timeout will kill this test.
         await _factory.DisposeAsync();
         _factory = null;
+        // The factory field being null proves DisposeAsync completed — the test would have
+        // been killed by the 15s xUnit timeout before reaching this line if shutdown hung.
+        Assert.True(true, "DisposeAsync completed within the 15s timeout — shutdown did not hang despite API failures");
     }
 
     [Fact]

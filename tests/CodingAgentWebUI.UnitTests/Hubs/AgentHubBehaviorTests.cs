@@ -995,6 +995,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         // Assert: defensive cleanup must release the dedup guard and remove the orphaned run
         _mockFacade.Verify(f => f.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId), Times.Once);
         _mockFacade.Verify(f => f.RemoveRun("job-1"), Times.Once);
+        agent.ActiveJobId.Should().BeNull("agent slot must be cleared even when CompleteRunAsync throws");
     }
 
     #endregion
