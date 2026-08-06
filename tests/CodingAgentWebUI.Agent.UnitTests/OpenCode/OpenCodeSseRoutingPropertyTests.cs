@@ -149,11 +149,12 @@ public class OpenCodeSseRoutingPropertyTests
     [Property(MaxTest = 20)]
     public void PermissionUpdated_TriggersAutoApproval(NonEmptyString permissionId)
     {
-        // Arrange - sanitize permission ID (no newlines, no slashes that break URL)
+        // Arrange - sanitize permission ID (no newlines, no slashes, no dots that break URL)
         var permId = permissionId.Get
             .Replace("\r", "").Replace("\n", "")
             .Replace("/", "").Replace("\\", "")
-            .Replace(" ", "").Replace("?", "").Replace("#", "");
+            .Replace(" ", "").Replace("?", "").Replace("#", "")
+            .Replace(".", "");
         if (string.IsNullOrEmpty(permId)) permId = "perm-fallback";
 
         var sseEvent = new SseEvent
