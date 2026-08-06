@@ -94,116 +94,19 @@ public static class SubIssueFileParser
                 return null;
             }
 
-            // Validate title: required, string, non-empty
-            if (!root.TryGetProperty("title", out var titleElement) &&
-                !root.TryGetProperty("Title", out titleElement))
-            {
-                logger.Warning("Sub-issue file {FileName} is missing required field 'title'", fileName);
-                return null;
-            }
+            var title = ReadRequiredString(root, fileName, "title", logger);
+            if (title is null) return null;
 
-            if (titleElement.ValueKind != JsonValueKind.String)
-            {
-                logger.Warning("Sub-issue file {FileName} has 'title' with incorrect type (expected string)", fileName);
-                return null;
-            }
+            var body = ReadRequiredString(root, fileName, "body", logger);
+            if (body is null) return null;
 
-            var title = titleElement.GetString();
-            if (string.IsNullOrWhiteSpace(title))
-            {
-                logger.Warning("Sub-issue file {FileName} has empty 'title'", fileName);
-                return null;
-            }
+            var dependencies = ReadStringArray(root, fileName, "dependencies", logger);
+            if (dependencies is null) return null;
 
-            // Validate body: required, string, non-empty
-            if (!root.TryGetProperty("body", out var bodyElement) &&
-                !root.TryGetProperty("Body", out bodyElement))
-            {
-                logger.Warning("Sub-issue file {FileName} is missing required field 'body'", fileName);
-                return null;
-            }
+            var labels = ReadStringArray(root, fileName, "labels", logger);
+            if (labels is null) return null;
 
-            if (bodyElement.ValueKind != JsonValueKind.String)
-            {
-                logger.Warning("Sub-issue file {FileName} has 'body' with incorrect type (expected string)", fileName);
-                return null;
-            }
-
-            var body = bodyElement.GetString();
-            if (string.IsNullOrWhiteSpace(body))
-            {
-                logger.Warning("Sub-issue file {FileName} has empty 'body'", fileName);
-                return null;
-            }
-
-            // Validate dependencies: required, array of strings
-            if (!root.TryGetProperty("dependencies", out var depsElement) &&
-                !root.TryGetProperty("Dependencies", out depsElement))
-            {
-                logger.Warning("Sub-issue file {FileName} is missing required field 'dependencies'", fileName);
-                return null;
-            }
-
-            if (depsElement.ValueKind != JsonValueKind.Array)
-            {
-                logger.Warning("Sub-issue file {FileName} has 'dependencies' with incorrect type (expected array)", fileName);
-                return null;
-            }
-
-            var dependencies = new List<string>();
-            foreach (var dep in depsElement.EnumerateArray())
-            {
-                if (dep.ValueKind != JsonValueKind.String)
-                {
-                    logger.Warning("Sub-issue file {FileName} has non-string element in 'dependencies' array", fileName);
-                    return null;
-                }
-
-                dependencies.Add(dep.GetString()!);
-            }
-
-            // Validate labels: required, array of strings
-            if (!root.TryGetProperty("labels", out var labelsElement) &&
-                !root.TryGetProperty("Labels", out labelsElement))
-            {
-                logger.Warning("Sub-issue file {FileName} is missing required field 'labels'", fileName);
-                return null;
-            }
-
-            if (labelsElement.ValueKind != JsonValueKind.Array)
-            {
-                logger.Warning("Sub-issue file {FileName} has 'labels' with incorrect type (expected array)", fileName);
-                return null;
-            }
-
-            var labels = new List<string>();
-            foreach (var label in labelsElement.EnumerateArray())
-            {
-                if (label.ValueKind != JsonValueKind.String)
-                {
-                    logger.Warning("Sub-issue file {FileName} has non-string element in 'labels' array", fileName);
-                    return null;
-                }
-
-                labels.Add(label.GetString()!);
-            }
-
-            // Parse targetRepository: optional, string (for cross-repo routing)
-            string? targetRepository = null;
-            if (root.TryGetProperty("targetRepository", out var targetRepoElement) ||
-                root.TryGetProperty("TargetRepository", out targetRepoElement))
-            {
-                if (targetRepoElement.ValueKind == JsonValueKind.String)
-                {
-                    var value = targetRepoElement.GetString();
-                    if (!string.IsNullOrWhiteSpace(value))
-                        targetRepository = value;
-                }
-                else if (targetRepoElement.ValueKind != JsonValueKind.Null)
-                {
-                    logger.Warning("Sub-issue file {FileName} has 'targetRepository' with incorrect type (expected string or null), ignoring", fileName);
-                }
-            }
+            var targetRepository = ReadOptionalString(root, fileName, "targetRepository", logger);
 
             return new SubIssueProposal
             {
@@ -214,5 +117,96 @@ public static class SubIssueFileParser
                 TargetRepository = targetRepository
             };
         }
+    }
+
+    /// <summary>
+    /// Reads a required non-empty string property from a JSON object (case-insensitive: lower then Title).
+    /// Logs a warning and returns null when the property is missing, wrong type, or empty.
+    /// TODO: [WARNING] No test exercises a JSON input where a required field (e.g. 'title') is present
+    /// but whitespace-only, verifying the "has empty '{Field}'" warning is logged and null is returned.
+    /// Add a unit test for SubIssueFileParser with whitespace-only field values to lock in this behavior.
+    /// </summary>
+    private static string? ReadRequiredString(JsonElement root, string fileName, string propertyName, ILogger logger)
+    {
+        var titleCased = char.ToUpperInvariant(propertyName[0]) + propertyName[1..];
+        if (!root.TryGetProperty(propertyName, out var element) &&
+            !root.TryGetProperty(titleCased, out element))
+        {
+            logger.Warning("Sub-issue file {FileName} is missing required field '{Field}'", fileName, propertyName);
+            return null;
+        }
+
+        if (element.ValueKind != JsonValueKind.String)
+        {
+            logger.Warning("Sub-issue file {FileName} has '{Field}' with incorrect type (expected string)", fileName, propertyName);
+            return null;
+        }
+
+        var value = element.GetString();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            logger.Warning("Sub-issue file {FileName} has empty '{Field}'", fileName, propertyName);
+            return null;
+        }
+
+        return value;
+    }
+
+    /// <summary>
+    /// Reads a required string-array property from a JSON object (case-insensitive: lower then Title).
+    /// Logs a warning and returns null when missing, wrong type, or contains non-string elements.
+    /// </summary>
+    private static List<string>? ReadStringArray(JsonElement root, string fileName, string propertyName, ILogger logger)
+    {
+        var titleCased = char.ToUpperInvariant(propertyName[0]) + propertyName[1..];
+        if (!root.TryGetProperty(propertyName, out var element) &&
+            !root.TryGetProperty(titleCased, out element))
+        {
+            logger.Warning("Sub-issue file {FileName} is missing required field '{Field}'", fileName, propertyName);
+            return null;
+        }
+
+        if (element.ValueKind != JsonValueKind.Array)
+        {
+            logger.Warning("Sub-issue file {FileName} has '{Field}' with incorrect type (expected array)", fileName, propertyName);
+            return null;
+        }
+
+        var items = new List<string>();
+        foreach (var item in element.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String)
+            {
+                logger.Warning("Sub-issue file {FileName} has non-string element in '{Field}' array", fileName, propertyName);
+                return null;
+            }
+            items.Add(item.GetString()!);
+        }
+
+        return items;
+    }
+
+    /// <summary>
+    /// Reads an optional string property (case-insensitive: lower then Title).
+    /// Returns null when missing, null-valued, or not a string (logs a warning for wrong type).
+    /// </summary>
+    private static string? ReadOptionalString(JsonElement root, string fileName, string propertyName, ILogger logger)
+    {
+        var titleCased = char.ToUpperInvariant(propertyName[0]) + propertyName[1..];
+        if (!root.TryGetProperty(propertyName, out var element) &&
+            !root.TryGetProperty(titleCased, out element))
+            return null;
+
+        if (element.ValueKind == JsonValueKind.Null)
+            return null;
+
+        if (element.ValueKind != JsonValueKind.String)
+        {
+            logger.Warning("Sub-issue file {FileName} has '{Field}' with incorrect type (expected string or null), ignoring", fileName, propertyName);
+            return null;
+        }
+
+        var value = element.GetString();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 }

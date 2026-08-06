@@ -39,30 +39,7 @@ public static class TrxTestResultParser
         {
             try
             {
-                var doc = XDocument.Load(trxFile);
-                var ns = doc.Root?.Name.Namespace ?? XNamespace.None;
-
-                var counters = doc.Descendants(ns + "Counters").FirstOrDefault();
-                if (counters != null)
-                {
-                    totalPassed += ParseIntAttribute(counters, "passed");
-                    totalFailed += ParseIntAttribute(counters, "failed") + ParseIntAttribute(counters, "error");
-                    totalSkipped += ParseIntAttribute(counters, "notExecuted");
-                }
-
-                // Extract individual failed test names from UnitTestResult elements
-                // Include both "Failed" and "Error" outcomes to match the Counters-based failed count
-                foreach (var unitTestResult in doc.Descendants(ns + "UnitTestResult"))
-                {
-                    var outcome = unitTestResult.Attribute("outcome")?.Value;
-                    if (string.Equals(outcome, "Failed", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(outcome, "Error", StringComparison.OrdinalIgnoreCase))
-                    {
-                        var testName = unitTestResult.Attribute("testName")?.Value;
-                        if (!string.IsNullOrEmpty(testName))
-                            failedTestNames.Add(testName);
-                    }
-                }
+                ParseSingleTrxFile(trxFile, ref totalPassed, ref totalFailed, ref totalSkipped, failedTestNames);
             }
             catch
             {
@@ -77,6 +54,41 @@ public static class TrxTestResultParser
             Skipped = totalSkipped,
             FailedTestNames = failedTestNames
         };
+    }
+
+    /// <summary>
+    /// Parses a single TRX file, accumulating counts into the ref parameters
+    /// and appending failed test names to <paramref name="failedTestNames"/>.
+    /// </summary>
+    private static void ParseSingleTrxFile(
+        string trxFile,
+        ref int totalPassed, ref int totalFailed, ref int totalSkipped,
+        List<string> failedTestNames)
+    {
+        var doc = XDocument.Load(trxFile);
+        var ns = doc.Root?.Name.Namespace ?? XNamespace.None;
+
+        var counters = doc.Descendants(ns + "Counters").FirstOrDefault();
+        if (counters != null)
+        {
+            totalPassed += ParseIntAttribute(counters, "passed");
+            totalFailed += ParseIntAttribute(counters, "failed") + ParseIntAttribute(counters, "error");
+            totalSkipped += ParseIntAttribute(counters, "notExecuted");
+        }
+
+        // Extract individual failed test names from UnitTestResult elements
+        // Include both "Failed" and "Error" outcomes to match the Counters-based failed count
+        foreach (var unitTestResult in doc.Descendants(ns + "UnitTestResult"))
+        {
+            var outcome = unitTestResult.Attribute("outcome")?.Value;
+            if (string.Equals(outcome, "Failed", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(outcome, "Error", StringComparison.OrdinalIgnoreCase))
+            {
+                var testName = unitTestResult.Attribute("testName")?.Value;
+                if (!string.IsNullOrEmpty(testName))
+                    failedTestNames.Add(testName);
+            }
+        }
     }
 
     private static int ParseIntAttribute(XElement element, string name)
