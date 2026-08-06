@@ -24,7 +24,8 @@ internal static class ChatSteeringWriter
         // idempotency. Consider using a more resilient extraction that counts markers or scans
         // for the canonical END marker at the end of the STEERING block only.
         @"^" + Regex.Escape(BeginMarker) + @"\r?\n.*?" + Regex.Escape(EndMarker) + @"\r?\n?",
-        RegexOptions.Singleline | RegexOptions.Multiline | RegexOptions.Compiled);
+        RegexOptions.Singleline | RegexOptions.Multiline | RegexOptions.Compiled,
+        matchTimeout: TimeSpan.FromSeconds(5));
 
     /// <summary>
     /// Writes <paramref name="projectSteeringContent"/> to <paramref name="chatWorkspace"/>.

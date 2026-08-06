@@ -260,7 +260,7 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
 
     private static int ExtractMetric(string text, string pattern)
     {
-        var match = Regex.Match(text, pattern);
+        var match = Regex.Match(text, pattern, RegexOptions.None, TimeSpan.FromSeconds(2));
         return match.Success && int.TryParse(match.Groups[1].Value, out var value) ? value : 0;
     }
 }

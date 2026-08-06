@@ -13,10 +13,12 @@ public static class DependencyParser
     // Matches either #digits or an identifier starting with a letter (e.g., PROJ-123)
     private static readonly Regex DependencyPattern = new(
         @"\b(?:blocked\s+by|depends\s+on|requires|after)\s+(?:#(\d+)|([A-Za-z][\w-]*))",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled,
+        matchTimeout: TimeSpan.FromSeconds(2));
 
     /// <summary>
     /// Parses the issue body and returns unique issue numbers referenced as dependencies.
+    /// Returns an empty list on any error (including regex timeout on adversarial input).
     /// </summary>
     /// <param name="body">The issue body text (may be null or empty).</param>
     /// <param name="selfIdentifier">Optional issue number to exclude self-references.</param>
@@ -28,17 +30,25 @@ public static class DependencyParser
 
         var results = new HashSet<int>();
 
-        foreach (Match match in DependencyPattern.Matches(body))
+        try
         {
-            // Group 1: #digits pattern; Group 2: alphanumeric identifier
-            var value = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
-            if (int.TryParse(value, out var issueNumber) && issueNumber > 0)
+            foreach (Match match in DependencyPattern.Matches(body))
             {
-                if (selfIdentifier.HasValue && issueNumber == selfIdentifier.Value)
-                    continue;
+                // Group 1: #digits pattern; Group 2: alphanumeric identifier
+                var value = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value;
+                if (int.TryParse(value, out var issueNumber) && issueNumber > 0)
+                {
+                    if (selfIdentifier.HasValue && issueNumber == selfIdentifier.Value)
+                        continue;
 
-                results.Add(issueNumber);
+                    results.Add(issueNumber);
+                }
             }
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            // Adversarial input exceeded timeout — return whatever was collected so far.
+            // An empty result means no dependencies are detected, which is safe (pessimistic: run proceeds).
         }
 
         return results.ToList();

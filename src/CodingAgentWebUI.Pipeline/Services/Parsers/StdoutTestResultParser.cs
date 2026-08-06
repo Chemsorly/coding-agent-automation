@@ -11,16 +11,28 @@ public static class StdoutTestResultParser
     /// <summary>
     /// Fallback: parses test counts from stdout when TRX files are not available.
     /// Handles .NET per-assembly format, .NET 10 summary line, pytest output, and Maven/JUnit output.
+    /// Returns zeros on any error (including regex timeout on adversarial input).
     /// </summary>
     public static (int Passed, int Failed, int Skipped) ParseTestCounts(string output)
     {
         if (string.IsNullOrWhiteSpace(output))
             return (0, 0, 0);
 
-        // Try .NET 10 summary line first: "Test summary: total: 47; failed: 0; succeeded: 47; skipped: 0"
+        try
+        {
+            return ParseTestCountsCore(output);
+        }
+        catch (RegexMatchTimeoutException)
+        {
+            return (0, 0, 0);
+        }
+    }
+
+    private static (int Passed, int Failed, int Skipped) ParseTestCountsCore(string output)
+    {
         var summaryMatch = Regex.Match(output,
             @"Test summary:.*?failed:\s*(\d+).*?succeeded:\s*(\d+).*?skipped:\s*(\d+)",
-            RegexOptions.IgnoreCase);
+            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2));
         if (summaryMatch.Success)
         {
             int.TryParse(summaryMatch.Groups[2].Value, out var succeeded);
@@ -32,7 +44,7 @@ public static class StdoutTestResultParser
         // Try pytest format: "5 passed, 2 failed, 1 skipped in 3.45s" or "5 passed in 1.23s"
         var pytestMatch = Regex.Match(output,
             @"=+\s*(.*?)\s*in\s+[\d.]+s\s*=+",
-            RegexOptions.IgnoreCase);
+            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2));
         if (pytestMatch.Success)
         {
             var pytestSummary = pytestMatch.Groups[1].Value;
@@ -40,16 +52,16 @@ public static class StdoutTestResultParser
             var pytestFailed = 0;
             var pytestSkipped = 0;
 
-            var passedMatch = Regex.Match(pytestSummary, @"(\d+)\s+passed", RegexOptions.IgnoreCase);
+            var passedMatch = Regex.Match(pytestSummary, @"(\d+)\s+passed", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
             if (passedMatch.Success) int.TryParse(passedMatch.Groups[1].Value, out pytestPassed);
 
-            var failedMatch = Regex.Match(pytestSummary, @"(\d+)\s+failed", RegexOptions.IgnoreCase);
+            var failedMatch = Regex.Match(pytestSummary, @"(\d+)\s+failed", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
             if (failedMatch.Success) int.TryParse(failedMatch.Groups[1].Value, out pytestFailed);
 
-            var skippedMatch = Regex.Match(pytestSummary, @"(\d+)\s+skipped", RegexOptions.IgnoreCase);
+            var skippedMatch = Regex.Match(pytestSummary, @"(\d+)\s+skipped", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
             if (skippedMatch.Success) int.TryParse(skippedMatch.Groups[1].Value, out pytestSkipped);
 
-            var errorMatch = Regex.Match(pytestSummary, @"(\d+)\s+error", RegexOptions.IgnoreCase);
+            var errorMatch = Regex.Match(pytestSummary, @"(\d+)\s+error", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
             if (errorMatch.Success && int.TryParse(errorMatch.Groups[1].Value, out var pytestErrors))
                 pytestFailed += pytestErrors;
 
@@ -65,7 +77,7 @@ public static class StdoutTestResultParser
 
         foreach (var match in Regex.Matches(output,
             @"Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)",
-            RegexOptions.IgnoreCase)
+            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2))
             .Cast<Match>())
         {
             mavenMatched = true;
@@ -89,7 +101,7 @@ public static class StdoutTestResultParser
 
         foreach (var match in Regex.Matches(output,
             @"Passed:\s*(\d+),\s*Failed:\s*(\d+),\s*Skipped:\s*(\d+)",
-            RegexOptions.IgnoreCase)
+            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2))
             .Cast<Match>())
         {
             if (int.TryParse(match.Groups[1].Value, out var p)) passed += p;

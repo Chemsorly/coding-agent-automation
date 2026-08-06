@@ -319,7 +319,7 @@
 
         var model = string.IsNullOrWhiteSpace(_form.Model) ? "auto" : _form.Model.Trim();
         if (!model.Equals("auto", StringComparison.OrdinalIgnoreCase)
-            && !System.Text.RegularExpressions.Regex.IsMatch(model, @"^[a-zA-Z0-9._\-/]+$"))
+            && !System.Text.RegularExpressions.Regex.IsMatch(model, @"^[a-zA-Z0-9._\-/]+$", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1)))
         {
             await OnShowStatus.InvokeAsync(("Model name contains invalid characters. Only letters, numbers, dots, hyphens, underscores, and slashes are allowed.", true));
             return;

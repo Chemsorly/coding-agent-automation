@@ -15,27 +15,32 @@ public static class IssueReferenceParser
     // GitHub closing keywords: close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved + #N or GH-N
     private static readonly Regex GitHubClosingKeywordPattern = new(
         @"(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:#|GH-)(\d+)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled,
+        matchTimeout: TimeSpan.FromSeconds(2));
 
     // GitLab closing keywords: Closes/Fixes/Resolves + #N only (base forms)
     private static readonly Regex GitLabClosingKeywordPattern = new(
         @"(?:Closes|Fixes|Resolves)\s+#(\d+)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled,
+        matchTimeout: TimeSpan.FromSeconds(2));
 
     // Cross-repo references: owner/repo#N
     private static readonly Regex CrossRepoPattern = new(
         @"[\w\-\.]+/[\w\-\.]+#(\d+)",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled,
+        matchTimeout: TimeSpan.FromSeconds(2));
 
     // GH-N references
     private static readonly Regex GhPattern = new(
         @"\bGH-(\d+)\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled,
+        matchTimeout: TimeSpan.FromSeconds(2));
 
     // Simple #N references (not preceded by &, word chars, or /)
     private static readonly Regex SimpleHashPattern = new(
         @"(?<![&\w/])#(\d+)\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        RegexOptions.IgnoreCase | RegexOptions.Compiled,
+        matchTimeout: TimeSpan.FromSeconds(2));
 
     /// <summary>
     /// Parses text for base closing keyword patterns (Closes/Fixes/Resolves #N) and adds
@@ -46,10 +51,14 @@ public static class IssueReferenceParser
         if (string.IsNullOrWhiteSpace(text))
             return;
 
-        foreach (Match match in GitLabClosingKeywordPattern.Matches(text))
+        try
         {
-            issueNumbers.Add(match.Groups[1].Value);
+            foreach (Match match in GitLabClosingKeywordPattern.Matches(text))
+            {
+                issueNumbers.Add(match.Groups[1].Value);
+            }
         }
+        catch (RegexMatchTimeoutException) { /* adversarial input — return partial results */ }
     }
 
     /// <summary>
@@ -61,24 +70,32 @@ public static class IssueReferenceParser
         if (string.IsNullOrWhiteSpace(text))
             return;
 
-        foreach (Match match in GitHubClosingKeywordPattern.Matches(text))
+        try
         {
-            issueNumbers.Add(match.Groups[1].Value);
+            foreach (Match match in GitHubClosingKeywordPattern.Matches(text))
+                issueNumbers.Add(match.Groups[1].Value);
         }
+        catch (RegexMatchTimeoutException) { }
 
-        foreach (Match match in CrossRepoPattern.Matches(text))
+        try
         {
-            issueNumbers.Add(match.Groups[1].Value);
+            foreach (Match match in CrossRepoPattern.Matches(text))
+                issueNumbers.Add(match.Groups[1].Value);
         }
+        catch (RegexMatchTimeoutException) { }
 
-        foreach (Match match in GhPattern.Matches(text))
+        try
         {
-            issueNumbers.Add(match.Groups[1].Value);
+            foreach (Match match in GhPattern.Matches(text))
+                issueNumbers.Add(match.Groups[1].Value);
         }
+        catch (RegexMatchTimeoutException) { }
 
-        foreach (Match match in SimpleHashPattern.Matches(text))
+        try
         {
-            issueNumbers.Add(match.Groups[1].Value);
+            foreach (Match match in SimpleHashPattern.Matches(text))
+                issueNumbers.Add(match.Groups[1].Value);
         }
+        catch (RegexMatchTimeoutException) { }
     }
 }

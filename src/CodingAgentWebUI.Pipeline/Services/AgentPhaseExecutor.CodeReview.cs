@@ -293,7 +293,7 @@ public partial class AgentPhaseExecutor
         // Validate branch name to prevent git argument injection
         if (run.RunType == PipelineRunType.Review && run.ReviewPrTargetBranch != null &&
             (run.ReviewPrTargetBranch.StartsWith("-") ||
-             !System.Text.RegularExpressions.Regex.IsMatch(run.ReviewPrTargetBranch, @"^[a-zA-Z0-9._/\-]+$")))
+             !System.Text.RegularExpressions.Regex.IsMatch(run.ReviewPrTargetBranch, @"^[a-zA-Z0-9._/\-]+$", System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1))))
         {
             logger.Warning("Pipeline {RunId} has unsafe ReviewPrTargetBranch '{Branch}', falling back to origin/main",
                 run.RunId, run.ReviewPrTargetBranch);
