@@ -134,8 +134,8 @@ public sealed class ConsolidationService : IConsolidationService, IConsolidation
                 "Failed to persist consolidation run {RunId} for {Type}/{TemplateName} — rolling back in-memory state",
                 run.RunId, type, templateName);
             _runningRuns.TryRemove(key, out _);
-            // TODO: Clear feedback cache here for HarnessSuggestions runs — currently leaves orphaned data
-            // in the ConcurrentDictionary until process restart when PersistRunAsync fails.
+            if (type == ConsolidationRunType.HarnessSuggestions)
+                _feedbackCache.ClearFeedbackDataForRun(run.RunId);
             return null;
         }
 

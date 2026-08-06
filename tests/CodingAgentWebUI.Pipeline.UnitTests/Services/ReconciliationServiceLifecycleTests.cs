@@ -61,6 +61,14 @@ public class ReconciliationServiceLifecycleTests : IDisposable
 
     // ── Timeout Enforcement ─────────────────────────────────────────────
 
+    // TODO: These tests (EnforceTimeouts_TimedOutItem_TransitionsToFailed, EnforceTimeouts_RunningItem_AlsoEnforced)
+    // do not pass an explicit dispatchedAt, so InsertWorkItem defaults DispatchedAt = createdAt.
+    // The anchor used by EnforceTimeoutsAsync is LastProgressAt ?? DispatchedAt ?? CreatedAt — when all
+    // three collapse to the same value, the dispatch-time anchor semantics are not verified at the
+    // integration level. If production code were changed to use CreatedAt directly instead of DispatchedAt,
+    // these tests would still pass. A missing negative case: set createdAt far in the past but
+    // dispatchedAt recently, and assert the item is NOT timed out (validating DispatchedAt is the anchor).
+
     [Fact]
     public async Task EnforceTimeouts_TimedOutItem_TransitionsToFailed()
     {
@@ -520,6 +528,10 @@ public class ReconciliationServiceLifecycleTests : IDisposable
         var item = await db.WorkItems.FindAsync(workItemId);
         // Still Running because the mock didn't actually transition — confirms ReconciliationService
         // didn't call TransitionAsync directly when FailRunAsync succeeded.
+        // TODO: This assertion is tautological — the item stays Running whether ReconciliationService
+        // skipped the direct transition or not, because the mock FailRunAsync never mutates the DB.
+        // A stronger assertion would inject a mock IWorkItemTransitionService and verify it was NOT
+        // called when FailRunAsync returns a non-null result.
         item!.Status.Should().Be(WorkItemStatus.Running);
     }
 
