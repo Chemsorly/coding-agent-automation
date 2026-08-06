@@ -383,6 +383,10 @@ public sealed class FakeAgentClient : IAsyncDisposable
             {
                 options.SerializerOptions = MessagePackSerializerOptions.Standard
                     .WithResolver(CompositeResolver.Create(
+                        // TODO: Add AgentIdFormatter here alongside JobIdFormatter so that if E2E tests
+                        // are extended to call DeregisterAgent or AgentReady (which now accept AgentId),
+                        // client-side serialization produces a bare string rather than {"Value":"..."}.
+                        // Without it, hub method binding on the server would fail silently.
                         new IMessagePackFormatter[] { new JobIdFormatter() },
                         new IFormatterResolver[] { ContractlessStandardResolverAllowPrivate.Instance }));
             })

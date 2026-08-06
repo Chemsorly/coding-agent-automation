@@ -621,7 +621,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
 
         // Assert: AssignJob never called on failure
         result.Success.Should().BeFalse();
-        _mockResolver.Verify(r => r.AssignJob(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        _mockResolver.Verify(r => r.AssignJob(It.IsAny<AgentId>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
@@ -767,7 +767,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
             "owner/repo#1", "ip-1", "rp-1", PipelineRunType.Implementation,
             It.IsAny<CancellationToken>()), Times.Once);
         // AssignJob NOT called directly (lifecycle manager handles it)
-        _mockResolver.Verify(r => r.AssignJob(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+        _mockResolver.Verify(r => r.AssignJob(It.IsAny<AgentId>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]
@@ -776,7 +776,7 @@ public sealed class SignalRWorkDistributorTests : IDisposable
         // Arrange: agent available, lifecycle manager throws — dispatch should still succeed
         var mockLifecycle = new Mock<IRunLifecycleManager>();
         mockLifecycle
-            .Setup(l => l.AgentAcceptedRunAsync(It.IsAny<RunId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
+            .Setup(l => l.AgentAcceptedRunAsync(It.IsAny<RunId>(), It.IsAny<AgentId>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<PipelineRunType>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("GitHub API error"));
 
         var sut = new SignalRWorkDistributor(

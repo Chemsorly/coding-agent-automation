@@ -138,19 +138,19 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "PendingWorkItemDrainService: failed to deserialize payload for WorkItem {WorkItemId}", item.Id);
-                _agentResolver.ReleaseAgent(resolveResult.AgentId);
+                _agentResolver.ReleaseAgent(resolveResult.AgentIdentifier);
                 continue;
             }
 
             if (request is null)
             {
                 _logger.LogError("PendingWorkItemDrainService: null payload for WorkItem {WorkItemId}", item.Id);
-                _agentResolver.ReleaseAgent(resolveResult.AgentId);
+                _agentResolver.ReleaseAgent(resolveResult.AgentIdentifier);
                 continue;
             }
 
             var connectionId = resolveResult.ConnectionId;
-            var agentId = resolveResult.AgentId;
+            var agentId = resolveResult.AgentIdentifier;
 
             // --- Consolidation items: dispatch via IConsolidationDispatchService (token vending at drain time) ---
             if (item.TaskType == WorkItemTaskType.Consolidation)
@@ -178,7 +178,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     /// </summary>
     private async Task<bool> DispatchConsolidationItemAsync(
         WorkItemEntity item, JobDistributionRequest request,
-        string agentId,
+        AgentId agentId,
         CancellationToken ct)
     {
         if (_consolidationDispatcher is null || _consolidationRunStore is null)
@@ -213,7 +213,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 entity =>
                 {
                     entity.DispatchedAt = DateTimeOffset.UtcNow;
-                    entity.AssignedAgentId = agentId;
+                    entity.AssignedAgentId = agentId.Value;
                 }, ct: ct);
 
             var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
@@ -284,7 +284,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     /// </summary>
     private async Task<bool> DispatchPipelineItemAsync(
         WorkItemEntity item, JobDistributionRequest request,
-        string agentId, string connectionId,
+        AgentId agentId, string connectionId,
         CancellationToken ct)
     {
         var dispatchedSuccessfully = false;
@@ -301,7 +301,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 entity =>
                 {
                     entity.DispatchedAt = dispatchTime;
-                    entity.AssignedAgentId = agentId;
+                    entity.AssignedAgentId = agentId.Value;
                 },
                 ct: ct);
 
@@ -315,14 +315,14 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 var run = _runService.GetRun(request.RunId);
                 if (run is not null)
                 {
-                    run.AgentId = agentId;
+                    run.AgentId = agentId.Value;
                 }
                 else
                 {
                     // Orchestrator restarted — in-memory PipelineRun was lost.
                     // Re-create it from the serialized request payload.
                     var recreatedRun = PipelineRunFactory.FromDistributionRequest(
-                        request, agentId, startedAt: item.DispatchedAt ?? item.CreatedAt);
+                        request, agentId.Value, startedAt: item.DispatchedAt ?? item.CreatedAt);
                     _runService.AddRun(recreatedRun);
                     _logger.LogInformation(
                         "PendingWorkItemDrainService: re-created in-memory PipelineRun {RunId} for issue {IssueIdentifier} (orchestrator restart recovery)",

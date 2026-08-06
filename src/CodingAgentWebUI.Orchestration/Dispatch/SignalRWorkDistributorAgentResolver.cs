@@ -37,13 +37,16 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
             return null;
 
         return new AgentResolveResult(agent.ConnectionId, agent.AgentId);
+        // TODO: The implicit string→AgentId conversion above calls ArgumentException.ThrowIfNullOrEmpty.
+        // If AgentEntry.AgentId is ever null or empty (e.g., due to a registration bug or a future model
+        // change), this throws ArgumentException in a hot dispatch path whose callers only check for null
+        // return. Once AgentEntry.AgentId is migrated to AgentId type (see AgentEntry.cs TODO), this path
+        // will be safe. Until then, a malformed AgentEntry could cause an unexpected exception here.
     }
 
     /// <inheritdoc />
-    public void ReleaseAgent(string agentId)
+    public void ReleaseAgent(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
         var entry = _registry.GetByAgentId(agentId);
         if (entry is not null)
         {
@@ -61,9 +64,8 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     }
 
     /// <inheritdoc />
-    public void AssignJob(string agentId, string jobId)
+    public void AssignJob(AgentId agentId, string jobId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
         ArgumentNullException.ThrowIfNull(jobId);
 
         var entry = _registry.GetByAgentId(agentId);

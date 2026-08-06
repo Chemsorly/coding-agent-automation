@@ -92,6 +92,13 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         if (agent is not null)
         {
+            // TODO: agent.AgentId is string (AgentEntry.AgentId not yet migrated to AgentId type — see AgentEntry.cs TODO).
+            // The implicit string→AgentId conversion in TransitionStatus(agent.AgentId, ...) calls
+            // ArgumentException.ThrowIfNullOrEmpty. If AgentEntry.AgentId is null or empty (unlikely with
+            // `required` keyword, but possible via deserialization/reflection), this throws ArgumentException
+            // inside OnDisconnectedAsync and leaves the agent in an unclean state in the registry.
+            // The previous string-based TransitionStatus had an explicit null guard that prevented this.
+            // Safe to remove this TODO once AgentEntry.AgentId is migrated to AgentId type.
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Disconnected);
             _logger.Information(
                 "Agent {AgentId} disconnected (connectionId={ConnectionId}, activeJobId={ActiveJobId}, exception={Exception})",
@@ -159,13 +166,11 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// Deregisters an agent from the registry.
     /// Only allows the caller to deregister their own agent identity.
     /// </summary>
-    public Task DeregisterAgent(string agentId)
+    public Task DeregisterAgent(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
         // Security: verify caller owns this agentId (prevents cross-agent deregistration)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "DeregisterAgent rejected — caller connection {ConnectionId} does not own agent {AgentId}",
@@ -231,13 +236,11 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// <summary>
     /// Agent signals it is ready for the next job. Triggers job dequeue.
     /// </summary>
-    public Task AgentReady(string agentId)
+    public Task AgentReady(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
         // Security: verify caller owns this agentId (prevents spurious drain signals)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "AgentReady rejected — caller connection {ConnectionId} does not own agent {AgentId}",

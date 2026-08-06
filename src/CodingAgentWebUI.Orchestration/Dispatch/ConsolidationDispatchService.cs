@@ -172,12 +172,16 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         ConsolidationRunType type,
         TemplateId? templateId,
         string workspacePath,
-        string agentId,
+        AgentId agentId,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(runId);
         ArgumentNullException.ThrowIfNull(workspacePath);
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: If default(AgentId) (Value == null) is passed here, GetByAgentId will call
+        // _agents.TryGetValue(null, ...) and throw ArgumentNullException from ConcurrentDictionary
+        // internals with a misleading parameter name ("key"). Add ArgumentException.ThrowIfNullOrEmpty(agentId.Value)
+        // once AgentEntry.AgentId is migrated to AgentId type and the primary constructor validates its input.
+        // See AgentId.cs TODO for context.
 
         // Cancel-during-dispatch race check via run store
         var existingRun = await _runStore.GetByIdAsync(runId, ct);

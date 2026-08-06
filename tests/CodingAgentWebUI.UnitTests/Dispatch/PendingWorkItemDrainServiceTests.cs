@@ -1200,7 +1200,7 @@ public sealed class DispatchPipelineItemAsyncTests : IDisposable
 
         _mockAgentComm.Setup(c => c.AssignJobAsync(It.IsAny<string>(), It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("SignalR delivery failed"));
-        _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
+        _mockResolver.Setup(r => r.ReleaseAgent((AgentId)"agent-1"));
 
         var service = CreateService();
 
@@ -1209,7 +1209,7 @@ public sealed class DispatchPipelineItemAsyncTests : IDisposable
 
         // Assert
         result.Should().BeFalse("failed dispatch must return false");
-        _mockResolver.Verify(r => r.ReleaseAgent("agent-1"), Times.Once);
+        _mockResolver.Verify(r => r.ReleaseAgent((AgentId)"agent-1"), Times.Once);
         await using var db = await _dbFactory.CreateDbContextAsync();
         var stored = await db.WorkItems.FindAsync(workItemId);
         stored!.Status.Should().Be(WorkItemStatus.Pending);
@@ -1278,6 +1278,9 @@ public sealed class DispatchPipelineItemAsyncTests : IDisposable
 
         interceptor.Armed = true;
         var failingTransition = new WorkItemTransitionService(interceptorFactory, NullLogger<WorkItemTransitionService>.Instance);
+        // TODO: _mockResolver.Setup(r => r.ReleaseAgent("agent-1")) may not match due to implicit
+        // string→AgentId conversion not being triggered in Moq expression trees. See warning in
+        // DispatchPipelineItem_AssignJobThrows_RevertsToPending_IncrementsRetryCount_ReturnsFalse.
         _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
 
         var service = new PendingWorkItemDrainService(
@@ -1364,7 +1367,7 @@ public sealed class DispatchPipelineItemAsyncTests : IDisposable
 
     private static async Task<bool> InvokeDispatchPipelineItemAsync(
         PendingWorkItemDrainService service, WorkItemEntity item, JobDistributionRequest request,
-        string agentId, string connectionId, CancellationToken ct)
+        AgentId agentId, string connectionId, CancellationToken ct)
     {
         var method = typeof(PendingWorkItemDrainService).GetMethod("DispatchPipelineItemAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)

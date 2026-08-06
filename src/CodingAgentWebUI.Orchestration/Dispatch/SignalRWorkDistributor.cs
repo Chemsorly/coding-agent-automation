@@ -101,7 +101,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         }
 
         var connectionId = resolveResult.ConnectionId;
-        var resolvedAgentId = resolveResult.AgentId;
+        var resolvedAgentId = resolveResult.AgentIdentifier;
 
         try
         {
@@ -110,7 +110,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
             {
                 var run = _runService.GetRun(request.RunId);
                 if (run is not null)
-                    run.AgentId = resolvedAgentId;
+                    run.AgentId = resolvedAgentId.Value;
             }
 
             var message = BuildJobAssignmentMessage(workItemId, request);
@@ -156,7 +156,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
             var workItem = await updateDb.WorkItems.FindAsync([workItemId], ct);
             if (workItem is not null)
             {
-                workItem.AssignedAgentId = resolvedAgentId;
+                workItem.AssignedAgentId = resolvedAgentId.Value;
                 await updateDb.SaveChangesAsync(ct);
             }
         }

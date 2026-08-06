@@ -44,7 +44,7 @@ public class SignalRWorkDistributorAgentResolverTests
         // Assert
         result.Should().NotBeNull();
         result!.ConnectionId.Should().Be("conn-abc");
-        result.AgentId.Should().Be("agent-1");
+        result.AgentIdentifier.Value.Should().Be("agent-1");
         var agent = _registry.GetByAgentId("agent-1");
         agent!.Status.Should().Be(AgentStatus.Busy);
     }
@@ -87,7 +87,7 @@ public class SignalRWorkDistributorAgentResolverTests
         agent!.Status.Should().Be(AgentStatus.Busy); // precondition
 
         // Act
-        _resolver.ReleaseAgent(result!.AgentId);
+        _resolver.ReleaseAgent(result!.AgentIdentifier);
 
         // Assert
         agent.Status.Should().Be(AgentStatus.Idle);
@@ -105,13 +105,13 @@ public class SignalRWorkDistributorAgentResolverTests
         }, "conn-jkl");
         var result = _resolver.ResolveAgent("dotnet");
         result.Should().NotBeNull();
-        _resolver.AssignJob(result!.AgentId, "run-999");
+        _resolver.AssignJob(result!.AgentIdentifier, "run-999");
 
         var agent = _registry.GetByAgentId("agent-4");
         agent!.ActiveJobId.Should().Be("run-999"); // precondition
 
         // Act
-        _resolver.ReleaseAgent(result.AgentId);
+        _resolver.ReleaseAgent(result.AgentIdentifier);
 
         // Assert
         agent.Status.Should().Be(AgentStatus.Idle);
@@ -182,7 +182,7 @@ public class SignalRWorkDistributorAgentResolverTests
             // Simulate dispatch failure — release the agent we resolved
             if (result is not null)
             {
-                _resolver.ReleaseAgent(result.AgentId);
+                _resolver.ReleaseAgent(result.AgentIdentifier);
             }
         })).ToArray();
 
@@ -192,7 +192,7 @@ public class SignalRWorkDistributorAgentResolverTests
         results.Should().NotContainNulls();
 
         // Assert: all 10 agents resolved to distinct agent IDs (no double-dispatch)
-        var resolvedIds = results.Select(r => r!.AgentId).Distinct().ToList();
+        var resolvedIds = results.Select(r => r!.AgentIdentifier).Distinct().ToList();
         resolvedIds.Should().HaveCount(agentCount);
 
         // Assert: no agent is stuck in Busy state — all are back to Idle

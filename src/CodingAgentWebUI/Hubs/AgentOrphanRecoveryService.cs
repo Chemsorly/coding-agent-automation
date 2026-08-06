@@ -28,15 +28,14 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
     // Currently uses CancellationToken.None for GetRunHistoryAsync — a pre-existing issue preserved
     // in the refactoring, but this operation hits history storage and should be cancellable.
     /// <inheritdoc />
-    public async Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, string agentId)
+    public async Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(message);
-        ArgumentNullException.ThrowIfNull(agentId);
 
         // Re-track active job from agent state (handles orchestrator restart scenario)
         if (message.ActiveJob is not null)
         {
-            await RestoreActiveJobAsync(message, agentId);
+            await RestoreActiveJobAsync(message, agentId.Value);
         }
 
         // Detect orphaned runs: if the orchestrator tracks active runs for this agent
@@ -46,11 +45,11 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         var entry = _facade.GetByAgentId(agentId);
         if (entry is { ActiveJobId: null })
         {
-            DetectAndRestoreOrphans(agentId, entry);
+            DetectAndRestoreOrphans(agentId.Value, entry);
         }
         else if (entry is { ActiveJobId: not null })
         {
-            HandleCrashRecovery(message, agentId, entry);
+            HandleCrashRecovery(message, agentId.Value, entry);
         }
     }
 

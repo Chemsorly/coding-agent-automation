@@ -101,10 +101,10 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.RefactoringDetection, StartedAtUtc = DateTime.UtcNow });
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.RefactoringDetection, null, "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.RefactoringDetection, null, "/tmp/ws", (AgentId)"agent-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(false); // Dispatch failed
 
-        _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
+        _mockResolver.Setup(r => r.ReleaseAgent((AgentId)"agent-1"));
 
         var service = CreateService();
 
@@ -118,6 +118,10 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         item.AssignedAgentId.Should().BeNull();
         item.DispatchedAt.Should().BeNull();
         item.RetryCount.Should().Be(0, "consolidation dispatch failures must NOT increment RetryCount");
+        _mockConsolidationDispatchService.Verify(
+            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        _mockResolver.Verify(r => r.ReleaseAgent((AgentId)"agent-1"), Times.Once);
     }
 
     [Fact]
@@ -149,7 +153,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
         item.CompletedAt.Should().NotBeNull();
 
         _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -164,6 +168,9 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 
         _mockResolver.Setup(r => r.ResolveAgent(""))
             .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        // TODO: _mockResolver.Setup(r => r.ReleaseAgent("agent-1")) may not match due to implicit
+        // string→AgentId conversion not being triggered in Moq expression trees. See similar warning
+        // in DrainPendingItems_ConsolidationItem_DispatchFails_RevertsToPending.
         _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
 
         // Create service WITHOUT consolidation dependencies
@@ -180,7 +187,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
 
         // Dispatch was never attempted
         _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -245,7 +252,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
             c => c.AssignJobAsync("conn-1", It.IsAny<JobAssignmentMessage>(), It.IsAny<CancellationToken>()),
             Times.Once);
         _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -379,6 +386,9 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
         // Setup: idle agent available
         _mockResolver.Setup(r => r.ResolveAgent("dotnet"))
             .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        // TODO: _mockResolver.Setup(r => r.ReleaseAgent("agent-1")) may not match due to implicit
+        // string→AgentId conversion not being triggered in Moq expression trees. See warning in
+        // DrainPendingItems_ConsolidationItem_DispatchFails_RevertsToPending.
         _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
 
         // Setup: run exists and is Queued
@@ -387,6 +397,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
 
         // Setup: dispatch THROWS an exception
         _mockConsolidationDispatchService
+            // TODO: "agent-1" string literal here may not match AgentId parameter — see same warning above.
             .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Token vending failed"));
 
@@ -417,6 +428,9 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
         // Setup: idle agent available
         _mockResolver.Setup(r => r.ResolveAgent("dotnet"))
             .Returns(new AgentResolveResult("conn-1", "agent-1"));
+        // TODO: _mockResolver.Setup(r => r.ReleaseAgent("agent-1")) may not match due to implicit
+        // string→AgentId conversion not being triggered in Moq expression trees. See warning in
+        // DrainPendingItems_ConsolidationItem_DispatchFails_RevertsToPending.
         _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
 
         // Setup: run exists and is Queued
@@ -426,8 +440,8 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
         // Setup: dispatch simulates shutdown by cancelling CTS then throwing
         using var cts = new CancellationTokenSource();
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, (TemplateId?)"template-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
-            .Returns((string _, ConsolidationRunType _, TemplateId? _, string _, string _, CancellationToken _) =>
+            .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, (TemplateId?)"template-1", "/tmp/ws", It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
+            .Returns((string _, ConsolidationRunType _, TemplateId? _, string _, AgentId _, CancellationToken _) =>
             {
                 cts.Cancel(); // Simulate graceful shutdown — token is now cancelled
                 throw new OperationCanceledException(cts.Token);
@@ -623,8 +637,16 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
         _mockConsolidationDispatchService
+            // TODO: The string literal "agent-1" here relies on the C# compiler inserting an implicit
+            // AgentId conversion in the Moq expression tree. If the compiler does not insert the conversion,
+            // Moq will compare a string to an AgentId struct and the setup will silently never match.
+            // Replace with an explicit (AgentId)"agent-1" cast or It.IsAny<AgentId>() if this becomes an issue.
             .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, "tpl-1", "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
+        // TODO: _mockResolver.Setup(r => r.AssignJob("agent-1", ...)) may not match due to implicit
+        // string→AgentId conversion not being triggered in Moq expression trees — if the setup never
+        // matches, the Verify(..., Times.Once) below also passes vacuously, masking a missing AssignJob call.
+        // Replace "agent-1" with (AgentId)"agent-1" to make matching deterministic.
         _mockResolver.Setup(r => r.AssignJob("agent-1", workItemId.ToString()));
 
         var service = CreateService();
@@ -634,6 +656,9 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
 
         // Assert
         result.Should().BeTrue("successful dispatch must return true");
+        // TODO: _mockResolver.Verify(r => r.AssignJob("agent-1", ...), Times.Once) may not match due to
+        // implicit string→AgentId conversion not being triggered in Moq expression trees. Replace "agent-1"
+        // with (AgentId)"agent-1" to make this verify deterministic.
         _mockResolver.Verify(r => r.AssignJob("agent-1", workItemId.ToString()), Times.Once);
         await using var db = await _dbFactory.CreateDbContextAsync();
         var stored = await db.WorkItems.FindAsync(workItemId);
@@ -659,6 +684,9 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp/ws", "agent-1", It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
+        // TODO: _mockResolver.Setup(r => r.ReleaseAgent("agent-1")) and the Verify below may not match
+        // due to implicit string→AgentId conversion not being triggered in Moq expression trees.
+        // Replace "agent-1" with (AgentId)"agent-1" to make setup and verify deterministic.
         _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
 
         var service = CreateService();
@@ -674,6 +702,9 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         stored.AssignedAgentId.Should().BeNull();
         stored.DispatchedAt.Should().BeNull();
         stored.RetryCount.Should().Be(0, "consolidation false-path must NOT increment RetryCount");
+        // TODO: _mockResolver.Verify(r => r.ReleaseAgent("agent-1"), Times.Once) may not match due to
+        // implicit string→AgentId conversion not being triggered in Moq expression trees.
+        // Replace "agent-1" with (AgentId)"agent-1" to make this verify deterministic.
         _mockResolver.Verify(r => r.ReleaseAgent("agent-1"), Times.Once);
     }
 
@@ -688,8 +719,11 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Queued, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Token vending failed"));
+        // TODO: _mockResolver.Setup(r => r.ReleaseAgent("agent-1")) and the Verify below may not match
+        // due to implicit string→AgentId conversion not being triggered in Moq expression trees.
+        // Replace "agent-1" with (AgentId)"agent-1" to make setup and verify deterministic.
         _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
 
         var service = CreateService();
@@ -711,6 +745,7 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         // DB read), to distinguish these two cases and make the exception-path coverage unambiguous.
         stored.DispatchedAt.Should().BeNull();
         stored.RetryCount.Should().Be(0, "consolidation exception-path must NOT increment RetryCount");
+        // TODO: see ReleaseAgent setup TODO above — same string-literal matching concern applies here.
         _mockResolver.Verify(r => r.ReleaseAgent("agent-1"), Times.Once);
     }
 
@@ -723,6 +758,9 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
 
         _mockConsolidationRunStore.Setup(s => s.GetByIdAsync(runId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ConsolidationRun { RunId = runId, Status = ConsolidationRunStatus.Cancelled, Type = ConsolidationRunType.BrainConsolidation, StartedAtUtc = DateTime.UtcNow });
+        // TODO: _mockResolver.Setup(r => r.ReleaseAgent("agent-1")) may not match due to implicit
+        // string→AgentId conversion not being triggered in Moq expression trees.
+        // Replace "agent-1" with (AgentId)"agent-1" to make setup deterministic.
         _mockResolver.Setup(r => r.ReleaseAgent("agent-1"));
 
         var service = CreateService();
@@ -737,7 +775,7 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         stored!.Status.Should().Be(WorkItemStatus.Cancelled);
         stored.CompletedAt.Should().NotBeNull();
         _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -790,7 +828,7 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
 
     private static async Task<bool> InvokeDispatchConsolidationItemAsync(
         PendingWorkItemDrainService service, WorkItemEntity item, JobDistributionRequest request,
-        string agentId, CancellationToken ct)
+        AgentId agentId, CancellationToken ct)
     {
         var method = typeof(PendingWorkItemDrainService).GetMethod("DispatchConsolidationItemAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)

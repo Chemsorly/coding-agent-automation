@@ -108,11 +108,9 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// <summary>
     /// Removes an agent from the registry entirely.
     /// </summary>
-    public bool Deregister(string agentId)
+    public bool Deregister(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
-        if (_agents.TryRemove(agentId, out var removed))
+        if (_agents.TryRemove(agentId.Value, out var removed))
         {
             _connectionIndex.TryRemove(removed.ConnectionId, out AgentEntry? _);
             _logger.Information("Agent {AgentId} deregistered", agentId);
@@ -125,10 +123,9 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// <summary>
     /// Looks up an agent by its unique agent identifier.
     /// </summary>
-    public AgentEntry? GetByAgentId(string agentId)
+    public AgentEntry? GetByAgentId(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-        return _agents.TryGetValue(agentId, out var entry) ? entry : null;
+        return _agents.TryGetValue(agentId.Value, out var entry) ? entry : null;
     }
 
     /// <summary>
@@ -144,11 +141,9 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// <summary>
     /// Updates the heartbeat timestamp for the specified agent.
     /// </summary>
-    public void UpdateHeartbeat(string agentId, DateTimeOffset timestamp)
+    public void UpdateHeartbeat(AgentId agentId, DateTimeOffset timestamp)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
-        if (_agents.TryGetValue(agentId, out var entry))
+        if (_agents.TryGetValue(agentId.Value, out var entry))
         {
             lock (entry.SyncRoot)
             {
@@ -165,11 +160,9 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// Transitions an agent to a new status. Records <c>DisconnectedAt</c> when
     /// transitioning to <see cref="AgentStatus.Disconnected"/>.
     /// </summary>
-    public void TransitionStatus(string agentId, AgentStatus newStatus)
+    public void TransitionStatus(AgentId agentId, AgentStatus newStatus)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
-        if (_agents.TryGetValue(agentId, out var entry))
+        if (_agents.TryGetValue(agentId.Value, out var entry))
         {
             lock (entry.SyncRoot)
             {

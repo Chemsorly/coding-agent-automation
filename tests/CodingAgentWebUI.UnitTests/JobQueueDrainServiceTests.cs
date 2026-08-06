@@ -454,7 +454,7 @@ public class JobQueueDrainServiceTests
         });
 
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         await _service.DrainAsync(CancellationToken.None);
@@ -493,7 +493,7 @@ public class JobQueueDrainServiceTests
 
         // Dispatch should never be called for cancelled runs
         _mockConsolidationDispatchService.Verify(
-            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()),
             Times.Never);
 
         // Queue should be empty (not re-enqueued)
@@ -517,7 +517,7 @@ public class JobQueueDrainServiceTests
         });
 
         _mockConsolidationDispatchService
-            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(), It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Agent error"));
 
         await _service.DrainAsync(CancellationToken.None);
@@ -552,7 +552,7 @@ public class JobQueueDrainServiceTests
         _mockConsolidationDispatchService.Reset();
         _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         RegisterIdleAgent();
@@ -617,7 +617,7 @@ public class JobQueueDrainServiceTests
         _mockConsolidationDispatchService.Reset();
         _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new InvalidOperationException("Agent unavailable"));
 
         RegisterIdleAgent();
@@ -667,7 +667,7 @@ public class JobQueueDrainServiceTests
         _mockConsolidationDispatchService.Reset();
         _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         RegisterIdleAgent();
@@ -727,7 +727,7 @@ public class JobQueueDrainServiceTests
         _mockConsolidationDispatchService.Reset();
         _mockConsolidationDispatchService
             .Setup(d => d.TryDispatchToAgentAsync(It.IsAny<string>(), It.IsAny<ConsolidationRunType>(),
-                It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                It.IsAny<TemplateId?>(), It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
 
         RegisterIdleAgent();

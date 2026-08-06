@@ -1,3 +1,5 @@
+using CodingAgentWebUI.Pipeline.Models;
+
 namespace CodingAgentWebUI.Orchestration.Dispatch;
 
 /// <summary>
@@ -5,7 +7,7 @@ namespace CodingAgentWebUI.Orchestration.Dispatch;
 /// and the agent ID (for DB tracking and failure rollback) as an atomic unit.
 /// This eliminates the thread-safety issue of storing "last resolved" in a shared field.
 /// </summary>
-public sealed record AgentResolveResult(string ConnectionId, string AgentId);
+public sealed record AgentResolveResult(string ConnectionId, AgentId AgentIdentifier);
 
 /// <summary>
 /// Resolves the SignalR connection ID for an agent matching the given selector labels.
@@ -29,15 +31,15 @@ public interface ISignalRWorkDistributorAgentResolver
     /// from being permanently stuck in Busy state.
     /// Thread-safe: operates on the explicit agent ID, not shared state.
     /// </summary>
-    /// <param name="agentId">The agent ID to release (from <see cref="AgentResolveResult.AgentId"/>).</param>
-    void ReleaseAgent(string agentId);
+    /// <param name="agentId">The agent ID to release (from <see cref="AgentResolveResult.AgentIdentifier"/>).</param>
+    void ReleaseAgent(AgentId agentId);
 
     /// <summary>
     /// Sets the active job ID on the agent entry after successful dispatch.
     /// Must be called after SignalR delivery succeeds so HeartbeatMonitor and the
     /// monitoring UI can correlate the agent with its active run.
     /// </summary>
-    /// <param name="agentId">The agent ID (from <see cref="AgentResolveResult.AgentId"/>).</param>
+    /// <param name="agentId">The agent ID (from <see cref="AgentResolveResult.AgentIdentifier"/>).</param>
     /// <param name="jobId">The run/work-item ID assigned to this agent.</param>
-    void AssignJob(string agentId, string jobId);
+    void AssignJob(AgentId agentId, string jobId);
 }
