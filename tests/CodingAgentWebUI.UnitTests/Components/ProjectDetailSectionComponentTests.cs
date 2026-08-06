@@ -515,3 +515,124 @@ public class ProjectDetailSectionTemplatesTabTests : BunitContext
         Assert.Null(statusMessage);
     }
 }
+
+/// <summary>
+/// bUnit component tests for ProjectDetailSection — MCP Servers tab rendering.
+/// Verifies conditional rendering of the server table, form, and add-button
+/// across all state combinations. These are characterization tests that lock in
+/// current rendering behavior to prevent regressions during Extract Method refactoring.
+/// </summary>
+public class ProjectDetailSectionMcpTabTests : BunitContext
+{
+    private readonly Mock<IConfigurationStore> _mockStore;
+
+    public ProjectDetailSectionMcpTabTests()
+    {
+        _mockStore = new Mock<IConfigurationStore>();
+        SetupDefaults();
+        Services.AddSingleton(new ProjectChangeNotifier());
+    }
+
+    private void SetupDefaults()
+    {
+        _mockStore.Setup(s => s.LoadPipelineConfigAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PipelineConfiguration());
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+        _mockStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineProject>());
+        _mockStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<PipelineJobTemplate>());
+        _mockStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+    }
+
+    [Fact]
+    public void McpTab_WhenServersExist_RendersServerTable()
+    {
+        // Arrange: project with one MCP server
+        var project = new PipelineProject
+        {
+            Id = "p1",
+            Name = "Test",
+            McpServers = [new McpServerConfig { Name = "context7", Type = "stdio", Command = "uvx" }]
+        };
+        _mockStore.Setup(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigStore, _mockStore.Object));
+
+        // Act: navigate to MCP Servers tab
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("MCP Servers")).Click();
+
+        // Assert: server table is rendered with the server name
+        Assert.Contains("monitoring-table", cut.Markup);
+        Assert.Contains("context7", cut.Markup);
+    }
+
+    [Fact]
+    public void McpTab_WhenServersEmpty_DoesNotRenderServerTable()
+    {
+        // Arrange: project with no MCP servers
+        var project = new PipelineProject { Id = "p1", Name = "Test", McpServers = null };
+        _mockStore.Setup(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigStore, _mockStore.Object));
+
+        // Act: navigate to MCP Servers tab
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("MCP Servers")).Click();
+
+        // Assert: no server table; add button is visible instead
+        Assert.DoesNotContain("monitoring-table", cut.Markup);
+        Assert.Contains("Add MCP Server", cut.Markup);
+    }
+
+    [Fact]
+    public void McpTab_WhenShowMcpFormTrue_RendersFormAndHidesAddButton()
+    {
+        // Arrange: project with no servers; we'll click the Add button to show the form
+        var project = new PipelineProject { Id = "p1", Name = "Test" };
+        _mockStore.Setup(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigStore, _mockStore.Object));
+
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("MCP Servers")).Click();
+
+        // Act: click the Add MCP Server button to show the form
+        cut.Find(".btn-add").Click();
+
+        // Assert: form is rendered, add-button is no longer visible
+        Assert.Contains("btn-cancel", cut.Markup);
+        Assert.Contains("Save Server", cut.Markup);
+        Assert.DoesNotContain("btn-add", cut.Markup);
+    }
+
+    [Fact]
+    public void McpTab_WhenShowMcpFormFalse_RendersAddButtonAndHidesForm()
+    {
+        // Arrange: project with no servers; form is not shown by default
+        var project = new PipelineProject { Id = "p1", Name = "Test" };
+        _mockStore.Setup(s => s.GetProjectByIdAsync("p1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(project);
+
+        var cut = Render<ProjectDetailSection>(p => p
+            .Add(s => s.ProjectId, "p1")
+            .Add(s => s.ConfigStore, _mockStore.Object));
+
+        // Act: navigate to MCP Servers tab (form is false by default)
+        cut.FindAll(".tab-btn").First(b => b.TextContent.Contains("MCP Servers")).Click();
+
+        // Assert: add button is rendered, form save/cancel buttons are absent
+        Assert.Contains("btn-add", cut.Markup);
+        Assert.DoesNotContain("Save Server", cut.Markup);
+        Assert.DoesNotContain("btn-cancel", cut.Markup);
+    }
+}
