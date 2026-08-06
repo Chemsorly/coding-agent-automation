@@ -450,12 +450,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     /// Waits for leadership before recovering sessions — non-leader replicas must not spin up
     /// background watchers for jobs they don't own.
     /// </summary>
-    public Task StartAsync(CancellationToken ct)
+    public Task StartAsync(CancellationToken cancellationToken)
     {
         // Launch session recovery in the background so StartAsync returns immediately.
         // The recovery loop waits for leadership before restoring watcher state,
         // preventing non-leader replicas from spinning up watchers they don't own.
-        _ = Task.Run(() => RecoverSessionsAsync(ct), ct);
+        _ = Task.Run(() => RecoverSessionsAsync(cancellationToken), cancellationToken);
         return Task.CompletedTask;
     }
 
@@ -510,7 +510,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
     }
 
-    public async Task StopAsync(CancellationToken ct)
+    public async Task StopAsync(CancellationToken cancellationToken)
     {
         var sessions = _sessions.Values.ToList();
         _logger.Information("ChatJobDispatcher: stopping — releasing {Count} active session(s)", sessions.Count);
