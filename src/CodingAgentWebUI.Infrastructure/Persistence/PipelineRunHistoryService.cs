@@ -76,10 +76,18 @@ public class PipelineRunHistoryService : IPipelineRunHistoryService
             return Task.CompletedTask;
         }
 
-        // TODO: [BUG-12] Add terminal step guard (IsTerminal check) matching PostgresPipelineRunHistoryService
-        // to ensure file-based deployments also correct non-terminal CurrentStep before persist.
-        // Currently mitigated by RunLifecycleManager.CompleteRunAsync guard, but direct callers bypass it.
-        var summary = run.ToSummary();
+        // Defense-in-depth: ensure terminal CurrentStep before persisting to history.
+        // Non-terminal steps indicate a mid-pipeline state that should never be the final persisted value.
+        PipelineStep? finalStepOverride = null;
+        if (!run.CurrentStep.IsTerminal())
+        {
+            _logger.Warning(
+                "AddRunToHistory: run {RunId} has non-terminal CurrentStep={Step}, forcing to Failed",
+                run.RunId, run.CurrentStep);
+            finalStepOverride = PipelineStep.Failed;
+        }
+
+        var summary = run.ToSummary(finalStepOverride);
         lock (_lock)
         {
             _runHistory.Insert(0, summary);

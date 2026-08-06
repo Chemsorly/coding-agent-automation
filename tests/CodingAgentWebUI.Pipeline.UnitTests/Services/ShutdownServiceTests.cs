@@ -108,9 +108,14 @@ public class ShutdownServiceTests
     public async Task StoppingAsync_DoesNotThrow_WhenCancelAgentRunsThrows()
     {
         // Arrange
+        var orchestrationAttempted = false;
         var service = new ShutdownService(
             new FakeLifecycleShutdownAction(isRunning: false, onCancel: () => { }),
-            new FakeOrchestrationShutdownAction(onCancel: () => throw new InvalidOperationException("network error")),
+            new FakeOrchestrationShutdownAction(onCancel: () =>
+            {
+                orchestrationAttempted = true;
+                throw new InvalidOperationException("network error");
+            }),
             new ShutdownSignal(),
             _logger);
 
@@ -118,6 +123,9 @@ public class ShutdownServiceTests
 
         // Act — should not throw
         await service.StoppingAsync(cts.Token);
+
+        // Assert: orchestration was attempted despite throwing
+        Assert.True(orchestrationAttempted, "orchestration cancel was attempted despite throwing");
     }
 
     // ── Test Fakes ──────────────────────────────────────────────────────────

@@ -47,22 +47,7 @@ public sealed partial class PipelineLoopService
             if (_stopRequested || ct.IsCancellationRequested) break;
 
             // Emit cycle-level poll metrics
-            var totalItemsFound = issueQueues.Values.Sum(q => q.Count)
-                + prQueues.Values.Sum(q => q.Count)
-                + decompositionQueues.Values.Sum(q => q.Count)
-                + projectLevelDecompositionQueues.Values.Sum(q => q.Count);
-            var templatePollFailures = snapshot.PollableTemplates.Count(t =>
-            {
-                var before = failuresBefore[t.Id];
-                var after = _templateStatuses.TryGetValue(t.Id, out var s) ? s.ConsecutiveFailures : 0;
-                return after > before;
-            });
-            var pollResult = templatePollFailures == 0 ? "success"
-                : snapshot.PollableTemplates.Count > 0 && templatePollFailures >= snapshot.PollableTemplates.Count ? "failure"
-                : "partial_failure";
-            PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", pollResult));
-            if (totalItemsFound > 0)
-                PipelineTelemetry.LoopIssuesFound.Add(totalItemsFound);
+            EmitCyclePollMetrics(snapshot, failuresBefore, issueQueues, prQueues, decompositionQueues, projectLevelDecompositionQueues);
 
             // Step 4: Circuit breaker
             if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, snapshot.Config.ClosedLoopCircuitBreakerCooldown, ct))
@@ -98,6 +83,38 @@ public sealed partial class PipelineLoopService
             NotifyChange();
             await DelayOrStop(snapshot.PollInterval, ct);
         }
+    }
+
+    /// <summary>
+    /// Emits cycle-level poll telemetry: overall poll result and total items found.
+    /// </summary>
+    private void EmitCyclePollMetrics(
+        CycleSnapshot snapshot,
+        Dictionary<string, int> failuresBefore,
+        Dictionary<string, List<IssueSummary>> issueQueues,
+        Dictionary<string, List<PullRequestSummary>> prQueues,
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>> decompositionQueues,
+        Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>> projectLevelDecompositionQueues)
+    {
+        var totalItemsFound = issueQueues.Values.Sum(q => q.Count)
+            + prQueues.Values.Sum(q => q.Count)
+            + decompositionQueues.Values.Sum(q => q.Count)
+            + projectLevelDecompositionQueues.Values.Sum(q => q.Count);
+
+        var templatePollFailures = snapshot.PollableTemplates.Count(t =>
+        {
+            var before = failuresBefore[t.Id];
+            var after = _templateStatuses.TryGetValue(t.Id, out var s) ? s.ConsecutiveFailures : 0;
+            return after > before;
+        });
+
+        var pollResult = templatePollFailures == 0 ? "success"
+            : snapshot.PollableTemplates.Count > 0 && templatePollFailures >= snapshot.PollableTemplates.Count ? "failure"
+            : "partial_failure";
+
+        PipelineTelemetry.LoopPolls.Add(1, new KeyValuePair<string, object?>("result", pollResult));
+        if (totalItemsFound > 0)
+            PipelineTelemetry.LoopIssuesFound.Add(totalItemsFound);
     }
 
     /// <summary>

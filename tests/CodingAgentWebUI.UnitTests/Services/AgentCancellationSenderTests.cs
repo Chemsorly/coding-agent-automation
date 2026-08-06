@@ -69,6 +69,11 @@ public sealed class AgentCancellationSenderTests
 
         // Should not throw
         await _sender.SendCancelJobAsync("agent-1", "run-42");
+
+        // Communication was attempted — the exception was caught, not silently skipped
+        _mockComm.Verify(
+            c => c.CancelJobAsync("conn-123", "run-42", It.IsAny<CancellationToken>()),
+            Times.Once);
     }
 
     [Fact]

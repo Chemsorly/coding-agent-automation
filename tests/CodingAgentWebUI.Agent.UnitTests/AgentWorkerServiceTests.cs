@@ -281,6 +281,8 @@ public class AgentWorkerServiceTests : IDisposable
         var handler = GetPrivateMethod(service, "HandleCancelJobAsync");
         var task = (Task)handler.Invoke(service, ["job-123"])!;
         await task;
+
+        Assert.True(task.IsCompletedSuccessfully, "task should complete successfully without throwing");
     }
 
     [Fact]
@@ -299,6 +301,8 @@ public class AgentWorkerServiceTests : IDisposable
         var handler = GetPrivateMethod(service, "HandleCancelChatAsync");
         var task = (Task)handler.Invoke(service, ["session-1"])!;
         await task;
+
+        Assert.True(task.IsCompletedSuccessfully, "task should complete successfully without throwing");
     }
 
     // ── Requirement 4.5: ShutdownAsync Stops Hub Connection ─────────────

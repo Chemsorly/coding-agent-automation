@@ -101,5 +101,10 @@ public class GracefulShutdownHelperTests
 
         await GracefulShutdownHelper.CancelAndWaitAsync(
             cts, task, TimeSpan.FromSeconds(5), _mockLogger.Object, "DisposedOp");
+
+        // A disposed CTS completes without triggering a timeout warning
+        _mockLogger.Verify(
+            l => l.Warning(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>()),
+            Times.Never);
     }
 }

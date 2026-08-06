@@ -1316,7 +1316,9 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var message = new ChatResponseMessage { SessionId = "s1", Lines = new[] { "hello" } };
 
         await hub.ReportChatResponse(message);
-        // No exception — success
+
+        // ReportChatResponse validates ownership but does NOT clear ActiveChatSessionId
+        agent.ActiveChatSessionId.Should().Be("s1");
     }
 
     [Fact]
@@ -1358,7 +1360,9 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var message = new ChatCompletedMessage { SessionId = "s1", ExitCode = 0 };
 
         await hub.ReportChatCompleted(message);
-        // No exception — success
+
+        // ReportChatCompleted clears ActiveChatSessionId upon successful completion
+        agent.ActiveChatSessionId.Should().BeNull();
     }
 
     [Fact]
@@ -1526,8 +1530,10 @@ public sealed class AgentHubBehaviorTests : IDisposable
             MemoryUsageMb = 512
         };
 
-        // Should not throw
         await hub.Heartbeat(heartbeat);
+
+        // Hub short-circuits before fetching a run when no job is active
+        _mockFacade.Verify(f => f.GetRun(It.IsAny<string>()), Times.Never);
     }
 
     #endregion

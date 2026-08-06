@@ -21,32 +21,10 @@ public static class PrConversationContextFormatter
         var reviewThreads = comments.Where(c => c.FilePath is not null || c.IsResolved is not null).ToList();
 
         if (discussion.Count > 0)
-        {
-            sb.AppendLine("## Discussion Comments");
-            sb.AppendLine();
-            foreach (var comment in discussion)
-            {
-                sb.AppendLine($"### {FormatAttribution(comment)} @{comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC)");
-                sb.AppendLine(comment.Body);
-                sb.AppendLine();
-            }
-        }
+            AppendDiscussionSection(sb, discussion);
 
         if (reviewThreads.Count > 0)
-        {
-            sb.AppendLine("## Review Thread Comments");
-            sb.AppendLine();
-            foreach (var comment in reviewThreads)
-            {
-                var resolved = comment.IsResolved == true ? " (RESOLVED)" : "";
-                var location = comment.FilePath is not null
-                    ? $" — {comment.FilePath}{(comment.Line.HasValue ? $":{comment.Line}" : "")}"
-                    : "";
-                sb.AppendLine($"### {FormatAttribution(comment)} @{comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC){location}{resolved}");
-                sb.AppendLine(comment.Body);
-                sb.AppendLine();
-            }
-        }
+            AppendReviewThreadSection(sb, reviewThreads);
 
         if (discussion.Count == 0 && reviewThreads.Count == 0)
         {
@@ -55,6 +33,40 @@ public static class PrConversationContextFormatter
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Appends the "Discussion Comments" section to the builder.
+    /// </summary>
+    private static void AppendDiscussionSection(StringBuilder sb, List<PrConversationComment> discussion)
+    {
+        sb.AppendLine("## Discussion Comments");
+        sb.AppendLine();
+        foreach (var comment in discussion)
+        {
+            sb.AppendLine($"### {FormatAttribution(comment)} @{comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC)");
+            sb.AppendLine(comment.Body);
+            sb.AppendLine();
+        }
+    }
+
+    /// <summary>
+    /// Appends the "Review Thread Comments" section to the builder.
+    /// </summary>
+    private static void AppendReviewThreadSection(StringBuilder sb, List<PrConversationComment> reviewThreads)
+    {
+        sb.AppendLine("## Review Thread Comments");
+        sb.AppendLine();
+        foreach (var comment in reviewThreads)
+        {
+            var resolved = comment.IsResolved == true ? " (RESOLVED)" : "";
+            var location = comment.FilePath is not null
+                ? $" — {comment.FilePath}{(comment.Line.HasValue ? $":{comment.Line}" : "")}"
+                : "";
+            sb.AppendLine($"### {FormatAttribution(comment)} @{comment.Author} ({comment.CreatedAt:yyyy-MM-dd HH:mm} UTC){location}{resolved}");
+            sb.AppendLine(comment.Body);
+            sb.AppendLine();
+        }
     }
 
     internal static string FormatAttribution(PrConversationComment comment)
