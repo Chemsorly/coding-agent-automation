@@ -132,6 +132,10 @@ public class OpenIssueContextWriterTests : IDisposable
     [Fact]
     public async Task WriteOpenIssueContextAsync_IndividualFetchFailure_ContinuesWithOthers()
     {
+        // TODO: [WARNING] This test only exercises fetch failures for open issues. The unified
+        // WriteIssueFilesAsync helper is also used for closed issues. Add a test that verifies
+        // a fetch failure for a closed-issue identifier is swallowed and processing continues,
+        // to prevent regression (e.g., re-throw instead of log in the closed-issue path).
         var issues = new[]
         {
             new IssueSummary { Identifier = "1", Title = "Issue 1", Labels = Array.Empty<string>() },

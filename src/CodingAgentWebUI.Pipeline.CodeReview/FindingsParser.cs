@@ -84,46 +84,47 @@ public static partial class FindingsParser
     {
         // Try each file:line pattern in order, return first match
         // Pattern 1: path:N (colon-separated)
-        var match = FileLineColonRegex().Match(text);
-        while (match.Success)
-        {
-            if (IsValidFilePath(match.Groups["path"].Value) && !IsPartOfUrl(text, match.Index)
-                && int.TryParse(match.Groups["num"].Value, out var lineNum) && lineNum > 0)
-                return (NormalizePath(match.Groups["path"].Value), lineNum, match.Index + match.Length);
-            match = match.NextMatch();
-        }
+        if (TryMatchFileLine(FileLineColonRegex().Match(text), text, out var result))
+            return result;
 
         // Pattern 2: path#LN (hash-L-number)
-        match = FileLineHashRegex().Match(text);
-        while (match.Success)
-        {
-            if (IsValidFilePath(match.Groups["path"].Value) && !IsPartOfUrl(text, match.Index)
-                && int.TryParse(match.Groups["num"].Value, out var lineNum) && lineNum > 0)
-                return (NormalizePath(match.Groups["path"].Value), lineNum, match.Index + match.Length);
-            match = match.NextMatch();
-        }
+        if (TryMatchFileLine(FileLineHashRegex().Match(text), text, out result))
+            return result;
 
         // Pattern 3: path (line N) (parenthesized)
-        match = FileLineParenRegex().Match(text);
-        while (match.Success)
-        {
-            if (IsValidFilePath(match.Groups["path"].Value) && !IsPartOfUrl(text, match.Index)
-                && int.TryParse(match.Groups["num"].Value, out var lineNum) && lineNum > 0)
-                return (NormalizePath(match.Groups["path"].Value), lineNum, match.Index + match.Length);
-            match = match.NextMatch();
-        }
+        if (TryMatchFileLine(FileLineParenRegex().Match(text), text, out result))
+            return result;
 
         // Pattern 4: path, line N (comma-separated)
-        match = FileLineCommaRegex().Match(text);
-        while (match.Success)
-        {
-            if (IsValidFilePath(match.Groups["path"].Value) && !IsPartOfUrl(text, match.Index)
-                && int.TryParse(match.Groups["num"].Value, out var lineNum) && lineNum > 0)
-                return (NormalizePath(match.Groups["path"].Value), lineNum, match.Index + match.Length);
-            match = match.NextMatch();
-        }
+        if (TryMatchFileLine(FileLineCommaRegex().Match(text), text, out result))
+            return result;
 
         return (null, 0, 0);
+    }
+
+    /// <summary>
+    /// Iterates through all matches of a regex pattern looking for the first valid file:line reference.
+    /// Returns true (and sets <paramref name="result"/>) when a valid match is found.
+    /// </summary>
+    private static bool TryMatchFileLine(
+        System.Text.RegularExpressions.Match match,
+        string fullText,
+        out (string? FilePath, int LineNumber, int EndIndex) result)
+    {
+        while (match.Success)
+        {
+            if (IsValidFilePath(match.Groups["path"].Value)
+                && !IsPartOfUrl(fullText, match.Index)
+                && int.TryParse(match.Groups["num"].Value, out var lineNum)
+                && lineNum > 0)
+            {
+                result = (NormalizePath(match.Groups["path"].Value), lineNum, match.Index + match.Length);
+                return true;
+            }
+            match = match.NextMatch();
+        }
+        result = default;
+        return false;
     }
 
     /// <summary>
