@@ -14,21 +14,20 @@ public class OutputBatcherTests
     [Fact]
     public async Task SendBatchAsync_FlushesLinesViaOnFlush()
     {
-        // Arrange — ManualFlushTrigger avoids any real-time delays
-        var trigger = new ManualFlushTrigger();
+        // Arrange — use default constructor with real 250ms PeriodicTimer
+        // The test polls for the result so no manual tick control is needed
         var received = new List<string>();
-        await using var batcher = new OutputBatcher(trigger);
+        await using var batcher = new OutputBatcher();
         batcher.OnFlush += lines =>
         {
             received.AddRange(lines);
             return Task.CompletedTask;
         };
 
-        // Act — add a line and trigger one flush tick; SendBatchAsync is called via the flush loop
+        // Act — add a line; the periodic timer will flush it within 250ms
         await batcher.AddLineAsync("hello");
-        trigger.Tick();
 
-        // Wait for the flush loop to process the tick
+        // Wait for the flush loop to process the tick (polls up to 3s)
         var deadline = DateTime.UtcNow.AddSeconds(3);
         while (received.Count == 0 && DateTime.UtcNow < deadline)
             await Task.Delay(10);
@@ -66,22 +65,23 @@ public class OutputBatcherTests
     [Fact]
     public async Task DisposeAsync_FlushesRemainingLinesViaBatchAsync()
     {
-        // Arrange — use ManualFlushTrigger so the flush loop doesn't consume lines before dispose
-        var trigger = new ManualFlushTrigger();
+        // Arrange — use default constructor; lines added and DisposeAsync called synchronously
+        // before the 250ms periodic timer can fire, so DisposeAsync handles the final flush.
         var received = new List<string>();
-        var batcher = new OutputBatcher(trigger);
+        var batcher = new OutputBatcher();
         batcher.OnFlush += lines =>
         {
             received.AddRange(lines);
             return Task.CompletedTask;
         };
 
-        // Act — add lines but don't tick the trigger; DisposeAsync must flush them
+        // Act — add lines then immediately dispose; DisposeAsync must flush them via
+        // _lock.WaitAsync(CancellationToken.None) in the final-flush path
         await batcher.AddLineAsync("remaining-1");
         await batcher.AddLineAsync("remaining-2");
         await batcher.DisposeAsync();
 
-        // Assert — dispose path called _lock.WaitAsync(CancellationToken.None) and flushed remaining
+        // Assert — dispose path flushed remaining lines
         received.Should().Contain("remaining-1");
         received.Should().Contain("remaining-2");
     }
@@ -89,10 +89,9 @@ public class OutputBatcherTests
     [Fact]
     public async Task DisposeAsync_WhenBufferIsEmpty_CompletesCleanly()
     {
-        // Arrange — nothing in buffer; tests the DisposeAsync fast path
-        var trigger = new ManualFlushTrigger();
+        // Arrange — nothing in buffer; tests the DisposeAsync fast path with no flush
         var flushCount = 0;
-        var batcher = new OutputBatcher(trigger);
+        var batcher = new OutputBatcher();
         batcher.OnFlush += _ =>
         {
             Interlocked.Increment(ref flushCount);
