@@ -156,7 +156,11 @@ public class FailPhaseAsyncTests
         await _orchestrator.ExecuteCodeGenerationAsync(context, CancellationToken.None);
 
         // Assert: FailPhaseAsync calls AddRunToHistory
-        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.Once);
+        // TODO: It.IsAny<CancellationToken>() does not verify that the in-scope token (request.Ct) is
+        // propagated — a regression back to CancellationToken.None would not be caught. If token
+        // propagation correctness is important here, capture the expected token from the context and
+        // assert with It.Is<CancellationToken>(t => t == expectedCt).
+        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -197,7 +201,7 @@ public class FailPhaseAsyncTests
             o => o.SwapLabelAsync(_run.IssueIdentifier, AgentLabels.Error, It.IsAny<CancellationToken>()),
             Times.Once);
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
-        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.Once);
+        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -221,7 +225,7 @@ public class FailPhaseAsyncTests
             o => o.SwapLabelAsync(_run.IssueIdentifier, AgentLabels.Error, It.IsAny<CancellationToken>()),
             Times.Once);
         _mockCallbacks.Verify(c => c.TransitionTo(PipelineStep.Failed), Times.Once);
-        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run), Times.Once);
+        _mockCallbacks.Verify(c => c.AddRunToHistoryAsync(_run, It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

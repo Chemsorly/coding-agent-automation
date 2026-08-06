@@ -174,7 +174,7 @@ public partial class AgentPhaseExecutor : IAgentPhaseExecutor
         run.MarkCompleted();
         await request.IssueOps.SwapLabelAsync(run.IssueIdentifier, request.Label, request.Ct);
         request.Callbacks.TransitionTo(request.Step);
-        await request.Callbacks.AddRunToHistoryAsync(run);
+        await request.Callbacks.AddRunToHistoryAsync(run, request.Ct);
         return false;
     }
 

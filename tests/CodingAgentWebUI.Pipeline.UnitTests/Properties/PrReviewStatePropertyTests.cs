@@ -389,7 +389,11 @@ public class PrReviewStatePropertyTests
 
         await context.FailRunAsync("Some failure");
 
-        callbacks.Verify(c => c.AddRunToHistoryAsync(run), Times.Once);
+        // TODO: It.IsAny<CancellationToken>() does not verify that the token passed to
+        // AddRunToHistoryAsync is the one from context.Cts (the in-scope token). A regression where
+        // CancellationToken.None is passed instead would not be caught. If token propagation
+        // correctness is important, assert with a specific token matcher.
+        callbacks.Verify(c => c.AddRunToHistoryAsync(run, It.IsAny<CancellationToken>()), Times.Once);
 
         context.Cts.Dispose();
         logger.Dispose();

@@ -147,6 +147,7 @@ public partial class GitHubRepositoryProvider
                     {
                         var client = await GetClientAsync(ct);
                         var graphqlBody = $"{{\"query\":\"mutation {{ markPullRequestReadyForReview(input: {{pullRequestId: \\\"{pr.NodeId}\\\"}}) {{ pullRequest {{ isDraft }} }} }}\"}}";
+                        // intentional — Octokit IConnection.Post<T>(Uri, object, string, string) has no CancellationToken overload
                         await client.Connection.Post<object>(
                             DeriveGraphQlUri(),
                             graphqlBody,

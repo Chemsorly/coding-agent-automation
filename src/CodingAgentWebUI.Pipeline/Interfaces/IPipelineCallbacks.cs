@@ -33,8 +33,7 @@ public interface IPipelineCallbacks
     void NotifyChange();
 
     /// <summary>Adds a completed run to the history store.</summary>
-    // TODO: Add CancellationToken parameter to allow callers to propagate cancellation
-    Task AddRunToHistoryAsync(PipelineRun run);
+    Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default);
 
     /// <summary>Updates file change statistics (lines added/removed, file count).</summary>
     Task UpdateFileChangeStats(PipelineRun run);

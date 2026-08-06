@@ -118,7 +118,8 @@ public partial class QualityGateExecutor
                 await callbacks.SwapAgentLabel(run.IssueIdentifier, AgentLabels.Cancelled, CancellationToken.None);
                 callbacks.EmitOutputLine("🚫 Pipeline cancelled");
                 callbacks.TransitionTo(PipelineStep.Cancelled);
-                await callbacks.AddRunToHistoryAsync(run);
+                // intentional — ct is already cancelled here; use CancellationToken.None so history write completes
+                await callbacks.AddRunToHistoryAsync(run, CancellationToken.None);
             }
         }
         catch (Exception ex)
@@ -131,7 +132,8 @@ public partial class QualityGateExecutor
             await context.IssueOps.SwapLabelAsync(run.IssueIdentifier, AgentLabels.Error, CancellationToken.None);
             callbacks.EmitOutputLine($"❌ Pipeline failed: {run.FailureReason}");
             callbacks.TransitionTo(PipelineStep.Failed);
-            await callbacks.AddRunToHistoryAsync(run);
+            // intentional — cleanup path; use CancellationToken.None so history write completes
+            await callbacks.AddRunToHistoryAsync(run, CancellationToken.None);
         }
         finally
         {

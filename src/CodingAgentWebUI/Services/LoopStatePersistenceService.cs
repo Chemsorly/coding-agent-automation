@@ -96,7 +96,8 @@ public sealed class LoopStatePersistenceService : IHostedLifecycleService, IDisp
     {
         try
         {
-            await _writeLock.WaitAsync();
+            // intentional — fire-and-forget persist; must complete regardless of service lifecycle
+            await _writeLock.WaitAsync(CancellationToken.None);
             try
             {
                 var state = new LoopState

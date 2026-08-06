@@ -203,7 +203,8 @@ public sealed class OutputBatcher : IAsyncDisposable
     /// </summary>
     private async Task SendBatchAsync(List<string> batch)
     {
-        await _flushGate.WaitAsync();
+        // intentional — serializes sends for ordering; SendBatchAsync has no CancellationToken parameter
+        await _flushGate.WaitAsync(CancellationToken.None);
         try
         {
             if (OnFlush is not null)
@@ -248,7 +249,8 @@ public sealed class OutputBatcher : IAsyncDisposable
 
         // Final flush of remaining lines
         List<string>? batch = null;
-        await _lock.WaitAsync();
+        // intentional — dispose path; must complete regardless of cancellation
+        await _lock.WaitAsync(CancellationToken.None);
         try
         {
             if (_buffer.Count > 0)

@@ -341,7 +341,7 @@ internal sealed class PipelineExecutionContextBuilder
         public override void TransitionTo(PipelineStep step) => transitionTo(step);
         public override void EmitOutputLine(string line) => emitOutputLine(line);
         public override void NotifyChange() { }
-        public override Task AddRunToHistoryAsync(PipelineRun run) => Task.CompletedTask;
+        public override Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default) => Task.CompletedTask;
         public override Task UpdateFileChangeStats(PipelineRun run)
             => prOrchestrator.UpdateFileChangeStatsAsync(run, repoProvider);
         public override Task SwapAgentLabel(string issueIdentifier, string label, CancellationToken ct)

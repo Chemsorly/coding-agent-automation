@@ -303,7 +303,13 @@ public sealed class TestPipelineRunner : IDisposable, IAsyncDisposable
         public void TransitionTo(PipelineStep step) => lifecycle.TransitionTo(run, step);
         public void EmitOutputLine(string line) => lifecycle.EmitOutputLine(line);
         public void NotifyChange() => lifecycle.NotifyChange();
-        public Task AddRunToHistoryAsync(PipelineRun run) => lifecycle.AddRunToHistoryAsync(run, CancellationToken.None);
+        public Task AddRunToHistoryAsync(PipelineRun run, CancellationToken ct = default) => lifecycle.AddRunToHistoryAsync(run, CancellationToken.None);
+        // TODO: The ct parameter is intentionally ignored above — this is a test harness that must
+        // always complete history writes regardless of cancellation. However, the signature now looks
+        // like a real implementation, which may mislead future test authors into expecting ct to be
+        // forwarded. If cancellation-propagation tests are ever added at this layer, this will silently
+        // pass even when the production implementation regresses. Consider adding an explicit comment
+        // or forwarding ct if test coverage of the cancellation path is desired.
 
         public Task UpdateFileChangeStats(PipelineRun run)
             => prOrchestrator.UpdateFileChangeStatsAsync(run, providerManager.ActiveRepoProvider!);

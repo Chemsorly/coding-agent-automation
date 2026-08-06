@@ -419,7 +419,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             {
                 _logger.Debug("POST /session/{SessionId}/abort", sessionId);
                 using var client = _httpClientFactory.CreateClient(AgentDefaults.OpenCodeHttpClientName);
-                await client.PostAsync($"/session/{sessionId}/abort", null);
+                // intentional — teardown abort; KillAsync has no CancellationToken parameter
+                await client.PostAsync($"/session/{sessionId}/abort", null, CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -640,7 +641,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             using var client = workspacePath is not null
                 ? CreateDirectoryClientForPath(workspacePath)
                 : CreateDirectoryClient();
-            await client.PostAsync($"/session/{sessionId}/abort", null);
+            // intentional — best-effort abort; AbortBestEffortAsync has no CancellationToken parameter
+            await client.PostAsync($"/session/{sessionId}/abort", null, CancellationToken.None);
         }
         catch (Exception ex)
         {

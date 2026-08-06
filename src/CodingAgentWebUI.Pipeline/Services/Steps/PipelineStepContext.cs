@@ -252,10 +252,16 @@ public sealed class PipelineStepContext
         Logger.Information(
             "Pipeline {RunId} FailRunAsync swapping label to agent:error for issue {IssueIdentifier} (reason={Reason}, step={CurrentStep})",
             Run.RunId, Run.IssueIdentifier, reason, Run.CurrentStep);
+        // TODO: If ct is already cancelled at the point FailRunAsync is called (race between external
+        // cancellation and a non-cancellation exception in the caller), both SwapAgentLabel and
+        // AddRunToHistoryAsync will throw OperationCanceledException and the run will not be recorded
+        // in history. QualityGateExecutor.RetryLoop already handles this correctly by using
+        // CancellationToken.None on its cleanup paths. Consider whether these two calls should also
+        // use CancellationToken.None to guarantee history persistence on all failure paths.
         await Callbacks.SwapAgentLabel(Run.IssueIdentifier, AgentLabels.Error, ct);
         Callbacks.EmitOutputLine($"❌ Pipeline failed: {reason}");
         Callbacks.TransitionTo(PipelineStep.Failed);
-        await Callbacks.AddRunToHistoryAsync(Run);
+        await Callbacks.AddRunToHistoryAsync(Run, ct);
     }
 
     /// <summary>

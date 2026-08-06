@@ -69,6 +69,7 @@ public partial class GitHubRepositoryProvider
                 async client =>
                 {
                     var url = new Uri($"repos/{Owner}/{Repo}/pulls/{prNumber}/reviews", UriKind.Relative);
+                    // intentional — Octokit IConnection.Post<T>(Uri, object, string, string) has no CancellationToken overload
                     await client.Connection.Post<object>(url, payload, "application/json", null);
                     return true;
                 },
