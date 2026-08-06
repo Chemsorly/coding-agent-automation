@@ -291,16 +291,23 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
 
         foreach (var run in runs)
         {
-            if (run.Status.Value == WorkflowRunStatus.InProgress || run.Status.Value == WorkflowRunStatus.Waiting)
-                hasRunning = true;
-            else if (run.Status.Value == WorkflowRunStatus.Queued || run.Status.Value == WorkflowRunStatus.Requested || run.Status.Value == WorkflowRunStatus.Pending)
-                hasPending = true;
-            else if (run.Status.Value == WorkflowRunStatus.Completed)
+            switch ((run.Status.Value, run.Conclusion?.Value))
             {
-                if (run.Conclusion?.Value == WorkflowRunConclusion.Failure)
+                case (WorkflowRunStatus.InProgress, _):
+                case (WorkflowRunStatus.Waiting, _):
+                    hasRunning = true;
+                    break;
+                case (WorkflowRunStatus.Queued, _):
+                case (WorkflowRunStatus.Requested, _):
+                case (WorkflowRunStatus.Pending, _):
+                    hasPending = true;
+                    break;
+                case (WorkflowRunStatus.Completed, WorkflowRunConclusion.Failure):
                     hasFailed = true;
-                else if (run.Conclusion?.Value == WorkflowRunConclusion.Cancelled)
+                    break;
+                case (WorkflowRunStatus.Completed, WorkflowRunConclusion.Cancelled):
                     hasCancelled = true;
+                    break;
             }
         }
 

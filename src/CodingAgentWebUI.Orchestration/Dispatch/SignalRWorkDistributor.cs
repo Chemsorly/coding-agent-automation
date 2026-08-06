@@ -74,30 +74,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         var resolveResult = _agentResolver.ResolveAgent(request.AgentSelector);
         if (resolveResult is null)
         {
-            // No idle agent available — revert to Pending for drain service pickup.
-            await using var pendingDb = await DbFactory.CreateDbContextAsync(ct);
-            var pendingItem = await pendingDb.WorkItems.FindAsync([workItemId], ct);
-            if (pendingItem is not null)
-            {
-                pendingItem.Status = WorkItemStatus.Pending;
-                pendingItem.DispatchedAt = null;
-                await pendingDb.SaveChangesAsync(ct);
-            }
-
-            Logger.LogInformation(
-                "WorkItem {WorkItemId} for issue {IssueIdentifier} queued as Pending (no idle agent)",
-                workItemId, request.IssueIdentifier);
-
-            // Clear the in-memory PipelineRun's AgentId so HeartbeatMonitor Phase 3
-            // doesn't orphan it (it checks GetByAgentId which returns null for "pending").
-            if (!string.IsNullOrEmpty(request.RunId))
-            {
-                var run = _runService.GetRun(request.RunId);
-                if (run is not null)
-                    run.AgentId = null;
-            }
-
-            return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available", Queued: true);
+            return await HandleNoAgentAvailableAsync(workItemId, request, ct);
         }
 
         var connectionId = resolveResult.ConnectionId;
@@ -105,38 +82,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
 
         try
         {
-            // Update the in-memory PipelineRun with the resolved agent ID
-            if (!string.IsNullOrEmpty(request.RunId))
-            {
-                var run = _runService.GetRun(request.RunId);
-                if (run is not null)
-                    run.AgentId = resolvedAgentId;
-            }
-
-            var message = BuildJobAssignmentMessage(workItemId, request);
-
-            // Inject project secrets at delivery time (not serialized in WorkItem payload for security)
-            if (!string.IsNullOrEmpty(request.ProjectId))
-            {
-                var project = await _projectStore.GetProjectByIdAsync(request.ProjectId, ct);
-                if (project?.Secrets is { Count: > 0 })
-                    message = message with { ProjectSecrets = project.Secrets };
-            }
-
-            await _agentComm.AssignJobAsync(connectionId, message, ct);
-
-            // Signal the lifecycle manager that an agent accepted this run.
-            if (_lifecycleManager is not null)
-            {
-                await _lifecycleManager.AgentAcceptedRunAsync(
-                    request.RunId ?? workItemId.ToString(), resolvedAgentId,
-                    request.IssueIdentifier, request.IssueProviderConfigId,
-                    request.RepoProviderConfigId, request.RunType, ct);
-            }
-            else
-            {
-                _agentResolver.AssignJob(resolvedAgentId, workItemId.ToString());
-            }
+            await SendToAgentAndSignalAsync(workItemId, request, connectionId, resolvedAgentId, ct);
         }
         catch (Exception ex)
         {
@@ -172,6 +118,82 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
             workItemId, connectionId);
 
         return new DistributionResult(true, workItemId.ToString(), null);
+    }
+
+    /// <summary>
+    /// Handles the case where no idle agent is available for the work item.
+    /// Reverts the WorkItem status to Pending for drain service pickup, clears the in-memory
+    /// run's AgentId, and returns a queued result.
+    /// </summary>
+    private async Task<DistributionResult> HandleNoAgentAvailableAsync(
+        Guid workItemId, JobDistributionRequest request, CancellationToken ct)
+    {
+        // No idle agent available — revert to Pending for drain service pickup.
+        await using var pendingDb = await DbFactory.CreateDbContextAsync(ct);
+        var pendingItem = await pendingDb.WorkItems.FindAsync([workItemId], ct);
+        if (pendingItem is not null)
+        {
+            pendingItem.Status = WorkItemStatus.Pending;
+            pendingItem.DispatchedAt = null;
+            await pendingDb.SaveChangesAsync(ct);
+        }
+
+        Logger.LogInformation(
+            "WorkItem {WorkItemId} for issue {IssueIdentifier} queued as Pending (no idle agent)",
+            workItemId, request.IssueIdentifier);
+
+        // Clear the in-memory PipelineRun's AgentId so HeartbeatMonitor Phase 3
+        // doesn't orphan it (it checks GetByAgentId which returns null for "pending").
+        if (!string.IsNullOrEmpty(request.RunId))
+        {
+            var run = _runService.GetRun(request.RunId);
+            if (run is not null)
+                run.AgentId = null;
+        }
+
+        return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available", Queued: true);
+    }
+
+    /// <summary>
+    /// Sends the job assignment message to the agent via SignalR and signals the lifecycle manager
+    /// (or falls back to direct agent assignment). Updates the in-memory PipelineRun with the agent ID.
+    /// </summary>
+    private async Task SendToAgentAndSignalAsync(
+        Guid workItemId, JobDistributionRequest request,
+        string connectionId, string resolvedAgentId, CancellationToken ct)
+    {
+        // Update the in-memory PipelineRun with the resolved agent ID
+        if (!string.IsNullOrEmpty(request.RunId))
+        {
+            var run = _runService.GetRun(request.RunId);
+            if (run is not null)
+                run.AgentId = resolvedAgentId;
+        }
+
+        var message = BuildJobAssignmentMessage(workItemId, request);
+
+        // Inject project secrets at delivery time (not serialized in WorkItem payload for security)
+        if (!string.IsNullOrEmpty(request.ProjectId))
+        {
+            var project = await _projectStore.GetProjectByIdAsync(request.ProjectId, ct);
+            if (project?.Secrets is { Count: > 0 })
+                message = message with { ProjectSecrets = project.Secrets };
+        }
+
+        await _agentComm.AssignJobAsync(connectionId, message, ct);
+
+        // Signal the lifecycle manager that an agent accepted this run.
+        if (_lifecycleManager is not null)
+        {
+            await _lifecycleManager.AgentAcceptedRunAsync(
+                request.RunId ?? workItemId.ToString(), resolvedAgentId,
+                request.IssueIdentifier, request.IssueProviderConfigId,
+                request.RepoProviderConfigId, request.RunType, ct);
+        }
+        else
+        {
+            _agentResolver.AssignJob(resolvedAgentId, workItemId.ToString());
+        }
     }
 
     // ── Consolidation insertion (always Pending, drained by PendingWorkItemDrainService) ──

@@ -35,27 +35,9 @@ public sealed class GitLabValidationService
     public async Task<GitLabValidationResult> ValidateAsync(
         string apiUrl, string accessToken, string projectId, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(apiUrl))
-            return new GitLabValidationResult(false, null, null, "API URL is required.");
-
-        // Validate URL scheme — only HTTP/HTTPS allowed
-        if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out var parsedUri)
-            || (parsedUri.Scheme != "https" && parsedUri.Scheme != "http"))
-        {
-            var truncatedUrl = apiUrl.Length > 200 ? apiUrl[..200] + "…" : apiUrl;
-            return new GitLabValidationResult(false, null, null,
-                $"API URL must use https:// or http:// scheme. Got: '{truncatedUrl}'.");
-        }
-
-        if (string.IsNullOrWhiteSpace(accessToken))
-            return new GitLabValidationResult(false, null, null, "Access token is required.");
-
-        if (string.IsNullOrWhiteSpace(projectId))
-            return new GitLabValidationResult(false, null, null, "Project ID is required.");
-
-        if (!int.TryParse(projectId, out var numericProjectId))
-            return new GitLabValidationResult(false, null, null,
-                $"Invalid project ID: '{projectId}'. Expected a numeric value.");
+        var inputError = ValidateInputs(apiUrl, accessToken, projectId, out var numericProjectId);
+        if (inputError is not null)
+            return inputError;
 
         IGitLabClient client;
         try
@@ -136,6 +118,42 @@ public sealed class GitLabValidationService
             return new GitLabValidationResult(false, null, null,
                 $"Validation failed: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Validates input parameters for <see cref="ValidateAsync"/>.
+    /// Returns a failure <see cref="GitLabValidationResult"/> if any input is invalid,
+    /// or <c>null</c> if all inputs are valid. Sets <paramref name="numericProjectId"/>
+    /// to the parsed project ID on success.
+    /// </summary>
+    private static GitLabValidationResult? ValidateInputs(
+        string apiUrl, string accessToken, string projectId, out int numericProjectId)
+    {
+        numericProjectId = 0;
+
+        if (string.IsNullOrWhiteSpace(apiUrl))
+            return new GitLabValidationResult(false, null, null, "API URL is required.");
+
+        // Validate URL scheme — only HTTP/HTTPS allowed
+        if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out var parsedUri)
+            || (parsedUri.Scheme != "https" && parsedUri.Scheme != "http"))
+        {
+            var truncatedUrl = apiUrl.Length > 200 ? apiUrl[..200] + "…" : apiUrl;
+            return new GitLabValidationResult(false, null, null,
+                $"API URL must use https:// or http:// scheme. Got: '{truncatedUrl}'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(accessToken))
+            return new GitLabValidationResult(false, null, null, "Access token is required.");
+
+        if (string.IsNullOrWhiteSpace(projectId))
+            return new GitLabValidationResult(false, null, null, "Project ID is required.");
+
+        if (!int.TryParse(projectId, out numericProjectId))
+            return new GitLabValidationResult(false, null, null,
+                $"Invalid project ID: '{projectId}'. Expected a numeric value.");
+
+        return null;
     }
 
     /// <summary>

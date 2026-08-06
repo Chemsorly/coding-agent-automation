@@ -406,6 +406,174 @@ public class DispatchServiceLifecycleTests : IDisposable
         hostStopCts.Dispose();
     }
 
+    // ── Concurrency Map & Rate Limiting & PVC Gating ────────────────────
+    // These tests replace the coverage formerly provided by the deleted DispatchStateBuilderTests.cs
+    // file. They test the equivalent logic now inlined in DispatchService.BuildDispatchStateAsync
+    // and ProcessDispatchCandidateAsync.
+
+    [Fact]
+    public async Task PollAndDispatch_BuildsCorrectConcurrencyMap_CountsDispatchedAndRunning()
+    {
+        // Arrange: seed two active items (Dispatched + Running) and one pending item, all under the
+        // same selector with a max-concurrent of 2. The concurrency map must count both active
+        // statuses — if only Running were counted, the Dispatched item would be missed and the
+        // pending item would be dispatched when it should be blocked.
+        var selector = "kiro,dotnet";
+        var pendingId = Guid.NewGuid();
+
+        await InsertWorkItem(Guid.NewGuid(), "owner/repo#dispatched", selector, WorkItemStatus.Dispatched);
+        await InsertWorkItem(Guid.NewGuid(), "owner/repo#running", selector, WorkItemStatus.Running);
+        await InsertWorkItem(pendingId, "owner/repo#pending", selector, WorkItemStatus.Pending);
+
+        var service = CreateService(
+            imageMapping: new Dictionary<string, string> { ["dotnet,kiro"] = "ghcr.io/agent:latest" },
+            maxConcurrentPods: new Dictionary<string, int> { ["kiro,dotnet"] = 2 });
+
+        await InvokePollAndDispatch(service);
+
+        // Assert: pending item must remain Pending because concurrency limit (2) is already reached
+        // by the one Dispatched + one Running item. If BuildDispatchStateAsync only counted Running,
+        // the concurrency would be 1 and the item would be incorrectly dispatched.
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var pending = await db.WorkItems.FindAsync(pendingId);
+        pending!.Status.Should().Be(WorkItemStatus.Pending,
+            "concurrency map must include both Dispatched and Running items; if only Running were counted, the item would be incorrectly dispatched");
+
+        _mockKubeClient.Verify(
+            k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "no K8s Job should be created when concurrency limit is reached by Dispatched + Running items");
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_ConcurrencyMapIsSelectorScoped_DoesNotCrossSelectors()
+    {
+        // Arrange: one Running item under a DIFFERENT selector should not affect the pending item's
+        // selector. Cross-contamination would incorrectly block dispatch.
+        var pendingId = Guid.NewGuid();
+
+        await InsertWorkItem(Guid.NewGuid(), "owner/repo#other", "kiro,python", WorkItemStatus.Running);
+        await InsertWorkItem(pendingId, "owner/repo#pending", "kiro,dotnet", WorkItemStatus.Pending);
+
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var service = CreateService(
+            imageMapping: new Dictionary<string, string>
+            {
+                ["dotnet,kiro"] = "ghcr.io/agent:latest",
+                ["kiro,python"] = "ghcr.io/python-agent:latest"
+            },
+            maxConcurrentPods: new Dictionary<string, int> { ["kiro,dotnet"] = 1, ["kiro,python"] = 1 });
+
+        await InvokePollAndDispatch(service);
+
+        // Assert: the kiro,dotnet pending item must be dispatched despite a Running kiro,python item
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var pending = await db.WorkItems.FindAsync(pendingId);
+        pending!.Status.Should().Be(WorkItemStatus.Dispatched,
+            "concurrency limit for kiro,dotnet is 1 and it has 0 active items — it must be dispatched");
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_RateLimitExhausted_StopsDispatchingRemainingItems()
+    {
+        // Arrange: three pending items with a rate limiter that allows only 1 acquisition.
+        // The first item uses the single available token; the remaining two must be left Pending.
+        // This tests that ProcessDispatchCandidateAsync returns false when the rate limiter
+        // denies acquisition, stopping the dispatch loop.
+        var item1 = Guid.NewGuid();
+        var item2 = Guid.NewGuid();
+        var item3 = Guid.NewGuid();
+
+        // Insert in chronological order (FIFO) to ensure item1 is processed first
+        await InsertWorkItem(item1, "owner/repo#1", "kiro,dotnet", WorkItemStatus.Pending,
+            createdAt: DateTimeOffset.UtcNow.AddMinutes(-10));
+        await InsertWorkItem(item2, "owner/repo#2", "kiro,dotnet", WorkItemStatus.Pending,
+            createdAt: DateTimeOffset.UtcNow.AddMinutes(-5));
+        await InsertWorkItem(item3, "owner/repo#3", "kiro,dotnet", WorkItemStatus.Pending,
+            createdAt: DateTimeOffset.UtcNow);
+
+        var dispatchCallCount = 0;
+        _mockKubeClient
+            .Setup(k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback(() => dispatchCallCount++)
+            .Returns(Task.CompletedTask);
+
+        // Use a rate limit of 1 per second — the first poll cycle will acquire 1 token and
+        // stop when the bucket is empty. The TokenBucketRateLimiter with 1 token and no
+        // auto-replenishment means only 1 item can be processed per poll cycle.
+        var configData = new Dictionary<string, string?>
+        {
+            ["WorkDistribution:Dispatch:PollIntervalSeconds"] = "10",
+            ["WorkDistribution:Dispatch:RateLimitPerSecond"] = "1",
+            ["WorkDistribution:Namespace"] = "default",
+            ["WorkDistribution:OrchestratorUrl"] = "http://orchestrator:8080",
+            ["WorkDistribution:AgentApiKeySecretName"] = "agent-api-key",
+            ["WorkDistribution:CredentialPools:Kiro:0"] = "pvc-test-1",
+            ["WorkDistribution:CredentialPools:Kiro:1"] = "pvc-test-2"
+        };
+        var config = new ConfigurationBuilder().AddInMemoryCollection(configData).Build();
+        var templateProvider = BuildTemplateProvider(new Dictionary<string, string> { ["dotnet,kiro"] = "ghcr.io/agent:latest" });
+        var service = new DispatchService(
+            new DispatchServiceCoreDependencies(_dbFactory, _leaderElection,
+                new DispatchLifecycleService(_mockKubeClient.Object, _transitionService, new DispatchServiceOptions
+                {
+                    PollIntervalSeconds = 10,
+                    RateLimitPerSecond = 1,
+                    Namespace = "default",
+                    OrchestratorUrl = "http://orchestrator:8080",
+                    AgentApiKeySecretName = "agent-api-key",
+                    KiroPvcPool = new List<string> { "pvc-test-1", "pvc-test-2" }
+                })),
+            config, templateProvider);
+
+        await InvokePollAndDispatch(service);
+
+        // Assert: exactly 1 item was dispatched (rate limit of 1); the other 2 remain Pending.
+        // This is a minimum: with rate-limit=1, exactly 1 token is consumed per cycle.
+        dispatchCallCount.Should().Be(1,
+            "rate limiter of 1 per second should stop dispatch after the first item");
+
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var items = await db.WorkItems.ToListAsync();
+        var dispatchedItems = items.Where(i => i.Status == WorkItemStatus.Dispatched).ToList();
+        var pendingItems = items.Where(i => i.Status == WorkItemStatus.Pending).ToList();
+
+        dispatchedItems.Should().HaveCount(1, "only 1 item should be dispatched with rate limit of 1");
+        pendingItems.Should().HaveCount(2, "2 items should remain Pending when rate limit stops the loop");
+    }
+
+    [Fact]
+    public async Task PollAndDispatch_NoPvcAvailable_SkipsKiroAgentItems()
+    {
+        // Arrange: one pending kiro-agent item but NO available PVCs (all configured PVCs are claimed
+        // by other Dispatched items). The item must be silently skipped (left Pending), NOT failed.
+        // If the PVC gate were removed, the kiro item would be incorrectly dispatched without a PVC.
+        var pendingId = Guid.NewGuid();
+        await InsertWorkItem(pendingId, "owner/repo#nopvc", "kiro,dotnet", WorkItemStatus.Pending);
+
+        // Claim all PVCs by seeding WorkItems with KiroPvcName set
+        await ClaimAllPvcsWithWorkItems(new[] { "pvc-test-1", "pvc-test-2" });
+
+        var service = CreateService(
+            imageMapping: new Dictionary<string, string> { ["dotnet,kiro"] = "ghcr.io/agent:latest" });
+
+        await InvokePollAndDispatch(service);
+
+        // Assert: item must remain Pending (not Failed or Dispatched)
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        var item = await db.WorkItems.FindAsync(pendingId);
+        item!.Status.Should().Be(WorkItemStatus.Pending,
+            "kiro-agent items must be silently skipped (not failed) when no PVC is available");
+
+        _mockKubeClient.Verify(
+            k => k.CreateJobAsync(It.IsAny<V1Job>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never,
+            "no K8s Job should be created when no PVC is available for the kiro agent");
+    }
+
     // ── BUG-14: ResetStartedAt on Dispatch ──────────────────────────────
 
     // TODO: Add negative test case: dispatch succeeds when GetRun returns null (run not in-memory).
@@ -633,6 +801,33 @@ public class DispatchServiceLifecycleTests : IDisposable
             TimeoutSeconds = 1800,
             Payload = "{}"
         });
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Seeds the database with Dispatched WorkItems that each claim one PVC from <paramref name="pvcNames"/>.
+    /// After this call, <see cref="DispatchLifecycleService.QueryAvailablePvcsAsync"/> will return an
+    /// empty available list because every PVC in the pool is marked as claimed by an active item.
+    /// </summary>
+    private async Task ClaimAllPvcsWithWorkItems(IEnumerable<string> pvcNames)
+    {
+        await using var db = await _dbFactory.CreateDbContextAsync();
+        foreach (var pvcName in pvcNames)
+        {
+            db.WorkItems.Add(new WorkItemEntity
+            {
+                Id = Guid.NewGuid(),
+                IssueIdentifier = $"owner/repo#pvc-holder-{pvcName}",
+                IssueProviderConfigId = "provider-1",
+                Status = WorkItemStatus.Dispatched,
+                AgentSelector = "kiro,dotnet",
+                TaskType = WorkItemTaskType.Implementation,
+                CreatedAt = DateTimeOffset.UtcNow.AddMinutes(-5),
+                TimeoutSeconds = 1800,
+                Payload = "{}",
+                ClaimedPvcName = pvcName
+            });
+        }
         await db.SaveChangesAsync();
     }
 

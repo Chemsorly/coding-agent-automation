@@ -113,7 +113,7 @@ internal sealed class DispatchLifecycleService
             if (workItem is null || workItem.Status != WorkItemStatus.Pending)
             {
                 // Item was modified by another process
-                if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+                ReclaimPvcIfClaimed(claimedPvc, availablePvcs);
                 return;
             }
 
@@ -122,13 +122,13 @@ internal sealed class DispatchLifecycleService
         }
         catch
         {
-            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+            ReclaimPvcIfClaimed(claimedPvc, availablePvcs);
             throw;
         }
         var (shouldProceed, projectSecrets) = prepareResult;
         if (!shouldProceed)
         {
-            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+            ReclaimPvcIfClaimed(claimedPvc, availablePvcs);
             return;
         }
 
@@ -145,12 +145,12 @@ internal sealed class DispatchLifecycleService
         catch (DbUpdateConcurrencyException)
         {
             Log.Warning("DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
-            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+            ReclaimPvcIfClaimed(claimedPvc, availablePvcs);
             return;
         }
         catch
         {
-            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+            ReclaimPvcIfClaimed(claimedPvc, availablePvcs);
             throw;
         }
 
@@ -172,6 +172,17 @@ internal sealed class DispatchLifecycleService
         workItem.DispatchedAt = DateTimeOffset.UtcNow;
 
         await FinalizeDispatchAsync(db, workItem, item, logPrefix, concurrencyBySelector, onDispatchSuccess, ct);
+    }
+
+    /// <summary>
+    /// Returns a claimed PVC back to the available pool. No-op if <paramref name="claimedPvc"/> is null.
+    /// Call this in any early-exit path before <see cref="CreateK8sJobAsync"/> succeeds to ensure PVCs
+    /// are not leaked when a work item is skipped or an exception is thrown.
+    /// </summary>
+    private static void ReclaimPvcIfClaimed(string? claimedPvc, List<string> availablePvcs)
+    {
+        if (claimedPvc is not null)
+            availablePvcs.Add(claimedPvc);
     }
 
     /// <summary>

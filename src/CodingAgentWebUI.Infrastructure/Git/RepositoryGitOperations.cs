@@ -124,6 +124,41 @@ internal static class RepositoryGitOperations
             Log.Debug("CommitAllAsync status: {FilePath} = {State}", entry.FilePath, entry.State);
         }
 
+        var stagedAny = StageAllChanges(repo, preStatus);
+
+        if (stagedAny)
+            repo.Index.Write();
+
+        var unstaged = UnstageHardcodedPaths(repo, pipelineInjectedPaths);
+
+        UnstageConfigurableBlacklistedPaths(repo, blacklistedPaths, unstaged);
+
+        var stagedChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
+        Log.Debug("CommitAllAsync final staged count (via Diff): {Count}", stagedChanges.Count);
+        foreach (var change in stagedChanges)
+        {
+            Log.Debug("CommitAllAsync final staged: {FilePath} = {Status}", change.Path, change.Status);
+        }
+
+        if (stagedChanges.Count == 0 && !allowEmpty)
+        {
+            Log.Warning("No changes to commit in workspace {WorkspacePath} — agent did not modify any files", workspacePath);
+            throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
+        }
+
+        var signature = new Signature(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
+        var commitOptions = allowEmpty ? new CommitOptions { AllowEmptyCommit = true } : new CommitOptions();
+        repo.Commit(message, signature, signature, commitOptions);
+
+        return unstaged.ToList();
+    }
+
+    /// <summary>
+    /// Stages all changed files in the working directory based on their file state.
+    /// Returns <c>true</c> if any files were staged.
+    /// </summary>
+    private static bool StageAllChanges(Repository repo, IEnumerable<StatusEntry> preStatus)
+    {
         var stagedAny = false;
         foreach (var entry in preStatus)
         {
@@ -149,10 +184,17 @@ internal static class RepositoryGitOperations
                 stagedAny = true;
             }
         }
+        return stagedAny;
+    }
 
-        if (stagedAny)
-            repo.Index.Write();
-
+    /// <summary>
+    /// Unstages pipeline-injected paths (hardcoded: .agent, .brain) and any provider-specific
+    /// injected paths. These must never be committed by the pipeline under any circumstances.
+    /// Returns the set of unstaged paths (normalized to forward slashes) for use by the caller.
+    /// </summary>
+    private static HashSet<string> UnstageHardcodedPaths(
+        Repository repo, IReadOnlyList<string>? pipelineInjectedPaths)
+    {
         var unstaged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Hardcoded: ALWAYS unstage pipeline-injected paths regardless of configured blacklist.
@@ -166,51 +208,50 @@ internal static class RepositoryGitOperations
         var hardcodedBlacklist = pipelineInjectedPaths is { Count: > 0 }
             ? universalHardcoded.Concat(pipelineInjectedPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
             : universalHardcoded;
+
+        var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
+        foreach (var change in indexChanges)
         {
-            var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-            foreach (var change in indexChanges)
+            if (PathBlacklistHelper.IsPathBlacklisted(change.Path, hardcodedBlacklist))
             {
-                if (PathBlacklistHelper.IsPathBlacklisted(change.Path, hardcodedBlacklist))
-                {
-                    Commands.Unstage(repo, change.Path);
-                    unstaged.Add(change.Path.Replace('\\', '/'));
-                }
+                Commands.Unstage(repo, change.Path);
+                unstaged.Add(change.Path.Replace('\\', '/'));
             }
         }
 
+        return unstaged;
+    }
+
+    /// <summary>
+    /// Unstages paths matching the configurable blacklist, skipping paths already unstaged
+    /// by <see cref="UnstageHardcodedPaths"/>. No-op if <paramref name="blacklistedPaths"/> is empty.
+    /// </summary>
+    /// <remarks>
+    /// NOTE: <paramref name="alreadyUnstaged"/> is both an input filter and an output accumulator —
+    /// this method adds newly unstaged paths to it. The caller (<c>CommitAll</c>) returns this same
+    /// HashSet (via <c>unstaged.ToList()</c>) as its result. Do NOT pass a read-only collection here.
+    /// </remarks>
+    // TODO: The hidden output-via-mutation contract on alreadyUnstaged (it doubles as the caller's
+    // return value) is fragile. If these helpers are ever reordered or the caller is refactored,
+    // configurable-blacklist paths could be silently dropped from the returned list. Consider
+    // returning the additional paths explicitly instead of mutating the input collection.
+    private static void UnstageConfigurableBlacklistedPaths(
+        Repository repo, IReadOnlyList<string>? blacklistedPaths, HashSet<string> alreadyUnstaged)
+    {
         // Apply configurable blacklist (may overlap with hardcoded — skip already-unstaged paths)
-        if (blacklistedPaths is { Count: > 0 })
+        if (blacklistedPaths is not { Count: > 0 })
+            return;
+
+        var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
+        foreach (var change in indexChanges)
         {
-            var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-            foreach (var change in indexChanges)
+            var normalized = change.Path.Replace('\\', '/');
+            if (!alreadyUnstaged.Contains(normalized) && PathBlacklistHelper.IsPathBlacklisted(change.Path, blacklistedPaths))
             {
-                var normalized = change.Path.Replace('\\', '/');
-                if (!unstaged.Contains(normalized) && PathBlacklistHelper.IsPathBlacklisted(change.Path, blacklistedPaths))
-                {
-                    Commands.Unstage(repo, change.Path);
-                    unstaged.Add(normalized);
-                }
+                Commands.Unstage(repo, change.Path);
+                alreadyUnstaged.Add(normalized);
             }
         }
-
-        var stagedChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-        Log.Debug("CommitAllAsync final staged count (via Diff): {Count}", stagedChanges.Count);
-        foreach (var change in stagedChanges)
-        {
-            Log.Debug("CommitAllAsync final staged: {FilePath} = {Status}", change.Path, change.Status);
-        }
-
-        if (stagedChanges.Count == 0 && !allowEmpty)
-        {
-            Log.Warning("No changes to commit in workspace {WorkspacePath} — agent did not modify any files", workspacePath);
-            throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
-        }
-
-        var signature = new Signature(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
-        var commitOptions = allowEmpty ? new CommitOptions { AllowEmptyCommit = true } : new CommitOptions();
-        repo.Commit(message, signature, signature, commitOptions);
-
-        return unstaged.ToList();
     }
 
     public static async Task Push(

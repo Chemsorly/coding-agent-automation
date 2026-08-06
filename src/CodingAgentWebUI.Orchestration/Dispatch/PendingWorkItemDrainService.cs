@@ -116,58 +116,75 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         {
             if (ct.IsCancellationRequested) break;
 
-            var resolveResult = _agentResolver.ResolveAgent(item.AgentSelector ?? "");
-            if (resolveResult is null)
-            {
-                if (string.IsNullOrWhiteSpace(item.AgentSelector))
-                {
-                    _logger.LogDebug("PendingWorkItemDrainService: no idle agents at all, stopping drain");
-                    break;
-                }
-                _logger.LogDebug(
-                    "PendingWorkItemDrainService: no agent for selector '{Selector}', skipping WorkItem {WorkItemId}",
-                    item.AgentSelector, item.Id);
-                continue;
-            }
-
-            JobDistributionRequest? request;
-            try
-            {
-                request = JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload ?? "", PipelineJsonOptions.Default);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "PendingWorkItemDrainService: failed to deserialize payload for WorkItem {WorkItemId}", item.Id);
-                _agentResolver.ReleaseAgent(resolveResult.AgentId);
-                continue;
-            }
-
-            if (request is null)
-            {
-                _logger.LogError("PendingWorkItemDrainService: null payload for WorkItem {WorkItemId}", item.Id);
-                _agentResolver.ReleaseAgent(resolveResult.AgentId);
-                continue;
-            }
-
-            var connectionId = resolveResult.ConnectionId;
-            var agentId = resolveResult.AgentId;
-
-            // --- Consolidation items: dispatch via IConsolidationDispatchService (token vending at drain time) ---
-            if (item.TaskType == WorkItemTaskType.Consolidation)
-            {
-                await DispatchConsolidationItemAsync(item, request, agentId, ct);
-                continue;
-            }
-
-            // --- Pipeline items ---
-            if (!await DispatchPipelineItemAsync(item, request, agentId, connectionId, ct)) continue;
-
-            await SwapLabelWithRetryAsync(item.Id, request, ct); // Swap label to agent:in-progress (#997, retries #1579)
-            _logger.LogInformation("PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
-                item.Id, item.IssueIdentifier, agentId);
+            var shouldStop = await DrainPendingItemAsync(item, ct);
+            if (shouldStop) break;
         }
 
         WorkDistributionTelemetry.DispatcherPollCount.Add(1); // TODO: placed at end — see comment in original for metric inconsistency risk
+    }
+
+    /// <summary>
+    /// Processes a single pending work item: resolves agent, deserializes payload, and dispatches.
+    /// Returns <c>true</c> if the drain loop should stop (no idle agents at all),
+    /// <c>false</c> to continue to the next item.
+    /// </summary>
+    private async Task<bool> DrainPendingItemAsync(WorkItemEntity item, CancellationToken ct)
+    {
+        var resolveResult = _agentResolver.ResolveAgent(item.AgentSelector ?? "");
+        if (resolveResult is null)
+        {
+            if (string.IsNullOrWhiteSpace(item.AgentSelector))
+            {
+                _logger.LogDebug("PendingWorkItemDrainService: no idle agents at all, stopping drain");
+                // TODO: No test asserts the early-break contract: an item with a null/whitespace
+                // AgentSelector + null resolver result must return true (stop the loop), not false
+                // (continue). The return value is the only mechanism preventing the loop from
+                // spinning indefinitely. Add a test that verifies the outer drain loop stops when
+                // this path is taken (e.g., assert only N items are processed, not N+1).
+                return true; // stop the loop
+            }
+            _logger.LogDebug(
+                "PendingWorkItemDrainService: no agent for selector '{Selector}', skipping WorkItem {WorkItemId}",
+                item.AgentSelector, item.Id);
+            return false;
+        }
+
+        JobDistributionRequest? request;
+        try
+        {
+            request = JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload ?? "", PipelineJsonOptions.Default);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "PendingWorkItemDrainService: failed to deserialize payload for WorkItem {WorkItemId}", item.Id);
+            _agentResolver.ReleaseAgent(resolveResult.AgentId);
+            return false;
+        }
+
+        if (request is null)
+        {
+            _logger.LogError("PendingWorkItemDrainService: null payload for WorkItem {WorkItemId}", item.Id);
+            _agentResolver.ReleaseAgent(resolveResult.AgentId);
+            return false;
+        }
+
+        var connectionId = resolveResult.ConnectionId;
+        var agentId = resolveResult.AgentId;
+
+        // --- Consolidation items: dispatch via IConsolidationDispatchService (token vending at drain time) ---
+        if (item.TaskType == WorkItemTaskType.Consolidation)
+        {
+            await DispatchConsolidationItemAsync(item, request, agentId, ct);
+            return false;
+        }
+
+        // --- Pipeline items ---
+        if (!await DispatchPipelineItemAsync(item, request, agentId, connectionId, ct)) return false;
+
+        await SwapLabelWithRetryAsync(item.Id, request, ct); // Swap label to agent:in-progress (#997, retries #1579)
+        _logger.LogInformation("PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
+            item.Id, item.IssueIdentifier, agentId);
+        return false;
     }
 
     /// <summary>
@@ -392,25 +409,36 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             // concurrency token or conditional update if this assumption changes.
             if (!dispatchedSuccessfully)
             {
-                try
-                {
-                    await using var retryDb = await _dbFactory.CreateDbContextAsync(CancellationToken.None);
-                    var entity = await retryDb.WorkItems.FindAsync([item.Id], CancellationToken.None);
-                    if (entity is not null)
-                    {
-                        entity.RetryCount++;
-                        await retryDb.SaveChangesAsync(CancellationToken.None);
-                    }
-                }
-                catch (Exception retryEx)
-                {
-                    _logger.LogWarning(retryEx,
-                        "PendingWorkItemDrainService: failed to increment RetryCount for WorkItem {WorkItemId} after dispatch-transition failure",
-                        item.Id);
-                }
+                await IncrementRetryCountDirectAsync(item.Id);
             }
 
             return false;
+        }
+    }
+
+    /// <summary>
+    /// Directly increments the RetryCount on a work item via a fresh DbContext.
+    /// Used when the normal Dispatched→Pending transition callback couldn't run
+    /// (e.g., because TransitionAsync itself failed and the item was never Dispatched).
+    /// Uses <see cref="CancellationToken.None"/> to survive graceful shutdown.
+    /// </summary>
+    private async Task IncrementRetryCountDirectAsync(Guid workItemId)
+    {
+        try
+        {
+            await using var retryDb = await _dbFactory.CreateDbContextAsync(CancellationToken.None);
+            var entity = await retryDb.WorkItems.FindAsync([workItemId], CancellationToken.None);
+            if (entity is not null)
+            {
+                entity.RetryCount++;
+                await retryDb.SaveChangesAsync(CancellationToken.None);
+            }
+        }
+        catch (Exception retryEx)
+        {
+            _logger.LogWarning(retryEx,
+                "PendingWorkItemDrainService: failed to increment RetryCount for WorkItem {WorkItemId} after dispatch-transition failure",
+                workItemId);
         }
     }
 

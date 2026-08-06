@@ -37,6 +37,13 @@ public sealed class DispatchService : BackgroundService
     private readonly IOrchestratorRunService? _runService;
     private readonly DispatchEligibilityChecker _eligibilityChecker;
     private readonly TokenBucketRateLimiter _rateLimiter;
+    // TODO: [WARNING] _startupValidationRun is declared volatile to ensure reads/writes are not
+    // reordered by the JIT or CPU. However, the check-then-set pattern in RunStartupValidationIfNeededAsync
+    // is not atomic — two concurrent threads could both pass the `if (!_startupValidationRun)` check before
+    // either sets the flag to true. In practice this is benign (duplicate validation is just redundant log
+    // noise), and no concurrent reader outside the poll loop is visible in the codebase. If a future
+    // health-check or config-reload path reads this field from a different thread, consider using
+    // Interlocked.CompareExchange for a proper check-and-set.
     private volatile bool _startupValidationRun;
 
     internal DispatchService(
@@ -96,49 +103,58 @@ public sealed class DispatchService : BackgroundService
 
             if (stoppingToken.IsCancellationRequested) break;
 
-            Log.Information("DispatchService: leader acquired, entering poll loop");
-
-            // Reset so validation re-runs on each leadership tenure.
-            // Allows detection of ConfigMap changes during leadership loss/re-acquisition.
-            _startupValidationRun = false;
-
-            // Create linked token: cancels on EITHER host stop OR leadership loss
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken, _leaderElection.LeaderToken);
-            var ct = linked.Token;
-
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    await PollAndDispatchAsync(ct);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "DispatchService: unhandled error in poll cycle");
-                }
-
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
-
-            if (!stoppingToken.IsCancellationRequested)
-            {
-                Log.Information("DispatchService: leadership lost, re-entering wait loop");
-            }
+            await RunLeadershipTenureAsync(stoppingToken);
         }
 
         Log.Information("DispatchService: exiting (stopping)");
+    }
+
+    /// <summary>
+    /// Runs the dispatch poll loop for a single leadership tenure.
+    /// Returns when leadership is lost or <paramref name="stoppingToken"/> is cancelled.
+    /// </summary>
+    private async Task RunLeadershipTenureAsync(CancellationToken stoppingToken)
+    {
+        Log.Information("DispatchService: leader acquired, entering poll loop");
+
+        // Reset so validation re-runs on each leadership tenure.
+        // Allows detection of ConfigMap changes during leadership loss/re-acquisition.
+        _startupValidationRun = false;
+
+        // Create linked token: cancels on EITHER host stop OR leadership loss
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            stoppingToken, _leaderElection.LeaderToken);
+        var ct = linked.Token;
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await PollAndDispatchAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "DispatchService: unhandled error in poll cycle");
+            }
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        if (!stoppingToken.IsCancellationRequested)
+        {
+            Log.Information("DispatchService: leadership lost, re-entering wait loop");
+        }
     }
 
     /// <inheritdoc/>
@@ -247,6 +263,11 @@ public sealed class DispatchService : BackgroundService
     /// Queries the database to build concurrency state (active counts per selector group)
     /// and determines available PVCs for kiro agents.
     /// </summary>
+    // TODO: The DB GROUP BY aggregation that produces the concurrency map (formerly tested by
+    // DispatchStateBuilderTests.BuildStateAsync_BuildsConcurrencyMap) no longer has a dedicated
+    // unit test. The logic is covered only incidentally by higher-level lifecycle tests. Consider
+    // adding a direct test for BuildDispatchStateAsync that seeds Dispatched/Running items and
+    // asserts the resulting dictionary counts per selector.
     private async Task<(Dictionary<string, int> ConcurrencyBySelector, List<string> AvailablePvcs)> BuildDispatchStateAsync(
         PipelineDbContext db, CancellationToken ct)
     {
@@ -285,32 +306,40 @@ public sealed class DispatchService : BackgroundService
                 }
                 return (true, projectSecrets);
             },
-            async workItem =>
-            {
-                // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14 fix).
-                // Without this, StartedAt reflects preparation/enqueue time which can be
-                // hours earlier for queued work, inflating the Duration shown in the UI.
-                _runService?.GetRun(item.Id.ToString())?.ResetStartedAt(workItem.DispatchedAt!.Value);
-
-                // Swap issue label to agent:in-progress (non-fatal — best effort)
-                if (_labelService is not null &&
-                    !string.IsNullOrEmpty(item.IssueIdentifier) &&
-                    !string.IsNullOrEmpty(item.IssueProviderConfigId))
-                {
-                    try
-                    {
-                        await _labelService.SwapLabelAsync(
-                            item.IssueProviderConfigId, item.IssueIdentifier, AgentLabels.InProgress, ct);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Warning(ex,
-                            "DispatchService: failed to swap label to agent:in-progress for {IssueIdentifier}",
-                            item.IssueIdentifier);
-                    }
-                }
-            },
+            async workItem => await OnPipelineDispatchSuccessAsync(workItem, item, ct),
             ct);
+    }
+
+    /// <summary>
+    /// Post-dispatch success callback for pipeline work items.
+    /// Resets the in-memory run's StartedAt to actual dispatch time (BUG-14 fix) and
+    /// swaps the issue label to <c>agent:in-progress</c> (best-effort, non-fatal).
+    /// </summary>
+    private async Task OnPipelineDispatchSuccessAsync(
+        WorkItemEntity workItem, PendingWorkItemProjection item, CancellationToken ct)
+    {
+        // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14 fix).
+        // Without this, StartedAt reflects preparation/enqueue time which can be
+        // hours earlier for queued work, inflating the Duration shown in the UI.
+        _runService?.GetRun(item.Id.ToString())?.ResetStartedAt(workItem.DispatchedAt!.Value);
+
+        // Swap issue label to agent:in-progress (non-fatal — best effort)
+        if (_labelService is not null &&
+            !string.IsNullOrEmpty(item.IssueIdentifier) &&
+            !string.IsNullOrEmpty(item.IssueProviderConfigId))
+        {
+            try
+            {
+                await _labelService.SwapLabelAsync(
+                    item.IssueProviderConfigId, item.IssueIdentifier, AgentLabels.InProgress, ct);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex,
+                    "DispatchService: failed to swap label to agent:in-progress for {IssueIdentifier}",
+                    item.IssueIdentifier);
+            }
+        }
     }
 
     // ── Static helpers (internal for testability) ────────────────────────
