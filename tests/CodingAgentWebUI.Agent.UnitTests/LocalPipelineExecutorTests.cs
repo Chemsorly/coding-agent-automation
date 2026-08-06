@@ -1625,6 +1625,9 @@ public class LocalPipelineExecutorTests : IDisposable
             cts.Token);
 
         await task; // Must not throw
+
+        // Semaphore was never acquired on the cancelled path — no lock leak
+        signalrLock.CurrentCount.Should().Be(1);
     }
 
     [Fact]
@@ -1639,6 +1642,8 @@ public class LocalPipelineExecutorTests : IDisposable
             signalrLock,
             () => Task.CompletedTask,
             CancellationToken.None);
+
+        Assert.True(true, "SerializedSendAsync swallowed ObjectDisposedException without rethrowing");
     }
 
     [Fact]
@@ -1661,11 +1666,14 @@ public class LocalPipelineExecutorTests : IDisposable
     public async Task SerializedSendAsync_WhenSemaphoreDisposedDuringSend_DoesNotThrow()
     {
         var signalrLock = new SemaphoreSlim(1, 1);
+        var executed = false;
 
         await PipelineSignalRReporter.SerializedSendAsync(
             signalrLock,
-            () => { signalrLock.Dispose(); return Task.CompletedTask; },
+            () => { executed = true; signalrLock.Dispose(); return Task.CompletedTask; },
             CancellationToken.None);
+
+        Assert.True(executed, "send callback was invoked before semaphore disposal");
     }
 
     // ── PullRequestCreationContext ──────────────────────────────────────
