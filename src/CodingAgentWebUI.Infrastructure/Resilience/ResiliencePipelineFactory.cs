@@ -26,15 +26,6 @@ public static class ResiliencePipelineFactory
     internal static readonly TimeSpan HttpOuterTimeout = TimeSpan.FromMinutes(3);
     internal static readonly TimeSpan GitLabOuterTimeout = TimeSpan.FromMinutes(3);
 
-    /// <summary>
-    /// Creates a resilience pipeline for GitHub API (Octokit) calls.
-    /// Uses an outer timeout (default: 5 minutes) that wraps the entire retry sequence including
-    /// rate-limit delays, and a per-attempt timeout (default: 30s) for individual API calls.
-    /// Pattern: outer timeout → retry (with rate-limit-aware backoff) → per-attempt timeout.
-    /// </summary>
-    public static ResiliencePipeline CreateGitHubApiPipeline(ILogger logger)
-        => CreateGitHubApiPipeline(logger, DefaultOuterTimeout, DefaultTimeout);
-
     internal static ResiliencePipeline CreateGitHubApiPipeline(
         ILogger logger,
         TimeSpan? outerTimeout = null,

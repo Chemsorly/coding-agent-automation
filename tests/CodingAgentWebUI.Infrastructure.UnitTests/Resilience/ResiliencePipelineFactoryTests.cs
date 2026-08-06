@@ -69,6 +69,12 @@ public class ResiliencePipelineFactoryTests
     [Fact]
     public void CreateGitHubApiPipeline_ReturnsNonNullPipeline()
     {
+        // TODO: This assertion (NotBeNull) is too weak to guard the S3427 fix regression. The single-argument
+        // call now resolves to the internal overload with optional parameters, but this test would not catch a
+        // regression where DefaultOuterTimeout or DefaultTimeout are wired incorrectly. Consider adding a test
+        // that calls CreateGitHubApiPipeline(logger) with no optional args and asserts that a hanging operation
+        // eventually throws TimeoutRejectedException within a reasonable multiple of DefaultOuterTimeout (5 min),
+        // confirming the default values are correctly applied.
         var pipeline = ResiliencePipelineFactory.CreateGitHubApiPipeline(Log.Logger);
         pipeline.Should().NotBeNull();
     }
