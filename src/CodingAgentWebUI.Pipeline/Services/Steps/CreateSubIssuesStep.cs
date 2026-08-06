@@ -155,98 +155,18 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         // 9. Retry transient errors (3 attempts, exponential backoff: 0s, 1s, 3s)
         for (var attempt = 0; attempt < MaxRetryAttempts; attempt++)
         {
-            try
+            if (attempt > 0)
             {
-                if (attempt > 0)
-                {
-                    var delay = RetryDelays[attempt];
-                    if (delay > TimeSpan.Zero)
-                    {
-                        await Task.Delay(delay, ct);
-                    }
-                }
-
-                // Create the issue — route to specific provider if target is resolved,
-                // otherwise use the dispatching template's default provider.
-                var created = targetProviderId is not null
-                    ? await context.IssueOps.CreateIssueForProviderAsync(
-                        targetProviderId, sanitizedTitle, sanitizedBody, labels, ct)
-                    : await context.IssueOps.CreateIssueAsync(
-                        sanitizedTitle, sanitizedBody, labels, ct);
-
-                context.Logger.Information(
-                    "Created issue {Identifier}: {Title}{RouteInfo}",
-                    created.Identifier, sanitizedTitle,
-                    targetProviderId is not null ? $" (routed to provider {targetProviderId})" : "");
-
-                PipelineTelemetry.SubIssuesCreated.Add(1,
-                    PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
-
-                return new SubIssueCreationResult
-                {
-                    Title = proposal.Title,
-                    Success = true,
-                    Identifier = created.Identifier,
-                    Url = created.Url
-                };
+                var delay = RetryDelays[attempt];
+                if (delay > TimeSpan.Zero)
+                    await Task.Delay(delay, ct);
             }
-            catch (OperationCanceledException)
-            {
-                // Timeout or external cancellation — don't retry
-                PipelineTelemetry.SubIssuesFailed.Add(1,
-                    PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
-                return new SubIssueCreationResult
-                {
-                    Title = proposal.Title,
-                    Success = false,
-                    FailureReason = "creation timeout exceeded"
-                };
-            }
-            catch (Exception ex) when (IsTransient(ex))
-            {
-                context.Logger.Warning(
-                    ex,
-                    "Transient error creating issue '{Title}' (attempt {Attempt}/{MaxAttempts})",
-                    proposal.Title, attempt + 1, MaxRetryAttempts);
 
-                // If this was the last attempt, fall through to failure
-                if (attempt == MaxRetryAttempts - 1)
-                {
-                    Activity.Current?.RecordError(ex);
-                    context.Logger.Warning(
-                        "Exhausted retries for issue '{Title}': {Error}",
-                        proposal.Title, ex.Message);
+            var attemptResult = await TryCreateIssueOnceAsync(
+                proposal, sanitizedTitle, sanitizedBody, labels, targetProviderId, attempt, context, ct);
 
-                    PipelineTelemetry.SubIssuesFailed.Add(1,
-                        PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
-
-                    return new SubIssueCreationResult
-                    {
-                        Title = proposal.Title,
-                        Success = false,
-                        FailureReason = $"Transient error after {MaxRetryAttempts} attempts: {ex.Message}"
-                    };
-                }
-            }
-            catch (Exception ex)
-            {
-                Activity.Current?.RecordError(ex);
-                // Non-transient error — skip immediately without retry
-                context.Logger.Warning(
-                    ex,
-                    "Non-transient error creating issue '{Title}': {Error}",
-                    proposal.Title, ex.Message);
-
-                PipelineTelemetry.SubIssuesFailed.Add(1,
-                    PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
-
-                return new SubIssueCreationResult
-                {
-                    Title = proposal.Title,
-                    Success = false,
-                    FailureReason = $"Non-transient error: {ex.Message}"
-                };
-            }
+            if (attemptResult is not null)
+                return attemptResult;
         }
 
         // Should not reach here, but safety net
@@ -256,6 +176,97 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             Success = false,
             FailureReason = "Unexpected: exhausted retry loop without result"
         };
+    }
+
+    /// <summary>
+    /// Attempts a single issue creation. Returns a completed <see cref="SubIssueCreationResult"/>
+    /// when the attempt either succeeds or fails non-retryably. Returns null when the attempt
+    /// failed transiently and should be retried.
+    /// </summary>
+    private static async Task<SubIssueCreationResult?> TryCreateIssueOnceAsync(
+        SubIssueProposal proposal,
+        string sanitizedTitle,
+        string sanitizedBody,
+        List<string> labels,
+        string? targetProviderId,
+        int attempt,
+        PipelineStepContext context,
+        CancellationToken ct)
+    {
+        try
+        {
+            // Create the issue — route to specific provider if target is resolved,
+            // otherwise use the dispatching template's default provider.
+            var created = targetProviderId is not null
+                ? await context.IssueOps.CreateIssueForProviderAsync(
+                    targetProviderId, sanitizedTitle, sanitizedBody, labels, ct)
+                : await context.IssueOps.CreateIssueAsync(
+                    sanitizedTitle, sanitizedBody, labels, ct);
+
+            context.Logger.Information(
+                "Created issue {Identifier}: {Title}{RouteInfo}",
+                created.Identifier, sanitizedTitle,
+                targetProviderId is not null ? $" (routed to provider {targetProviderId})" : "");
+
+            PipelineTelemetry.SubIssuesCreated.Add(1,
+                PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
+
+            return new SubIssueCreationResult
+            {
+                Title = proposal.Title,
+                Success = true,
+                Identifier = created.Identifier,
+                Url = created.Url
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            PipelineTelemetry.SubIssuesFailed.Add(1,
+                PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
+            return new SubIssueCreationResult
+            {
+                Title = proposal.Title,
+                Success = false,
+                FailureReason = "creation timeout exceeded"
+            };
+        }
+        catch (Exception ex) when (IsTransient(ex))
+        {
+            context.Logger.Warning(ex,
+                "Transient error creating issue '{Title}' (attempt {Attempt}/{MaxAttempts})",
+                proposal.Title, attempt + 1, MaxRetryAttempts);
+
+            if (attempt == MaxRetryAttempts - 1)
+            {
+                // Last attempt — stop retrying
+                Activity.Current?.RecordError(ex);
+                context.Logger.Warning("Exhausted retries for issue '{Title}': {Error}", proposal.Title, ex.Message);
+                PipelineTelemetry.SubIssuesFailed.Add(1,
+                    PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
+                return new SubIssueCreationResult
+                {
+                    Title = proposal.Title,
+                    Success = false,
+                    FailureReason = $"Transient error after {MaxRetryAttempts} attempts: {ex.Message}"
+                };
+            }
+
+            return null; // Retry
+        }
+        catch (Exception ex)
+        {
+            Activity.Current?.RecordError(ex);
+            context.Logger.Warning(ex,
+                "Non-transient error creating issue '{Title}': {Error}", proposal.Title, ex.Message);
+            PipelineTelemetry.SubIssuesFailed.Add(1,
+                PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
+            return new SubIssueCreationResult
+            {
+                Title = proposal.Title,
+                Success = false,
+                FailureReason = $"Non-transient error: {ex.Message}"
+            };
+        }
     }
 
     /// <summary>

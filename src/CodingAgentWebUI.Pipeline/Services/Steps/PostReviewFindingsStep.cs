@@ -87,15 +87,9 @@ public sealed class PostReviewFindingsStep : IPipelineStep
 
         // Step 1: Stale review handling
         if (supportsInline)
-        {
-            // Dismiss previous reviews via platform-native API
             await DismissPreviousReviewSafeAsync(context, prNumber, ct);
-        }
         else
-        {
-            // Collapse existing reviews (existing behavior for non-inline providers)
             await CollapseExistingReviewsAsync(context, prNumber, ct);
-        }
 
         // Step 2: Determine the body and review type
         var body = context.Run.CodeReviewAgentsRun.Count == 0
@@ -111,27 +105,13 @@ public sealed class PostReviewFindingsStep : IPipelineStep
             return;
         }
 
-        // Step 4: If provider doesn't support inline comments but inline is enabled,
-        // parse findings and append "Findings by Location" section to body
+        // Step 4: If provider doesn't support inline comments, append location section and submit
+        // Note: The original inner `if (inlineSettings.Enabled)` guard was intentionally removed here.
+        // Step 3 above already returns early when `!inlineSettings.Enabled`, so by this point
+        // inlineSettings.Enabled is always true — the guard is implicit and the behavior is preserved.
         if (!supportsInline)
         {
-            if (inlineSettings.Enabled)
-            {
-                // Parse findings to get location metadata for the body section
-                var findings = new List<StructuredFinding>();
-                foreach (var kvp in context.Run.CodeReviewAgentFindings)
-                {
-                    if (!string.IsNullOrEmpty(kvp.Value))
-                        findings.AddRange(FindingsParser.Parse(kvp.Value, kvp.Key));
-                }
-
-                var locationSection = ReviewFindingsFormatter.FormatFindingsByLocation(findings);
-                if (!string.IsNullOrEmpty(locationSection))
-                {
-                    body += "\n" + locationSection;
-                }
-            }
-
+            body = AppendLocationSection(body, context.Run.CodeReviewAgentFindings);
             await SubmitWithOwnPrFallbackAsync(context, prNumber, body, reviewType, ct);
             return;
         }
@@ -148,45 +128,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
 
         // Step 6.5: Filter comments to only those targeting lines within diff hunks.
         // GitHub's API returns 422 if a comment targets a line outside the diff.
-        var diffPath = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.FullDiffFilePath);
-        IReadOnlyList<ReviewComment> validComments = comments;
-        if (File.Exists(diffPath))
-        {
-            try
-            {
-                var diffText = await File.ReadAllTextAsync(diffPath, ct);
-                var validLines = DiffHunkParser.ParseValidLines(diffText);
-                validComments = comments
-                    .Where(c => validLines.TryGetValue(c.Path, out var lines) && lines.Contains(c.Line))
-                    .ToList();
-
-                var filteredCount = comments.Count - validComments.Count;
-                if (filteredCount > 0)
-                {
-                    context.Logger.Information(
-                        "Filtered {FilteredCount}/{TotalCount} inline comments targeting lines outside diff hunks",
-                        filteredCount, comments.Count);
-
-                    // Log per-comment diagnostics at Debug level for troubleshooting
-                    foreach (var c in comments)
-                    {
-                        if (!validLines.ContainsKey(c.Path))
-                        {
-                            context.Logger.Debug("Comment on {Path}:{Line} filtered — file not in diff", c.Path, c.Line);
-                        }
-                        else if (!validLines[c.Path].Contains(c.Line))
-                        {
-                            context.Logger.Debug("Comment on {Path}:{Line} filtered — line not in any diff hunk", c.Path, c.Line);
-                        }
-                    }
-                }
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                context.Logger.Warning(ex, "Failed to parse diff for hunk validation, submitting all comments (may 422)");
-                // Fall through with unfiltered comments — the 422 fallback will handle it
-            }
-        }
+        var validComments = await FilterCommentsToDiffHunksAsync(context, comments, ct);
 
         // Step 7: Build ReviewSubmission with CommitId
         string? commitId = null;
@@ -243,6 +185,72 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         // Using Approve could inadvertently satisfy branch protection rules,
         // allowing PRs to merge without human review.
         return PullRequestReviewType.Comment;
+    }
+
+    /// <summary>
+    /// Parses all agent findings and appends a "Findings by Location" section to <paramref name="body"/>
+    /// when the provider does not support native inline comments.
+    /// </summary>
+    private static string AppendLocationSection(
+        string body, IReadOnlyDictionary<string, string> agentFindings)
+    {
+        var findings = new List<StructuredFinding>();
+        foreach (var kvp in agentFindings)
+        {
+            if (!string.IsNullOrEmpty(kvp.Value))
+                findings.AddRange(FindingsParser.Parse(kvp.Value, kvp.Key));
+        }
+
+        var locationSection = ReviewFindingsFormatter.FormatFindingsByLocation(findings);
+        return string.IsNullOrEmpty(locationSection) ? body : body + "\n" + locationSection;
+    }
+
+    /// <summary>
+    /// Filters <paramref name="comments"/> to only those targeting lines within diff hunks.
+    /// Returns the original list unfiltered when the diff file is unavailable or parsing fails
+    /// (the 422 fallback in the caller will handle any rejected comments).
+    /// </summary>
+    private static async Task<IReadOnlyList<ReviewComment>> FilterCommentsToDiffHunksAsync(
+        PipelineStepContext context,
+        IReadOnlyList<ReviewComment> comments,
+        CancellationToken ct)
+    {
+        var diffPath = Path.Combine(context.Run.WorkspacePath!, AgentWorkspacePaths.FullDiffFilePath);
+        if (!File.Exists(diffPath))
+            return comments;
+
+        try
+        {
+            var diffText = await File.ReadAllTextAsync(diffPath, ct);
+            var validLines = DiffHunkParser.ParseValidLines(diffText);
+            var validComments = comments
+                .Where(c => validLines.TryGetValue(c.Path, out var lines) && lines.Contains(c.Line))
+                .ToList();
+
+            var filteredCount = comments.Count - validComments.Count;
+            if (filteredCount > 0)
+            {
+                context.Logger.Information(
+                    "Filtered {FilteredCount}/{TotalCount} inline comments targeting lines outside diff hunks",
+                    filteredCount, comments.Count);
+
+                // Log per-comment diagnostics at Debug level for troubleshooting
+                foreach (var c in comments)
+                {
+                    if (!validLines.ContainsKey(c.Path))
+                        context.Logger.Debug("Comment on {Path}:{Line} filtered — file not in diff", c.Path, c.Line);
+                    else if (!validLines[c.Path].Contains(c.Line))
+                        context.Logger.Debug("Comment on {Path}:{Line} filtered — line not in any diff hunk", c.Path, c.Line);
+                }
+            }
+
+            return validComments;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            context.Logger.Warning(ex, "Failed to parse diff for hunk validation, submitting all comments (may 422)");
+            return comments;
+        }
     }
 
     /// <summary>

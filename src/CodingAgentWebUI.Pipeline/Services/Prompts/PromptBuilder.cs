@@ -460,44 +460,53 @@ public static partial class PromptBuilder
 
             if (fenceDelimiter is null)
             {
-                // Not inside a fence — check if this line opens one
-                if (trimmed.StartsWith("```"))
+                fenceDelimiter = TryOpenFence(trimmed);
+                if (fenceDelimiter is not null)
                 {
-                    fenceDelimiter = "```";
-                    sb.AppendLine(line);
-                    continue;
-                }
-                if (trimmed.StartsWith("~~~"))
-                {
-                    fenceDelimiter = "~~~";
                     sb.AppendLine(line);
                     continue;
                 }
 
-                // Outside code blocks — perform replacements
-                var processedLine = ReplaceInlineImages(line, urlToLocalPath);
-
-                // Check for HTML <img> tags and add comment below if URL matched
-                var imgMatch = HtmlImgSrcRegex().Match(processedLine);
-                if (imgMatch.Success && urlToLocalPath.TryGetValue(imgMatch.Groups[1].Value, out var localPath))
-                {
-                    sb.AppendLine(processedLine);
-                    sb.AppendLine($"<!-- Downloaded as {localPath} -->");
-                }
-                else
-                {
-                    sb.AppendLine(processedLine);
-                }
+                AppendOutsideFenceLine(sb, line, urlToLocalPath);
             }
             else
             {
                 // Inside a fence — check if this line closes it (must match opening delimiter)
                 if (trimmed.StartsWith(fenceDelimiter))
-                {
                     fenceDelimiter = null;
-                }
                 sb.AppendLine(line);
             }
+        }
+    }
+
+    /// <summary>
+    /// Returns the fence delimiter if the trimmed line opens a code fence, null otherwise.
+    /// </summary>
+    private static string? TryOpenFence(string trimmed)
+    {
+        if (trimmed.StartsWith("```")) return "```";
+        if (trimmed.StartsWith("~~~")) return "~~~";
+        return null;
+    }
+
+    /// <summary>
+    /// Appends a single outside-fence line to the builder, replacing inline images
+    /// and adding HTML img download comments where applicable.
+    /// </summary>
+    private static void AppendOutsideFenceLine(StringBuilder sb, string line, Dictionary<string, string> urlToLocalPath)
+    {
+        var processedLine = ReplaceInlineImages(line, urlToLocalPath);
+
+        // Check for HTML <img> tags and add comment below if URL matched
+        var imgMatch = HtmlImgSrcRegex().Match(processedLine);
+        if (imgMatch.Success && urlToLocalPath.TryGetValue(imgMatch.Groups[1].Value, out var localPath))
+        {
+            sb.AppendLine(processedLine);
+            sb.AppendLine($"<!-- Downloaded as {localPath} -->");
+        }
+        else
+        {
+            sb.AppendLine(processedLine);
         }
     }
 
