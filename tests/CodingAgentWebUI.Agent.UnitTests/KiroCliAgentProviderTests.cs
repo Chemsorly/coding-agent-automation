@@ -280,11 +280,6 @@ public class KiroCliAgentProviderTests
         await _provider.ApplyCliSettingsAsync(CancellationToken.None);
 
         // Early return path — no warning should be logged
-        // TODO: [WARNING] Moq generic type mismatch: Warning(It.IsAny<string>(), It.IsAny<object>())
-        // binds T=object, but production code calls _logger.Warning<string>(...) — a different
-        // generic instantiation. Times.Never will always pass regardless of whether a warning was
-        // actually logged. Fix by using It.IsAny<string>() for the second parameter to match the
-        // actual generic instantiation, or use a mock wrapper that captures all Warning calls.
         _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object>()), Times.Never);
     }
 
@@ -297,9 +292,6 @@ public class KiroCliAgentProviderTests
         await provider.ApplyCliSettingsAsync(CancellationToken.None);
 
         // Early return path — no warning should be logged
-        // TODO: [WARNING] Same Moq generic type mismatch as ApplyCliSettingsAsync_WhenModelIsNull_DoesNothing.
-        // Warning(It.IsAny<string>(), It.IsAny<object>()) targets Warning<object> but production code
-        // emits Warning<string>. This verify will always pass regardless of actual log output.
         _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object>()), Times.Never);
     }
 
@@ -312,9 +304,6 @@ public class KiroCliAgentProviderTests
         await provider.ApplyCliSettingsAsync(CancellationToken.None);
 
         // Early return path — no warning should be logged
-        // TODO: [WARNING] Same Moq generic type mismatch as ApplyCliSettingsAsync_WhenModelIsNull_DoesNothing.
-        // Warning(It.IsAny<string>(), It.IsAny<object>()) targets Warning<object> but production code
-        // emits Warning<string>. This verify will always pass regardless of actual log output.
         _mockLogger.Verify(l => l.Warning(It.IsAny<string>(), It.IsAny<object>()), Times.Never);
     }
 

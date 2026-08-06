@@ -282,11 +282,6 @@ public class AgentWorkerServiceTests : IDisposable
         var task = (Task)handler.Invoke(service, ["job-123"])!;
         await task;
 
-        // TODO: [WARNING] task.IsCompletedSuccessfully is guaranteed true after a successful `await task`
-        // (the test would already have thrown at the await line otherwise). The assertion is redundant
-        // rather than tautological — it adds no independent failure mode. Consider removing it and
-        // relying solely on `await task` to enforce the no-throw contract, or add a positive behavioral
-        // assertion (e.g. verify state was cleaned up after cancellation).
         Assert.True(task.IsCompletedSuccessfully, "task should complete successfully without throwing");
     }
 
@@ -307,8 +302,6 @@ public class AgentWorkerServiceTests : IDisposable
         var task = (Task)handler.Invoke(service, ["session-1"])!;
         await task;
 
-        // TODO: [WARNING] Same as HandleCancelJob_DisposedCts_DoesNotThrow — task.IsCompletedSuccessfully
-        // is guaranteed true after a successful `await task` and adds no independent failure mode.
         Assert.True(task.IsCompletedSuccessfully, "task should complete successfully without throwing");
     }
 

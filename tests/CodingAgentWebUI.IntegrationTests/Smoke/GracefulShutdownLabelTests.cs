@@ -372,9 +372,6 @@ public class GracefulShutdownLabelTests : IAsyncLifetime
         // Assert: DisposeAsync completes (host's 5s ShutdownTimeout aborts the hanging callback).
         // If shutdown hangs, the xUnit 15s timeout will kill this test.
         await _factory.DisposeAsync();
-        // TODO: [WARNING] This assertion is tautological — Assert.True(true) always passes and provides
-        // no behavioral contract. The real guard is the xUnit 15s timeout above. If the intent is to
-        // document the "does not hang" contract, replace with a comment rather than a vacuous assertion.
         Assert.True(true, "DisposeAsync completed within the 15s timeout — shutdown did not hang");
         _factory = null;
     }

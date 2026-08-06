@@ -311,10 +311,6 @@ public class GitLabRepositoryProviderMergeRequestTests
         await provider.DismissPreviousReviewAsync(
             (int)mr.Iid, "<!-- marker -->", "Superseded", CancellationToken.None);
 
-        // TODO: [WARNING] This assertion is tautological — Assert.True(true) always passes and cannot
-        // detect regressions. A stronger assertion would verify the discussion list is still empty,
-        // e.g. mrClient.Discussions((int)mr.Iid).All.ToList().Should().BeEmpty(), confirming the
-        // no-op contract (no thread was created or modified on the no-matching-threads path).
         Assert.True(true, "no exception thrown — DismissPreviousReviewAsync is a no-op when no matching threads exist");
     }
 

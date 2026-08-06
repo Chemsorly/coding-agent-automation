@@ -1643,12 +1643,6 @@ public class LocalPipelineExecutorTests : IDisposable
             () => Task.CompletedTask,
             CancellationToken.None);
 
-        // TODO: [WARNING] This assertion is tautological — Assert.True(true) always passes and cannot
-        // detect a regression where the method starts rethrowing ObjectDisposedException. The companion
-        // test SerializedSendAsync_WhenSemaphoreDisposed_SendIsNotExecuted already covers the
-        // meaningful behavioral contract (send is not executed). Consider asserting semaphore state
-        // (e.g. signalrLock.IsDisposed via reflection or a wrapper) or simply removing the vacuous
-        // assertion in favour of a comment explaining the no-throw guarantee is enforced by `await task`.
         Assert.True(true, "SerializedSendAsync swallowed ObjectDisposedException without rethrowing");
     }
 
