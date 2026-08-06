@@ -1,5 +1,6 @@
 using System.Text.Json;
 using CodingAgentWebUI.Infrastructure.Persistence;
+using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Infrastructure.Persistence.Services;
 using CodingAgentWebUI.Orchestration.Telemetry;
 using CodingAgentWebUI.Pipeline;
@@ -124,36 +125,20 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             var resolveResult = _agentResolver.ResolveAgent(item.AgentSelector ?? "");
             if (resolveResult is null)
             {
-                // No idle agent for this selector. If the selector is empty (matches any agent),
-                // then no agents are idle at all — stop draining entirely.
                 if (string.IsNullOrWhiteSpace(item.AgentSelector))
                 {
                     _logger.LogDebug("PendingWorkItemDrainService: no idle agents at all, stopping drain");
                     break;
                 }
-                // Label-constrained item with no matching agent — skip, try the next item
                 _logger.LogDebug(
                     "PendingWorkItemDrainService: no agent for selector '{Selector}', skipping WorkItem {WorkItemId}",
                     item.AgentSelector, item.Id);
                 continue;
             }
 
-            // Deserialize the original request from payload
-            JobDistributionRequest? request;
-            try
+            var (request, skip) = ResolveAndValidateRequest(item);
+            if (skip)
             {
-                request = JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload ?? "", PipelineJsonOptions.Default);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "PendingWorkItemDrainService: failed to deserialize payload for WorkItem {WorkItemId}", item.Id);
-                _agentResolver.ReleaseAgent(resolveResult.AgentId);
-                continue;
-            }
-
-            if (request is null)
-            {
-                _logger.LogError("PendingWorkItemDrainService: null payload for WorkItem {WorkItemId}", item.Id);
                 _agentResolver.ReleaseAgent(resolveResult.AgentId);
                 continue;
             }
@@ -161,254 +146,32 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             var connectionId = resolveResult.ConnectionId;
             var agentId = resolveResult.AgentId;
 
-            // --- Consolidation items: dispatch via IConsolidationDispatchService (token vending at drain time) ---
+            // --- Consolidation items ---
             if (item.TaskType == WorkItemTaskType.Consolidation)
             {
-                if (_consolidationDispatcher is null || _consolidationRunStore is null)
-                {
-                    _logger.LogError("PendingWorkItemDrainService: consolidation dispatcher not available for WorkItem {WorkItemId}", item.Id);
-                    _agentResolver.ReleaseAgent(agentId);
-                    continue;
-                }
-
-                // Cancel-during-dispatch race guard: check if run was cancelled while queued
-                var runId = request.IssueIdentifier; // RunId stored as IssueIdentifier for consolidation
-                var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
-                if (consolidationRun is null ||
-                    consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
-                    consolidationRun.Status == ConsolidationRunStatus.Failed)
-                {
-                    _logger.LogInformation(
-                        "PendingWorkItemDrainService: consolidation run {RunId} is cancelled/failed, transitioning WorkItem {WorkItemId} to Cancelled",
-                        runId, item.Id);
-                    _agentResolver.ReleaseAgent(agentId);
-                    await _transitionService.TransitionAsync(
-                        item.Id, WorkItemStatus.Cancelled,
-                        entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct: ct);
-                    continue;
-                }
-
-                try
-                {
-                    // Transition to Dispatched before dispatch attempt
-                    await _transitionService.TransitionAsync(
-                        item.Id, WorkItemStatus.Dispatched,
-                        entity =>
-                        {
-                            entity.DispatchedAt = DateTimeOffset.UtcNow;
-                            entity.AssignedAgentId = agentId;
-                        }, ct: ct);
-
-                    var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
-                        runId,
-                        request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
-                        string.IsNullOrEmpty(request.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)request.ConsolidationTemplateId,
-                        request.ConsolidationWorkspacePath ?? "",
-                        agentId,
-                        ct);
-
-                    if (dispatched)
-                    {
-                        _agentResolver.AssignJob(agentId, item.Id.ToString());
-
-                        var latency = (DateTimeOffset.UtcNow - (item.OriginalEnqueuedAt ?? item.CreatedAt)).TotalSeconds;
-                        WorkDistributionTelemetry.DispatchLatency.Record(latency,
-                            new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
-                        WorkDistributionTelemetry.PendingDuration.Record(latency,
-                            new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
-
-                        _logger.LogInformation(
-                            "PendingWorkItemDrainService: dispatched consolidation WorkItem {WorkItemId} (run {RunId}) to agent {AgentId}",
-                            item.Id, runId, agentId);
-                    }
-                    else
-                    {
-                        // Dispatch failed — revert to Pending for next cycle
-                        _agentResolver.ReleaseAgent(agentId);
-                        // Note: this path still uses `ct` — the outer catch handler provides the safety net
-                        // by retrying with CancellationToken.None if this revert fails during shutdown.
-                        await _transitionService.TransitionAsync(
-                            item.Id, WorkItemStatus.Pending,
-                            entity =>
-                            {
-                                entity.DispatchedAt = null;
-                                entity.AssignedAgentId = null;
-                            }, ct: ct);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex,
-                        "PendingWorkItemDrainService: consolidation dispatch failed for WorkItem {WorkItemId}",
-                        item.Id);
-                    _agentResolver.ReleaseAgent(agentId);
-                    // Revert WorkItem from Dispatched to Pending so it's available for the next drain cycle
-                    // (previously this was left stuck in Dispatched until the stuck-item detector fired ~5 min later)
-                    try
-                    {
-                        await _transitionService.TransitionAsync(
-                            item.Id, WorkItemStatus.Pending,
-                            entity =>
-                            {
-                                entity.DispatchedAt = null;
-                                entity.AssignedAgentId = null;
-                            }, ct: CancellationToken.None);
-                    }
-                    catch (Exception revertEx)
-                    {
-                        _logger.LogWarning(revertEx,
-                            "PendingWorkItemDrainService: failed to revert WorkItem {WorkItemId} to Pending after dispatch exception — stuck-item detector will handle",
-                            item.Id);
-                    }
-                }
-
+                await HandleConsolidationItemAsync(item, request!, agentId, ct);
+                // TODO: HandleConsolidationItemAsync does not return a result, so SwapLabelWithRetryAsync
+                // and the success log below are never reached for consolidation items. This matches the
+                // original behavior (original consolidation block also ended with `continue`), so there
+                // is no behavioral regression — but it means label-swap is consolidation-only skipped.
+                // (review-findings: Correctness WARNING)
                 continue;
             }
 
-            // --- Pipeline items: existing path ---
-            var dispatchedSuccessfully = false;
-            try
+            // --- Pipeline items ---
+            var result = await HandlePipelineItemAsync(item, request!, agentId, connectionId, ct);
+
+            // If TransitionAsync(Dispatched) itself failed, perform direct RetryCount increment
+            if (!result.FullyCompleted && !result.DispatchedSuccessfully)
             {
-                // DB transition first: in-memory state only reflects confirmed DB state.
-                // If TransitionAsync fails, no in-memory cleanup is needed.
-                // This also ensures the agent's JobAccepted → Running transition is valid
-                // (Dispatched → Running, not Pending → Running which is rejected).
-                var dispatchTime = DateTimeOffset.UtcNow;
-                await _transitionService.TransitionAsync(
-                    item.Id,
-                    WorkItemStatus.Dispatched,
-                    entity =>
-                    {
-                        entity.DispatchedAt = dispatchTime;
-                        entity.AssignedAgentId = agentId;
-                    },
-                    ct: ct);
-
-                dispatchedSuccessfully = true;
-
-                // Update in-memory PipelineRun with agent ID.
-                // If the run is not in memory (orchestrator restart scenario), re-create it
-                // so that HeartbeatMonitor and run-tracking continue to function correctly.
-                if (!string.IsNullOrEmpty(request.RunId))
-                {
-                    var run = _runService.GetRun(request.RunId);
-                    if (run is not null)
-                    {
-                        run.AgentId = agentId;
-                    }
-                    else
-                    {
-                        // Orchestrator restarted — in-memory PipelineRun was lost.
-                        // Re-create it from the serialized request payload.
-                        var recreatedRun = PipelineRunFactory.FromDistributionRequest(
-                            request, agentId, startedAt: item.DispatchedAt ?? item.CreatedAt);
-                        _runService.AddRun(recreatedRun);
-                        _logger.LogInformation(
-                            "PendingWorkItemDrainService: re-created in-memory PipelineRun {RunId} for issue {IssueIdentifier} (orchestrator restart recovery)",
-                            request.RunId, request.IssueIdentifier);
-                    }
-                }
-
-                // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14).
-                // Without this, StartedAt reflects preparation/enqueue time which can be
-                // hours earlier for queued work, inflating the Duration shown in the UI.
-                if (!string.IsNullOrEmpty(request.RunId))
-                {
-                    _runService.GetRun(request.RunId)?.ResetStartedAt(dispatchTime);
-                }
-
-                var message = DbWorkDistributorBase.BuildJobAssignmentMessage(item.Id, request);
-
-                // Inject project secrets at delivery time (not serialized in WorkItem payload for security)
-                if (_projectStore is not null && !string.IsNullOrEmpty(request.ProjectId))
-                {
-                    var project = await _projectStore.GetProjectByIdAsync(request.ProjectId, ct);
-                    if (project?.Secrets is { Count: > 0 })
-                        message = message with { ProjectSecrets = project.Secrets };
-                }
-
-                await _agentComm.AssignJobAsync(connectionId, message, ct);
-
-                _agentResolver.AssignJob(agentId, item.Id.ToString());
-
-                var latency = (DateTimeOffset.UtcNow - (item.OriginalEnqueuedAt ?? item.CreatedAt)).TotalSeconds;
-                WorkDistributionTelemetry.DispatchLatency.Record(latency,
-                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
-                WorkDistributionTelemetry.PendingDuration.Record(latency,
-                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                await IncrementRetryCountDirectAsync(item.Id);
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex,
-                    "PendingWorkItemDrainService: dispatch failed for WorkItem {WorkItemId}",
-                    item.Id);
-                _agentResolver.ReleaseAgent(agentId);
 
-                // Clean up in-memory PipelineRun only if it was actually registered
-                // (DB transition succeeded, so in-memory registration happened).
-                // If TransitionAsync failed, the run was never added — no cleanup needed.
-                if (dispatchedSuccessfully && !string.IsNullOrEmpty(request.RunId))
-                {
-                    _runService.RemoveRun(request.RunId);
-                }
-
-                // Revert to Pending for retry on next drain cycle.
-                // Safe regardless of where the exception occurred:
-                // - If TransitionAsync(Dispatched) itself failed, item is still Pending → TransitionAsync
-                //   returns true idempotently (already at target).
-                // - If exception was after Dispatched transition, item reverts Dispatched → Pending (valid).
-                try
-                {
-                    await _transitionService.TransitionAsync(
-                        item.Id, WorkItemStatus.Pending,
-                        entity =>
-                        {
-                            entity.DispatchedAt = null;
-                            entity.AssignedAgentId = null;
-                            entity.RetryCount++;
-                        }, ct: CancellationToken.None);
-                }
-                catch (Exception revertEx)
-                {
-                    _logger.LogWarning(revertEx,
-                        "PendingWorkItemDrainService: failed to revert WorkItem {WorkItemId} to Pending after dispatch failure — stuck-item detector will handle",
-                        item.Id);
-                }
-
-                // If TransitionAsync(Dispatched) itself failed, the item was already Pending and the
-                // idempotent path above skipped the mutate callback — RetryCount was NOT incremented.
-                // Perform a direct DB update to prevent infinite retry loops.
-                // TODO: If a concurrent process (e.g., stuck-item detector) also increments RetryCount
-                // between the exception and this update, a double-increment could occur. Risk is low
-                // because the drain service is the sole owner of dispatch for a given item, and an extra
-                // increment only accelerates retry exhaustion (safe direction). Consider adding a
-                // concurrency token or conditional update if this assumption changes.
-                if (!dispatchedSuccessfully)
-                {
-                    try
-                    {
-                        await using var retryDb = await _dbFactory.CreateDbContextAsync(CancellationToken.None);
-                        var entity = await retryDb.WorkItems.FindAsync([item.Id], CancellationToken.None);
-                        if (entity is not null)
-                        {
-                            entity.RetryCount++;
-                            await retryDb.SaveChangesAsync(CancellationToken.None);
-                        }
-                    }
-                    catch (Exception retryEx)
-                    {
-                        _logger.LogWarning(retryEx,
-                            "PendingWorkItemDrainService: failed to increment RetryCount for WorkItem {WorkItemId} after dispatch-transition failure",
-                            item.Id);
-                    }
-                }
-
+            if (!result.FullyCompleted)
                 continue;
-            }
 
             // Swap label to agent:in-progress now that an agent is actually working on it (#997)
-            // Retry with exponential backoff to cover transient API failures (#1579)
-            await SwapLabelWithRetryAsync(item.Id, request, ct);
+            await SwapLabelWithRetryAsync(item.Id, request!, ct);
 
             _logger.LogInformation(
                 "PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
@@ -500,6 +263,274 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         {
             _logger.LogWarning(ex,
                 "PendingWorkItemDrainService: failed to flag WorkItem {WorkItemId} for label reconciliation",
+                workItemId);
+        }
+    }
+
+    /// <summary>
+    /// Result of a pipeline dispatch attempt. Carries whether the DB transition to Dispatched
+    /// succeeded, so the caller can drive the two-path RetryCount increment correctly.
+    /// </summary>
+    private readonly record struct PipelineDispatchResult(bool DispatchedSuccessfully, bool FullyCompleted);
+
+    // TODO: ResolveAndValidateRequest has two distinct error branches (JsonException on deserialization,
+    // null result after successful parse) that are not covered by unit tests targeting this drain service
+    // directly. The E2E test K8sMode_AgentFetchesAssignment_NullPayload_Returns404 covers null payload
+    // at the API layer only. Add a unit test: insert a WorkItem with Payload="not json", trigger the
+    // drain, and verify _agentResolver.ReleaseAgent is called for the pipeline path.
+    // (review-findings: TestQualityReviewer WARNING; Correctness WARNING re: AsNoTracking + null Payload)
+    private (JobDistributionRequest? request, bool skip) ResolveAndValidateRequest(
+        WorkItemEntity item)
+    {
+        JobDistributionRequest? request;
+        try
+        {
+            request = JsonSerializer.Deserialize<JobDistributionRequest>(
+                item.Payload ?? "", PipelineJsonOptions.Default);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "PendingWorkItemDrainService: failed to deserialize payload for WorkItem {WorkItemId}", item.Id);
+            return (null, true);
+        }
+
+        if (request is null)
+        {
+            _logger.LogError(
+                "PendingWorkItemDrainService: null payload for WorkItem {WorkItemId}", item.Id);
+            return (null, true);
+        }
+
+        return (request, false);
+    }
+
+    private async Task HandleConsolidationItemAsync(
+        WorkItemEntity item, JobDistributionRequest request, string agentId, CancellationToken ct)
+    {
+        if (_consolidationDispatcher is null || _consolidationRunStore is null)
+        {
+            _logger.LogError(
+                "PendingWorkItemDrainService: consolidation dispatcher not available for WorkItem {WorkItemId}",
+                item.Id);
+            _agentResolver.ReleaseAgent(agentId);
+            return;
+        }
+
+        // Cancel-during-dispatch race guard: check if run was cancelled while queued
+        var runId = request.IssueIdentifier; // RunId stored as IssueIdentifier for consolidation
+        var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
+        if (consolidationRun is null ||
+            consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
+            consolidationRun.Status == ConsolidationRunStatus.Failed)
+        {
+            _logger.LogInformation(
+                "PendingWorkItemDrainService: consolidation run {RunId} is cancelled/failed, transitioning WorkItem {WorkItemId} to Cancelled",
+                runId, item.Id);
+            _agentResolver.ReleaseAgent(agentId);
+            await _transitionService.TransitionAsync(
+                item.Id, WorkItemStatus.Cancelled,
+                entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct: ct);
+            return;
+        }
+
+        try
+        {
+            // Transition to Dispatched before dispatch attempt
+            await _transitionService.TransitionAsync(
+                item.Id, WorkItemStatus.Dispatched,
+                entity =>
+                {
+                    entity.DispatchedAt = DateTimeOffset.UtcNow;
+                    entity.AssignedAgentId = agentId;
+                }, ct: ct);
+
+            var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
+                runId,
+                request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
+                string.IsNullOrEmpty(request.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)request.ConsolidationTemplateId,
+                request.ConsolidationWorkspacePath ?? "",
+                agentId,
+                ct);
+
+            if (dispatched)
+            {
+                _agentResolver.AssignJob(agentId, item.Id.ToString());
+
+                var latency = (DateTimeOffset.UtcNow - (item.OriginalEnqueuedAt ?? item.CreatedAt)).TotalSeconds;
+                WorkDistributionTelemetry.DispatchLatency.Record(latency,
+                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                WorkDistributionTelemetry.PendingDuration.Record(latency,
+                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+
+                _logger.LogInformation(
+                    "PendingWorkItemDrainService: dispatched consolidation WorkItem {WorkItemId} (run {RunId}) to agent {AgentId}",
+                    item.Id, runId, agentId);
+            }
+            else
+            {
+                // Dispatch failed — revert to Pending for next cycle
+                _agentResolver.ReleaseAgent(agentId);
+                await _transitionService.TransitionAsync(
+                    item.Id, WorkItemStatus.Pending,
+                    entity =>
+                    {
+                        entity.DispatchedAt = null;
+                        entity.AssignedAgentId = null;
+                    }, ct: ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "PendingWorkItemDrainService: consolidation dispatch failed for WorkItem {WorkItemId}",
+                item.Id);
+            _agentResolver.ReleaseAgent(agentId);
+            await RevertConsolidationToPendingAsync(item.Id);
+        }
+    }
+
+    private async Task RevertConsolidationToPendingAsync(Guid workItemId)
+    {
+        try
+        {
+            await _transitionService.TransitionAsync(
+                workItemId, WorkItemStatus.Pending,
+                entity =>
+                {
+                    entity.DispatchedAt = null;
+                    entity.AssignedAgentId = null;
+                }, ct: CancellationToken.None);
+        }
+        catch (Exception revertEx)
+        {
+            _logger.LogWarning(revertEx,
+                "PendingWorkItemDrainService: failed to revert WorkItem {WorkItemId} to Pending after dispatch exception — stuck-item detector will handle",
+                workItemId);
+        }
+    }
+
+    private async Task<PipelineDispatchResult> HandlePipelineItemAsync(
+        WorkItemEntity item, JobDistributionRequest request, string agentId, string connectionId, CancellationToken ct)
+    {
+        var dispatchedSuccessfully = false;
+        try
+        {
+            var dispatchTime = DateTimeOffset.UtcNow;
+            await _transitionService.TransitionAsync(
+                item.Id,
+                WorkItemStatus.Dispatched,
+                entity =>
+                {
+                    entity.DispatchedAt = dispatchTime;
+                    entity.AssignedAgentId = agentId;
+                },
+                ct: ct);
+
+            dispatchedSuccessfully = true;
+
+            // Update in-memory PipelineRun with agent ID.
+            if (!string.IsNullOrEmpty(request.RunId))
+            {
+                var run = _runService.GetRun(request.RunId);
+                if (run is not null)
+                {
+                    run.AgentId = agentId;
+                }
+                else
+                {
+                    var recreatedRun = PipelineRunFactory.FromDistributionRequest(
+                        request, agentId, startedAt: item.DispatchedAt ?? item.CreatedAt);
+                    _runService.AddRun(recreatedRun);
+                    _logger.LogInformation(
+                        "PendingWorkItemDrainService: re-created in-memory PipelineRun {RunId} for issue {IssueIdentifier} (orchestrator restart recovery)",
+                        request.RunId, request.IssueIdentifier);
+                }
+            }
+
+            // Update in-memory PipelineRun StartedAt to actual dispatch time (BUG-14).
+            if (!string.IsNullOrEmpty(request.RunId))
+            {
+                _runService.GetRun(request.RunId)?.ResetStartedAt(dispatchTime);
+            }
+
+            var message = DbWorkDistributorBase.BuildJobAssignmentMessage(item.Id, request);
+
+            // Inject project secrets at delivery time
+            if (_projectStore is not null && !string.IsNullOrEmpty(request.ProjectId))
+            {
+                var project = await _projectStore.GetProjectByIdAsync(request.ProjectId, ct);
+                if (project?.Secrets is { Count: > 0 })
+                    message = message with { ProjectSecrets = project.Secrets };
+            }
+
+            await _agentComm.AssignJobAsync(connectionId, message, ct);
+
+            _agentResolver.AssignJob(agentId, item.Id.ToString());
+
+            var latency = (DateTimeOffset.UtcNow - (item.OriginalEnqueuedAt ?? item.CreatedAt)).TotalSeconds;
+            WorkDistributionTelemetry.DispatchLatency.Record(latency,
+                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+            WorkDistributionTelemetry.PendingDuration.Record(latency,
+                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+
+            return new PipelineDispatchResult(dispatchedSuccessfully, FullyCompleted: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex,
+                "PendingWorkItemDrainService: dispatch failed for WorkItem {WorkItemId}",
+                item.Id);
+            _agentResolver.ReleaseAgent(agentId);
+
+            if (dispatchedSuccessfully && !string.IsNullOrEmpty(request.RunId))
+            {
+                _runService.RemoveRun(request.RunId);
+            }
+
+            await RevertPipelineToPendingAsync(item.Id);
+
+            return new PipelineDispatchResult(dispatchedSuccessfully, FullyCompleted: false);
+        }
+    }
+
+    private async Task RevertPipelineToPendingAsync(Guid workItemId)
+    {
+        try
+        {
+            await _transitionService.TransitionAsync(
+                workItemId, WorkItemStatus.Pending,
+                entity =>
+                {
+                    entity.DispatchedAt = null;
+                    entity.AssignedAgentId = null;
+                    entity.RetryCount++;
+                }, ct: CancellationToken.None);
+        }
+        catch (Exception revertEx)
+        {
+            _logger.LogWarning(revertEx,
+                "PendingWorkItemDrainService: failed to revert WorkItem {WorkItemId} to Pending after dispatch failure — stuck-item detector will handle",
+                workItemId);
+        }
+    }
+
+    private async Task IncrementRetryCountDirectAsync(Guid workItemId)
+    {
+        try
+        {
+            await using var retryDb = await _dbFactory.CreateDbContextAsync(CancellationToken.None);
+            var entity = await retryDb.WorkItems.FindAsync([workItemId], CancellationToken.None);
+            if (entity is not null)
+            {
+                entity.RetryCount++;
+                await retryDb.SaveChangesAsync(CancellationToken.None);
+            }
+        }
+        catch (Exception retryEx)
+        {
+            _logger.LogWarning(retryEx,
+                "PendingWorkItemDrainService: failed to increment RetryCount for WorkItem {WorkItemId} after dispatch-transition failure",
                 workItemId);
         }
     }

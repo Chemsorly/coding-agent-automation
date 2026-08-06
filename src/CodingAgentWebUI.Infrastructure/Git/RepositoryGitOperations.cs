@@ -124,6 +124,47 @@ internal static class RepositoryGitOperations
             Log.Debug("CommitAllAsync status: {FilePath} = {State}", entry.FilePath, entry.State);
         }
 
+        var stagedAny = StageAllWorkingTreeChanges(repo, preStatus);
+
+        if (stagedAny)
+            repo.Index.Write();
+
+        // Hardcoded: ALWAYS unstage pipeline-injected paths regardless of configured blacklist.
+        // These directories/files contain pipeline metadata and steering content that must
+        // never be committed by the pipeline under any circumstances:
+        //   .agent  — MCP configs, prompt files, analysis output, review findings
+        //   .brain  — cloned brain/knowledge repository
+        //   + provider-specific paths from IAgentProvider.PipelineInjectedPaths
+        //     (e.g., .kiro for Kiro CLI, AGENTS.md for OpenCode)
+        var universalHardcoded = new[] { ".agent", ".brain" };
+        var hardcodedBlacklist = pipelineInjectedPaths is { Count: > 0 }
+            ? universalHardcoded.Concat(pipelineInjectedPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+            : universalHardcoded;
+
+        var unstaged = UnstageBlacklistedPaths(repo, hardcodedBlacklist, blacklistedPaths);
+
+        var stagedChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
+        Log.Debug("CommitAllAsync final staged count (via Diff): {Count}", stagedChanges.Count);
+        foreach (var change in stagedChanges)
+        {
+            Log.Debug("CommitAllAsync final staged: {FilePath} = {Status}", change.Path, change.Status);
+        }
+
+        if (stagedChanges.Count == 0 && !allowEmpty)
+        {
+            Log.Warning("No changes to commit in workspace {WorkspacePath} — agent did not modify any files", workspacePath);
+            throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
+        }
+
+        var signature = new Signature(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
+        var commitOptions = allowEmpty ? new CommitOptions { AllowEmptyCommit = true } : new CommitOptions();
+        repo.Commit(message, signature, signature, commitOptions);
+
+        return unstaged.ToList();
+    }
+
+    private static bool StageAllWorkingTreeChanges(Repository repo, RepositoryStatus preStatus)
+    {
         var stagedAny = false;
         foreach (var entry in preStatus)
         {
@@ -149,23 +190,14 @@ internal static class RepositoryGitOperations
                 stagedAny = true;
             }
         }
+        return stagedAny;
+    }
 
-        if (stagedAny)
-            repo.Index.Write();
-
+    private static HashSet<string> UnstageBlacklistedPaths(
+        Repository repo, string[] hardcodedBlacklist, IReadOnlyList<string>? configBlacklist)
+    {
         var unstaged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Hardcoded: ALWAYS unstage pipeline-injected paths regardless of configured blacklist.
-        // These directories/files contain pipeline metadata and steering content that must
-        // never be committed by the pipeline under any circumstances:
-        //   .agent  — MCP configs, prompt files, analysis output, review findings
-        //   .brain  — cloned brain/knowledge repository
-        //   + provider-specific paths from IAgentProvider.PipelineInjectedPaths
-        //     (e.g., .kiro for Kiro CLI, AGENTS.md for OpenCode)
-        var universalHardcoded = new[] { ".agent", ".brain" };
-        var hardcodedBlacklist = pipelineInjectedPaths is { Count: > 0 }
-            ? universalHardcoded.Concat(pipelineInjectedPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
-            : universalHardcoded;
         {
             var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
             foreach (var change in indexChanges)
@@ -179,13 +211,13 @@ internal static class RepositoryGitOperations
         }
 
         // Apply configurable blacklist (may overlap with hardcoded — skip already-unstaged paths)
-        if (blacklistedPaths is { Count: > 0 })
+        if (configBlacklist is { Count: > 0 })
         {
             var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
             foreach (var change in indexChanges)
             {
                 var normalized = change.Path.Replace('\\', '/');
-                if (!unstaged.Contains(normalized) && PathBlacklistHelper.IsPathBlacklisted(change.Path, blacklistedPaths))
+                if (!unstaged.Contains(normalized) && PathBlacklistHelper.IsPathBlacklisted(change.Path, configBlacklist))
                 {
                     Commands.Unstage(repo, change.Path);
                     unstaged.Add(normalized);
@@ -193,24 +225,7 @@ internal static class RepositoryGitOperations
             }
         }
 
-        var stagedChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-        Log.Debug("CommitAllAsync final staged count (via Diff): {Count}", stagedChanges.Count);
-        foreach (var change in stagedChanges)
-        {
-            Log.Debug("CommitAllAsync final staged: {FilePath} = {Status}", change.Path, change.Status);
-        }
-
-        if (stagedChanges.Count == 0 && !allowEmpty)
-        {
-            Log.Warning("No changes to commit in workspace {WorkspacePath} — agent did not modify any files", workspacePath);
-            throw new InvalidOperationException("No changes to commit. The agent did not modify any files in the workspace.");
-        }
-
-        var signature = new Signature(GitConstants.CommitAuthorName, GitConstants.CommitAuthorEmail, DateTimeOffset.UtcNow);
-        var commitOptions = allowEmpty ? new CommitOptions { AllowEmptyCommit = true } : new CommitOptions();
-        repo.Commit(message, signature, signature, commitOptions);
-
-        return unstaged.ToList();
+        return unstaged;
     }
 
     public static async Task Push(

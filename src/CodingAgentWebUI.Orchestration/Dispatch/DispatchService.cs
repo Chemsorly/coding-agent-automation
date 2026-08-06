@@ -88,13 +88,8 @@ public sealed class DispatchService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // Wait for leadership
-            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-            }
-
-            if (stoppingToken.IsCancellationRequested) break;
+            if (!await WaitForLeadershipAsync(stoppingToken))
+                break;
 
             Log.Information("DispatchService: leader acquired, entering poll loop");
 
@@ -102,35 +97,7 @@ public sealed class DispatchService : BackgroundService
             // Allows detection of ConfigMap changes during leadership loss/re-acquisition.
             _startupValidationRun = false;
 
-            // Create linked token: cancels on EITHER host stop OR leadership loss
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken, _leaderElection.LeaderToken);
-            var ct = linked.Token;
-
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    await PollAndDispatchAsync(ct);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "DispatchService: unhandled error in poll cycle");
-                }
-
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
+            await RunLeaderPollLoopAsync(stoppingToken);
 
             if (!stoppingToken.IsCancellationRequested)
             {
@@ -139,6 +106,52 @@ public sealed class DispatchService : BackgroundService
         }
 
         Log.Information("DispatchService: exiting (stopping)");
+    }
+
+    // TODO: WaitForLeadershipAsync is duplicated verbatim in ConsolidationDispatchHandler. Both
+    // classes extracted the identical leadership-wait pattern independently. Consider extracting
+    // this into a shared base class or helper to reduce future maintenance risk.
+    // (review-findings: DotNetSpecialist WARNING)
+    private async Task<bool> WaitForLeadershipAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+        }
+        return !stoppingToken.IsCancellationRequested;
+    }
+
+    private async Task RunLeaderPollLoopAsync(CancellationToken stoppingToken)
+    {
+        // Create linked token: cancels on EITHER host stop OR leadership loss
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            stoppingToken, _leaderElection.LeaderToken);
+        var ct = linked.Token;
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await PollAndDispatchAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "DispatchService: unhandled error in poll cycle");
+            }
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
     }
 
     /// <inheritdoc/>

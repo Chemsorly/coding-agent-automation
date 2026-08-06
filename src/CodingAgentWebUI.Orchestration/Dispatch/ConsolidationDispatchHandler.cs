@@ -103,45 +103,12 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // Wait for leadership
-            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-            }
-
-            if (stoppingToken.IsCancellationRequested) break;
+            if (!await WaitForLeadershipAsync(stoppingToken))
+                break;
 
             Log.Information("ConsolidationDispatchHandler: leader acquired, entering poll loop");
 
-            // Create linked token: cancels on EITHER host stop OR leadership loss
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken, _leaderElection.LeaderToken);
-            var ct = linked.Token;
-
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    await PollAndDispatchConsolidationAsync(ct);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "ConsolidationDispatchHandler: unhandled error in poll cycle");
-                }
-
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
+            await RunConsolidationPollLoopAsync(stoppingToken);
 
             if (!stoppingToken.IsCancellationRequested)
             {
@@ -150,6 +117,52 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         }
 
         Log.Information("ConsolidationDispatchHandler: exiting (stopping)");
+    }
+
+    // TODO: WaitForLeadershipAsync is duplicated verbatim in DispatchService. Both classes extracted
+    // the identical leadership-wait pattern independently. Consider extracting this into a shared
+    // base class or helper to reduce future maintenance risk.
+    // (review-findings: DotNetSpecialist WARNING)
+    private async Task<bool> WaitForLeadershipAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+        }
+        return !stoppingToken.IsCancellationRequested;
+    }
+
+    private async Task RunConsolidationPollLoopAsync(CancellationToken stoppingToken)
+    {
+        // Create linked token: cancels on EITHER host stop OR leadership loss
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            stoppingToken, _leaderElection.LeaderToken);
+        var ct = linked.Token;
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await PollAndDispatchConsolidationAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "ConsolidationDispatchHandler: unhandled error in poll cycle");
+            }
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
     }
 
     /// <inheritdoc/>
@@ -263,23 +276,8 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         CancellationToken ct)
     {
         // Cancel-during-dispatch race guard: check if run was cancelled while queued
-        if (_consolidationRunStore is not null && !string.IsNullOrEmpty(item.IssueIdentifier))
-        {
-            var runId = item.IssueIdentifier;
-            var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
-            if (consolidationRun is not null &&
-                (consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
-                 consolidationRun.Status == ConsolidationRunStatus.Failed))
-            {
-                Log.Information(
-                    "ConsolidationDispatchHandler: consolidation run {RunId} is {Status}, skipping dispatch for WorkItem {WorkItemId}",
-                    runId, consolidationRun.Status, item.Id);
-                await _transitionService.TransitionAsync(
-                    item.Id, WorkItemStatus.Cancelled,
-                    entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct: ct);
-                return;
-            }
-        }
+        if (await CheckCancelledRunAsync(item.IssueIdentifier, item.Id, ct))
+            return;
 
         // Capture updatedRequest outside the delegate so onDispatchSuccess can reference it
         JobDistributionRequest? updatedRequest = null;
@@ -288,46 +286,9 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
             new DispatchLifecycleContext(db, item, template, isKiroAgent, availablePvcs, concurrencyBySelector, "consolidation "),
             async workItem =>
             {
-                var request = DeserializeConsolidationPayload(workItem.Payload, item.Id);
-                if (request is null)
-                {
-                    await FailConsolidationWorkItemAsync(item.Id, "Consolidation WorkItem has no valid payload", item.IssueIdentifier, ct);
-                    return (false, null);
-                }
-
-                IReadOnlyList<ProviderConfig>? vendedConfigs;
-                string repoProviderId;
-                PipelineConfiguration? pipelineConfig;
-                try
-                {
-                    (vendedConfigs, repoProviderId, pipelineConfig) = await ResolveProviderConfigsAsync(item, request, ct);
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "ConsolidationDispatchHandler: failed to resolve provider configs for consolidation WorkItem {WorkItemId}", item.Id);
-                    await FailConsolidationWorkItemAsync(item.Id, $"Provider config resolution failed: {ex.Message}", item.IssueIdentifier, ct);
-                    return (false, null);
-                }
-
-                // Update payload with resolved configs
-                updatedRequest = request with
-                {
-                    ProviderConfigs = vendedConfigs ?? [],
-                    RepoProviderConfigId = repoProviderId,
-                    PipelineConfiguration = pipelineConfig ?? new PipelineConfiguration()
-                };
-                workItem.Payload = JsonSerializer.Serialize(updatedRequest, PipelineJsonOptions.Default);
-
-                // Load project secrets if project has them (resolve project from template if needed)
-                Dictionary<string, string>? projectSecrets = null;
-                var resolvedProjectId = await ResolveProjectIdAsync(item, request, ct);
-
-                if (!string.IsNullOrEmpty(resolvedProjectId))
-                {
-                    projectSecrets = await DispatchLifecycleService.LoadProjectSecretsAsync(db, resolvedProjectId, ct);
-                }
-
-                return (true, projectSecrets);
+                var result = await PrepareConsolidationVariantAsync(item, workItem, db, ct);
+                updatedRequest = result.updatedRequest;
+                return (result.shouldContinue, result.projectSecrets);
             },
             async _ =>
             {
@@ -342,6 +303,80 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
                 if (item.IssueIdentifier is not null)
                     await CascadeFailureAsync(item.IssueIdentifier, errorMessage, ct);
             });
+    }
+
+    // TODO: CheckCancelledRunAsync has independently testable business logic (null store → return false,
+    // run neither Cancelled nor Failed → return false, run Cancelled/Failed → transition + return true)
+    // but has no unit-level tests. The only coverage is indirect via ConsolidationDispatchServiceTests
+    // which targets a different class. Add unit tests for at least: (a) _consolidationRunStore is null
+    // returns false without DB access, (b) run is Active → returns false, (c) run is Cancelled →
+    // transitions WorkItem to Cancelled and returns true. (review-findings: TestQualityReviewer WARNING)
+    private async Task<bool> CheckCancelledRunAsync(string? issueIdentifier, Guid workItemId, CancellationToken ct)
+    {
+        if (_consolidationRunStore is null || string.IsNullOrEmpty(issueIdentifier))
+            return false;
+
+        var runId = issueIdentifier;
+        var consolidationRun = await _consolidationRunStore.GetByIdAsync(runId, ct);
+        if (consolidationRun is not null &&
+            (consolidationRun.Status == ConsolidationRunStatus.Cancelled ||
+             consolidationRun.Status == ConsolidationRunStatus.Failed))
+        {
+            Log.Information(
+                "ConsolidationDispatchHandler: consolidation run {RunId} is {Status}, skipping dispatch for WorkItem {WorkItemId}",
+                runId, consolidationRun.Status, workItemId);
+            await _transitionService.TransitionAsync(
+                workItemId, WorkItemStatus.Cancelled,
+                entity => entity.CompletedAt = DateTimeOffset.UtcNow, ct: ct);
+            return true;
+        }
+
+        return false;
+    }
+
+    private async Task<(bool shouldContinue, Dictionary<string, string>? projectSecrets, JobDistributionRequest? updatedRequest)> PrepareConsolidationVariantAsync(
+        PendingWorkItemProjection item, WorkItemEntity workItem, PipelineDbContext db, CancellationToken ct)
+    {
+        var request = DeserializeConsolidationPayload(workItem.Payload, item.Id);
+        if (request is null)
+        {
+            await FailConsolidationWorkItemAsync(item.Id, "Consolidation WorkItem has no valid payload", item.IssueIdentifier, ct);
+            return (false, null, null);
+        }
+
+        IReadOnlyList<ProviderConfig>? vendedConfigs;
+        string repoProviderId;
+        PipelineConfiguration? pipelineConfig;
+        try
+        {
+            (vendedConfigs, repoProviderId, pipelineConfig) = await ResolveProviderConfigsAsync(item, request, ct);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "ConsolidationDispatchHandler: failed to resolve provider configs for consolidation WorkItem {WorkItemId}", item.Id);
+            await FailConsolidationWorkItemAsync(item.Id, $"Provider config resolution failed: {ex.Message}", item.IssueIdentifier, ct);
+            return (false, null, null);
+        }
+
+        // Update payload with resolved configs
+        var updatedRequest = request with
+        {
+            ProviderConfigs = vendedConfigs ?? [],
+            RepoProviderConfigId = repoProviderId,
+            PipelineConfiguration = pipelineConfig ?? new PipelineConfiguration()
+        };
+        workItem.Payload = JsonSerializer.Serialize(updatedRequest, PipelineJsonOptions.Default);
+
+        // Load project secrets if project has them (resolve project from template if needed)
+        Dictionary<string, string>? projectSecrets = null;
+        var resolvedProjectId = await ResolveProjectIdAsync(item, request, ct);
+
+        if (!string.IsNullOrEmpty(resolvedProjectId))
+        {
+            projectSecrets = await DispatchLifecycleService.LoadProjectSecretsAsync(db, resolvedProjectId, ct);
+        }
+
+        return (true, projectSecrets, updatedRequest);
     }
 
     /// <summary>

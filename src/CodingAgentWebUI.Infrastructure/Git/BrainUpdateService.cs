@@ -356,52 +356,13 @@ public partial class BrainUpdateService : IBrainUpdateService
             }
 
             // Save our file contents before reset
-            var ourFileContents = new Dictionary<string, string?>();
-            var baseFileContents = new Dictionary<string, string?>();
-            foreach (var change in ourChanges)
-            {
-                if (change.Status != FileChangeStatus.Deleted)
-                {
-                    ourFileContents[change.Path] = _git.GetFileContentFromHead(brainPath, change.Path);
-                }
-                baseFileContents[change.Path] = _git.GetFileContentFromHeadParent(brainPath, change.Path);
-            }
+            var (ourFileContents, baseFileContents) = SaveOurFileContents(ourChanges, brainPath);
 
             // Reset to remote branch tip
             _git.ResetHardToRemote(brainPath, brainProvider.BaseBranch);
 
             // Re-apply our changes
-            var conflictCount = 0;
-            foreach (var change in ourChanges)
-            {
-                ct.ThrowIfCancellationRequested();
-
-                var filePath = change.Path;
-                var fullPath = Path.Combine(brainPath, filePath);
-
-                if (change.Status == FileChangeStatus.Deleted)
-                {
-                    _git.DeleteFile(fullPath);
-                    continue;
-                }
-
-                var ourContent = ourFileContents.GetValueOrDefault(change.Path) ?? "";
-                var baseContent = baseFileContents.GetValueOrDefault(change.Path) ?? "";
-                var remoteContent = _git.FileExists(fullPath) ? _git.ReadAllText(fullPath) : "";
-
-                if (remoteContent != baseContent && ourContent != baseContent)
-                {
-                    // Both sides modified — resolve with accept-both
-                    conflictCount++;
-                    var resolved = ResolveConflictAcceptBoth(remoteContent, ourContent);
-                    _git.WriteAllText(fullPath, resolved);
-                }
-                else
-                {
-                    // Only we modified — apply our version
-                    _git.WriteAllText(fullPath, ourContent);
-                }
-            }
+            var conflictCount = ReApplyOurChanges(ourChanges, brainPath, ourFileContents, baseFileContents, ct);
 
             if (conflictCount > 0)
             {
@@ -421,6 +382,65 @@ public partial class BrainUpdateService : IBrainUpdateService
                 _logger.Warning("Brain rebase produced empty commit (remote already has identical changes), skipping");
             }
         }, ct);
+    }
+
+    private (Dictionary<string, string?> ourContents, Dictionary<string, string?> baseContents) SaveOurFileContents(
+        IReadOnlyList<FileChange> ourChanges, string brainPath)
+    {
+        var ourFileContents = new Dictionary<string, string?>();
+        var baseFileContents = new Dictionary<string, string?>();
+        foreach (var change in ourChanges)
+        {
+            if (change.Status != FileChangeStatus.Deleted)
+            {
+                ourFileContents[change.Path] = _git.GetFileContentFromHead(brainPath, change.Path);
+            }
+            baseFileContents[change.Path] = _git.GetFileContentFromHeadParent(brainPath, change.Path);
+        }
+        return (ourFileContents, baseFileContents);
+    }
+
+    // TODO: ReApplyOurChanges has an untested Deleted-file branch. BrainUpdateServicePushRetryTests
+    // only exercises FileChangeStatus.Modified entries via SetupRebaseMocks. Add a test where one
+    // of ourChanges has Status == FileChangeStatus.Deleted: verify _git.DeleteFile is called and
+    // _git.WriteAllText is NOT called for that entry. (review-findings: TestQualityReviewer WARNING)
+    private int ReApplyOurChanges(
+        IReadOnlyList<FileChange> ourChanges, string brainPath,
+        Dictionary<string, string?> ourFileContents, Dictionary<string, string?> baseFileContents,
+        CancellationToken ct)
+    {
+        var conflictCount = 0;
+        foreach (var change in ourChanges)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var filePath = change.Path;
+            var fullPath = Path.Combine(brainPath, filePath);
+
+            if (change.Status == FileChangeStatus.Deleted)
+            {
+                _git.DeleteFile(fullPath);
+                continue;
+            }
+
+            var ourContent = ourFileContents.GetValueOrDefault(change.Path) ?? "";
+            var baseContent = baseFileContents.GetValueOrDefault(change.Path) ?? "";
+            var remoteContent = _git.FileExists(fullPath) ? _git.ReadAllText(fullPath) : "";
+
+            if (remoteContent != baseContent && ourContent != baseContent)
+            {
+                // Both sides modified — resolve with accept-both
+                conflictCount++;
+                var resolved = ResolveConflictAcceptBoth(remoteContent, ourContent);
+                _git.WriteAllText(fullPath, resolved);
+            }
+            else
+            {
+                // Only we modified — apply our version
+                _git.WriteAllText(fullPath, ourContent);
+            }
+        }
+        return conflictCount;
     }
 
     [GeneratedRegex(@"###\s+\d{4}-\d{2}-\d{2}")]

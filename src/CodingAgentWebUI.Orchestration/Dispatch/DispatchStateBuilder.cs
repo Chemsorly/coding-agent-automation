@@ -191,17 +191,8 @@ internal sealed class DispatchStateBuilder
             }
 
             // Check concurrency limit from template
-            var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
-            if (maxConcurrent > 0)
-            {
-                var current = state.ConcurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0);
-                if (current >= maxConcurrent)
-                {
-                    Log.Debug("{CallerName}: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
-                        callerName, item.AgentSelector, current, maxConcurrent, item.Id);
-                    continue;
-                }
-            }
+            if (IsAtConcurrencyLimit(item, state.ConcurrencyBySelector, callerName))
+                continue;
 
             // Resolve template — fail immediately if no match (before PVC gating)
             var (template, effectiveSelector, skipItem) = await ResolveTemplateAsync(
@@ -228,6 +219,23 @@ internal sealed class DispatchStateBuilder
 
             yield return new DispatchCandidate(item, template, effectiveSelector, isKiroAgent);
         }
+    }
+
+    private bool IsAtConcurrencyLimit(
+        PendingWorkItemProjection item, Dictionary<string, int> concurrencyBySelector, string callerName)
+    {
+        var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
+        if (maxConcurrent > 0)
+        {
+            var current = concurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0);
+            if (current >= maxConcurrent)
+            {
+                Log.Debug("{CallerName}: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
+                    callerName, item.AgentSelector, current, maxConcurrent, item.Id);
+                return true;
+            }
+        }
+        return false;
     }
 
     /// <summary>

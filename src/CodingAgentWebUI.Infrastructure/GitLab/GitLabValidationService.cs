@@ -35,6 +35,26 @@ public sealed class GitLabValidationService
     public async Task<GitLabValidationResult> ValidateAsync(
         string apiUrl, string accessToken, string projectId, CancellationToken ct)
     {
+        var inputError = ValidateInputs(apiUrl, accessToken, projectId);
+        if (inputError is not null)
+            return inputError;
+
+        // TODO: double-parse fragility — ValidateInputs already confirms the string is numeric via
+        // TryParse(..., out _) but discards the parsed value, so Parse is called here again. If the
+        // validation logic and the parse ever diverge (e.g., culture edge cases), an unhandled
+        // FormatException could surface. Fix by returning the parsed int from ValidateInputs (or
+        // using an out parameter) to eliminate the implicit coupling. (review-findings: DotNetSpecialist/SecurityReviewer WARNING)
+        var numericProjectId = int.Parse(projectId);
+
+        var (client, clientError) = CreateClient(apiUrl, accessToken);
+        if (client is null)
+            return clientError!;
+
+        return await ExecuteValidationAsync(client, numericProjectId, apiUrl, ct);
+    }
+
+    private static GitLabValidationResult? ValidateInputs(string apiUrl, string accessToken, string projectId)
+    {
         if (string.IsNullOrWhiteSpace(apiUrl))
             return new GitLabValidationResult(false, null, null, "API URL is required.");
 
@@ -53,26 +73,35 @@ public sealed class GitLabValidationService
         if (string.IsNullOrWhiteSpace(projectId))
             return new GitLabValidationResult(false, null, null, "Project ID is required.");
 
-        if (!int.TryParse(projectId, out var numericProjectId))
+        if (!int.TryParse(projectId, out _))
             return new GitLabValidationResult(false, null, null,
                 $"Invalid project ID: '{projectId}'. Expected a numeric value.");
 
-        IGitLabClient client;
+        return null;
+    }
+
+    private (IGitLabClient? client, GitLabValidationResult? errorResult) CreateClient(string apiUrl, string accessToken)
+    {
         try
         {
             var options = new RequestOptions(retryCount: 0, retryInterval: TimeSpan.Zero)
             {
                 UserAgent = "CodingAgentAutomation/1.0"
             };
-            client = new GitLabClient(apiUrl, accessToken, options);
+            var client = new GitLabClient(apiUrl, accessToken, options);
+            return (client, null);
         }
         catch (Exception ex)
         {
             _logger.Warning(ex, "Failed to create GitLab client for validation");
-            return new GitLabValidationResult(false, null, null,
-                $"Failed to create GitLab client: {ex.Message}");
+            return (null, new GitLabValidationResult(false, null, null,
+                $"Failed to create GitLab client: {ex.Message}"));
         }
+    }
 
+    private async Task<GitLabValidationResult> ExecuteValidationAsync(
+        IGitLabClient client, int numericProjectId, string apiUrl, CancellationToken ct)
+    {
         try
         {
             // Task.Run wraps the synchronous NGitLab indexer call. Cancellation relies on

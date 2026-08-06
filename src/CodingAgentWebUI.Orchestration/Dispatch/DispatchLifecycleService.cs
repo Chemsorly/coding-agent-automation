@@ -105,26 +105,11 @@ internal sealed class DispatchLifecycleService
             return;
 
         // Load full WorkItem and run variant-specific preparation.
-        WorkItemEntity? workItem;
-        (bool shouldProceed, Dictionary<string, string>? projectSecrets) prepareResult;
-        try
-        {
-            workItem = await db.WorkItems.FindAsync([item.Id], ct);
-            if (workItem is null || workItem.Status != WorkItemStatus.Pending)
-            {
-                // Item was modified by another process
-                if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
-                return;
-            }
+        var (workItem, prepareResult) = await LoadAndPrepareWorkItemAsync(
+            db, item, claimedPvc, availablePvcs, prepareVariant, ct);
+        if (workItem is null)
+            return;
 
-            // Variant-specific preparation (may mutate workItem, load secrets, or signal abort)
-            prepareResult = await prepareVariant(workItem);
-        }
-        catch
-        {
-            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
-            throw;
-        }
         var (shouldProceed, projectSecrets) = prepareResult;
         if (!shouldProceed)
         {
@@ -172,6 +157,42 @@ internal sealed class DispatchLifecycleService
         workItem.DispatchedAt = DateTimeOffset.UtcNow;
 
         await FinalizeDispatchAsync(db, workItem, item, logPrefix, concurrencyBySelector, onDispatchSuccess, ct);
+    }
+
+    /// <summary>
+    /// Loads the full WorkItem entity and runs variant-specific preparation.
+    /// Returns (null, default) if the item is no longer eligible (modified by another process).
+    /// Releases the PVC back to the pool on failure or ineligibility.
+    /// </summary>
+    private async Task<(WorkItemEntity? workItem, (bool shouldContinue, Dictionary<string, string>? projectSecrets) prepareResult)> LoadAndPrepareWorkItemAsync(
+        PipelineDbContext db,
+        PendingWorkItemProjection item,
+        string? claimedPvc,
+        List<string> availablePvcs,
+        Func<WorkItemEntity, Task<(bool shouldContinue, Dictionary<string, string>? projectSecrets)>> prepareVariant,
+        CancellationToken ct)
+    {
+        WorkItemEntity? workItem;
+        (bool shouldContinue, Dictionary<string, string>? projectSecrets) prepareResult;
+        try
+        {
+            workItem = await db.WorkItems.FindAsync([item.Id], ct);
+            if (workItem is null || workItem.Status != WorkItemStatus.Pending)
+            {
+                // Item was modified by another process
+                if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+                return (null, default);
+            }
+
+            // Variant-specific preparation (may mutate workItem, load secrets, or signal abort)
+            prepareResult = await prepareVariant(workItem);
+        }
+        catch
+        {
+            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+            throw;
+        }
+        return (workItem, prepareResult);
     }
 
     /// <summary>

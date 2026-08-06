@@ -291,17 +291,7 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
 
         foreach (var run in runs)
         {
-            if (run.Status.Value == WorkflowRunStatus.InProgress || run.Status.Value == WorkflowRunStatus.Waiting)
-                hasRunning = true;
-            else if (run.Status.Value == WorkflowRunStatus.Queued || run.Status.Value == WorkflowRunStatus.Requested || run.Status.Value == WorkflowRunStatus.Pending)
-                hasPending = true;
-            else if (run.Status.Value == WorkflowRunStatus.Completed)
-            {
-                if (run.Conclusion?.Value == WorkflowRunConclusion.Failure)
-                    hasFailed = true;
-                else if (run.Conclusion?.Value == WorkflowRunConclusion.Cancelled)
-                    hasCancelled = true;
-            }
+            ClassifyRun(run, ref hasRunning, ref hasPending, ref hasFailed, ref hasCancelled);
         }
 
         // Early-return: surface failures immediately even if other runs are still in progress.
@@ -311,5 +301,20 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         if (hasRunning) return PipelineRunState.Running;
         if (hasPending) return PipelineRunState.Pending;
         return PipelineRunState.Passed;
+    }
+
+    private static void ClassifyRun(WorkflowRun run, ref bool hasRunning, ref bool hasPending, ref bool hasFailed, ref bool hasCancelled)
+    {
+        if (run.Status.Value == WorkflowRunStatus.InProgress || run.Status.Value == WorkflowRunStatus.Waiting)
+            hasRunning = true;
+        else if (run.Status.Value == WorkflowRunStatus.Queued || run.Status.Value == WorkflowRunStatus.Requested || run.Status.Value == WorkflowRunStatus.Pending)
+            hasPending = true;
+        else if (run.Status.Value == WorkflowRunStatus.Completed)
+        {
+            if (run.Conclusion?.Value == WorkflowRunConclusion.Failure)
+                hasFailed = true;
+            else if (run.Conclusion?.Value == WorkflowRunConclusion.Cancelled)
+                hasCancelled = true;
+        }
     }
 }
