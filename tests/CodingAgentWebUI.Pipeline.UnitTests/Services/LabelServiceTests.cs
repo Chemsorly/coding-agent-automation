@@ -229,6 +229,9 @@ public class LabelServiceTests
 
         // Should not throw
         await swapper.SwapLabelAsync("nonexistent-id", "42", AgentLabels.InProgress, LabelTargetKind.Issue, CancellationToken.None);
+
+        // Early-return path — no provider should have been instantiated
+        _providerFactory.Verify(f => f.CreateIssueProvider(It.IsAny<ProviderConfig>()), Times.Never);
     }
 
     [Fact]
