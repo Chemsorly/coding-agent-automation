@@ -333,9 +333,12 @@ public class AgentCodingPageComponentTests : BunitContext
     public void AgentCoding_DisposesEventHandlers()
     {
         var component = Render<AgentCoding>();
-
+        // Capture markup before disposal
+        var markupBeforeDispose = component.Markup;
         // Dispose should not throw
         component.Dispose();
+        Assert.True(component.IsDisposed);
+        Assert.Contains("Agent Coding", markupBeforeDispose);
     }
 
     [Fact]

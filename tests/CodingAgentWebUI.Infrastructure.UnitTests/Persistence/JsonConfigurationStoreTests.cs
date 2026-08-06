@@ -158,8 +158,10 @@ public class JsonConfigurationStoreTests : IDisposable
     [Fact]
     public async Task DeleteProviderConfig_NonExistentId_DoesNotThrow()
     {
-        // Should not throw when deleting a non-existent config
+        // Should not throw when deleting a non-existent config — and result remains empty
         await _store.DeleteProviderConfigAsync("does-not-exist", ProviderKind.Agent, CancellationToken.None);
+        var configs = await _store.LoadProviderConfigsAsync(ProviderKind.Agent, CancellationToken.None);
+        Assert.Empty(configs);
     }
 
     [Fact]

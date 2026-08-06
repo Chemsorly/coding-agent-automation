@@ -46,5 +46,9 @@ public sealed class TemplateCrudTests : E2ETestBase, IClassFixture<E2EFixture>
         // Double-check: verify we can actually select it
         var select = Page.Locator("[data-testid='template-select']");
         await select.SelectOptionAsync(new SelectOptionValue { Label = "CRUD Test Template" });
+
+        // Assert: the selected option value is the expected template
+        var selectedValue = await select.InputValueAsync();
+        Assert.Equal("template-crud-test", selectedValue);
     }
 }

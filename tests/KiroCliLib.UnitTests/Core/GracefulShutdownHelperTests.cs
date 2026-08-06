@@ -36,10 +36,14 @@ public class GracefulShutdownHelperTests
         var tcs = new TaskCompletionSource();
         tcs.SetResult(); // Complete immediately
 
+        // Should not throw — null CTS is handled gracefully
         await GracefulShutdownHelper.CancelAndWaitAsync(
             cts: null, task: tcs.Task, TimeSpan.FromSeconds(5), _mockLogger.Object, "TestOp");
 
-        // No exception thrown — null CTS is handled gracefully
+        // No timeout warning should be logged (task completed instantly)
+        _mockLogger.Verify(
+            l => l.Warning(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan>()),
+            Times.Never);
     }
 
     [Fact]

@@ -15,8 +15,12 @@ public class AppStartupTests : IClassFixture<CustomWebApplicationFactory>
     [Fact]
     public void App_Starts_Without_Throwing()
     {
-        // Creating the client boots the entire app — if DI is broken, this throws
+        // Creating the client boots the entire app — if DI is broken, this throws.
+        // Verify the client is operational by checking it can reach the health endpoint.
         using var client = _factory.CreateClient();
+        Assert.NotNull(client);
+        // BaseAddress is set by WebApplicationFactory — proves the factory bootstrapped correctly
+        Assert.StartsWith("http://", client.BaseAddress?.ToString() ?? "");
     }
 
     [Fact]

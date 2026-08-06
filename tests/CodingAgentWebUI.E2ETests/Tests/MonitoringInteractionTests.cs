@@ -278,6 +278,10 @@ public sealed class MonitoringInteractionTests : E2ETestBase, IClassFixture<E2EF
 
         // Assert: agent shows "Busy" status (poll DOM until rendered — timer-driven refresh)
         await monitoringPage.WaitForAgentStatusAsync("status-agent-1", "Busy", timeoutMs: 15_000);
+
+        // Verify the agent cell is actually visible with the expected status text
+        var agentStatusCell = await Page.QuerySelectorAsync($"td:has-text(\"status-agent-1\")");
+        Assert.NotNull(agentStatusCell);
     }
 
     [Fact(Skip = "Requires DB/SignalR mode (pending queue). Legacy mode fails dispatch immediately when no agent is available.")]

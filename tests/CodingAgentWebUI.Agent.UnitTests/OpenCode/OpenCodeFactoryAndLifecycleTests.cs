@@ -1,4 +1,5 @@
 using System.Net;
+using AwesomeAssertions;
 using CodingAgentWebUI.Agent.OpenCode;
 using CodingAgentWebUI.Pipeline;
 using CodingAgentWebUI.Pipeline.Interfaces;
@@ -147,7 +148,8 @@ public class OpenCodeFactoryAndLifecycleTests
         ctx.Handler.EnqueueResponse(HttpStatusCode.InternalServerError, "abort failed");
 
         // Act & Assert — should not throw even when server returns error
-        await ctx.Provider.KillAsync();
+        var act = () => ctx.Provider.KillAsync();
+        await act.Should().NotThrowAsync("KillAsync is best-effort and must swallow HTTP errors");
     }
 
     // ── GetLatestSessionIdAsync Tests ───────────────────────────────────

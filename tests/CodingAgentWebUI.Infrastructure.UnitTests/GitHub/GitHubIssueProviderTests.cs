@@ -382,6 +382,7 @@ public class GitHubIssueProviderTests
         _mockClient.Setup(c => c.Repository).Returns(mockRepos.Object);
 
         await _provider.Invoking(p => p.ValidateAsync(CancellationToken.None)).Should().NotThrowAsync();
+        mockRepos.Verify(r => r.Get("owner", "repo"), Times.Once);
     }
 
     [Fact]
