@@ -108,14 +108,16 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// <summary>
     /// Removes an agent from the registry entirely.
     /// </summary>
-    public bool Deregister(string agentId)
+    public bool Deregister(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
-        if (_agents.TryRemove(agentId, out var removed))
+        // TODO: default(AgentId).Value is null (struct default bypasses the implicit operator guard).
+        // Calling this method with default(AgentId) will throw ArgumentNullException inside
+        // ConcurrentDictionary.TryRemove rather than at this entry point. Consider adding
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) for a clear precondition failure.
+        if (_agents.TryRemove(agentId.Value, out var removed))
         {
             _connectionIndex.TryRemove(removed.ConnectionId, out AgentEntry? _);
-            _logger.Information("Agent {AgentId} deregistered", agentId);
+            _logger.Information("Agent {AgentId} deregistered", agentId.Value);
             return true;
         }
 
@@ -125,10 +127,12 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// <summary>
     /// Looks up an agent by its unique agent identifier.
     /// </summary>
-    public AgentEntry? GetByAgentId(string agentId)
+    public AgentEntry? GetByAgentId(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-        return _agents.TryGetValue(agentId, out var entry) ? entry : null;
+        // TODO: default(AgentId).Value is null — will throw ArgumentNullException inside
+        // ConcurrentDictionary.TryGetValue rather than here. Add
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) for a clear precondition.
+        return _agents.TryGetValue(agentId.Value, out var entry) ? entry : null;
     }
 
     /// <summary>
@@ -144,11 +148,12 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// <summary>
     /// Updates the heartbeat timestamp for the specified agent.
     /// </summary>
-    public void UpdateHeartbeat(string agentId, DateTimeOffset timestamp)
+    public void UpdateHeartbeat(AgentId agentId, DateTimeOffset timestamp)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
-        if (_agents.TryGetValue(agentId, out var entry))
+        // TODO: default(AgentId).Value is null — will throw ArgumentNullException inside
+        // ConcurrentDictionary.TryGetValue rather than here. Add
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) for a clear precondition.
+        if (_agents.TryGetValue(agentId.Value, out var entry))
         {
             lock (entry.SyncRoot)
             {
@@ -157,7 +162,7 @@ public sealed class AgentRegistryService : IAgentRegistryService
         }
         else
         {
-            _logger.Warning("Heartbeat received for unknown agent {AgentId}", agentId);
+            _logger.Warning("Heartbeat received for unknown agent {AgentId}", agentId.Value);
         }
     }
 
@@ -165,11 +170,12 @@ public sealed class AgentRegistryService : IAgentRegistryService
     /// Transitions an agent to a new status. Records <c>DisconnectedAt</c> when
     /// transitioning to <see cref="AgentStatus.Disconnected"/>.
     /// </summary>
-    public void TransitionStatus(string agentId, AgentStatus newStatus)
+    public void TransitionStatus(AgentId agentId, AgentStatus newStatus)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
-        if (_agents.TryGetValue(agentId, out var entry))
+        // TODO: default(AgentId).Value is null — will throw ArgumentNullException inside
+        // ConcurrentDictionary.TryGetValue rather than here. Add
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) for a clear precondition.
+        if (_agents.TryGetValue(agentId.Value, out var entry))
         {
             lock (entry.SyncRoot)
             {

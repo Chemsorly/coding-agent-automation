@@ -88,7 +88,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         _mockFacade.Verify(f => f.AddRun(It.IsAny<PipelineRun>()), Times.Never);
         entry.ActiveJobId.Should().BeNull();
-        // TODO: Add negative assertion: _mockFacade.Verify(f => f.TransitionStatus(It.IsAny<string>(), It.IsAny<AgentStatus>()), Times.Never)
+        // TODO: Add negative assertion: _mockFacade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never)
         // to catch bugs that incorrectly transition the agent to Busy for stale history runs.
     }
 
@@ -346,7 +346,7 @@ public sealed class AgentOrphanRecoveryServiceTests
 
         entry.ActiveJobId.Should().BeNull();
         entry.OrphanRestoredAt.Should().BeNull();
-        _mockFacade.Verify(f => f.TransitionStatus(It.IsAny<string>(), It.IsAny<AgentStatus>()), Times.Never);
+        _mockFacade.Verify(f => f.TransitionStatus(It.IsAny<AgentId>(), It.IsAny<AgentStatus>()), Times.Never);
     }
 
     // ── Crash recovery: registry has ActiveJobId but agent doesn't → sets OrphanRestoredAt

@@ -83,11 +83,11 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _registry.Register(message, connectionId);
 
     /// <inheritdoc />
-    public bool Deregister(string agentId)
+    public bool Deregister(AgentId agentId)
         => _registry.Deregister(agentId);
 
     /// <inheritdoc />
-    public AgentEntry? GetByAgentId(string agentId)
+    public AgentEntry? GetByAgentId(AgentId agentId)
         => _registry.GetByAgentId(agentId);
 
     /// <inheritdoc />
@@ -95,11 +95,11 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _registry.GetByConnectionId(connectionId);
 
     /// <inheritdoc />
-    public void TransitionStatus(string agentId, AgentStatus newStatus)
+    public void TransitionStatus(AgentId agentId, AgentStatus newStatus)
         => _registry.TransitionStatus(agentId, newStatus);
 
     /// <inheritdoc />
-    public void UpdateHeartbeat(string agentId, DateTimeOffset timestamp)
+    public void UpdateHeartbeat(AgentId agentId, DateTimeOffset timestamp)
         => _registry.UpdateHeartbeat(agentId, timestamp);
 
     // ── Run state operations ────────────────────────────────────────────
@@ -253,8 +253,8 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _runService.RemoveRun(jobId);
 
     /// <inheritdoc />
-    public IReadOnlyList<PipelineRun> GetActiveRunsByAgent(string agentId)
-        => _runService.GetActiveRuns().Where(r => r.AgentId == agentId).ToList();
+    public IReadOnlyList<PipelineRun> GetActiveRunsByAgent(AgentId agentId)
+        => _runService.GetActiveRuns().Where(r => r.AgentId == agentId.Value).ToList();
 
     // ── Dispatch operations ─────────────────────────────────────────────
 

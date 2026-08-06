@@ -1369,7 +1369,8 @@ public sealed class DispatchPipelineItemAsyncTests : IDisposable
         var method = typeof(PendingWorkItemDrainService).GetMethod("DispatchPipelineItemAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
             ?? throw new InvalidOperationException("DispatchPipelineItemAsync not found");
-        var task = (Task<bool>)method.Invoke(service, [item, request, agentId, connectionId, ct])!;
+        AgentId typedAgentId = agentId;
+        var task = (Task<bool>)method.Invoke(service, [item, request, typedAgentId, connectionId, ct])!;
         return await task;
     }
 

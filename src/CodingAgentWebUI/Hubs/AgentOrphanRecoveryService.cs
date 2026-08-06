@@ -28,29 +28,37 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
     // Currently uses CancellationToken.None for GetRunHistoryAsync — a pre-existing issue preserved
     // in the refactoring, but this operation hits history storage and should be cancellable.
     /// <inheritdoc />
-    public async Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, string agentId)
+    public async Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(message);
-        ArgumentNullException.ThrowIfNull(agentId);
+
+        // Extract string value for forwarding to private helpers (which remain string-typed
+        // to avoid cascading changes through the internal call chain).
+        // TODO: The null-safety contract here is weaker than it appears — a default(AgentId) (Value == null)
+        // passed to this public method produces a null agentIdString. The implicit string→AgentId conversion
+        // in the private helper call sites would then throw ArgumentNullException inside the helper rather than
+        // at this public boundary. Consider adding ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId))
+        // here to make the precondition violation explicit and diagnosable at the entry point.
+        var agentIdString = agentId.Value;
 
         // Re-track active job from agent state (handles orchestrator restart scenario)
         if (message.ActiveJob is not null)
         {
-            await RestoreActiveJobAsync(message, agentId);
+            await RestoreActiveJobAsync(message, agentIdString);
         }
 
         // Detect orphaned runs: if the orchestrator tracks active runs for this agent
         // but the agent registered without an active job, restore the ActiveJobId on the
         // registry entry so the HeartbeatMonitor grace period logic can handle cleanup.
         // This avoids immediately failing runs when an agent has a brief network blip.
-        var entry = _facade.GetByAgentId(agentId);
+        var entry = _facade.GetByAgentId(agentIdString);
         if (entry is { ActiveJobId: null })
         {
-            DetectAndRestoreOrphans(agentId, entry);
+            DetectAndRestoreOrphans(agentIdString, entry);
         }
         else if (entry is { ActiveJobId: not null })
         {
-            HandleCrashRecovery(message, agentId, entry);
+            HandleCrashRecovery(message, agentIdString, entry);
         }
     }
 

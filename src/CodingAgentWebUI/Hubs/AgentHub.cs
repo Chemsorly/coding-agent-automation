@@ -92,6 +92,12 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         if (agent is not null)
         {
+            // TODO: agent.AgentId is a raw string on AgentEntry (pre-existing design). The implicit
+            // string→AgentId conversion applied by IAgentHubFacade.TransitionStatus will throw
+            // ArgumentException if agent.AgentId is null or empty (e.g., partial registration failure).
+            // An unhandled exception in OnDisconnectedAsync is swallowed by SignalR but prevents
+            // base.OnDisconnectedAsync from being called, leaving the connection in an inconsistent state.
+            // Consider guarding with: if (!string.IsNullOrEmpty(agent.AgentId)) before the facade call.
             _facade.TransitionStatus(agent.AgentId, AgentStatus.Disconnected);
             _logger.Information(
                 "Agent {AgentId} disconnected (connectionId={ConnectionId}, activeJobId={ActiveJobId}, exception={Exception})",
@@ -159,17 +165,15 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// Deregisters an agent from the registry.
     /// Only allows the caller to deregister their own agent identity.
     /// </summary>
-    public Task DeregisterAgent(string agentId)
+    public Task DeregisterAgent(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
         // Security: verify caller owns this agentId (prevents cross-agent deregistration)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "DeregisterAgent rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, agentId);
+                Context.ConnectionId, agentId.Value);
             return Task.CompletedTask;
         }
 
@@ -202,6 +206,13 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
 
         _facade.UpdateHeartbeat(message.AgentId, message.Timestamp);
 
+        // TODO: message.AgentId is a raw string on HeartbeatMessage (pre-existing design). The implicit
+        // string→AgentId conversion applied by IAgentHubFacade.UpdateHeartbeat and IAgentHubFacade.GetByAgentId
+        // will throw ArgumentException if message.AgentId is null or empty. Although this is unlikely given
+        // the ownership check above, a malformed message that passes with a matching null AgentId on callerAgent
+        // could cause a confusing exception here. The pre-existing ArgumentNullException guards on these methods
+        // were removed during the AgentId migration; consider reinstating at the facade boundary.
+
         // If the agent reports an active pipeline step, treat as progress evidence.
         // When CurrentStep is null the agent considers itself idle (job done locally) —
         // don't reset the clock so the progress timeout can still detect stuck-in-Busy (#788).
@@ -231,21 +242,19 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// <summary>
     /// Agent signals it is ready for the next job. Triggers job dequeue.
     /// </summary>
-    public Task AgentReady(string agentId)
+    public Task AgentReady(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
         // Security: verify caller owns this agentId (prevents spurious drain signals)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "AgentReady rejected — caller connection {ConnectionId} does not own agent {AgentId}",
-                Context.ConnectionId, agentId);
+                Context.ConnectionId, agentId.Value);
             return Task.CompletedTask;
         }
 
-        _logger.Information("Agent {AgentId} signaled ready", agentId);
+        _logger.Information("Agent {AgentId} signaled ready", agentId.Value);
         _facade.Signal();
         return Task.CompletedTask;
     }

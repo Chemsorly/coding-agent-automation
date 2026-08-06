@@ -40,10 +40,12 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     }
 
     /// <inheritdoc />
-    public void ReleaseAgent(string agentId)
+    public void ReleaseAgent(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
-
+        // TODO: default(AgentId) has Value == null (struct default bypasses the implicit operator).
+        // Passing default(AgentId) here will cause a null-key ArgumentNullException deep inside
+        // ConcurrentDictionary rather than a clear precondition failure at this entry point.
+        // Consider adding ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) here.
         var entry = _registry.GetByAgentId(agentId);
         if (entry is not null)
         {
@@ -61,11 +63,13 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     }
 
     /// <inheritdoc />
-    public void AssignJob(string agentId, string jobId)
+    public void AssignJob(AgentId agentId, string jobId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
         ArgumentNullException.ThrowIfNull(jobId);
-
+        // TODO: default(AgentId) has Value == null (struct default bypasses the implicit operator).
+        // Passing default(AgentId) here will cause a null-key ArgumentNullException deep inside
+        // ConcurrentDictionary rather than a clear precondition failure at this entry point.
+        // Consider adding ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) here.
         var entry = _registry.GetByAgentId(agentId);
         if (entry is null)
         {

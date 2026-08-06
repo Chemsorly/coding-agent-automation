@@ -13,5 +13,5 @@ public interface IAgentOrphanRecoveryService
     /// <summary>
     /// Reconciles agent state after registration. Called immediately after <c>_facade.Register()</c>.
     /// </summary>
-    Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, string agentId);
+    Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId);
 }

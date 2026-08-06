@@ -212,17 +212,16 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task AgentAcceptedRunAsync(RunId runId, string agentId, string issueIdentifier,
+    public async Task AgentAcceptedRunAsync(RunId runId, AgentId agentId, string issueIdentifier,
         string issueProviderConfigId, string repoProviderConfigId,
         PipelineRunType runType, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(runId.Value);
-        ArgumentNullException.ThrowIfNull(agentId);
 
         // 1. Set AgentId on the in-memory PipelineRun
         var run = _runService.GetRun(runId);
         if (run is not null)
-            run.AgentId = agentId;
+            run.AgentId = agentId.Value;
 
         // 2. Set ActiveJobId on agent + transition to Busy
         var agent = _registry.GetByAgentId(agentId);
@@ -248,7 +247,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
 
         _logger.Information(
             "RunLifecycleManager.AgentAcceptedRunAsync: agent {AgentId} accepted run {RunId} for issue {IssueIdentifier}",
-            agentId, runId, issueIdentifier);
+            agentId.Value, runId, issueIdentifier);
     }
 
     /// <inheritdoc />

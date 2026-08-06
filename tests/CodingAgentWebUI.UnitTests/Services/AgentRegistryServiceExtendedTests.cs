@@ -122,6 +122,14 @@ public class AgentRegistryServiceExtendedTests
     [Fact]
     public void Deregister_NullAgentId_ThrowsArgumentNull()
     {
+        // TODO: The null! string passes through the AgentId implicit conversion operator, which calls
+        // ArgumentException.ThrowIfNullOrEmpty — this throws ArgumentNullException (subtype of ArgumentException)
+        // for null input. The test passes due to the inheritance relationship, but the throwing mechanism has
+        // changed from an explicit ArgumentNullException.ThrowIfNull on the method body to the implicit operator.
+        // Consider changing to Assert.Throws<ArgumentException> for robustness.
+        // TODO: No test covers the empty-string rejection path (AgentId _ = "" throws ArgumentException,
+        // not ArgumentNullException). Add Deregister_EmptyAgentId_ThrowsArgumentException to cover the
+        // full precondition contract of the implicit operator at the service-API level.
         Assert.Throws<ArgumentNullException>(() => _registry.Deregister(null!));
     }
 
@@ -130,6 +138,11 @@ public class AgentRegistryServiceExtendedTests
     [Fact]
     public void GetByAgentId_NullId_ThrowsArgumentNull()
     {
+        // TODO: The null! string passes through the AgentId implicit conversion operator, which calls
+        // ArgumentException.ThrowIfNullOrEmpty — this throws ArgumentNullException (subtype of ArgumentException)
+        // for null input. The test passes due to the inheritance relationship, but the throwing mechanism has
+        // changed from an explicit ArgumentNullException.ThrowIfNull on the method body to the implicit operator.
+        // Consider changing to Assert.Throws<ArgumentException> for robustness.
         Assert.Throws<ArgumentNullException>(() => _registry.GetByAgentId(null!));
     }
 
@@ -177,6 +190,11 @@ public class AgentRegistryServiceExtendedTests
     [Fact]
     public void UpdateHeartbeat_NullAgentId_ThrowsArgumentNull()
     {
+        // TODO: The null! string passes through the AgentId implicit conversion operator, which calls
+        // ArgumentException.ThrowIfNullOrEmpty — this throws ArgumentNullException (subtype of ArgumentException)
+        // for null input. The test passes due to the inheritance relationship, but the throwing mechanism has
+        // changed from an explicit ArgumentNullException.ThrowIfNull on the method body to the implicit operator.
+        // Consider changing to Assert.Throws<ArgumentException> for robustness.
         Assert.Throws<ArgumentNullException>(() => _registry.UpdateHeartbeat(null!, DateTimeOffset.UtcNow));
     }
 
@@ -251,6 +269,11 @@ public class AgentRegistryServiceExtendedTests
     [Fact]
     public void TransitionStatus_NullAgentId_ThrowsArgumentNull()
     {
+        // TODO: The null! string passes through the AgentId implicit conversion operator, which calls
+        // ArgumentException.ThrowIfNullOrEmpty — this throws ArgumentNullException (subtype of ArgumentException)
+        // for null input. The test passes due to the inheritance relationship, but the throwing mechanism has
+        // changed from an explicit ArgumentNullException.ThrowIfNull on the method body to the implicit operator.
+        // Consider changing to Assert.Throws<ArgumentException> for robustness.
         Assert.Throws<ArgumentNullException>(() => _registry.TransitionStatus(null!, AgentStatus.Idle));
     }
 
