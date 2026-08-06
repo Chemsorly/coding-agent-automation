@@ -158,11 +158,7 @@ internal sealed class DispatchScheduler
             bool prMadeProgress = false;
             bool decompMadeProgress = false;
 
-            bool hasIssues = HasEligible(request.PollableTemplates, request.IssueQueues, t => t.ImplementationEnabled);
-            bool hasPrs = HasEligible(request.PollableTemplates, request.PrQueues, t => t.ReviewEnabled);
-            bool hasDecomp = (HasEligible(request.PollableTemplates, request.DecompositionQueues, t => t.DecompositionEnabled)
-                || HasEligibleProjectLevelDecomposition(request.ProjectLevelDecompositionQueues))
-                && activeDecompositionCount < request.Config.MaxConcurrentDecompositions;
+            var (hasIssues, hasPrs, hasDecomp) = ComputeQueueAvailability(request, activeDecompositionCount);
 
             // Determine which queue to dispatch from this iteration.
             // If the current turn's queue is empty, try the next non-empty queue.
@@ -252,6 +248,20 @@ internal sealed class DispatchScheduler
         }
 
         return new DispatchResult(processedCount, failedCount);
+    }
+
+    /// <summary>
+    /// Computes whether each queue type has eligible work, respecting decomposition concurrency limits.
+    /// </summary>
+    private (bool hasIssues, bool hasPrs, bool hasDecomp) ComputeQueueAvailability(
+        DispatchRoundRobinRequest request, int activeDecompositionCount)
+    {
+        var hasIssues = HasEligible(request.PollableTemplates, request.IssueQueues, t => t.ImplementationEnabled);
+        var hasPrs = HasEligible(request.PollableTemplates, request.PrQueues, t => t.ReviewEnabled);
+        var hasDecomp = (HasEligible(request.PollableTemplates, request.DecompositionQueues, t => t.DecompositionEnabled)
+            || HasEligibleProjectLevelDecomposition(request.ProjectLevelDecompositionQueues))
+            && activeDecompositionCount < request.Config.MaxConcurrentDecompositions;
+        return (hasIssues, hasPrs, hasDecomp);
     }
 
     /// <summary>
@@ -354,12 +364,7 @@ internal sealed class DispatchScheduler
                 PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
                 continue;
             }
-            if (_orchestration.IsIssueBeingProcessed(candidate.Identifier, template.IssueProviderId))
-            {
-                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                continue;
-            }
-            if (ctx.ActiveIssueIdentifiers.Contains((candidate.Identifier, template.IssueProviderId)))
+            if (IsIssueAlreadyActive(candidate.Identifier, template.IssueProviderId, ctx))
             {
                 PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                 continue;
@@ -388,6 +393,22 @@ internal sealed class DispatchScheduler
             return candidate;
         }
         return null;
+    }
+
+    /// <summary>
+    /// Returns <c>true</c> if the issue is currently being processed or present in the active identifiers set.
+    /// TODO: [WARNING] This method merges two logically distinct checks with different staleness semantics:
+    /// (1) IsIssueBeingProcessed checks live orchestration state; (2) ActiveIssueIdentifiers checks the
+    /// in-memory cycle snapshot. Do not remove or short-circuit check (1) — it guards against races that
+    /// the snapshot alone cannot detect (e.g., an issue dispatched by another agent instance between polls).
+    /// </summary>
+    private bool IsIssueAlreadyActive(string identifier, string issueProviderId, RoundDispatchContext ctx)
+    {
+        if (_orchestration.IsIssueBeingProcessed(identifier, issueProviderId))
+            return true;
+        if (ctx.ActiveIssueIdentifiers.Contains((identifier, issueProviderId)))
+            return true;
+        return false;
     }
 
     /// <summary>
@@ -477,12 +498,7 @@ internal sealed class DispatchScheduler
                 PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedFilteredByLabel));
                 continue;
             }
-            if (_orchestration.IsIssueBeingProcessed(candidate.Identifier, template.IssueProviderId))
-            {
-                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                continue;
-            }
-            if (ctx.ActiveIssueIdentifiers.Contains((candidate.Identifier, template.IssueProviderId)))
+            if (IsIssueAlreadyActive(candidate.Identifier, template.IssueProviderId, ctx))
             {
                 PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                 continue;
@@ -585,12 +601,7 @@ internal sealed class DispatchScheduler
             var candidate = queue[0];
             queue.RemoveAt(0);
 
-            if (_orchestration.IsIssueBeingProcessed(candidate.Issue.Identifier, template.IssueProviderId))
-            {
-                PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
-                continue;
-            }
-            if (ctx.ActiveIssueIdentifiers.Contains((candidate.Issue.Identifier, template.IssueProviderId)))
+            if (IsIssueAlreadyActive(candidate.Issue.Identifier, template.IssueProviderId, ctx))
             {
                 PipelineTelemetry.LoopDispatchDecisions.Add(1, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedAlreadyProcessing));
                 continue;
@@ -637,12 +648,7 @@ internal sealed class DispatchScheduler
             var candidate = TryDequeueValidProjectLevelEpic(kvp.Value, ctx);
             if (candidate is null) continue;
 
-            var phaseLabel = candidate.Value.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
-            ctx.TrackingReportIssue(candidate.Value.Issue.Identifier);
-            ctx.ReportStatus($"🧩 Dispatching project-level epic #{candidate.Value.Issue.Identifier} {phaseLabel} from '{candidate.Value.Template.Name}'");
-            ctx.NotifyChange();
-
-            var (dispatched, epicFailed) = await DispatchProjectLevelEpicAsync(candidate.Value, ctx, stoppingToken, ct);
+            var (dispatched, epicFailed) = await TryDispatchProjectLevelCandidateAsync(candidate.Value, ctx, stoppingToken, ct);
             if (dispatched || epicFailed)
             {
                 consumed++;
@@ -658,6 +664,24 @@ internal sealed class DispatchScheduler
             projectLevelDecompositionQueues.Remove(key);
 
         return (madeProgress, consumed, processed, failed, additionalDecompDispatches);
+    }
+
+    /// <summary>
+    /// Reports status, notifies change, and dispatches a single project-level epic candidate.
+    /// Returns (dispatched, epicFailed).
+    /// </summary>
+    private async Task<(bool dispatched, bool epicFailed)> TryDispatchProjectLevelCandidateAsync(
+        (IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template) candidate,
+        RoundDispatchContext ctx,
+        CancellationToken stoppingToken,
+        CancellationToken ct)
+    {
+        var phaseLabel = candidate.Phase == PipelineRunType.DecompositionAnalysis ? "analysis" : "decomposition";
+        ctx.TrackingReportIssue(candidate.Issue.Identifier);
+        ctx.ReportStatus($"🧩 Dispatching project-level epic #{candidate.Issue.Identifier} {phaseLabel} from '{candidate.Template.Name}'");
+        ctx.NotifyChange();
+
+        return await DispatchProjectLevelEpicAsync(candidate, ctx, stoppingToken, ct);
     }
 
     /// <summary>

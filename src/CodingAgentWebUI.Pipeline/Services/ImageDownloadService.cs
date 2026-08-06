@@ -135,8 +135,6 @@ public sealed class ImageDownloadService : IDisposable
         CancellationToken ct)
     {
         var imageRef = ctx.ImageRef;
-        var targetDirectory = ctx.TargetDirectory;
-        var authToken = ctx.AuthToken;
         var config = ctx.Config;
         var budget = ctx.Budget;
         var url = ResolveUrl(imageRef.Url, ctx.GitlabApiUrl, ctx.GitlabProjectId);
@@ -150,63 +148,8 @@ public sealed class ImageDownloadService : IDisposable
             return null;
         }
 
-        // Manual redirect loop
-        var currentUrl = url;
-        HttpResponseMessage? response = null;
-        var isGitLabRelative = imageRef.Url.StartsWith('/');
-        var stripAuth = false;
-
-        for (var redirectCount = 0; redirectCount <= MaxRedirects; redirectCount++)
-        {
-            if (redirectCount == MaxRedirects)
-            {
-                _logger?.LogDebug("Max redirects exceeded for {Url}", imageRef.Url);
-                return null;
-            }
-
-            using var request = new HttpRequestMessage(HttpMethod.Get, currentUrl);
-            if (!stripAuth)
-                ApplyAuthHeaders(request, currentUrl, authToken, isGitLabRelative);
-
-            try
-            {
-                response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
-                    .ConfigureAwait(false);
-            }
-            catch (HttpRequestException ex)
-            {
-                _logger?.LogDebug(ex, "HTTP request failed for {Url}", currentUrl);
-                return null;
-            }
-
-            if (IsRedirect(response.StatusCode))
-            {
-                var location = response.Headers.Location;
-                response.Dispose();
-
-                if (location is null)
-                    return null;
-
-                var redirectUri = location.IsAbsoluteUri ? location : new Uri(currentUrl, location);
-
-                // Block redirect to non-HTTPS
-                if (!string.Equals(redirectUri.Scheme, "https", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger?.LogDebug("Redirect to non-HTTPS blocked: {Url}", redirectUri);
-                    return null;
-                }
-
-                // Cross-origin detection: strip auth on next request
-                if (!IsSameOrigin(currentUrl, redirectUri))
-                    stripAuth = true;
-
-                currentUrl = redirectUri;
-                continue;
-            }
-
-            break;
-        }
-
+        // Manual redirect following with auth stripping on cross-origin
+        var (response, finalUrl) = await FollowRedirectsAsync(imageRef, url, ctx.AuthToken, ct);
         if (response is null)
             return null;
 
@@ -214,36 +157,18 @@ public sealed class ImageDownloadService : IDisposable
         {
             if (!response.IsSuccessStatusCode)
                 return null;
-            // Content-Type validation
+
             var contentType = response.Content.Headers.ContentType?.MediaType;
-            if (contentType is null || !AllowedContentTypes.Contains(contentType))
-            {
-                _logger?.LogDebug("Invalid content type {ContentType} for {Url}", contentType, imageRef.Url);
+            // TODO: [WARNING] finalUrl! uses a null-forgiving operator. FollowRedirectsAsync currently
+            // always returns null finalUrl alongside null response, but the return type (Uri?) allows
+            // (non-null response, null finalUrl). Consider changing the return type to guarantee
+            // finalUrl is non-null when response is non-null, or add an explicit null guard here.
+            var finalExtension = ValidateAndResolveExtension(contentType, finalUrl!, imageRef);
+            if (finalExtension is null)
                 return null;
-            }
 
-            // Extension validation (three-way check)
-            var urlExtension = GetUrlExtension(currentUrl);
-            var expectedExtension = ContentTypeToExtension.GetValueOrDefault(contentType);
-
-            if (urlExtension is not null && expectedExtension is not null && !ExtensionMatchesContentType(urlExtension, contentType))
-            {
-                // If URL has an extension, it must agree with Content-Type
-                _logger?.LogDebug("Extension/Content-Type mismatch: ext={Ext}, ct={CT}", urlExtension, contentType);
-                return null;
-            }
-
-            // Determine final extension
-            var finalExtension = urlExtension ?? expectedExtension ?? ".png";
-            if (!AllowedExtensions.Contains(finalExtension))
-            {
-                _logger?.LogDebug("Disallowed extension {Ext}", finalExtension);
-                return null;
-            }
-
-            // Generate filename
             var filename = $"{Guid.NewGuid():N}{finalExtension}";
-            var filePath = Path.Combine(targetDirectory, filename);
+            var filePath = Path.Combine(ctx.TargetDirectory, filename);
 
             // Per-image size pre-check via Content-Length header (before downloading)
             var contentLength = response.Content.Headers.ContentLength;
@@ -253,106 +178,227 @@ public sealed class ImageDownloadService : IDisposable
                 return null;
             }
 
-            // Stream content with byte counting and throughput detection
-            long bytesDownloaded = 0;
-            try
-            {
-                await using var contentStream = await GetDecompressedStream(response).ConfigureAwait(false);
-                await using var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, useAsync: true);
-
-                var buffer = new byte[8192];
-                var windowStart = Environment.TickCount64;
-                long windowBytes = 0;
-
-                while (true)
-                {
-                    var read = await contentStream.ReadAsync(buffer, ct).ConfigureAwait(false);
-                    if (read == 0)
-                        break;
-
-                    bytesDownloaded += read;
-                    windowBytes += read;
-
-                    // Per-image streaming size cap (guards against missing Content-Length)
-                    if (bytesDownloaded > config.MaxImageSizeBytes)
-                    {
-                        _logger?.LogDebug("Per-image size exceeded during streaming for {Url}: {Bytes} bytes", imageRef.Url, bytesDownloaded);
-                        break;
-                    }
-
-                    await fileStream.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-
-                    // Throughput detection
-                    var elapsed = Environment.TickCount64 - windowStart;
-                    if (elapsed >= ThroughputWindowSeconds * 1000)
-                    {
-                        var bytesPerSecond = windowBytes * 1000.0 / elapsed;
-                        if (bytesPerSecond < MinBytesPerSecond)
-                        {
-                            _logger?.LogDebug("Throughput below floor for {Url}: {Bps} B/s", imageRef.Url, bytesPerSecond);
-                            break;
-                        }
-                        windowStart = Environment.TickCount64;
-                        windowBytes = 0;
-                    }
-                }
-            }
-            catch (Exception) when (File.Exists(filePath))
-            {
-                TryDeleteFile(filePath);
-                throw;
-            }
-
+            var bytesDownloaded = await StreamWithBudgetAsync(response, imageRef, filePath, config, ct);
             if (bytesDownloaded == 0)
             {
                 TryDeleteFile(filePath);
                 return null;
             }
 
-            // Post-download validation with guaranteed cleanup on any exit path
-            var downloadSucceeded = false;
+            return PostDownloadValidate(filePath, filename, imageRef, contentType!, bytesDownloaded, budget, config);
+        }
+    }
+
+    /// <summary>
+    /// Follows HTTP redirects up to MaxRedirects, stripping auth on cross-origin redirects.
+    /// Returns the final non-redirect response and final URI, or (null, null) on failure.
+    /// </summary>
+    private async Task<(HttpResponseMessage? response, Uri? finalUrl)> FollowRedirectsAsync(
+        ImageReference imageRef, Uri startUrl, string authToken, CancellationToken ct)
+    {
+        var currentUrl = startUrl;
+        var isGitLabRelative = imageRef.Url.StartsWith('/');
+        var stripAuth = false;
+
+        for (var redirectCount = 0; redirectCount <= MaxRedirects; redirectCount++)
+        {
+            if (redirectCount == MaxRedirects)
+            {
+                _logger?.LogDebug("Max redirects exceeded for {Url}", imageRef.Url);
+                return (null, null);
+            }
+
+            using var request = new HttpRequestMessage(HttpMethod.Get, currentUrl);
+            if (!stripAuth)
+                ApplyAuthHeaders(request, currentUrl, authToken, isGitLabRelative);
+
+            HttpResponseMessage response;
             try
             {
-                // Post-loop streaming size cap cleanup
-                if (bytesDownloaded > config.MaxImageSizeBytes)
-                    return null;
-
-                // Magic bytes validation
-                if (!ValidateMagicBytes(filePath, contentType))
-                {
-                    _logger?.LogDebug("Magic bytes mismatch for {Url}", imageRef.Url);
-                    return null;
-                }
-
-                // Atomic budget reservation (avoids TOCTOU race with concurrent downloads)
-                if (!budget.TryReserve(bytesDownloaded, config.MaxTotalImageSizeBytes))
-                {
-                    _logger?.LogDebug("Total budget would be exceeded for {Url}", imageRef.Url);
-                    return null;
-                }
-
-                // Dimension validation (best-effort with NetVips)
-                if (!ValidateDimensions(filePath))
-                {
-                    _logger?.LogDebug("Dimension validation failed for {Url}", imageRef.Url);
-                    return null;
-                }
-
-                downloadSucceeded = true;
-                return new DownloadedImage
-                {
-                    LocalPath = filePath,
-                    LocalFilename = filename,
-                    Reference = imageRef,
-                    FileSizeBytes = bytesDownloaded,
-                    MimeType = contentType
-                };
+                response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct)
+                    .ConfigureAwait(false);
             }
-            finally
+            catch (HttpRequestException ex)
             {
-                if (!downloadSucceeded)
-                    TryDeleteFile(filePath);
+                _logger?.LogDebug(ex, "HTTP request failed for {Url}", currentUrl);
+                return (null, null);
             }
+
+            if (!IsRedirect(response.StatusCode))
+                return (response, currentUrl);
+
+            var location = response.Headers.Location;
+            response.Dispose();
+
+            if (location is null)
+                return (null, null);
+
+            var redirectUri = location.IsAbsoluteUri ? location : new Uri(currentUrl, location);
+
+            if (!string.Equals(redirectUri.Scheme, "https", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger?.LogDebug("Redirect to non-HTTPS blocked: {Url}", redirectUri);
+                return (null, null);
+            }
+
+            if (!IsSameOrigin(currentUrl, redirectUri))
+                stripAuth = true;
+
+            currentUrl = redirectUri;
+        }
+
+        return (null, null);
+    }
+
+    /// <summary>
+    /// Validates Content-Type and extension consistency, returns the final extension to use,
+    /// or null if validation fails.
+    /// </summary>
+    private string? ValidateAndResolveExtension(string? contentType, Uri finalUrl, ImageReference imageRef)
+    {
+        if (contentType is null || !AllowedContentTypes.Contains(contentType))
+        {
+            _logger?.LogDebug("Invalid content type {ContentType} for {Url}", contentType, imageRef.Url);
+            return null;
+        }
+
+        var urlExtension = GetUrlExtension(finalUrl);
+        var expectedExtension = ContentTypeToExtension.GetValueOrDefault(contentType);
+
+        if (urlExtension is not null && expectedExtension is not null && !ExtensionMatchesContentType(urlExtension, contentType))
+        {
+            _logger?.LogDebug("Extension/Content-Type mismatch: ext={Ext}, ct={CT}", urlExtension, contentType);
+            return null;
+        }
+
+        var finalExtension = urlExtension ?? expectedExtension ?? ".png";
+        if (!AllowedExtensions.Contains(finalExtension))
+        {
+            _logger?.LogDebug("Disallowed extension {Ext}", finalExtension);
+            return null;
+        }
+
+        return finalExtension;
+    }
+
+    /// <summary>
+    /// Streams response content to a file with per-image size cap and throughput detection.
+    /// Returns bytes downloaded, or 0 if aborted (file is cleaned up by caller).
+    /// When bytesDownloaded exceeds MaxImageSizeBytes, the loop breaks with a non-zero value;
+    /// the caller must pass the result to PostDownloadValidate which performs the over-size check
+    /// and cleans up the file in its finally block.
+    /// TODO: [WARNING] The file-cleanup contract is split: zero-bytes cleanup is documented here
+    /// ("cleaned up by caller"), but over-size cleanup is silently delegated to PostDownloadValidate.
+    /// Future callers that omit PostDownloadValidate will leave partial files on disk.
+    /// </summary>
+    private async Task<long> StreamWithBudgetAsync(
+        HttpResponseMessage response,
+        ImageReference imageRef,
+        string filePath,
+        PipelineConfiguration config,
+        CancellationToken ct)
+    {
+        long bytesDownloaded = 0;
+        try
+        {
+            await using var contentStream = await GetDecompressedStream(response).ConfigureAwait(false);
+            await using var fileStream = new FileStream(filePath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, useAsync: true);
+
+            var buffer = new byte[8192];
+            var windowStart = Environment.TickCount64;
+            long windowBytes = 0;
+
+            while (true)
+            {
+                var read = await contentStream.ReadAsync(buffer, ct).ConfigureAwait(false);
+                if (read == 0)
+                    break;
+
+                bytesDownloaded += read;
+                windowBytes += read;
+
+                if (bytesDownloaded > config.MaxImageSizeBytes)
+                {
+                    _logger?.LogDebug("Per-image size exceeded during streaming for {Url}: {Bytes} bytes", imageRef.Url, bytesDownloaded);
+                    break;
+                }
+
+                await fileStream.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+
+                var elapsed = Environment.TickCount64 - windowStart;
+                if (elapsed >= ThroughputWindowSeconds * 1000)
+                {
+                    var bytesPerSecond = windowBytes * 1000.0 / elapsed;
+                    if (bytesPerSecond < MinBytesPerSecond)
+                    {
+                        _logger?.LogDebug("Throughput below floor for {Url}: {Bps} B/s", imageRef.Url, bytesPerSecond);
+                        break;
+                    }
+                    windowStart = Environment.TickCount64;
+                    windowBytes = 0;
+                }
+            }
+        }
+        catch (Exception) when (File.Exists(filePath))
+        {
+            TryDeleteFile(filePath);
+            throw;
+        }
+
+        return bytesDownloaded;
+    }
+
+    /// <summary>
+    /// Validates magic bytes, dimensions, and budget after download.
+    /// Returns the completed DownloadedImage on success, null if any check fails (cleans up file).
+    /// </summary>
+    private DownloadedImage? PostDownloadValidate(
+        string filePath,
+        string filename,
+        ImageReference imageRef,
+        string contentType,
+        long bytesDownloaded,
+        ByteBudget budget,
+        PipelineConfiguration config)
+    {
+        var downloadSucceeded = false;
+        try
+        {
+            if (bytesDownloaded > config.MaxImageSizeBytes)
+                return null;
+
+            if (!ValidateMagicBytes(filePath, contentType))
+            {
+                _logger?.LogDebug("Magic bytes mismatch for {Url}", imageRef.Url);
+                return null;
+            }
+
+            if (!budget.TryReserve(bytesDownloaded, config.MaxTotalImageSizeBytes))
+            {
+                _logger?.LogDebug("Total budget would be exceeded for {Url}", imageRef.Url);
+                return null;
+            }
+
+            if (!ValidateDimensions(filePath))
+            {
+                _logger?.LogDebug("Dimension validation failed for {Url}", imageRef.Url);
+                return null;
+            }
+
+            downloadSucceeded = true;
+            return new DownloadedImage
+            {
+                LocalPath = filePath,
+                LocalFilename = filename,
+                Reference = imageRef,
+                FileSizeBytes = bytesDownloaded,
+                MimeType = contentType
+            };
+        }
+        finally
+        {
+            if (!downloadSucceeded)
+                TryDeleteFile(filePath);
         }
     }
 

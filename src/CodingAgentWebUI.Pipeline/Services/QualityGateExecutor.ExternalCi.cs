@@ -60,48 +60,9 @@ public partial class QualityGateExecutor
         GateResult? ciGate = null;
         try
         {
-            try
-            {
-                var issueRef = context.IssueReference ?? $"#{run.IssueIdentifier}";
-                var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, issueRef);
-                var blacklisted = await context.RepoProvider.CommitAllAsync(
-                    run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct,
-                    config.PipelineInjectedPaths);
-                RecordBlacklistedFiles(run, blacklisted, config, callbacks);
-            }
-            catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
-            {
-                if (skipCiIfNoChanges)
-                {
-                    _logger.Information("Pipeline {RunId} no changes after cleanup, skipping external CI (already validated)", run.RunId);
-                    callbacks.EmitOutputLine("✅ External CI skipped — no changes since last CI pass");
-                    return report;
-                }
-                else if (allowEmptyCommit)
-                {
-                    _logger.Information("Pipeline {RunId} no changes after retry fix, creating empty commit to trigger CI", run.RunId);
-                    await context.RepoProvider.CommitAllAsync(
-                        run.WorkspacePath!,
-                        $"chore: trigger CI re-run for {run.IssueIdentifier} (retry {run.RetryCount})",
-                        config.BlacklistedPaths, allowEmpty: true, ct,
-                        config.PipelineInjectedPaths);
-                }
-                else if (!await context.RepoProvider.HasCommitsAheadAsync(run.WorkspacePath!, ct))
-                {
-                    _logger.Warning("Pipeline {RunId} no changes to commit and no commits ahead of base", run.RunId);
-                    throw;
-                }
-                else
-                {
-                    _logger.Information("Pipeline {RunId} no uncommitted changes but branch has commits ahead, proceeding to push", run.RunId);
-                }
-            }
-
-            await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
-            _logger.Information("Pipeline {RunId} pushed branch {BranchName} for CI validation",
-                run.RunId, run.BranchName);
-            callbacks.EmitOutputLine($"📦 Committed changes for CI validation");
-            callbacks.EmitOutputLine($"🔀 Pushed to origin/{run.BranchName}");
+            var skipCi = await CommitAndPushAsync(context, report, allowEmptyCommit, skipCiIfNoChanges, ct);
+            if (skipCi)
+                return report;
 
             // Create draft PR if not exists — ensures CI results (coverage comments) land on the PR
             await callbacks.CreateDraftPrIfNotExists(run, ct);
@@ -110,54 +71,9 @@ public partial class QualityGateExecutor
             try { commitSha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
             catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA", run.RunId); }
 
-            var pollSha = commitSha;
-
             callbacks.EmitOutputLine("⏳ Waiting for external CI...");
             var ciPollStopwatch = System.Diagnostics.Stopwatch.StartNew();
-            var ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, ct);
-
-            var ciPassed = ciStatus.State == PipelineRunState.Passed;
-            IReadOnlyDictionary<long, string>? ciLogPaths = null;
-            if (!ciPassed && run.WorkspacePath != null)
-                ciLogPaths = _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId);
-
-            // Classify CI failure and auto-retry infrastructure failures
-            if (!ciPassed)
-            {
-                var classification = CiFailureClassifier.Classify(ciStatus);
-                while (!ciPassed
-                       && classification == CiFailureClassifier.CiFailureCategory.Infrastructure
-                       && run.InfrastructureRetryCount < config.MaxInfrastructureRetries)
-                {
-                    ct.ThrowIfCancellationRequested();
-                    run.InfrastructureRetryCount++;
-                    _logger.Warning("Pipeline {RunId} CI infrastructure failure detected, auto-retrying ({Attempt}/{Max})",
-                        run.RunId, run.InfrastructureRetryCount, config.MaxInfrastructureRetries);
-                    callbacks.EmitOutputLine($"⚠️ CI infrastructure failure — auto-retrying ({run.InfrastructureRetryCount}/{config.MaxInfrastructureRetries})...");
-
-                    await context.RepoProvider.CommitAllAsync(run.WorkspacePath!,
-                        $"chore: re-trigger CI after infrastructure failure ({run.InfrastructureRetryCount})",
-                        config.BlacklistedPaths, allowEmpty: true, ct,
-                        config.PipelineInjectedPaths);
-                    await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
-
-                    string? retrySha = null;
-                    try { retrySha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
-                    catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA for infra retry", run.RunId); }
-                    var retryPollSha = retrySha;
-
-                    callbacks.EmitOutputLine("⏳ Waiting for external CI (infrastructure retry)...");
-                    ciStatus = await PollCiWithNotStartedRetryAsync(context, retryPollSha, config, callbacks, ct);
-                    ciPassed = ciStatus.State == PipelineRunState.Passed;
-
-                    ciLogPaths = (!ciPassed && run.WorkspacePath != null)
-                        ? _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId)
-                        : null;
-
-                    if (!ciPassed)
-                        classification = CiFailureClassifier.Classify(ciStatus);
-                }
-            }
+            var (ciPassed, ciStatus, ciLogPaths) = await PollAndHandleInfraRetryAsync(context, commitSha, config, callbacks, ct);
 
             // TODO: Duration includes infrastructure retry wait times — consider recording per-attempt duration for better histogram granularity
             PipelineTelemetry.ExternalCiDuration.Record(
@@ -204,6 +120,145 @@ public partial class QualityGateExecutor
             SecurityScan = report.SecurityScan,
             ExternalCi = ciGate
         };
+    }
+
+    /// <summary>
+    /// Commits and pushes the workspace branch. Returns true when CI should be skipped
+    /// (no-changes + skipCiIfNoChanges path). Throws on all other non-cancellation errors.
+    /// </summary>
+    private async Task<bool> CommitAndPushAsync(
+        QualityGateContext context,
+        // TODO: [WARNING] The `report` parameter is not used inside this method. It was retained
+        // from the original inline code where `report` was in the outer scope. Consider removing
+        // it to avoid misleading future readers into thinking the report is mutated here.
+        QualityGateReport report,
+        bool allowEmptyCommit,
+        bool skipCiIfNoChanges,
+        CancellationToken ct)
+    {
+        var run = context.Run;
+        var config = context.Config;
+        var callbacks = context.Callbacks;
+
+        try
+        {
+            var issueRef = context.IssueReference ?? $"#{run.IssueIdentifier}";
+            var commitMessage = PipelineFormatting.GenerateCommitMessage(run.IssueTitle, issueRef);
+            var blacklisted = await context.RepoProvider.CommitAllAsync(
+                run.WorkspacePath!, commitMessage, config.BlacklistedPaths, ct,
+                config.PipelineInjectedPaths);
+            RecordBlacklistedFiles(run, blacklisted, config, callbacks);
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("No changes to commit"))
+        {
+            if (skipCiIfNoChanges)
+            {
+                _logger.Information("Pipeline {RunId} no changes after cleanup, skipping external CI (already validated)", run.RunId);
+                callbacks.EmitOutputLine("✅ External CI skipped — no changes since last CI pass");
+                return true;
+            }
+            else if (allowEmptyCommit)
+            {
+                _logger.Information("Pipeline {RunId} no changes after retry fix, creating empty commit to trigger CI", run.RunId);
+                await context.RepoProvider.CommitAllAsync(
+                    run.WorkspacePath!,
+                    $"chore: trigger CI re-run for {run.IssueIdentifier} (retry {run.RetryCount})",
+                    config.BlacklistedPaths, allowEmpty: true, ct,
+                    config.PipelineInjectedPaths);
+            }
+            else if (!await context.RepoProvider.HasCommitsAheadAsync(run.WorkspacePath!, ct))
+            {
+                _logger.Warning("Pipeline {RunId} no changes to commit and no commits ahead of base", run.RunId);
+                throw;
+            }
+            else
+            {
+                _logger.Information("Pipeline {RunId} no uncommitted changes but branch has commits ahead, proceeding to push", run.RunId);
+            }
+        }
+
+        await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
+        _logger.Information("Pipeline {RunId} pushed branch {BranchName} for CI validation", run.RunId, run.BranchName);
+        callbacks.EmitOutputLine($"📦 Committed changes for CI validation");
+        callbacks.EmitOutputLine($"🔀 Pushed to origin/{run.BranchName}");
+        return false;
+    }
+
+    /// <summary>
+    /// Polls CI and automatically retries on infrastructure failures up to
+    /// <see cref="PipelineConfiguration.MaxInfrastructureRetries"/> times.
+    /// Returns (ciPassed, finalStatus, ciLogPaths).
+    /// </summary>
+    private async Task<(bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)> PollAndHandleInfraRetryAsync(
+        QualityGateContext context,
+        string? pollSha,
+        PipelineConfiguration config,
+        IPipelineCallbacks callbacks,
+        CancellationToken ct)
+    {
+        var run = context.Run;
+        var ciStatus = await PollCiWithNotStartedRetryAsync(context, pollSha, config, callbacks, ct);
+        var ciPassed = ciStatus.State == PipelineRunState.Passed;
+        IReadOnlyDictionary<long, string>? ciLogPaths = null;
+
+        if (!ciPassed && run.WorkspacePath != null)
+            ciLogPaths = _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId);
+
+        if (!ciPassed)
+        {
+            var classification = CiFailureClassifier.Classify(ciStatus);
+            while (!ciPassed
+                   && classification == CiFailureClassifier.CiFailureCategory.Infrastructure
+                   && run.InfrastructureRetryCount < config.MaxInfrastructureRetries)
+            {
+                (ciPassed, ciStatus, ciLogPaths) = await ExecuteInfraRetryAsync(
+                    context, config, callbacks, ciStatus, ct);
+
+                if (!ciPassed)
+                    classification = CiFailureClassifier.Classify(ciStatus);
+            }
+        }
+
+        return (ciPassed, ciStatus, ciLogPaths);
+    }
+
+    /// <summary>
+    /// Performs one infrastructure-failure retry: increments the counter, logs, creates an empty
+    /// commit, re-pushes, and polls CI again. Returns (ciPassed, newStatus, ciLogPaths).
+    /// </summary>
+    private async Task<(bool ciPassed, PipelineRunStatus ciStatus, IReadOnlyDictionary<long, string>? ciLogPaths)> ExecuteInfraRetryAsync(
+        QualityGateContext context,
+        PipelineConfiguration config,
+        IPipelineCallbacks callbacks,
+        PipelineRunStatus previousStatus,
+        CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var run = context.Run;
+        run.InfrastructureRetryCount++;
+        _logger.Warning("Pipeline {RunId} CI infrastructure failure detected, auto-retrying ({Attempt}/{Max})",
+            run.RunId, run.InfrastructureRetryCount, config.MaxInfrastructureRetries);
+        callbacks.EmitOutputLine($"⚠️ CI infrastructure failure — auto-retrying ({run.InfrastructureRetryCount}/{config.MaxInfrastructureRetries})...");
+
+        await context.RepoProvider.CommitAllAsync(run.WorkspacePath!,
+            $"chore: re-trigger CI after infrastructure failure ({run.InfrastructureRetryCount})",
+            config.BlacklistedPaths, allowEmpty: true, ct,
+            config.PipelineInjectedPaths);
+        await context.RepoProvider.PushBranchAsync(run.WorkspacePath!, run.BranchName!, forcePush: true, ct);
+
+        string? retrySha = null;
+        try { retrySha = await context.RepoProvider.GetHeadCommitShaAsync(run.WorkspacePath!, ct); }
+        catch (Exception ex) { _logger.Debug(ex, "Pipeline {RunId} could not read HEAD commit SHA for infra retry", run.RunId); }
+
+        callbacks.EmitOutputLine("⏳ Waiting for external CI (infrastructure retry)...");
+        var ciStatus = await PollCiWithNotStartedRetryAsync(context, retrySha, config, callbacks, ct);
+        var ciPassed = ciStatus.State == PipelineRunState.Passed;
+
+        IReadOnlyDictionary<long, string>? ciLogPaths = (!ciPassed && run.WorkspacePath != null)
+            ? _ciLogWriter.WriteJobLogs(ciStatus, run.WorkspacePath, run.RunId)
+            : null;
+
+        return (ciPassed, ciStatus, ciLogPaths);
     }
 
     /// <summary>

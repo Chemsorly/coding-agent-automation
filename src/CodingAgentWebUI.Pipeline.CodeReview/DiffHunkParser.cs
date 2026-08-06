@@ -32,70 +32,101 @@ internal static partial class DiffHunkParser
         {
             // Normalize Windows line endings — prevents \r from breaking prefix detection
             var line = rawLine.TrimEnd('\r');
-            // Detect file boundary: +++ b/path/to/file
-            if (line.StartsWith("+++ ", StringComparison.Ordinal))
-            {
-                var path = ExtractNewFilePath(line);
-                if (path is null)
-                {
-                    // Deleted file (+++ /dev/null) — no valid RIGHT-side lines
-                    currentFile = null;
-                    inHunk = false;
-                    continue;
-                }
 
-                currentFile = NormalizePath(path);
-                // Ensure the file entry exists (may already exist from a previous hunk section)
-                if (!result.ContainsKey(currentFile))
-                    result[currentFile] = new HashSet<int>();
-
-                inHunk = false;
+            if (TryHandleFileBoundary(line, result, ref currentFile, ref inHunk))
                 continue;
-            }
 
-            // Detect new diff entry — resets hunk state
             if (line.StartsWith("diff ", StringComparison.Ordinal))
             {
                 inHunk = false;
                 continue;
             }
 
-            // Detect hunk header: @@ -oldStart,oldSize +newStart,newSize @@
-            if (currentFile is not null && line.StartsWith("@@", StringComparison.Ordinal))
-            {
-                var match = HunkHeaderRegex().Match(line);
-                if (!match.Success)
-                    continue;
-
-                currentNewLine = int.Parse(match.Groups[3].Value);
-                inHunk = true;
+            if (TryHandleHunkHeader(line, currentFile, ref inHunk, ref currentNewLine))
                 continue;
-            }
 
-            // Walk hunk content lines to identify actually-changed lines
             if (inHunk && currentFile is not null)
-            {
-                if (line.StartsWith('+'))
-                {
-                    // Added/modified line — valid target for inline comments
-                    result[currentFile].Add(currentNewLine);
-                    currentNewLine++;
-                }
-                else if (line.StartsWith('-'))
-                {
-                    // Deleted line — does NOT advance new-line counter
-                    // Not a valid target on the RIGHT side
-                }
-                else if (line.StartsWith(' ') || (line.Length == 0 && currentNewLine > 0))
-                {
-                    // Context line — advances counter but NOT a valid comment target
-                    currentNewLine++;
-                }
-                // else: unknown line (e.g., "\ No newline at end of file") — skip without advancing
-            }
+                ProcessHunkContentLine(line, result[currentFile], ref currentNewLine);
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// Handles a "+++ b/path" file boundary line.
+    /// Updates <paramref name="currentFile"/> and resets <paramref name="inHunk"/>.
+    /// Returns true when the line was a file boundary (caller should continue).
+    /// </summary>
+    private static bool TryHandleFileBoundary(
+        string line,
+        Dictionary<string, HashSet<int>> result,
+        ref string? currentFile,
+        ref bool inHunk)
+    {
+        if (!line.StartsWith("+++ ", StringComparison.Ordinal))
+            return false;
+
+        var path = ExtractNewFilePath(line);
+        if (path is null)
+        {
+            // Deleted file (+++ /dev/null) — no valid RIGHT-side lines
+            currentFile = null;
+            inHunk = false;
+            return true;
+        }
+
+        currentFile = NormalizePath(path);
+        if (!result.ContainsKey(currentFile))
+            result[currentFile] = new HashSet<int>();
+
+        inHunk = false;
+        return true;
+    }
+
+    /// <summary>
+    /// Handles a hunk header line ("@@ -old +new @@").
+    /// Sets <paramref name="inHunk"/> and <paramref name="currentNewLine"/> when matched.
+    /// Returns true when the line was a hunk header (caller should continue).
+    /// </summary>
+    private static bool TryHandleHunkHeader(
+        string line, string? currentFile,
+        ref bool inHunk, ref int currentNewLine)
+    {
+        if (currentFile is null || !line.StartsWith("@@", StringComparison.Ordinal))
+            return false;
+
+        var match = HunkHeaderRegex().Match(line);
+        if (!match.Success)
+            return true; // consumed but unmatched — skip without advancing
+
+        currentNewLine = int.Parse(match.Groups[3].Value);
+        inHunk = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Processes a single line within an active diff hunk:
+    /// records added lines as valid targets and advances the new-line counter.
+    /// </summary>
+    private static void ProcessHunkContentLine(string line, HashSet<int> validLines, ref int currentNewLine)
+    {
+        if (line.StartsWith('+'))
+        {
+            // Added/modified line — valid target for inline comments
+            validLines.Add(currentNewLine);
+            currentNewLine++;
+        }
+        else if (line.StartsWith('-'))
+        {
+            // Deleted line — does NOT advance new-line counter
+            // Not a valid target on the RIGHT side
+        }
+        else if (line.StartsWith(' ') || (line.Length == 0 && currentNewLine > 0))
+        {
+            // Context line — advances counter but NOT a valid comment target
+            currentNewLine++;
+        }
+        // else: unknown line (e.g., "\ No newline at end of file") — skip without advancing
     }
 
     /// <summary>

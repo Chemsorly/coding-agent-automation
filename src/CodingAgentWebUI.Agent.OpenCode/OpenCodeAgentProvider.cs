@@ -25,7 +25,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
     private volatile string? _sessionStatus; // "idle", "busy", "retry"
     private volatile string? _sessionStatusMessage; // Error/retry message from session.status event
     private volatile string? _allSessionsSummary; // Cached summary from polling GET /session/status
-    private CancellationTokenSource? _sessionStatusPollCts; // Controls the background polling loop
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (long Input, long Output, long Reasoning, long CacheRead, long CacheWrite, double Cost)> _lastSessionTokens = new();
 
     /// <summary>
@@ -115,7 +114,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         // NOTE: Per-call local variable for SSE dedup — avoids races with concurrent parallel calls.
 
         var pollCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        _sessionStatusPollCts = pollCts;
         var pollTask = PollAllSessionStatusesAsync(pollCts.Token);
 
         try
@@ -201,7 +199,6 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
             try { await pollCts.CancelAsync(); } catch (OperationCanceledException) { }
             try { await pollTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
             pollCts.Dispose();
-            _sessionStatusPollCts = null;
         }
     }
 

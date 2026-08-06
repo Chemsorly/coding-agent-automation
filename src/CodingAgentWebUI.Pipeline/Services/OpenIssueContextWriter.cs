@@ -94,59 +94,48 @@ public sealed class OpenIssueContextWriter : IOpenIssueContextWriter
 
         // Fetch each issue's detail and write to workspace
         var writtenCount = 0;
-
-        foreach (var identifier in openIdentifiers)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            try
-            {
-                var detail = await issueOps.GetIssueAsync(identifier, ct);
-                var filePath = Path.Combine(outputDir, $"{identifier}.md");
-                var content = FormatIssueMarkdown(detail, isClosed: false);
-
-                await File.WriteAllTextAsync(filePath, content, Encoding.UTF8, ct);
-                writtenCount++;
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex,
-                    "Failed to fetch or write open issue {Identifier}: {Error}",
-                    identifier, ex.Message);
-            }
-        }
-
-        foreach (var identifier in closedIdentifiers)
-        {
-            ct.ThrowIfCancellationRequested();
-
-            try
-            {
-                var detail = await issueOps.GetIssueAsync(identifier, ct);
-                var filePath = Path.Combine(outputDir, $"{identifier}.md");
-                var content = FormatIssueMarkdown(detail, isClosed: true);
-
-                await File.WriteAllTextAsync(filePath, content, Encoding.UTF8, ct);
-                writtenCount++;
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger.Warning(ex,
-                    "Failed to fetch or write closed issue {Identifier}: {Error}",
-                    identifier, ex.Message);
-            }
-        }
+        writtenCount += await WriteIssueFilesAsync(issueOps, openIdentifiers, outputDir, isClosed: false, ct);
+        writtenCount += await WriteIssueFilesAsync(issueOps, closedIdentifiers, outputDir, isClosed: true, ct);
 
         _logger.Information("Wrote {WrittenCount} issue context files (open={OpenCount}, closed={ClosedCount})",
             writtenCount, openIdentifiers.Count, closedIdentifiers.Count);
+
+        return writtenCount;
+    }
+
+    private async Task<int> WriteIssueFilesAsync(
+        IAgentIssueOperations issueOps,
+        List<string> identifiers,
+        string outputDir,
+        bool isClosed,
+        CancellationToken ct)
+    {
+        var writtenCount = 0;
+
+        foreach (var identifier in identifiers)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            try
+            {
+                var detail = await issueOps.GetIssueAsync(identifier, ct);
+                var filePath = Path.Combine(outputDir, $"{identifier}.md");
+                var content = FormatIssueMarkdown(detail, isClosed);
+
+                await File.WriteAllTextAsync(filePath, content, Encoding.UTF8, ct);
+                writtenCount++;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(ex,
+                    "Failed to fetch or write {State} issue {Identifier}: {Error}",
+                    isClosed ? "closed" : "open", identifier, ex.Message);
+            }
+        }
 
         return writtenCount;
     }

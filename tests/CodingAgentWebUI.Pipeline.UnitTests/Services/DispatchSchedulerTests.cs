@@ -420,6 +420,11 @@ public class DispatchSchedulerTests
         _mockOrchestration.Setup(o => o.IsIssueBeingProcessed(It.IsAny<string>(), It.IsAny<ProviderConfigId>()))
             .Returns(true);
 
+        // TODO: [WARNING] The test below only exercises IsIssueAlreadyActive branch (1):
+        // _orchestration.IsIssueBeingProcessed. Branch (2) — ctx.ActiveIssueIdentifiers.Contains —
+        // is never covered because ActiveIssueIdentifiers is always initialized empty.
+        // Add a test where IsIssueBeingProcessed returns false but the identifier IS in
+        // ActiveIssueIdentifiers to cover the second deduplication guard.
         var template = CreateTemplate("t1");
         var project = CreateProject("p1");
         var (pollable, flattened) = BuildTemplateLists(template, project);
