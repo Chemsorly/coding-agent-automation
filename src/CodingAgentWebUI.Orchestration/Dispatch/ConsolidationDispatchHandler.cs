@@ -412,11 +412,9 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         if (_consolidationJobPreparer is null)
         {
             Log.Error("ConsolidationDispatchHandler: IConsolidationJobPreparationService not available for consolidation WorkItem {WorkItemId}", item.Id);
-            // Throw without calling FailConsolidationWorkItemAsync here: the caller's catch (Exception ex) block
-            // will call FailConsolidationWorkItemAsync exactly once. Calling it here AND throwing would cause a
-            // double-fail — the same work item would be transitioned to Failed twice with two different messages.
-            // TODO: [WARNING] The caller's catch block passes `ct` to FailConsolidationWorkItemAsync, which means the
-            // failure-recording DB write respects graceful shutdown cancellation — this matches the original behaviour.
+            // Do not call FailConsolidationWorkItemAsync here — the caller's catch (Exception ex) block
+            // handles failure recording exactly once. A double-call would transition the work item to
+            // Failed twice. The catch block passes `ct`, matching original graceful-shutdown behaviour.
             throw new InvalidOperationException("IConsolidationJobPreparationService not registered");
         }
 

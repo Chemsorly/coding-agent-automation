@@ -53,7 +53,6 @@ public partial class BrainUpdateService : IBrainUpdateService
         ArgumentNullException.ThrowIfNull(changedFiles);
 
         var warnings = new List<string>();
-        var today = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
         // Check for session log file at sessions/{date}_{runId}.md
         var sessionLogCreated = changedFiles.Any(f =>

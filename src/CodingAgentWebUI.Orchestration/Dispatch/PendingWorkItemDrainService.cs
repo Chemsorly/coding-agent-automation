@@ -35,6 +35,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
     internal static readonly TimeSpan DefaultDrainInterval = TimeSpan.FromSeconds(5);
 
+    private const string AgentSelectorTag = "agent_selector";
+
     public PendingWorkItemDrainService(
         DrainServiceDependencies deps,
         IProjectStore? projectStore = null,
@@ -247,9 +249,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
                 var latency = (DateTimeOffset.UtcNow - (item.OriginalEnqueuedAt ?? item.CreatedAt)).TotalSeconds;
                 WorkDistributionTelemetry.DispatchLatency.Record(latency,
-                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                    new KeyValuePair<string, object?>(AgentSelectorTag, item.AgentSelector ?? ""));
                 WorkDistributionTelemetry.PendingDuration.Record(latency,
-                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                    new KeyValuePair<string, object?>(AgentSelectorTag, item.AgentSelector ?? ""));
 
                 _logger.LogInformation(
                     "PendingWorkItemDrainService: dispatched consolidation WorkItem {WorkItemId} (run {RunId}) to agent {AgentId}",
@@ -371,9 +373,9 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
             var latency = (DateTimeOffset.UtcNow - (item.OriginalEnqueuedAt ?? item.CreatedAt)).TotalSeconds;
             WorkDistributionTelemetry.DispatchLatency.Record(latency,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                new KeyValuePair<string, object?>(AgentSelectorTag, item.AgentSelector ?? ""));
             WorkDistributionTelemetry.PendingDuration.Record(latency,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                new KeyValuePair<string, object?>(AgentSelectorTag, item.AgentSelector ?? ""));
 
             return true;
         }

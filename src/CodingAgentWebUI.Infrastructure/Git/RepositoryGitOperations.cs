@@ -210,13 +210,10 @@ internal static class RepositoryGitOperations
             : universalHardcoded;
 
         var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-        foreach (var change in indexChanges)
+        foreach (var change in indexChanges.Where(c => PathBlacklistHelper.IsPathBlacklisted(c.Path, hardcodedBlacklist)))
         {
-            if (PathBlacklistHelper.IsPathBlacklisted(change.Path, hardcodedBlacklist))
-            {
-                Commands.Unstage(repo, change.Path);
-                unstaged.Add(change.Path.Replace('\\', '/'));
-            }
+            Commands.Unstage(repo, change.Path);
+            unstaged.Add(change.Path.Replace('\\', '/'));
         }
 
         return unstaged;
@@ -243,14 +240,11 @@ internal static class RepositoryGitOperations
             return;
 
         var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-        foreach (var change in indexChanges)
+        foreach (var change in indexChanges.Where(c => !alreadyUnstaged.Contains(c.Path.Replace('\\', '/')) && PathBlacklistHelper.IsPathBlacklisted(c.Path, blacklistedPaths)))
         {
             var normalized = change.Path.Replace('\\', '/');
-            if (!alreadyUnstaged.Contains(normalized) && PathBlacklistHelper.IsPathBlacklisted(change.Path, blacklistedPaths))
-            {
-                Commands.Unstage(repo, change.Path);
-                alreadyUnstaged.Add(normalized);
-            }
+            Commands.Unstage(repo, change.Path);
+            alreadyUnstaged.Add(normalized);
         }
     }
 
