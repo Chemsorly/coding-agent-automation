@@ -184,7 +184,8 @@ public class AgentRegistryServiceExtendedTests
     public void UpdateHeartbeat_NonExistentAgent_DoesNotThrow()
     {
         // Should log warning but not throw
-        _registry.UpdateHeartbeat("non-existent", DateTimeOffset.UtcNow);
+        Action act = () => _registry.UpdateHeartbeat("non-existent", DateTimeOffset.UtcNow);
+        act.Should().NotThrow();
     }
 
     [Fact]
@@ -263,7 +264,8 @@ public class AgentRegistryServiceExtendedTests
     [Fact]
     public void TransitionStatus_NonExistentAgent_DoesNotThrow()
     {
-        _registry.TransitionStatus("non-existent", AgentStatus.Idle);
+        Action act = () => _registry.TransitionStatus("non-existent", AgentStatus.Idle);
+        act.Should().NotThrow();
     }
 
     [Fact]
