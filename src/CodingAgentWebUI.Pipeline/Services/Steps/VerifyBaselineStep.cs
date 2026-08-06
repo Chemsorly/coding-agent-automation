@@ -55,32 +55,45 @@ public sealed class VerifyBaselineStep : IPipelineStep
         if (report.QgcResults.Count > 0)
         {
             foreach (var qgc in report.QgcResults.Where(r => !r.Passed))
-            {
-                context.Callbacks.EmitOutputLine($"  ▸ QGC '{qgc.DisplayName}':");
-                if (qgc.Compilation is { Passed: false })
-                    context.Callbacks.EmitOutputLine($"    ❌ Compilation: {qgc.Compilation.Details}");
-                if (qgc.Tests is { Passed: false })
-                    context.Callbacks.EmitOutputLine($"    ❌ Tests: {qgc.Tests.Details}");
-                if (qgc.Coverage is { Passed: false })
-                    context.Callbacks.EmitOutputLine($"    ❌ Coverage: {qgc.Coverage.Details}");
-                if (qgc.SecurityScan is { Passed: false })
-                    context.Callbacks.EmitOutputLine($"    ❌ Security: {qgc.SecurityScan.Details}");
-            }
+                EmitQgcFailureLines(context, qgc);
         }
         else
         {
-            // Fallback to aggregate fields for backward compat
-            if (report.Compilation is { Passed: false })
-                context.Callbacks.EmitOutputLine($"  ❌ Compilation: {report.Compilation.Details}");
-            if (report.Tests is { Passed: false })
-                context.Callbacks.EmitOutputLine($"  ❌ Tests: {report.Tests.Details}");
-            if (report.Coverage is { Passed: false })
-                context.Callbacks.EmitOutputLine($"  ❌ Coverage: {report.Coverage.Details}");
-            if (report.SecurityScan is { Passed: false })
-                context.Callbacks.EmitOutputLine($"  ❌ Security: {report.SecurityScan.Details}");
-            if (report.ExternalCi is { Passed: false })
-                context.Callbacks.EmitOutputLine($"  ❌ External CI: {report.ExternalCi.Details}");
+            EmitAggregateFailureLines(context, report);
         }
+    }
+
+    /// <summary>
+    /// Emits failure output lines for a single failing QGC execution result.
+    /// </summary>
+    private static void EmitQgcFailureLines(PipelineStepContext context, QgcExecutionResult qgc)
+    {
+        context.Callbacks.EmitOutputLine($"  ▸ QGC '{qgc.DisplayName}':");
+        if (qgc.Compilation is { Passed: false })
+            context.Callbacks.EmitOutputLine($"    ❌ Compilation: {qgc.Compilation.Details}");
+        if (qgc.Tests is { Passed: false })
+            context.Callbacks.EmitOutputLine($"    ❌ Tests: {qgc.Tests.Details}");
+        if (qgc.Coverage is { Passed: false })
+            context.Callbacks.EmitOutputLine($"    ❌ Coverage: {qgc.Coverage.Details}");
+        if (qgc.SecurityScan is { Passed: false })
+            context.Callbacks.EmitOutputLine($"    ❌ Security: {qgc.SecurityScan.Details}");
+    }
+
+    /// <summary>
+    /// Emits failure output lines from the aggregate report fields (backward-compat fallback).
+    /// </summary>
+    private static void EmitAggregateFailureLines(PipelineStepContext context, QualityGateReport report)
+    {
+        if (report.Compilation is { Passed: false })
+            context.Callbacks.EmitOutputLine($"  ❌ Compilation: {report.Compilation.Details}");
+        if (report.Tests is { Passed: false })
+            context.Callbacks.EmitOutputLine($"  ❌ Tests: {report.Tests.Details}");
+        if (report.Coverage is { Passed: false })
+            context.Callbacks.EmitOutputLine($"  ❌ Coverage: {report.Coverage.Details}");
+        if (report.SecurityScan is { Passed: false })
+            context.Callbacks.EmitOutputLine($"  ❌ Security: {report.SecurityScan.Details}");
+        if (report.ExternalCi is { Passed: false })
+            context.Callbacks.EmitOutputLine($"  ❌ External CI: {report.ExternalCi.Details}");
     }
 
     private static async Task RunWorkspaceBaselineAsync(PipelineStepContext context, CancellationToken ct)
@@ -92,22 +105,9 @@ public sealed class VerifyBaselineStep : IPipelineStep
             return;
         }
 
-        IReadOnlyList<QualityGateConfiguration> qgcs;
-        if (context.PreResolvedQualityGateConfigs is not null)
-        {
-            qgcs = context.PreResolvedQualityGateConfigs;
-        }
-        else
-        {
-            qgcs = await context.ConfigStore.LoadQualityGateConfigsAsync(ct);
-        }
-
-        if (qgcs.Count == 0)
-        {
-            context.Run.BaselineHealthPassed = null;
-            context.Callbacks.EmitOutputLine("⏭️ No quality gate configs found, skipping workspace baseline");
+        var qgcs = await LoadQualityGateConfigsAsync(context, ct);
+        if (qgcs is null)
             return;
-        }
 
         context.Callbacks.EmitOutputLine("🔍 Running workspace baseline verification...");
 
@@ -131,5 +131,32 @@ public sealed class VerifyBaselineStep : IPipelineStep
             context.Run.BaselineHealthPassed = false;
             context.Callbacks.EmitOutputLine($"⚠️ Workspace baseline check failed (non-fatal): {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Loads quality gate configurations from the pre-resolved set or config store.
+    /// Returns null (and sets BaselineHealthPassed to null) when no configs are found.
+    /// </summary>
+    private static async Task<IReadOnlyList<QualityGateConfiguration>?> LoadQualityGateConfigsAsync(
+        PipelineStepContext context, CancellationToken ct)
+    {
+        IReadOnlyList<QualityGateConfiguration> qgcs;
+        if (context.PreResolvedQualityGateConfigs is not null)
+        {
+            qgcs = context.PreResolvedQualityGateConfigs;
+        }
+        else
+        {
+            qgcs = await context.ConfigStore.LoadQualityGateConfigsAsync(ct);
+        }
+
+        if (qgcs.Count == 0)
+        {
+            context.Run.BaselineHealthPassed = null;
+            context.Callbacks.EmitOutputLine("⏭️ No quality gate configs found, skipping workspace baseline");
+            return null;
+        }
+
+        return qgcs;
     }
 }

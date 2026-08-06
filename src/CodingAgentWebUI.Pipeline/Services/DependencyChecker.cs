@@ -45,33 +45,7 @@ public sealed class DependencyChecker : IDependencyChecker
         {
             ct.ThrowIfCancellationRequested();
 
-            bool isClosed;
-
-            if (stateCache.TryGetValue(depNumber, out var cached))
-            {
-                isClosed = cached;
-            }
-            else
-            {
-                try
-                {
-                    isClosed = await issueProvider.IsIssueClosedAsync(depNumber.ToString(), ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning(
-                        "Failed to check dependency #{DependencyNumber} for issue #{Identifier}: {ErrorMessage}. Treating as unresolved.",
-                        depNumber, issueIdentifier, ex.Message);
-                    isClosed = false;
-                }
-
-                stateCache[depNumber] = isClosed;
-            }
-
+            var isClosed = await ResolveIssueStateAsync(depNumber, issueIdentifier, issueProvider, stateCache, ct);
             if (!isClosed)
                 blockedBy.Add(depNumber);
         }
@@ -91,5 +65,38 @@ public sealed class DependencyChecker : IDependencyChecker
             BlockedBy = blockedBy,
             TotalDependencies = dependencies.Count
         };
+    }
+
+    /// <summary>
+    /// Returns whether the given dependency issue is closed, using <paramref name="stateCache"/>
+    /// to avoid redundant API calls. Treats API failures as "not closed" (unresolved).
+    /// </summary>
+    private async Task<bool> ResolveIssueStateAsync(
+        int depNumber, string issueIdentifier,
+        IIssueProvider issueProvider, Dictionary<int, bool> stateCache,
+        CancellationToken ct)
+    {
+        if (stateCache.TryGetValue(depNumber, out var cached))
+            return cached;
+
+        bool isClosed;
+        try
+        {
+            isClosed = await issueProvider.IsIssueClosedAsync(depNumber.ToString(), ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(
+                "Failed to check dependency #{DependencyNumber} for issue #{Identifier}: {ErrorMessage}. Treating as unresolved.",
+                depNumber, issueIdentifier, ex.Message);
+            isClosed = false;
+        }
+
+        stateCache[depNumber] = isClosed;
+        return isClosed;
     }
 }

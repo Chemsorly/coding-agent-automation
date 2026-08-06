@@ -815,108 +815,129 @@
 
     // ── MCP Servers tab ───────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Renders the MCP Servers tab. Delegates to two focused helpers to keep
+    /// cognitive complexity within the S3776 limit of 15.
+    /// </summary>
     private RenderFragment RenderMcpTab() => __builder =>
     {
         <div class="provider-form">
             <h3>MCP Servers</h3>
             <p class="form-hint">Project MCP servers are merged with the profile's servers at dispatch time. Servers with the same name override the profile configuration; others are added. Leave empty to use the profile's MCP servers unchanged.</p>
 
-            @if (_mcpServers.Count > 0)
-            {
-                <div class="monitoring-table-wrap" style="margin-bottom: 8px;">
-                    <table class="monitoring-table">
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Type</th>
-                                <th>Command / URL</th>
-                                <th>Enabled</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var (server, idx) in _mcpServers.Select((s, i) => (s, i)))
-                            {
-                                <tr>
-                                    <td class="monitoring-mono">@server.Name</td>
-                                    <td>@server.Type</td>
-                                    <td class="monitoring-mono">@(server.Type == "http" ? server.Url : $"{server.Command} {server.Args}".Trim())</td>
-                                    <td>@(server.Enabled ? "✓" : "✗")</td>
-                                    <td>
-                                        <button class="btn-edit" @onclick="() => EditMcpServer(idx)">Edit</button>
-                                        <button class="btn-delete" @onclick="() => RemoveMcpServer(idx)">Remove</button>
-                                    </td>
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
-                </div>
-            }
-
-            @if (_showMcpForm)
-            {
-                <div class="provider-form" style="margin-top: 8px; padding: 12px; border: 1px solid var(--border-color, #ddd); border-radius: 4px;">
-                    <h4 style="margin-top: 0;">@(_editingMcpIndex >= 0 ? "Edit" : "Add") MCP Server</h4>
-                    <div class="form-group">
-                        <label>Name *</label>
-                        <input type="text" @bind="_mcpForm.Name" placeholder="e.g. context7" />
-                    </div>
-                    <div class="form-group">
-                        <label>Type</label>
-                        <select @bind="_mcpForm.Type">
-                            <option value="stdio">stdio (command-based)</option>
-                            <option value="http">HTTP (URL-based)</option>
-                        </select>
-                    </div>
-                    @if (_mcpForm.Type == "http")
-                    {
-                        <div class="form-group">
-                            <label>URL *</label>
-                            <input type="text" @bind="_mcpForm.Url" placeholder="e.g. https://mcp.context7.com/mcp" />
-                        </div>
-                        <div class="form-group">
-                            <label>Headers <span class="form-hint">(one per line, KEY=VALUE — use for auth tokens)</span></label>
-                            <textarea rows="3" @bind="_mcpForm.Headers" @bind:event="oninput" placeholder="Authorization=Bearer mytoken&#10;X-Org=myorg"></textarea>
-                        </div>
-                    }
-                    else
-                    {
-                        <div class="form-group">
-                            <label>Command *</label>
-                            <input type="text" @bind="_mcpForm.Command" placeholder="e.g. uvx" />
-                        </div>
-                        <div class="form-group">
-                            <label>Arguments <span class="form-hint">(space-separated)</span></label>
-                            <input type="text" @bind="_mcpForm.Args" placeholder="e.g. context7-mcp@latest" />
-                        </div>
-                        <div class="form-group">
-                            <label>Environment Variables <span class="form-hint">(one per line, KEY=VALUE)</span></label>
-                            <textarea rows="3" @bind="_mcpForm.EnvVars" @bind:event="oninput" placeholder="FASTMCP_LOG_LEVEL=ERROR"></textarea>
-                        </div>
-                    }
-                    <div class="form-group form-checkbox">
-                        <label>
-                            <input type="checkbox" @bind="_mcpForm.Enabled" />
-                            Enabled
-                        </label>
-                    </div>
-                    <div class="form-buttons">
-                        <button class="btn-save" @onclick="SaveMcpServer">Save Server</button>
-                        <button class="btn-cancel" @onclick="() => _showMcpForm = false">Cancel</button>
-                    </div>
-                </div>
-            }
-            else
-            {
-                <div style="display: flex; gap: 8px; margin-top: 4px;">
-                    <button class="btn-add" @onclick="ShowAddMcpForm">+ Add MCP Server</button>
-                </div>
-            }
+            @RenderMcpServerTable()
+            @RenderMcpServerFormOrAddButton()
 
             <div class="pipeline-form-actions">
                 <button class="btn-save" @onclick="SaveMcpServersAsync">Save MCP Servers</button>
             </div>
         </div>
+    };
+
+    /// <summary>
+    /// Renders the server list table when at least one MCP server is configured.
+    /// Renders nothing when the server list is empty.
+    /// </summary>
+    private RenderFragment RenderMcpServerTable() => __builder =>
+    {
+        @if (_mcpServers.Count > 0)
+        {
+            <div class="monitoring-table-wrap" style="margin-bottom: 8px;">
+                <table class="monitoring-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Command / URL</th>
+                            <th>Enabled</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var (server, idx) in _mcpServers.Select((s, i) => (s, i)))
+                        {
+                            <tr>
+                                <td class="monitoring-mono">@server.Name</td>
+                                <td>@server.Type</td>
+                                <td class="monitoring-mono">@(server.Type == "http" ? server.Url : $"{server.Command} {server.Args}".Trim())</td>
+                                <td>@(server.Enabled ? "✓" : "✗")</td>
+                                <td>
+                                    <button class="btn-edit" @onclick="() => EditMcpServer(idx)">Edit</button>
+                                    <button class="btn-delete" @onclick="() => RemoveMcpServer(idx)">Remove</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    };
+
+    /// <summary>
+    /// Renders either the add/edit form (when _showMcpForm is true) or the
+    /// "+ Add MCP Server" button (when _showMcpForm is false).
+    /// </summary>
+    private RenderFragment RenderMcpServerFormOrAddButton() => __builder =>
+    {
+        @if (_showMcpForm)
+        {
+            <div class="provider-form" style="margin-top: 8px; padding: 12px; border: 1px solid var(--border-color, #ddd); border-radius: 4px;">
+                <h4 style="margin-top: 0;">@(_editingMcpIndex >= 0 ? "Edit" : "Add") MCP Server</h4>
+                <div class="form-group">
+                    <label>Name *</label>
+                    <input type="text" @bind="_mcpForm.Name" placeholder="e.g. context7" />
+                </div>
+                <div class="form-group">
+                    <label>Type</label>
+                    <select @bind="_mcpForm.Type">
+                        <option value="stdio">stdio (command-based)</option>
+                        <option value="http">HTTP (URL-based)</option>
+                    </select>
+                </div>
+                @if (_mcpForm.Type == "http")
+                {
+                    <div class="form-group">
+                        <label>URL *</label>
+                        <input type="text" @bind="_mcpForm.Url" placeholder="e.g. https://mcp.context7.com/mcp" />
+                    </div>
+                    <div class="form-group">
+                        <label>Headers <span class="form-hint">(one per line, KEY=VALUE — use for auth tokens)</span></label>
+                        <textarea rows="3" @bind="_mcpForm.Headers" @bind:event="oninput" placeholder="Authorization=Bearer mytoken&#10;X-Org=myorg"></textarea>
+                    </div>
+                }
+                else
+                {
+                    <div class="form-group">
+                        <label>Command *</label>
+                        <input type="text" @bind="_mcpForm.Command" placeholder="e.g. uvx" />
+                    </div>
+                    <div class="form-group">
+                        <label>Arguments <span class="form-hint">(space-separated)</span></label>
+                        <input type="text" @bind="_mcpForm.Args" placeholder="e.g. context7-mcp@latest" />
+                    </div>
+                    <div class="form-group">
+                        <label>Environment Variables <span class="form-hint">(one per line, KEY=VALUE)</span></label>
+                        <textarea rows="3" @bind="_mcpForm.EnvVars" @bind:event="oninput" placeholder="FASTMCP_LOG_LEVEL=ERROR"></textarea>
+                    </div>
+                }
+                <div class="form-group form-checkbox">
+                    <label>
+                        <input type="checkbox" @bind="_mcpForm.Enabled" />
+                        Enabled
+                    </label>
+                </div>
+                <div class="form-buttons">
+                    <button class="btn-save" @onclick="SaveMcpServer">Save Server</button>
+                    <button class="btn-cancel" @onclick="() => _showMcpForm = false">Cancel</button>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div style="display: flex; gap: 8px; margin-top: 4px;">
+                <button class="btn-add" @onclick="ShowAddMcpForm">+ Add MCP Server</button>
+            </div>
+        }
     };
 
     private void ShowAddMcpForm()

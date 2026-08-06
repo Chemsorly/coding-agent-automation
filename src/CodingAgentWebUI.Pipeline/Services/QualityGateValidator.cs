@@ -68,71 +68,87 @@ public class QualityGateValidator : IQualityGateValidator
 
         foreach (var qgc in qualityGateConfigs)
         {
-            var compilationResult = await RunQgcCompilationAsync(workspacePath, qgc, ct);
-            GateResult? testsResult = null;
-            GateResult? coverageResult = null;
+            var (result, shouldStop) = await RunSingleQgcAsync(workspacePath, qgc, ct);
+            qgcResults.Add(result);
+            if (shouldStop)
+                break;
+        }
 
-            if (compilationResult is { Passed: false })
+        return BuildAggregateReport(qgcResults);
+    }
+
+    /// <summary>
+    /// Runs compilation, tests, and coverage for a single QGC.
+    /// Returns the result record and whether processing should stop (i.e., a gate failed).
+    /// </summary>
+    private async Task<(QgcExecutionResult Result, bool ShouldStop)> RunSingleQgcAsync(
+        string workspacePath, QualityGateConfiguration qgc, CancellationToken ct)
+    {
+        var compilationResult = await RunQgcCompilationAsync(workspacePath, qgc, ct);
+
+        if (compilationResult is { Passed: false })
+        {
+            return (new QgcExecutionResult
             {
-                qgcResults.Add(new QgcExecutionResult
-                {
-                    QgcId = qgc.Id,
-                    DisplayName = qgc.DisplayName,
-                    Compilation = compilationResult,
-                    Tests = null,
-                    Coverage = null,
-                    SecurityScan = null
-                });
-                break; // Stop on first failure
-            }
+                QgcId = qgc.Id,
+                DisplayName = qgc.DisplayName,
+                Compilation = compilationResult,
+                Tests = null,
+                Coverage = null,
+                SecurityScan = null
+            }, true);
+        }
 
-            testsResult = await RunQgcTestsAsync(workspacePath, qgc, ct);
+        var testsResult = await RunQgcTestsAsync(workspacePath, qgc, ct);
 
-            if (testsResult is { Passed: false })
-            {
-                qgcResults.Add(new QgcExecutionResult
-                {
-                    QgcId = qgc.Id,
-                    DisplayName = qgc.DisplayName,
-                    Compilation = compilationResult,
-                    Tests = testsResult,
-                    Coverage = null,
-                    SecurityScan = null
-                });
-                break; // Stop on first failure
-            }
-
-            // Coverage threshold check
-            if (qgc.CoverageThreshold is > 0)
-            {
-                coverageResult = ParseCoverageFromReports(workspacePath, qgc);
-
-                if (coverageResult is { Passed: false })
-                {
-                    qgcResults.Add(new QgcExecutionResult
-                    {
-                        QgcId = qgc.Id,
-                        DisplayName = qgc.DisplayName,
-                        Compilation = compilationResult,
-                        Tests = testsResult,
-                        Coverage = coverageResult,
-                        SecurityScan = null
-                    });
-                    break; // Stop on first failure
-                }
-            }
-
-            qgcResults.Add(new QgcExecutionResult
+        if (testsResult is { Passed: false })
+        {
+            return (new QgcExecutionResult
             {
                 QgcId = qgc.Id,
                 DisplayName = qgc.DisplayName,
                 Compilation = compilationResult,
                 Tests = testsResult,
-                Coverage = coverageResult,
+                Coverage = null,
                 SecurityScan = null
-            });
+            }, true);
         }
 
+        GateResult? coverageResult = null;
+        if (qgc.CoverageThreshold is > 0)
+        {
+            coverageResult = ParseCoverageFromReports(workspacePath, qgc);
+
+            if (coverageResult is { Passed: false })
+            {
+                return (new QgcExecutionResult
+                {
+                    QgcId = qgc.Id,
+                    DisplayName = qgc.DisplayName,
+                    Compilation = compilationResult,
+                    Tests = testsResult,
+                    Coverage = coverageResult,
+                    SecurityScan = null
+                }, true);
+            }
+        }
+
+        return (new QgcExecutionResult
+        {
+            QgcId = qgc.Id,
+            DisplayName = qgc.DisplayName,
+            Compilation = compilationResult,
+            Tests = testsResult,
+            Coverage = coverageResult,
+            SecurityScan = null
+        }, false);
+    }
+
+    /// <summary>
+    /// Builds the aggregate <see cref="QualityGateReport"/> from individual QGC execution results.
+    /// </summary>
+    private static QualityGateReport BuildAggregateReport(List<QgcExecutionResult> qgcResults)
+    {
         // Build aggregate flat fields for backward compatibility
         var allCompilationsPassed = qgcResults.All(r => r.Compilation?.Passed ?? true);
         var allTestsPassed = qgcResults.All(r => r.Tests?.Passed ?? true);
@@ -300,29 +316,7 @@ public class QualityGateValidator : IQualityGateValidator
 
         WriteGateOutput(workspacePath, $"{qgc.DisplayName}-tests", stdout, stderr);
 
-        // Parse test counts
-        int passed, failed, skipped;
-        if (isDotnet && resultsDir != null)
-        {
-            // Parse TRX files for accurate test counts
-            var trxResult = TrxTestResultParser.ParseTestResults(resultsDir);
-            passed = trxResult.Passed;
-            failed = trxResult.Failed;
-            skipped = trxResult.Skipped;
-
-            // If TRX parsing found nothing, fall back to stdout parsing
-            if (passed == 0 && failed == 0 && skipped == 0)
-            {
-                _logger.Warning("No TRX results found in {ResultsDir} for QGC {QgcName}, falling back to stdout parsing",
-                    resultsDir, qgc.DisplayName);
-                (passed, failed, skipped) = ParseTestCountsFromStdout(stdout);
-            }
-        }
-        else
-        {
-            // Non-.NET: parse test counts from stdout
-            (passed, failed, skipped) = ParseTestCountsFromStdout(stdout);
-        }
+        var (passed, failed, skipped) = ResolveTestCounts(isDotnet, resultsDir, qgc, stdout);
 
         _logger.Information("QGC {QgcName} test results: {Passed} passed, {Failed} failed, {Skipped} skipped",
             qgc.DisplayName, passed, failed, skipped);
@@ -332,17 +326,7 @@ public class QualityGateValidator : IQualityGateValidator
         // Clean up results directory (non-fatal) — skip if coverage was collected,
         // because ParseCoverageFromReports needs the Cobertura XML files afterward.
         if (isDotnet && resultsDir != null && !collectCoverage)
-        {
-            try
-            {
-                if (Directory.Exists(resultsDir))
-                    Directory.Delete(resultsDir, recursive: true);
-            }
-            catch (Exception ex)
-            {
-                _logger.Debug(ex, "Failed to clean up test results directory {ResultsDir}", resultsDir);
-            }
-        }
+            TryDeleteResultsDirectory(resultsDir);
 
         var details = gatePassed
             ? $"Tests passed: {passed} passed, {failed} failed, {skipped} skipped"
@@ -357,6 +341,45 @@ public class QualityGateValidator : IQualityGateValidator
             TestsFailed = failed,
             TestsSkipped = skipped
         };
+    }
+
+    /// <summary>
+    /// Resolves test counts from TRX files (for .NET) or stdout parsing (for other stacks).
+    /// Falls back to stdout parsing when TRX files are missing or empty.
+    /// TODO: [WARNING] No test covers the TRX-parse-found-nothing → stdout-fallback path after extraction.
+    /// Add a test with an empty TRX results directory to assert stdout-based counts are returned,
+    /// locking in the fallback behavior and preventing silent regression if the condition changes.
+    /// </summary>
+    private (int Passed, int Failed, int Skipped) ResolveTestCounts(
+        bool isDotnet, string? resultsDir, QualityGateConfiguration qgc, string stdout)
+    {
+        if (isDotnet && resultsDir != null)
+        {
+            var trxResult = TrxTestResultParser.ParseTestResults(resultsDir);
+            if (trxResult.Passed != 0 || trxResult.Failed != 0 || trxResult.Skipped != 0)
+                return (trxResult.Passed, trxResult.Failed, trxResult.Skipped);
+
+            _logger.Warning("No TRX results found in {ResultsDir} for QGC {QgcName}, falling back to stdout parsing",
+                resultsDir, qgc.DisplayName);
+        }
+
+        return ParseTestCountsFromStdout(stdout);
+    }
+
+    /// <summary>
+    /// Deletes a test results directory, logging (non-fatal) on failure.
+    /// </summary>
+    private void TryDeleteResultsDirectory(string resultsDir)
+    {
+        try
+        {
+            if (Directory.Exists(resultsDir))
+                Directory.Delete(resultsDir, recursive: true);
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug(ex, "Failed to clean up test results directory {ResultsDir}", resultsDir);
+        }
     }
 
     /// <summary>
