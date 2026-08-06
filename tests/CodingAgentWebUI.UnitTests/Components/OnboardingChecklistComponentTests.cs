@@ -134,6 +134,7 @@ public class OnboardingChecklistComponentTests : BunitContext
 
         // After OnAfterRenderAsync runs, component should be hidden
         cut.WaitForState(() => !cut.Markup.Contains("Getting Started"), TimeSpan.FromSeconds(1));
+        Assert.DoesNotContain("Getting Started", cut.Markup);
     }
 
     [Theory]

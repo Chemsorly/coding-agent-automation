@@ -38,6 +38,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .WriteToOtlpIfConfigured("test-service")
             .CreateLogger();
 
+        Assert.NotNull(logger);
         logger.Information("Test message");
         logger.Dispose();
     }
@@ -51,6 +52,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .WriteToOtlpIfConfigured("test-service", "Development")
             .CreateLogger();
 
+        Assert.NotNull(logger);
         logger.Information("Test message");
         logger.Dispose();
     }
@@ -66,6 +68,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .WriteToOtlpIfConfigured("test-service")
             .CreateLogger();
 
+        Assert.NotNull(logger);
         logger.Information("Test message");
         logger.Dispose();
     }
@@ -83,6 +86,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .WriteToOtlpIfConfigured("test-service", "Test")
             .CreateLogger();
 
+        Assert.NotNull(logger);
         logger.Information("Test message");
         logger.Dispose();
     }
@@ -97,6 +101,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .WriteToOtlpIfConfigured("test-service", "Test")
             .CreateLogger();
 
+        Assert.NotNull(logger);
         logger.Information("Test message");
         logger.Dispose();
     }
@@ -114,6 +119,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .WriteToOtlpIfConfigured("test-service", "Test")
             .CreateLogger();
 
+        Assert.NotNull(logger);
         logger.Information("Test message");
         logger.Dispose();
     }
@@ -131,6 +137,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .WriteToOtlpIfConfigured("test-service", "Test")
             .CreateLogger();
 
+        Assert.NotNull(logger);
         logger.Information("Test message");
         logger.Dispose();
     }
@@ -145,6 +152,7 @@ public class SerilogOtlpExtensionsTests : IDisposable
             .WriteToOtlpIfConfigured("test-service", "Test")
             .CreateLogger();
 
+        Assert.NotNull(logger);
         logger.Information("Test message");
         logger.Dispose();
     }
