@@ -97,7 +97,110 @@ public class DecompositionStepTests
         result.Should().NotBeNull("exact marker must match");
     }
 
+    // ── BuildIssueContextContent (via reflection) ─────────────────────────
+
+    [Fact]
+    public void BuildIssueContextContent_WithNoComments_ContainsIssueTitleAndDescription()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "org/repo#1",
+            Title = "Fix the login bug",
+            Description = "Users cannot log in when 2FA is enabled.",
+            Labels = Array.Empty<string>()
+        };
+        var result = InvokeBuildIssueContextContent(issue, new List<IssueComment>());
+
+        result.Should().Contain("Fix the login bug");
+        result.Should().Contain("Users cannot log in when 2FA is enabled.");
+        result.Should().Contain("# Epic Issue Context");
+    }
+
+    [Fact]
+    public void BuildIssueContextContent_WithComments_IncludesCommentAuthorAndBody()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "org/repo#2",
+            Title = "My Epic",
+            Description = "Epic description",
+            Labels = Array.Empty<string>()
+        };
+        var comments = new List<IssueComment>
+        {
+            MakeComment(1, "This is the approved plan."),
+            MakeComment(2, "Additional comment here.")
+        };
+
+        var result = InvokeBuildIssueContextContent(issue, comments);
+
+        result.Should().Contain("This is the approved plan.");
+        result.Should().Contain("Additional comment here.");
+        result.Should().Contain("test-author");
+        result.Should().Contain("## Comments");
+    }
+
+    [Fact]
+    public void BuildIssueContextContent_WithEmptyDescription_DoesNotThrow()
+    {
+        var issue = new IssueDetail
+        {
+            Identifier = "org/repo#3",
+            Title = "Empty desc",
+            Description = "",
+            Labels = Array.Empty<string>()
+        };
+        var act = () => InvokeBuildIssueContextContent(issue, []);
+        act.Should().NotThrow();
+    }
+
+    // ── BuildDeduplicationSection (via reflection) ────────────────────────
+
+    [Fact]
+    public void BuildDeduplicationSection_WithTitles_ContainsAllTitles()
+    {
+        var titles = new List<string> { "Fix login bug", "Add dark mode", "Improve performance" };
+        var result = InvokeBuildDeduplicationSection(titles);
+
+        result.Should().Contain("Fix login bug");
+        result.Should().Contain("Add dark mode");
+        result.Should().Contain("Improve performance");
+        result.Should().Contain("Do NOT Duplicate");
+    }
+
+    [Fact]
+    public void BuildDeduplicationSection_EmptyList_ContainsHeader()
+    {
+        var result = InvokeBuildDeduplicationSection([]);
+        result.Should().Contain("Existing Agent-Generated Sub-Issues");
+    }
+
+    [Fact]
+    public void BuildDeduplicationSection_WithSingleTitle_FormatsAsBullet()
+    {
+        var result = InvokeBuildDeduplicationSection(["Only one issue"]);
+        result.Should().Contain("- Only one issue");
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────
+
+    private static string InvokeBuildIssueContextContent(IssueDetail issue, IReadOnlyList<IssueComment> comments)
+    {
+        var method = typeof(DecompositionStep).GetMethod(
+            "BuildIssueContextContent",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        method.Should().NotBeNull("BuildIssueContextContent must exist");
+        return (string)method!.Invoke(null, [issue, comments])!;
+    }
+
+    private static string InvokeBuildDeduplicationSection(IReadOnlyList<string> titles)
+    {
+        var method = typeof(DecompositionStep).GetMethod(
+            "BuildDeduplicationSection",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        method.Should().NotBeNull("BuildDeduplicationSection must exist");
+        return (string)method!.Invoke(null, [titles])!;
+    }
 
     private static IssueComment MakeComment(int id, string body) => new()
     {

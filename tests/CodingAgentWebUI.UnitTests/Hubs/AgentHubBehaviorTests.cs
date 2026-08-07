@@ -329,6 +329,86 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     #endregion
 
+    #region JobAccepted
+
+    [Fact]
+    public async Task JobAccepted_TransitionsAgentToBusy()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.JobAccepted("job-1");
+
+        _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Busy), Times.Once);
+    }
+
+    [Fact]
+    public async Task JobAccepted_TransitionsWorkItemToRunning()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.JobAccepted("job-1");
+
+        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task JobAccepted_NullAgent_StillTransitionsWorkItem()
+    {
+        // When agent is null (connection not found), the WorkItem transition should still happen
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.JobAccepted("job-1");
+
+        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task JobAccepted_WorkItemTransitionThrows_DoesNotPropagateException()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB error"));
+
+        var hub = CreateHubWithOrchestration();
+
+        // The exception from TransitionWorkItemAsync must be swallowed (it's in a try-catch)
+        var act = () => hub.JobAccepted("job-1");
+        await act.Should().NotThrowAsync("TransitionWorkItem failure must not propagate");
+    }
+
+    [Fact]
+    public async Task JobAccepted_NotifiesChange()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHubWithOrchestration();
+        var act = () => hub.JobAccepted("job-1");
+
+        // NotifyChange is called inside HandleJobAcceptedAsync — just verify no throw
+        await act.Should().NotThrowAsync("JobAccepted must complete without error on happy path");
+    }
+
+    #endregion
+
     #region RequestLabelChange
 
     [Fact]
