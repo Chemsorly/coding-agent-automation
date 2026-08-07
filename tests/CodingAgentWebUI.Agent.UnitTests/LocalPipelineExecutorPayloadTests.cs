@@ -205,4 +205,172 @@ public class LocalPipelineExecutorPayloadTests
         IssueProviderConfigId = "ip-1",
         RepoProviderConfigId = "rp-1"
     };
+
+    // ── BuildCompletionPayload — additional field coverage ────────────────────
+
+    [Fact]
+    public void BuildCompletionPayload_IsDraftPr_Copied()
+    {
+        var run = MakeRun();
+        run.IsDraftPr = true;
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.IsDraftPr.Should().BeTrue();
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_BrainUpdatesPushed_Copied()
+    {
+        var run = MakeRun();
+        run.BrainUpdatesPushed = true;
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.BrainUpdatesPushed.Should().BeTrue();
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_AnalysisRecommendation_Copied()
+    {
+        var run = MakeRun();
+        run.AnalysisRecommendation = CodingAgentWebUI.Pipeline.Models.AnalysisGateResult.Ready;
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.AnalysisRecommendation.Should().Be(CodingAgentWebUI.Pipeline.Models.AnalysisGateResult.Ready);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_FilesChangedCount_Copied()
+    {
+        var run = MakeRun();
+        run.FilesChangedCount = 7;
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.FilesChangedCount.Should().Be(7);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_LinesAdded_Copied()
+    {
+        var run = MakeRun();
+        run.LinesAdded = 120;
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.LinesAdded.Should().Be(120);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_LinesRemoved_Copied()
+    {
+        var run = MakeRun();
+        run.LinesRemoved = 30;
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.LinesRemoved.Should().Be(30);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_TotalCost_Copied()
+    {
+        var run = MakeRun();
+        run.TotalCost = 2.50m;
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.TotalCost.Should().Be(2.50m);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_CodeReviewAgentsRun_Copied()
+    {
+        var run = MakeRun();
+        run.CodeReviewAgentsRun = ["agent-a", "agent-b"];
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.CodeReviewAgentsRun.Should().BeEquivalentTo(["agent-a", "agent-b"]);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_CompletedAtOffset_UsedWhenSet()
+    {
+        var run = MakeRun();
+        var expectedTime = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.Zero);
+        run.CompletedAtOffset = expectedTime;
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.CompletedAt.Should().Be(expectedTime);
+    }
+
+    // ── BuildFailurePayload — additional field coverage ───────────────────────
+
+    [Fact]
+    public void BuildFailurePayload_FinalLabel_NotSet()
+    {
+        var run = MakeRun();
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "error");
+
+        // BuildFailurePayload does not set FinalLabel (no run.FinalLabel passed through)
+        payload.FinalLabel.Should().BeNull();
+    }
+
+    [Fact]
+    public void BuildFailurePayload_FilesChangedCount_Copied()
+    {
+        var run = MakeRun();
+        run.FilesChangedCount = 3;
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
+        payload.FilesChangedCount.Should().Be(3);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_LinesAdded_Copied()
+    {
+        var run = MakeRun();
+        run.LinesAdded = 50;
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
+        payload.LinesAdded.Should().Be(50);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_LinesRemoved_Copied()
+    {
+        var run = MakeRun();
+        run.LinesRemoved = 10;
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
+        payload.LinesRemoved.Should().Be(10);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_TotalTokens_Copied()
+    {
+        var run = MakeRun();
+        run.TotalTokens = 7777L;
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
+        payload.TotalTokens.Should().Be(7777L);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_TotalCost_Copied()
+    {
+        var run = MakeRun();
+        run.TotalCost = 0.75m;
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
+        payload.TotalCost.Should().Be(0.75m);
+    }
+
+    [Fact]
+    public void BuildFailurePayload_CodeReviewAgentsRun_Copied()
+    {
+        var run = MakeRun();
+        run.CodeReviewAgentsRun = ["sec-agent"];
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
+        payload.CodeReviewAgentsRun.Should().BeEquivalentTo(["sec-agent"]);
+    }
 }

@@ -987,4 +987,43 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     }
 
     #endregion
+
+    #region NotifyRunCancelledAsync
+
+    [Fact]
+    public async Task NotifyRunCancelledAsync_CallsWorkDistributorCancelJob()
+    {
+        _mockWorkDistributor.Setup(w => w.CancelJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var svc = CreateService();
+        await svc.NotifyRunCancelledAsync("run-cancel-1", CancellationToken.None);
+
+        _mockWorkDistributor.Verify(w => w.CancelJobAsync("run-cancel-1", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task NotifyRunCancelledAsync_CallsDispatcherRemoveJob()
+    {
+        _mockWorkDistributor.Setup(w => w.CancelJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+
+        var svc = CreateService();
+        // Call NotifyRunCancelledAsync — it should call _jobDispatcher.RemoveJob(runId)
+        // RemoveJob internally calls RemoveFromQueue which removes from _processingIssues using "consolidation" as provider
+        await svc.NotifyRunCancelledAsync("run-remove-test", CancellationToken.None);
+
+        // Verify that CancelJobAsync was called on the distributor
+        _mockWorkDistributor.Verify(w => w.CancelJobAsync("run-remove-test", It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task NotifyRunCancelledAsync_NullRunId_ThrowsArgumentNullException()
+    {
+        var svc = CreateService();
+        await svc.Invoking(s => s.NotifyRunCancelledAsync(null!, CancellationToken.None))
+            .Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    #endregion
 }

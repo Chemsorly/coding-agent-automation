@@ -8,13 +8,13 @@ on:
 jobs:
   build:
     name: Build and analyze
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
-          java-version: 17
-          distribution: 'zulu' # Alternative distribution options are available.
+          java-version: 21
+          distribution: 'zulu'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
@@ -25,73 +25,71 @@ jobs:
       - name: Cache SonarQube Cloud packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~\sonar\cache
+          path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
       - name: Cache SonarQube Cloud scanner
         id: cache-sonar-scanner
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ runner.temp }}\scanner
+          path: ${{ runner.temp }}/scanner
           key: ${{ runner.os }}-sonar-scanner
           restore-keys: ${{ runner.os }}-sonar-scanner
       - name: Install SonarQube Cloud scanner
         if: steps.cache-sonar-scanner.outputs.cache-hit != 'true'
-        shell: powershell
         run: |
-          New-Item -Path ${{ runner.temp }}\scanner -ItemType Directory
-          dotnet tool update dotnet-sonarscanner --tool-path ${{ runner.temp }}\scanner
+          mkdir -p ${{ runner.temp }}/scanner
+          dotnet tool update dotnet-sonarscanner --tool-path ${{ runner.temp }}/scanner
       - name: Build and analyze
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        shell: powershell
         run: |
-          ${{ runner.temp }}\scanner\dotnet-sonarscanner begin `
-            /k:"Chemsorly_coding-agent-automation" `
-            /o:"chemsorly" `
-            /d:sonar.token="$env:SONAR_TOKEN" `
-            "/d:sonar.cs.cobertura.reportsPaths=**/TestResults/**/coverage.cobertura.xml" `
-            /s:"${{ github.workspace }}\SonarQube.Analysis.xml" `
+          ${{ runner.temp }}/scanner/dotnet-sonarscanner begin \
+            /k:"Chemsorly_coding-agent-automation" \
+            /o:"chemsorly" \
+            /d:sonar.token="$SONAR_TOKEN" \
+            "/d:sonar.cs.cobertura.reportsPaths=**/TestResults/**/coverage.cobertura.xml" \
+            /s:"${{ github.workspace }}/SonarQube.Analysis.xml" \
             /d:sonar.qualitygate.wait=true
           dotnet build --no-incremental
-          dotnet test tests/CodingAgentWebUI.Pipeline.UnitTests/ `
-            --no-build `
-            --collect:"XPlat Code Coverage" `
-            --settings tests/CodingAgentWebUI.Pipeline.UnitTests/coverlet.runsettings `
+          dotnet test tests/CodingAgentWebUI.Pipeline.UnitTests/ \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings tests/CodingAgentWebUI.Pipeline.UnitTests/coverlet.runsettings \
             --results-directory TestResults
-          dotnet test tests/CodingAgentWebUI.Agent.UnitTests/ `
-            --no-build `
-            --collect:"XPlat Code Coverage" `
-            --settings tests/CodingAgentWebUI.Agent.UnitTests/coverlet.runsettings `
+          dotnet test tests/CodingAgentWebUI.Agent.UnitTests/ \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings tests/CodingAgentWebUI.Agent.UnitTests/coverlet.runsettings \
             --results-directory TestResults
-          dotnet test tests/CodingAgentWebUI.Infrastructure.UnitTests/ `
-            --no-build `
-            --collect:"XPlat Code Coverage" `
-            --settings tests/CodingAgentWebUI.Infrastructure.UnitTests/coverlet.runsettings `
+          dotnet test tests/CodingAgentWebUI.Infrastructure.UnitTests/ \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings tests/CodingAgentWebUI.Infrastructure.UnitTests/coverlet.runsettings \
             --results-directory TestResults
-          dotnet test tests/CodingAgentWebUI.UnitTests/ `
-            --no-build `
-            --collect:"XPlat Code Coverage" `
-            --settings tests/CodingAgentWebUI.UnitTests/coverlet.runsettings `
+          dotnet test tests/CodingAgentWebUI.UnitTests/ \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings tests/CodingAgentWebUI.UnitTests/coverlet.runsettings \
             --results-directory TestResults
-          dotnet test tests/CodingAgentWebUI.Orchestration.UnitTests/ `
-            --no-build `
-            --collect:"XPlat Code Coverage" `
-            --settings tests/CodingAgentWebUI.Orchestration.UnitTests/coverlet.runsettings `
+          dotnet test tests/CodingAgentWebUI.Orchestration.UnitTests/ \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings tests/CodingAgentWebUI.Orchestration.UnitTests/coverlet.runsettings \
             --results-directory TestResults
-          dotnet test tests/KiroCliLib.UnitTests/ `
-            --no-build `
-            --collect:"XPlat Code Coverage" `
-            --settings tests/KiroCliLib.UnitTests/coverlet.runsettings `
+          dotnet test tests/KiroCliLib.UnitTests/ \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings tests/KiroCliLib.UnitTests/coverlet.runsettings \
             --results-directory TestResults
-          dotnet test tests/CodingAgentWebUI.IntegrationTests/ `
-            --no-build `
-            --collect:"XPlat Code Coverage" `
-            --settings tests/CodingAgentWebUI.IntegrationTests/coverlet.runsettings `
+          dotnet test tests/CodingAgentWebUI.IntegrationTests/ \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings tests/CodingAgentWebUI.IntegrationTests/coverlet.runsettings \
             --results-directory TestResults
-          dotnet test tests/CodingAgentWebUI.Infrastructure.IntegrationTests/ `
-            --no-build `
-            --collect:"XPlat Code Coverage" `
-            --settings tests/CodingAgentWebUI.Infrastructure.IntegrationTests/coverlet.runsettings `
+          dotnet test tests/CodingAgentWebUI.Infrastructure.IntegrationTests/ \
+            --no-build \
+            --collect:"XPlat Code Coverage" \
+            --settings tests/CodingAgentWebUI.Infrastructure.IntegrationTests/coverlet.runsettings \
             --results-directory TestResults
-          ${{ runner.temp }}\scanner\dotnet-sonarscanner end /d:sonar.token="$env:SONAR_TOKEN"
+          ${{ runner.temp }}/scanner/dotnet-sonarscanner end /d:sonar.token="$SONAR_TOKEN"

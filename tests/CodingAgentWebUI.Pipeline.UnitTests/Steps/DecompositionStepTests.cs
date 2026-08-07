@@ -1,6 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services.Steps;
+using Moq;
 using Xunit;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Steps;
@@ -183,6 +184,99 @@ public class DecompositionStepTests
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────
+
+    // ── QueryExistingSubIssueTitlesAsync (via reflection) ────────────────────
+
+    [Fact]
+    public async Task QueryExistingSubIssueTitlesAsync_SinglePage_ReturnsTitles()
+    {
+        var mockOps = new Mock<CodingAgentWebUI.Pipeline.Interfaces.IAgentIssueOperations>();
+        mockOps.Setup(o => o.ListOpenIssuesAsync(1, 50, It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CodingAgentWebUI.Pipeline.Models.PagedResult<CodingAgentWebUI.Pipeline.Models.IssueSummary>
+            {
+                Items = new List<CodingAgentWebUI.Pipeline.Models.IssueSummary>
+                {
+                    new() { Identifier = "1", Title = "Issue Alpha", Labels = Array.Empty<string>() },
+                    new() { Identifier = "2", Title = "Issue Beta", Labels = Array.Empty<string>() }
+                }.AsReadOnly(),
+                HasMore = false, Page = 1, PageSize = 50
+            });
+
+        var result = await InvokeQueryExistingSubIssueTitlesAsync(mockOps.Object, "run-1", CancellationToken.None);
+
+        result.Should().HaveCount(2);
+        result.Should().Contain("Issue Alpha");
+        result.Should().Contain("Issue Beta");
+    }
+
+    [Fact]
+    public async Task QueryExistingSubIssueTitlesAsync_MultiPage_ReturnsCombinedTitles()
+    {
+        var mockOps = new Mock<CodingAgentWebUI.Pipeline.Interfaces.IAgentIssueOperations>();
+        mockOps.SetupSequence(o => o.ListOpenIssuesAsync(It.IsAny<int>(), 50, It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CodingAgentWebUI.Pipeline.Models.PagedResult<CodingAgentWebUI.Pipeline.Models.IssueSummary>
+            {
+                Items = new List<CodingAgentWebUI.Pipeline.Models.IssueSummary>
+                {
+                    new() { Identifier = "1", Title = "Page1-Issue1", Labels = Array.Empty<string>() }
+                }.AsReadOnly(),
+                HasMore = true, Page = 1, PageSize = 50
+            })
+            .ReturnsAsync(new CodingAgentWebUI.Pipeline.Models.PagedResult<CodingAgentWebUI.Pipeline.Models.IssueSummary>
+            {
+                Items = new List<CodingAgentWebUI.Pipeline.Models.IssueSummary>
+                {
+                    new() { Identifier = "2", Title = "Page2-Issue1", Labels = Array.Empty<string>() }
+                }.AsReadOnly(),
+                HasMore = false, Page = 2, PageSize = 50
+            });
+
+        var result = await InvokeQueryExistingSubIssueTitlesAsync(mockOps.Object, "run-2", CancellationToken.None);
+
+        result.Should().HaveCount(2);
+        result.Should().Contain("Page1-Issue1");
+        result.Should().Contain("Page2-Issue1");
+    }
+
+    [Fact]
+    public async Task QueryExistingSubIssueTitlesAsync_EmptyResult_ReturnsEmpty()
+    {
+        var mockOps = new Mock<CodingAgentWebUI.Pipeline.Interfaces.IAgentIssueOperations>();
+        mockOps.Setup(o => o.ListOpenIssuesAsync(It.IsAny<int>(), 50, It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new CodingAgentWebUI.Pipeline.Models.PagedResult<CodingAgentWebUI.Pipeline.Models.IssueSummary>
+            {
+                Items = new List<CodingAgentWebUI.Pipeline.Models.IssueSummary>().AsReadOnly(),
+                HasMore = false, Page = 1, PageSize = 50
+            });
+
+        var result = await InvokeQueryExistingSubIssueTitlesAsync(mockOps.Object, "run-3", CancellationToken.None);
+
+        result.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task QueryExistingSubIssueTitlesAsync_ExceptionSwallowed_ReturnsEmpty()
+    {
+        var mockOps = new Mock<CodingAgentWebUI.Pipeline.Interfaces.IAgentIssueOperations>();
+        mockOps.Setup(o => o.ListOpenIssuesAsync(It.IsAny<int>(), 50, It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("API error"));
+
+        // Exception must be swallowed, returning empty list
+        var result = await InvokeQueryExistingSubIssueTitlesAsync(mockOps.Object, "run-4", CancellationToken.None);
+
+        result.Should().BeEmpty("exceptions from the issues API must be swallowed");
+    }
+
+    private static async Task<IReadOnlyList<string>> InvokeQueryExistingSubIssueTitlesAsync(
+        CodingAgentWebUI.Pipeline.Interfaces.IAgentIssueOperations issueOps, string runId, CancellationToken ct)
+    {
+        var method = typeof(DecompositionStep).GetMethod(
+            "QueryExistingSubIssueTitlesAsync",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        method.Should().NotBeNull("QueryExistingSubIssueTitlesAsync must exist");
+        var task = (Task<IReadOnlyList<string>>)method!.Invoke(null, [issueOps, Serilog.Log.Logger, runId, ct])!;
+        return await task;
+    }
 
     private static string InvokeBuildIssueContextContent(IssueDetail issue, IReadOnlyList<IssueComment> comments)
     {
