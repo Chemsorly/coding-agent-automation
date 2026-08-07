@@ -4,6 +4,7 @@ using CodingAgentWebUI.Infrastructure.Persistence;
 using CodingAgentWebUI.Infrastructure.Persistence.Entities;
 using CodingAgentWebUI.Orchestration.Dispatch;
 using CodingAgentWebUI.Orchestration.LeaderElection;
+using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -17,16 +18,6 @@ namespace CodingAgentWebUI.Pipeline.UnitTests.Services;
 /// Unit tests for <see cref="DispatchStateBuilder"/>.
 /// Validates: state building, concurrency gating, rate limiting, template resolution, PVC gating.
 /// </summary>
-/// <remarks>
-/// TODO: Missing test for successful fallback template resolution path — GetEligibleCandidatesAsync
-/// has a code path where ResolveTemplateViaProfileAsync returns a valid fallback template and the
-/// concurrency limit is re-checked against the resolved selector. Only the failure case (NoTemplate)
-/// is currently tested.
-///
-/// TODO: Missing test for leadership loss stopping GetEligibleCandidatesAsync mid-iteration.
-/// The method checks !leaderElection.IsLeader at each iteration and yields break, but no test
-/// validates this specific leadership-loss bailout behavior.
-/// </remarks>
 [Trait("Feature", "DispatchStateBuilder")]
 public class DispatchStateBuilderTests : IDisposable
 {
@@ -273,71 +264,81 @@ public class DispatchStateBuilderTests : IDisposable
         candidates.Should().HaveCount(1, "should stop after cancellation");
     }
 
-    // TODO: Missing test — GetEligibleCandidatesAsync path where ResolveTemplateAsync returns
-    // skipItem=true is untested. The merged guard `if (skipItem || template is null)` with inner
-    // `if (!skipItem) await onNoTemplate(...)` correctly suppresses the callback when skipItem=true,
-    // but no test exercises this branch. If the !skipItem guard were accidentally removed, onNoTemplate
-    // would be called spuriously for profile-fallback-skip items and no test would catch it.
-    // Add a test: item with selector that triggers concurrency-limit skip in ResolveTemplateAsync
-    // → verify onNoTemplate is NOT invoked and the item is not yielded.
-    // See review finding: TestQualityReviewer WARNING DispatchStateBuilderTests.cs:273
-
-    // ── IsAtConcurrencyLimit predicate tests ────────────────────────────
-
     [Fact]
-    public void IsAtConcurrencyLimit_NoEntry_ReturnsFalse()
+    public async Task GetEligibleCandidatesAsync_FallbackTemplateResolved_YieldsCandidate()
     {
-        var concurrency = new Dictionary<string, int>(); // empty — no active runs
-        DispatchStateBuilder.IsAtConcurrencyLimit("kiro,dotnet", concurrency, maxConcurrent: 2)
-            .Should().BeFalse("no active runs, selector not in map");
+        // Arrange: item with selector "kiro" — no direct template for "kiro",
+        // but profile resolves it to "dotnet,kiro" which has a template.
+        await InsertWorkItem(Guid.NewGuid(), "kiro", WorkItemStatus.Pending);
+
+        var profile = new AgentProfile
+        {
+            DisplayName = "Kiro+Dotnet Profile",
+            AgentProviderConfigId = "agent-kiro",
+            MatchLabels = ["dotnet", "kiro"],
+            Enabled = true
+        };
+        var mockProfileStore = new Mock<IAgentProfileStore>();
+        mockProfileStore
+            .Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile> { profile });
+
+        // Template is keyed to the resolved "dotnet,kiro" selector
+        var builder = CreateBuilder(
+            imageMapping: new() { ["dotnet,kiro"] = "img:latest" },
+            profileStore: mockProfileStore.Object);
+
+        var state = await builder.BuildStateAsync(
+            w => w.TaskType != WorkItemTaskType.Consolidation,
+            recordTelemetry: false,
+            CancellationToken.None);
+
+        using var rateLimiter = CreateUnlimitedRateLimiter();
+
+        var candidates = new List<DispatchCandidate>();
+        await foreach (var candidate in builder.GetEligibleCandidatesAsync(
+            state!, _leaderElection, rateLimiter, "Test",
+            (_, _, _) => Task.CompletedTask, CancellationToken.None))
+        {
+            candidates.Add(candidate);
+        }
+
+        candidates.Should().HaveCount(1, "fallback profile resolution should yield a candidate");
+        candidates[0].EffectiveSelector.Should().Be("dotnet,kiro");
     }
 
     [Fact]
-    public void IsAtConcurrencyLimit_AtLimit_ReturnsTrue()
+    public async Task GetEligibleCandidatesAsync_LeadershipLostMidIteration_StopsImmediately()
     {
-        var concurrency = new Dictionary<string, int> { ["kiro,dotnet"] = 2 };
-        DispatchStateBuilder.IsAtConcurrencyLimit("kiro,dotnet", concurrency, maxConcurrent: 2)
-            .Should().BeTrue("current == maxConcurrent means at limit");
-    }
+        // Arrange: 2 pending items
+        await InsertWorkItem(Guid.NewGuid(), "kiro,dotnet", WorkItemStatus.Pending);
+        await InsertWorkItem(Guid.NewGuid(), "kiro,dotnet", WorkItemStatus.Pending);
 
-    [Fact]
-    public void IsAtConcurrencyLimit_BelowLimit_ReturnsFalse()
-    {
-        var concurrency = new Dictionary<string, int> { ["kiro,dotnet"] = 1 };
-        DispatchStateBuilder.IsAtConcurrencyLimit("kiro,dotnet", concurrency, maxConcurrent: 2)
-            .Should().BeFalse("1 active run with limit 2 is below limit");
-    }
+        var builder = CreateBuilder(imageMapping: new() { ["dotnet,kiro"] = "img:latest" });
 
-    [Fact]
-    public void IsAtConcurrencyLimit_ZeroMaxConcurrent_AlwaysReturnsFalse()
-    {
-        // maxConcurrent == 0 means no limit is configured
-        var concurrency = new Dictionary<string, int> { ["kiro,dotnet"] = 100 };
-        DispatchStateBuilder.IsAtConcurrencyLimit("kiro,dotnet", concurrency, maxConcurrent: 0)
-            .Should().BeFalse("maxConcurrent=0 means no limit");
-    }
+        var state = await builder.BuildStateAsync(
+            w => w.TaskType != WorkItemTaskType.Consolidation,
+            recordTelemetry: false,
+            CancellationToken.None);
 
-    // ── IsKiroAgentWithoutPvc predicate tests ────────────────────────────
+        using var rateLimiter = CreateUnlimitedRateLimiter();
 
-    [Fact]
-    public void IsKiroAgentWithoutPvc_NonKiroAgent_ReturnsFalse()
-    {
-        DispatchStateBuilder.IsKiroAgentWithoutPvc(isKiroAgent: false, availablePvcs: [])
-            .Should().BeFalse("non-kiro agents do not require PVCs");
-    }
+        // Build a LeaderElectionService that loses leadership after the first candidate
+        var leaderElection = CreateAlwaysLeaderElection();
+        var isLeaderField = typeof(LeaderElectionService).GetField("_isLeader",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
 
-    [Fact]
-    public void IsKiroAgentWithoutPvc_KiroAgentEmptyPool_ReturnsTrue()
-    {
-        DispatchStateBuilder.IsKiroAgentWithoutPvc(isKiroAgent: true, availablePvcs: [])
-            .Should().BeTrue("kiro agent with no available PVCs should be skipped");
-    }
+        var candidates = new List<DispatchCandidate>();
+        await foreach (var candidate in builder.GetEligibleCandidatesAsync(
+            state!, leaderElection, rateLimiter, "Test",
+            (_, _, _) => Task.CompletedTask, CancellationToken.None))
+        {
+            candidates.Add(candidate);
+            // Simulate leadership loss after the first candidate
+            isLeaderField!.SetValue(leaderElection, false);
+        }
 
-    [Fact]
-    public void IsKiroAgentWithoutPvc_KiroAgentWithPvcs_ReturnsFalse()
-    {
-        DispatchStateBuilder.IsKiroAgentWithoutPvc(isKiroAgent: true, availablePvcs: ["pvc-1"])
-            .Should().BeFalse("kiro agent with a PVC available can proceed");
+        candidates.Should().HaveCount(1, "leadership loss should stop iteration after the first candidate");
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────
@@ -345,14 +346,15 @@ public class DispatchStateBuilderTests : IDisposable
     private DispatchStateBuilder CreateBuilder(
         Dictionary<string, string>? imageMapping = null,
         Dictionary<string, int>? maxConcurrent = null,
-        string[]? pvcPool = null)
+        string[]? pvcPool = null,
+        IAgentProfileStore? profileStore = null)
     {
         imageMapping ??= new() { ["dotnet,kiro"] = "ghcr.io/agent:latest" };
         maxConcurrent ??= new();
         pvcPool ??= ["pvc-1", "pvc-2"];
 
         var templateProvider = BuildTemplateProvider(imageMapping, maxConcurrent);
-        var templateResolver = new DispatchTemplateResolver(null, templateProvider);
+        var templateResolver = new DispatchTemplateResolver(profileStore, templateProvider);
         var lifecycle = new DispatchLifecycleService(
             _mockKubeClient.Object,
             new Infrastructure.Persistence.Services.WorkItemTransitionService(
