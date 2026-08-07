@@ -113,35 +113,7 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
 
             Log.Information("ConsolidationDispatchHandler: leader acquired, entering poll loop");
 
-            // Create linked token: cancels on EITHER host stop OR leadership loss
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken, _leaderElection.LeaderToken);
-            var ct = linked.Token;
-
-            while (!ct.IsCancellationRequested)
-            {
-                try
-                {
-                    await PollAndDispatchConsolidationAsync(ct);
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Log.Error(ex, "ConsolidationDispatchHandler: unhandled error in poll cycle");
-                }
-
-                try
-                {
-                    await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-            }
+            await RunLeaderPollLoopAsync(stoppingToken);
 
             if (!stoppingToken.IsCancellationRequested)
             {
@@ -150,6 +122,43 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         }
 
         Log.Information("ConsolidationDispatchHandler: exiting (stopping)");
+    }
+
+    /// <summary>
+    /// Runs the poll loop while the current node holds leadership.
+    /// Returns when either the host stopping token fires or leadership is lost.
+    /// </summary>
+    private async Task RunLeaderPollLoopAsync(CancellationToken stoppingToken)
+    {
+        // Create linked token: cancels on EITHER host stop OR leadership loss
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            stoppingToken, _leaderElection.LeaderToken);
+        var ct = linked.Token;
+
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await PollAndDispatchConsolidationAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "ConsolidationDispatchHandler: unhandled error in poll cycle");
+            }
+
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
     }
 
     /// <inheritdoc/>

@@ -199,35 +199,51 @@ internal sealed class DispatchStateBuilder
                 continue;
             }
 
-            // Resolve template — fail immediately if no match (before PVC gating)
-            var (template, effectiveSelector, skipItem) = await ResolveTemplateAsync(
-                item, state.ConcurrencyBySelector, callerName, ct);
+            var candidate = await TryResolveCandidateAsync(item, state, callerName, onNoTemplate, ct);
+            if (candidate is null) continue;
 
-            if (skipItem || template is null)
-            {
-                // TODO: When skipItem=true and template is also null simultaneously, the onNoTemplate
-                // callback is correctly suppressed (the !skipItem guard below prevents it). However this
-                // reduces observability: there is no log/metric indicating that onNoTemplate was suppressed
-                // rather than invoked, which could mask misconfigured selectors. Consider adding a
-                // diagnostic log here for the (skipItem && template is null) case.
-                // See review finding: DotNetSpecialist WARNING DispatchStateBuilder.cs:206
-                if (!skipItem)
-                    await onNoTemplate(item, $"No job template for selector: {item.AgentSelector}", ct);
-                continue;
-            }
-
-            var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
-
-            if (IsKiroAgentWithoutPvc(isKiroAgent, state.AvailablePvcs))
-            {
-                // No PVC available — skip, leave Pending for next poll cycle (NOT failed)
-                Log.Information("{CallerName}: no PVC available for kiro agent, skipping WorkItem {WorkItemId}",
-                    callerName, item.Id);
-                continue;
-            }
-
-            yield return new DispatchCandidate(item, template, effectiveSelector, isKiroAgent);
+            yield return candidate;
         }
+    }
+
+    /// <summary>
+    /// Resolves the job template and PVC gate for a single item.
+    /// Returns a <see cref="DispatchCandidate"/> if the item is eligible, or <c>null</c> to skip it.
+    /// </summary>
+    private async Task<DispatchCandidate?> TryResolveCandidateAsync(
+        PendingWorkItemProjection item,
+        DispatchState state,
+        string callerName,
+        Func<PendingWorkItemProjection, string, CancellationToken, Task> onNoTemplate,
+        CancellationToken ct)
+    {
+        var (template, effectiveSelector, skipItem) = await ResolveTemplateAsync(
+            item, state.ConcurrencyBySelector, callerName, ct);
+
+        if (skipItem || template is null)
+        {
+            // TODO: When skipItem=true and template is also null simultaneously, the onNoTemplate
+            // callback is correctly suppressed (the !skipItem guard below prevents it). However this
+            // reduces observability: there is no log/metric indicating that onNoTemplate was suppressed
+            // rather than invoked, which could mask misconfigured selectors. Consider adding a
+            // diagnostic log here for the (skipItem && template is null) case.
+            // See review finding: DotNetSpecialist WARNING DispatchStateBuilder.cs:206
+            if (!skipItem)
+                await onNoTemplate(item, $"No job template for selector: {item.AgentSelector}", ct);
+            return null;
+        }
+
+        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+
+        if (IsKiroAgentWithoutPvc(isKiroAgent, state.AvailablePvcs))
+        {
+            // No PVC available — skip, leave Pending for next poll cycle (NOT failed)
+            Log.Information("{CallerName}: no PVC available for kiro agent, skipping WorkItem {WorkItemId}",
+                callerName, item.Id);
+            return null;
+        }
+
+        return new DispatchCandidate(item, template, effectiveSelector, isKiroAgent);
     }
 
     /// <summary>

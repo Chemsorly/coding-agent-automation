@@ -115,33 +115,43 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         foreach (var item in pendingItems)
         {
             if (ct.IsCancellationRequested) break;
-
-            if (!TryResolveAgentForItem(item, out var agentId, out var connectionId))
-            {
-                // Break on "no idle agents at all", continue on "no agent for selector"
-                if (string.IsNullOrWhiteSpace(item.AgentSelector)) break;
-                continue;
-            }
-
-            if (!TryDeserializePayload(item, agentId, out var request))
-                continue;
-
-            // --- Consolidation items: dispatch via IConsolidationDispatchService (token vending at drain time) ---
-            if (item.TaskType == WorkItemTaskType.Consolidation)
-            {
-                await DispatchConsolidationItemAsync(item, request!, agentId, ct);
-                continue;
-            }
-
-            // --- Pipeline items ---
-            if (!await DispatchPipelineItemAsync(item, request!, agentId, connectionId!, ct)) continue;
-
-            await SwapLabelWithRetryAsync(item.Id, request!, ct); // Swap label to agent:in-progress (#997, retries #1579)
-            _logger.LogInformation("PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
-                item.Id, item.IssueIdentifier, agentId);
+            if (!await ProcessPendingItemAsync(item, ct)) break;
         }
 
         WorkDistributionTelemetry.DispatcherPollCount.Add(1); // TODO: placed at end — see comment in original for metric inconsistency risk
+    }
+
+    /// <summary>
+    /// Processes a single pending work item: resolves an agent, deserializes payload, and dispatches.
+    /// Returns <c>false</c> when no idle agents are available at all and the drain loop should stop.
+    /// Returns <c>true</c> to continue processing the next item (including the case where this item
+    /// was skipped because no agent matched the selector).
+    /// </summary>
+    private async Task<bool> ProcessPendingItemAsync(WorkItemEntity item, CancellationToken ct)
+    {
+        if (!TryResolveAgentForItem(item, out var agentId, out var connectionId))
+        {
+            // Break on "no idle agents at all", continue on "no agent for selector"
+            return !string.IsNullOrWhiteSpace(item.AgentSelector);
+        }
+
+        if (!TryDeserializePayload(item, agentId, out var request))
+            return true;
+
+        // --- Consolidation items: dispatch via IConsolidationDispatchService (token vending at drain time) ---
+        if (item.TaskType == WorkItemTaskType.Consolidation)
+        {
+            await DispatchConsolidationItemAsync(item, request!, agentId, ct);
+            return true;
+        }
+
+        // --- Pipeline items ---
+        if (!await DispatchPipelineItemAsync(item, request!, agentId, connectionId!, ct)) return true;
+
+        await SwapLabelWithRetryAsync(item.Id, request!, ct); // Swap label to agent:in-progress (#997, retries #1579)
+        _logger.LogInformation("PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
+            item.Id, item.IssueIdentifier, agentId);
+        return true;
     }
 
     /// <summary>
