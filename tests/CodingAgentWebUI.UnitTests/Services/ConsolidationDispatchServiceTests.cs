@@ -986,6 +986,50 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
             "should select the profile whose MatchLabels cover the input labels");
     }
 
+    [Fact]
+    public async Task ResolveRequiredLabelsAsync_WhenTemplateFoundAndRepoConfigHasRequiredLabels_UsesRepoConfigLabels()
+    {
+        // Template exists with a specific repo provider that has RequiredLabels set
+        var template = new PipelineJobTemplate
+        {
+            Id = "t-found",
+            Name = "Found Template",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-1"
+        };
+        var repoConfig = new ProviderConfig
+        {
+            Id = "rp-1",
+            Kind = ProviderKind.Repository,
+            ProviderType = "GitHub",
+            DisplayName = "Repo",
+            RequiredLabels = new List<string> { "java", "java21" }
+        };
+
+        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>
+            {
+                new() { Id = "proj-1", Name = "P1", Enabled = true, TemplateIds = new[] { "t-found" } }
+            });
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate> { template });
+        _mockConfigStore.Setup(s => s.GetProviderConfigByIdAsync("rp-1", ProviderKind.Repository, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(repoConfig);
+
+        var config = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = "/tmp",
+            DefaultRequiredAgentLabels = "dotnet,kiro" // should be overridden by repo config
+        };
+        var svc = CreateService(config);
+
+        var labels = await svc.ResolveRequiredLabelsAsync((TemplateId)"t-found", config, CancellationToken.None);
+
+        labels.Should().Contain("java",
+            "when the template's repo config specifies RequiredLabels, those should be returned");
+        labels.Should().Contain("java21");
+    }
+
     #endregion
 
     #region NotifyRunCancelledAsync
