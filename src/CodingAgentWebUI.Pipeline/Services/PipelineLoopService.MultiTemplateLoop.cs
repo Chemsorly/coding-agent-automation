@@ -17,7 +17,6 @@ public sealed partial class PipelineLoopService
 
         while (!_stopRequested && !ct.IsCancellationRequested)
         {
-            // Step 1–2: Snapshot config and reconcile provider caches
             var snapshot = await SnapshotAndReconcileAsync(ct);
             if (snapshot is null)
             {
@@ -26,63 +25,73 @@ public sealed partial class PipelineLoopService
                 continue;
             }
 
-            // Step 3: Poll per-template queues (issues + PRs + decomposition)
-            var failuresBefore = snapshot.PollableTemplates.DistinctBy(t => t.Id).ToDictionary(
-                t => t.Id,
-                t => _templateStatuses.TryGetValue(t.Id, out var s) ? s.ConsecutiveFailures : 0);
-
-            var (issueQueues, prQueues, decompositionQueues) = await _poller.PollTemplateQueuesAsync(
-                snapshot.PollableTemplates, snapshot.MaxPagesToFetch, _templateStatuses,
-                i => CurrentCycleTemplateIndex = i,
-                msg => { lock (_lock) { StatusMessage = msg; } },
-                NotifyChange,
-                ct);
-
-            if (_stopRequested || ct.IsCancellationRequested) break;
-
-            // Step 3b: Project-level epic polling
-            var projectLevelDecompositionQueues = await _poller.PollProjectLevelEpicsAsync(
-                snapshot.Projects, snapshot.TemplateLookup, snapshot.MaxPagesToFetch, ct);
-
-            if (_stopRequested || ct.IsCancellationRequested) break;
-
-            // Emit cycle-level poll metrics
-            EmitCyclePollMetrics(snapshot, failuresBefore, issueQueues, prQueues, decompositionQueues, projectLevelDecompositionQueues);
-
-            // Step 4: Circuit breaker
-            if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, snapshot.Config.ClosedLoopCircuitBreakerCooldown, ct))
-                continue;
-
-            // Step 5: Fair dispatch
-            var dispatchResult = await _dispatcher.DispatchFairRoundRobinAsync(
-                new DispatchScheduler.DispatchRoundRobinRequest
-                {
-                    PollableTemplates = snapshot.PollableTemplates,
-                    FlattenedTemplates = snapshot.FlattenedTemplates,
-                    Config = snapshot.Config,
-                    MaxRunsPerCycle = snapshot.MaxRunsPerCycle,
-                    ActiveIssueIdentifiers = snapshot.ActiveIssueIdentifiers,
-                    IssueQueues = issueQueues,
-                    PrQueues = prQueues,
-                    DecompositionQueues = decompositionQueues,
-                    ProjectLevelDecompositionQueues = projectLevelDecompositionQueues,
-                    ReportStatus = msg => { lock (_lock) { StatusMessage = msg; } },
-                    ReportIssue = id => CurrentIssueIdentifier = id,
-                    NotifyChange = NotifyChange
-                },
-                stoppingToken, ct);
-
-            ProcessedCount += dispatchResult.ProcessedCount;
-            FailedCount += dispatchResult.FailedCount;
-
-            CurrentIssueIdentifier = null;
-            if (_stopRequested || ct.IsCancellationRequested) break;
-
-            // Step 6: Wait before next cycle
-            lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.PollInterval.TotalSeconds}s."; }
-            NotifyChange();
-            await DelayOrStop(snapshot.PollInterval, ct);
+            if (!await ExecuteCycleAsync(snapshot, stoppingToken, ct))
+                break;
         }
+    }
+
+    /// <summary>
+    /// Executes a single pipeline loop cycle: poll → circuit-breaker → dispatch → wait.
+    /// Returns false if the loop should stop immediately (cancellation or stop requested).
+    /// </summary>
+    private async Task<bool> ExecuteCycleAsync(CycleSnapshot snapshot, CancellationToken stoppingToken, CancellationToken ct)
+    {
+        var failuresBefore = BuildTemplateFailureBaseline(snapshot.PollableTemplates);
+
+        var (issueQueues, prQueues, decompositionQueues) = await _poller.PollTemplateQueuesAsync(
+            snapshot.PollableTemplates, snapshot.MaxPagesToFetch, _templateStatuses,
+            i => CurrentCycleTemplateIndex = i,
+            msg => { lock (_lock) { StatusMessage = msg; } },
+            NotifyChange,
+            ct);
+
+        if (_stopRequested || ct.IsCancellationRequested) return false;
+
+        var projectLevelDecompositionQueues = await _poller.PollProjectLevelEpicsAsync(
+            snapshot.Projects, snapshot.TemplateLookup, snapshot.MaxPagesToFetch, ct);
+
+        if (_stopRequested || ct.IsCancellationRequested) return false;
+
+        EmitCyclePollMetrics(snapshot, failuresBefore, issueQueues, prQueues, decompositionQueues, projectLevelDecompositionQueues);
+
+        if (await CheckCircuitBreakerAsync(snapshot.EnabledTemplates, snapshot.MaxConsecutiveFailures, snapshot.Config.ClosedLoopCircuitBreakerCooldown, ct))
+            return true;
+
+        var dispatchResult = await _dispatcher.DispatchFairRoundRobinAsync(
+            new DispatchScheduler.DispatchRoundRobinRequest
+            {
+                PollableTemplates = snapshot.PollableTemplates,
+                FlattenedTemplates = snapshot.FlattenedTemplates,
+                Config = snapshot.Config,
+                MaxRunsPerCycle = snapshot.MaxRunsPerCycle,
+                ActiveIssueIdentifiers = snapshot.ActiveIssueIdentifiers,
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompositionQueues,
+                ProjectLevelDecompositionQueues = projectLevelDecompositionQueues,
+                ReportStatus = msg => { lock (_lock) { StatusMessage = msg; } },
+                ReportIssue = id => CurrentIssueIdentifier = id,
+                NotifyChange = NotifyChange
+            },
+            stoppingToken, ct);
+
+        ProcessedCount += dispatchResult.ProcessedCount;
+        FailedCount += dispatchResult.FailedCount;
+        CurrentIssueIdentifier = null;
+
+        if (_stopRequested || ct.IsCancellationRequested) return false;
+
+        lock (_lock) { StatusMessage = $"🔄 Cycle complete. Polling {snapshot.EnabledTemplates.Count} templates every {(int)snapshot.PollInterval.TotalSeconds}s."; }
+        NotifyChange();
+        await DelayOrStop(snapshot.PollInterval, ct);
+        return true;
+    }
+
+    private Dictionary<string, int> BuildTemplateFailureBaseline(IReadOnlyList<PipelineJobTemplate> templates)
+    {
+        return templates.DistinctBy(t => t.Id).ToDictionary(
+            t => t.Id,
+            t => _templateStatuses.TryGetValue(t.Id, out var s) ? s.ConsecutiveFailures : 0);
     }
 
     /// <summary>

@@ -68,7 +68,7 @@ public sealed partial class ReconciliationService
             Log.Warning("ReconciliationService: timeout — WorkItem {WorkItemId} exceeded {Timeout}s",
                 item.Id, item.TimeoutSeconds);
 
-            await TimeoutSingleWorkItemAsync(item.Id, item.DispatchedAt, item.IssueIdentifier, item.IssueProviderConfigId, item.K8sJobName, item.TimeoutSeconds, now, ct);
+            await TimeoutSingleWorkItemAsync(item.Id, item.DispatchedAt, item.IssueIdentifier, item.IssueProviderConfigId, item.K8sJobName, item.TimeoutSeconds, ct);
         }
     }
 
@@ -76,7 +76,7 @@ public sealed partial class ReconciliationService
         Guid workItemId, DateTimeOffset? dispatchedAt,
         string issueIdentifier, string issueProviderConfigId,
         string? k8sJobName, int timeoutSeconds,
-        DateTimeOffset now, CancellationToken ct)
+        CancellationToken ct)
     {
         var timeoutReason = $"Timeout exceeded: {timeoutSeconds}s";
 

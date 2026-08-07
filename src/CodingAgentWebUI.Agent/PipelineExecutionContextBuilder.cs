@@ -216,7 +216,7 @@ internal sealed class PipelineExecutionContextBuilder
     /// Backward-compatible overload accepting individual parameters.
     /// Used by tests and callers that do not yet use <see cref="PipelineBuildRequest"/>.
     /// </summary>
-    public Task<PipelineExecutionBuildResult> Build(
+    public Task<PipelineExecutionBuildResult> Build( // NOSONAR S107 — convenience overload delegates to PipelineBuildRequest
         JobAssignmentMessage job,
         PipelineConfiguration config,
         IRepositoryProvider repoProvider,

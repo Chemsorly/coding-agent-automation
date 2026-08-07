@@ -14,50 +14,64 @@ public static class CoberturaParser
     /// </summary>
     public static double ParseCoverage(string[] coberturaFiles)
     {
-        // Track per-line coverage: sourceFile -> (lineNumber -> hits)
         var lineCoverage = new Dictionary<string, Dictionary<int, int>>();
 
         foreach (var file in coberturaFiles)
         {
-            try
-            {
-                var doc = XDocument.Load(file);
-                if (doc.Root == null) continue;
-
-                foreach (var cls in doc.Descendants("class"))
-                {
-                    var filename = cls.Attribute("filename")?.Value;
-                    if (string.IsNullOrEmpty(filename)) continue;
-
-                    if (!lineCoverage.TryGetValue(filename, out var fileLines))
-                    {
-                        fileLines = new Dictionary<int, int>();
-                        lineCoverage[filename] = fileLines;
-                    }
-
-                    foreach (var line in cls.Descendants("line"))
-                    {
-                        var number = (int?)line.Attribute("number");
-                        var hits = (int?)line.Attribute("hits");
-                        if (number == null) continue;
-
-                        var lineNum = number.Value;
-                        var lineHits = hits ?? 0;
-
-                        // Take the max hits across reports for the same line
-                        if (fileLines.TryGetValue(lineNum, out var existing))
-                            fileLines[lineNum] = Math.Max(existing, lineHits);
-                        else
-                            fileLines[lineNum] = lineHits;
-                    }
-                }
-            }
-            catch
-            {
-                // Skip malformed files
-            }
+            MergeFileCoverage(file, lineCoverage);
         }
 
+        return ComputeCoveragePercentage(lineCoverage);
+    }
+
+    private static void MergeFileCoverage(string file, Dictionary<string, Dictionary<int, int>> lineCoverage)
+    {
+        try
+        {
+            var doc = XDocument.Load(file);
+            if (doc.Root == null) return;
+
+            foreach (var cls in doc.Descendants("class"))
+            {
+                var filename = cls.Attribute("filename")?.Value;
+                if (string.IsNullOrEmpty(filename)) continue;
+
+                if (!lineCoverage.TryGetValue(filename, out var fileLines))
+                {
+                    fileLines = new Dictionary<int, int>();
+                    lineCoverage[filename] = fileLines;
+                }
+
+                MergeClassLines(cls, fileLines);
+            }
+        }
+        catch
+        {
+            // Skip malformed files
+        }
+    }
+
+    private static void MergeClassLines(XElement cls, Dictionary<int, int> fileLines)
+    {
+        foreach (var line in cls.Descendants("line"))
+        {
+            var number = (int?)line.Attribute("number");
+            var hits = (int?)line.Attribute("hits");
+            if (number == null) continue;
+
+            var lineNum = number.Value;
+            var lineHits = hits ?? 0;
+
+            // Take the max hits across reports for the same line
+            if (fileLines.TryGetValue(lineNum, out var existing))
+                fileLines[lineNum] = Math.Max(existing, lineHits);
+            else
+                fileLines[lineNum] = lineHits;
+        }
+    }
+
+    private static double ComputeCoveragePercentage(Dictionary<string, Dictionary<int, int>> lineCoverage)
+    {
         var totalLines = 0L;
         var coveredLines = 0L;
         foreach (var fileLines in lineCoverage.Values)
@@ -68,7 +82,6 @@ public static class CoberturaParser
                 if (hits > 0) coveredLines++;
             }
         }
-
         return totalLines > 0 ? (double)coveredLines / totalLines * 100.0 : 0.0;
     }
 }

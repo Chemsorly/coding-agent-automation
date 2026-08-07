@@ -85,63 +85,11 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
             if (failure is not null) return failure;
 
             // 4. Diff summary and adversarial review
-            TokenUsage? diffSummaryTokenUsage = null;
             AdversarialReviewResult? reviewResult = null;
-            var skipReview = false;
 
-            // 4a. Diff summary step (wrapped in try-catch for error isolation)
-            using (var diffActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.DiffGeneration"))
-            {
-                diffActivity?.SetTag("pipeline.run_id", job.JobId);
-                try
-                {
-                    // Delete stale diff file before requesting new one
-                    var diffFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.BrainConsolidationDiffFilePath);
-                    if (File.Exists(diffFilePath))
-                        File.Delete(diffFilePath);
-
-                    onOutputLine?.Invoke("📝 Requesting diff summary from generator...");
-
-                    var diffResult = await agentProvider.ExecuteAsync(
-                        new AgentRequest
-                        {
-                            Prompt = ConsolidationPromptBuilder.BuildBrainConsolidationDiffPrompt(),
-                            WorkspacePath = workspacePath,
-                            Timeout = job.PipelineConfiguration.AgentTimeout,
-                            UseResume = true
-                        },
-                        ct);
-
-                    diffSummaryTokenUsage = diffResult.Usage;
-
-                    // Check if diff summary file meets minimum content threshold
-                    if (!File.Exists(diffFilePath))
-                    {
-                        Logger.Warning("Diff summary file not produced at {Path}, skipping review", AgentWorkspacePaths.BrainConsolidationDiffFilePath);
-                        onOutputLine?.Invoke("⚠️ Diff summary file not produced — skipping review");
-                        skipReview = true;
-                    }
-                    else
-                    {
-                        var diffContent = await File.ReadAllTextAsync(diffFilePath, ct);
-                        if (diffContent.Trim().Length < AdversarialReviewHelper.MinimumContentThreshold)
-                        {
-                            Logger.Warning("Diff summary file too short ({Length} chars), skipping review",
-                                diffContent.Trim().Length);
-                            onOutputLine?.Invoke($"⚠️ Diff summary too short ({diffContent.Trim().Length} chars) — skipping review");
-                            skipReview = true;
-                        }
-                    }
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    diffActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
-                    diffActivity?.AddException(ex);
-                    Logger.Warning(ex, "Diff summary step failed: {Message}, skipping review entirely", ex.Message);
-                    onOutputLine?.Invoke($"⚠️ Diff summary failed: {ex.Message} — skipping review");
-                    skipReview = true;
-                }
-            }
+            // 4a. Diff summary (wrapped for error isolation)
+            var (skipReview, diffSummaryTokenUsage) = await TryGenerateDiffSummaryAsync(
+                job, agentProvider, workspacePath, onOutputLine, ct);
 
             // 4b. Review step (only if diff summary succeeded)
             if (!skipReview)
@@ -241,6 +189,58 @@ public sealed class BrainConsolidationExecutor : ConsolidationExecutorBase
                 RefinementTokenUsage = refinementTokenUsage
             };
         }, ct);
+    }
+
+    /// <summary>
+    /// Generates the diff summary file and validates its content threshold.
+    /// Returns (skipReview, tokenUsage).
+    /// </summary>
+    private async Task<(bool skipReview, TokenUsage? tokenUsage)> TryGenerateDiffSummaryAsync(
+        ConsolidationJobMessage job, IAgentProvider agentProvider, string workspacePath,
+        Action<string>? onOutputLine, CancellationToken ct)
+    {
+        using var diffActivity = PipelineTelemetry.ActivitySource.StartActivity("BrainConsolidation.DiffGeneration");
+        diffActivity?.SetTag("pipeline.run_id", job.JobId);
+        try
+        {
+            var diffFilePath = Path.Combine(workspacePath, AgentWorkspacePaths.BrainConsolidationDiffFilePath);
+            if (File.Exists(diffFilePath)) File.Delete(diffFilePath);
+
+            onOutputLine?.Invoke("📝 Requesting diff summary from generator...");
+            var diffResult = await agentProvider.ExecuteAsync(
+                new AgentRequest
+                {
+                    Prompt = ConsolidationPromptBuilder.BuildBrainConsolidationDiffPrompt(),
+                    WorkspacePath = workspacePath,
+                    Timeout = job.PipelineConfiguration.AgentTimeout,
+                    UseResume = true
+                }, ct);
+
+            if (!File.Exists(diffFilePath))
+            {
+                Logger.Warning("Diff summary file not produced at {Path}, skipping review", AgentWorkspacePaths.BrainConsolidationDiffFilePath);
+                onOutputLine?.Invoke("⚠️ Diff summary file not produced — skipping review");
+                return (skipReview: true, diffResult.Usage);
+            }
+
+            var diffContent = await File.ReadAllTextAsync(diffFilePath, ct);
+            if (diffContent.Trim().Length < AdversarialReviewHelper.MinimumContentThreshold)
+            {
+                Logger.Warning("Diff summary file too short ({Length} chars), skipping review", diffContent.Trim().Length);
+                onOutputLine?.Invoke($"⚠️ Diff summary too short ({diffContent.Trim().Length} chars) — skipping review");
+                return (skipReview: true, diffResult.Usage);
+            }
+
+            return (skipReview: false, diffResult.Usage);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            diffActivity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            diffActivity?.AddException(ex);
+            Logger.Warning(ex, "Diff summary step failed: {Message}, skipping review entirely", ex.Message);
+            onOutputLine?.Invoke($"⚠️ Diff summary failed: {ex.Message} — skipping review");
+            return (skipReview: true, null);
+        }
     }
 
     /// <summary>

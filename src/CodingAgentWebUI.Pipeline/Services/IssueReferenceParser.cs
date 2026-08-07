@@ -75,27 +75,27 @@ public static class IssueReferenceParser
             foreach (Match match in GitHubClosingKeywordPattern.Matches(text))
                 issueNumbers.Add(match.Groups[1].Value);
         }
-        catch (RegexMatchTimeoutException) { }
+        catch (RegexMatchTimeoutException) { /* regex timeout — skip this pattern */ }
 
         try
         {
             foreach (Match match in CrossRepoPattern.Matches(text))
                 issueNumbers.Add(match.Groups[1].Value);
         }
-        catch (RegexMatchTimeoutException) { }
+        catch (RegexMatchTimeoutException) { /* regex timeout — skip this pattern */ }
 
         try
         {
             foreach (Match match in GhPattern.Matches(text))
                 issueNumbers.Add(match.Groups[1].Value);
         }
-        catch (RegexMatchTimeoutException) { }
+        catch (RegexMatchTimeoutException) { /* regex timeout — skip this pattern */ }
 
         try
         {
             foreach (Match match in SimpleHashPattern.Matches(text))
                 issueNumbers.Add(match.Groups[1].Value);
         }
-        catch (RegexMatchTimeoutException) { }
+        catch (RegexMatchTimeoutException) { /* regex timeout — skip this pattern */ }
     }
 }

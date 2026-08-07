@@ -277,7 +277,7 @@ public sealed class PipelineStepContext
         try { await action(); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Activity.Current?.RecordError(ex);
+            Activity.Current?.RecordError(ex, ct);
             Logger.Error(ex, "Pipeline {RunId} {ActionDescription} failed", Run.RunId, actionDescription);
             await FailRunAsync($"{actionDescription} failed: {ex.Message}", ct);
             return StepResult.Stop;
@@ -295,7 +295,7 @@ public sealed class PipelineStepContext
         try { await action(); }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Activity.Current?.RecordError(ex);
+            Activity.Current?.RecordError(ex, ct);
             Logger.Warning(ex, "Pipeline {RunId} {ActionDescription} failed, continuing", Run.RunId, actionDescription);
             onFailure?.Invoke();
         }

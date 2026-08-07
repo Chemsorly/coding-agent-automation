@@ -38,9 +38,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
     private readonly IAgentCommunication _agentComm;
     private readonly IConfigurationStore _configStore;
     private readonly IProjectStore _projectStore;
-    private readonly ITokenVendingService _tokenVending;
     private readonly IConsolidationJobPreparationService _jobPreparer;
-    private readonly PipelineConfiguration _config;
     private readonly IWorkDistributor _workDistributor;
     private readonly IPipelineRunHistoryService _runHistoryService;
     private readonly ILogger _logger;
@@ -70,9 +68,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
         _agentComm = deps.AgentComm;
         _configStore = deps.ConfigStore;
         _projectStore = deps.ProjectStore;
-        _tokenVending = deps.TokenVending;
         _jobPreparer = jobPreparer ?? new ConsolidationJobPreparationService(deps.ConfigStore, deps.ProjectStore, deps.TokenVending, deps.Logger);
-        _config = deps.Config;
         _workDistributor = deps.WorkDistributor;
         _runHistoryService = deps.RunHistoryService;
         _logger = deps.Logger;

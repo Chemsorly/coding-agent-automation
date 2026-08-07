@@ -56,32 +56,28 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
             }
         ).ToListAsync(ct);
 
-        var summaries = rows.Select(r => MapRowToSummary(r.RunId, r.WorkItemId, r.IssueIdentifier,
+        var summaries = rows.Select(r => MapRowToSummary(new ActiveRunRow(
+            r.RunId, r.WorkItemId, r.IssueIdentifier,
             r.IssueTitle, r.RunType, r.TaskType, r.AssignedAgentId, r.AgentId,
-            r.DispatchedAt, r.CreatedAt, r.ProjectName, r.Status)).ToList();
+            r.DispatchedAt, r.CreatedAt, r.ProjectName, r.Status))).ToList();
 
         EnrichWithLiveState(summaries);
 
         return summaries;
     }
 
-    private static ActiveRunSummary MapRowToSummary(
-        Guid? runId, Guid workItemId, string issueIdentifier,
-        string? issueTitle, PipelineRunType? runType, WorkItemTaskType taskType,
-        string? assignedAgentId, string? agentId,
-        DateTimeOffset? dispatchedAt, DateTimeOffset createdAt,
-        string? projectName, WorkItemStatus status)
+    private static ActiveRunSummary MapRowToSummary(ActiveRunRow r)
     {
         return new ActiveRunSummary
         {
-            RunId = runId?.ToString() ?? workItemId.ToString(),
-            IssueIdentifier = issueIdentifier,
-            IssueTitle = issueTitle ?? "",
-            RunType = runType ?? MapTaskTypeToRunType(taskType),
-            AgentId = assignedAgentId ?? agentId,
-            StartedAt = dispatchedAt ?? createdAt,
-            ProjectName = projectName,
-            CurrentStep = MapStatusToStep(status)
+            RunId = r.RunId?.ToString() ?? r.WorkItemId.ToString(),
+            IssueIdentifier = r.IssueIdentifier,
+            IssueTitle = r.IssueTitle ?? "",
+            RunType = r.RunType ?? MapTaskTypeToRunType(r.TaskType),
+            AgentId = r.AssignedAgentId ?? r.AgentId,
+            StartedAt = r.DispatchedAt ?? r.CreatedAt,
+            ProjectName = r.ProjectName,
+            CurrentStep = MapStatusToStep(r.Status)
         };
     }
 
@@ -158,4 +154,11 @@ public sealed class PostgresActiveRunQueryService : IActiveRunQueryService
         WorkItemTaskType.Consolidation => PipelineRunType.Implementation, // best-effort fallback
         _ => PipelineRunType.Implementation
     };
+
+    private sealed record ActiveRunRow(
+        Guid? RunId, Guid WorkItemId, string IssueIdentifier,
+        string? IssueTitle, PipelineRunType? RunType, WorkItemTaskType TaskType,
+        string? AssignedAgentId, string? AgentId,
+        DateTimeOffset? DispatchedAt, DateTimeOffset CreatedAt,
+        string? ProjectName, WorkItemStatus Status);
 }

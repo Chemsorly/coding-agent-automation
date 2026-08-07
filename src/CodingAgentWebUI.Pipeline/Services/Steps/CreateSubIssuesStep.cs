@@ -183,7 +183,7 @@ public sealed class CreateSubIssuesStep : IPipelineStep
     /// when the attempt either succeeds or fails non-retryably. Returns null when the attempt
     /// failed transiently and should be retried.
     /// </summary>
-    private static async Task<SubIssueCreationResult?> TryCreateIssueOnceAsync(
+    private static async Task<SubIssueCreationResult?> TryCreateIssueOnceAsync( // NOSONAR S107 — private helper; all params are independent issue creation inputs
         SubIssueProposal proposal,
         string sanitizedTitle,
         string sanitizedBody,
@@ -239,7 +239,7 @@ public sealed class CreateSubIssuesStep : IPipelineStep
             if (attempt == MaxRetryAttempts - 1)
             {
                 // Last attempt — stop retrying
-                Activity.Current?.RecordError(ex);
+                Activity.Current?.RecordError(ex, ct);
                 context.Logger.Warning("Exhausted retries for issue '{Title}': {Error}", proposal.Title, ex.Message);
                 PipelineTelemetry.SubIssuesFailed.Add(1,
                     PipelineTelemetry.BuildTags(context.Run.RunType, context.Run.ProjectId, context.Run.ProjectName));
@@ -255,7 +255,7 @@ public sealed class CreateSubIssuesStep : IPipelineStep
         }
         catch (Exception ex)
         {
-            Activity.Current?.RecordError(ex);
+            Activity.Current?.RecordError(ex, ct);
             context.Logger.Warning(ex,
                 "Non-transient error creating issue '{Title}': {Error}", proposal.Title, ex.Message);
             PipelineTelemetry.SubIssuesFailed.Add(1,

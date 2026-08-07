@@ -96,7 +96,6 @@ internal sealed class DispatchLifecycleService
         var concurrencyBySelector = ctx.ConcurrencyBySelector;
         var logPrefix = ctx.LogPrefix;
 
-        // Generate deterministic job name
         var jobName = DispatchService.GenerateJobName(item.Id);
 
         // Select a PVC for kiro agents directly from the available pool (RWO makes label patching unnecessary).
@@ -104,68 +103,28 @@ internal sealed class DispatchLifecycleService
         if (isKiroAgent && claimedPvc is null)
             return;
 
-        // Load full WorkItem and run variant-specific preparation.
-        WorkItemEntity? workItem;
-        (bool shouldProceed, Dictionary<string, string>? projectSecrets) prepareResult;
-        try
-        {
-            workItem = await db.WorkItems.FindAsync([item.Id], ct);
-            if (workItem is null || workItem.Status != WorkItemStatus.Pending)
-            {
-                // Item was modified by another process
-                ReleaseClaimedPvc(claimedPvc, availablePvcs);
-                return;
-            }
+        // Load and run variant-specific preparation; returns null to signal abort (PVC already released).
+        var prepareResult = await LoadAndPrepareWorkItemAsync(db, item, claimedPvc, availablePvcs, prepareVariant, ct);
+        if (prepareResult is null) return;
 
-            // Variant-specific preparation (may mutate workItem, load secrets, or signal abort)
-            prepareResult = await prepareVariant(workItem);
-        }
-        catch
-        {
-            ReleaseClaimedPvc(claimedPvc, availablePvcs);
-            throw;
-        }
-        var (shouldProceed, projectSecrets) = prepareResult;
-        if (!shouldProceed)
-        {
-            ReleaseClaimedPvc(claimedPvc, availablePvcs);
-            return;
-        }
+        var (workItem, projectSecrets) = prepareResult.Value;
 
         // Pre-write K8sJobName (and ClaimedPvcName) to WorkItem BEFORE K8s API call.
-        // EF change tracking also persists any entity mutations from prepareVariant (e.g., Payload).
         workItem.K8sJobName = jobName;
         if (claimedPvc is not null)
             workItem.ClaimedPvcName = claimedPvc;
 
-        try
-        {
-            await db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            Log.Warning("DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
-            ReleaseClaimedPvc(claimedPvc, availablePvcs);
+        if (!await TrySavePreDispatchAsync(db, item, claimedPvc, availablePvcs, logPrefix, ct))
             return;
-        }
-        catch
-        {
-            ReleaseClaimedPvc(claimedPvc, availablePvcs);
-            throw;
-        }
 
         // Create K8s Job via JobSpecBuilder
         if (!await CreateK8sJobAsync(db, item, workItem, template, jobName, claimedPvc, availablePvcs, projectSecrets, logPrefix, onFailure, ct))
             return;
 
-        // Create per-job K8s Secret if project has secrets
         await CreateJobSecretIfNeededAsync(jobName, item.Id, projectSecrets, logPrefix, ct);
 
-        // Update to Dispatched — clear change tracker first to get fresh state
-        // (avoids stale entity if another service modified the item during K8s API call)
         var (shouldContinue, reloadedWorkItem) = await HandleOrphanedJobIfRaceDetectedAsync(db, item.Id, jobName, claimedPvc, availablePvcs, logPrefix, ct);
-        if (!shouldContinue)
-            return;
+        if (!shouldContinue) return;
 
         workItem = reloadedWorkItem!;
         workItem.Status = WorkItemStatus.Dispatched;
@@ -175,13 +134,72 @@ internal sealed class DispatchLifecycleService
     }
 
     /// <summary>
-    /// Returns the claimed PVC to the available pool.
-    /// A no-op when <paramref name="claimedPvc"/> is null (non-kiro agents never claim a PVC).
+    /// Loads the work item from DB, verifies it is still Pending, and runs the variant-specific
+    /// preparation delegate. Returns null if the item should not be dispatched (caller should return).
+    /// On exception, releases the claimed PVC before rethrowing.
     /// </summary>
-    private static void ReleaseClaimedPvc(string? claimedPvc, List<string> availablePvcs)
+    private static async Task<(WorkItemEntity workItem, Dictionary<string, string>? projectSecrets)?>
+        LoadAndPrepareWorkItemAsync(
+            PipelineDbContext db,
+            PendingWorkItemProjection item,
+            string? claimedPvc,
+            List<string> availablePvcs,
+            Func<WorkItemEntity, Task<(bool shouldContinue, Dictionary<string, string>? projectSecrets)>> prepareVariant,
+            CancellationToken ct)
     {
-        if (claimedPvc is not null)
-            availablePvcs.Add(claimedPvc);
+        try
+        {
+            var workItem = await db.WorkItems.FindAsync([item.Id], ct);
+            if (workItem is null || workItem.Status != WorkItemStatus.Pending)
+            {
+                if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+                return null;
+            }
+
+            var (shouldProceed, projectSecrets) = await prepareVariant(workItem);
+            if (!shouldProceed)
+            {
+                if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+                return null;
+            }
+
+            return (workItem, projectSecrets);
+        }
+        catch
+        {
+            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Saves the pre-dispatch K8sJobName write. Handles concurrency conflicts by releasing the PVC
+    /// and returning false, and releases the PVC on any other exception before rethrowing.
+    /// </summary>
+    private static async Task<bool> TrySavePreDispatchAsync(
+        PipelineDbContext db,
+        PendingWorkItemProjection item,
+        string? claimedPvc,
+        List<string> availablePvcs,
+        string logPrefix,
+        CancellationToken ct)
+    {
+        try
+        {
+            await db.SaveChangesAsync(ct);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            Log.Warning("DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
+            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+            return false;
+        }
+        catch
+        {
+            if (claimedPvc is not null) availablePvcs.Add(claimedPvc);
+            throw;
+        }
     }
 
     /// <summary>
@@ -214,7 +232,7 @@ internal sealed class DispatchLifecycleService
     /// Saves the Dispatched status transition, records metrics, updates concurrency tracking,
     /// and invokes the variant-specific post-dispatch success callback.
     /// </summary>
-    private async Task FinalizeDispatchAsync(
+    private static async Task FinalizeDispatchAsync(
         PipelineDbContext db,
         WorkItemEntity workItem,
         PendingWorkItemProjection item,

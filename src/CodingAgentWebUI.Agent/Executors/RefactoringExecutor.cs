@@ -55,87 +55,92 @@ public sealed class RefactoringExecutor : ConsolidationExecutorBase
 
         return await WrapWithCancellationHandlingAsync(job.JobId, async () =>
         {
-            // 1. Clone code repo
+            // 1. Clone code repo (optionally + brain repo)
             Directory.CreateDirectory(workspacePath);
-            Logger.Information("Cloning code repo for refactoring detection run {RunId} into {Workspace}",
-                job.JobId, workspacePath);
+            Logger.Information("Cloning code repo for refactoring detection run {RunId} into {Workspace}", job.JobId, workspacePath);
 
             await RunWithTracingAsync("RefactoringDetection.Clone", job.JobId, async _ =>
             {
                 await repoProvider.CloneAsync(workspacePath, ct);
-
-                // 1b. Optionally clone brain repo for architectural context
                 if (brainProvider is not null)
-                {
-                    var brainPath = Path.Combine(workspacePath, ".brain");
-                    try
-                    {
-                        await brainProvider.CloneAsync(brainPath, ct);
-                        Logger.Information("Brain repo cloned for architectural context in run {RunId}", job.JobId);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        Logger.Warning(ex, "Failed to clone brain repo for context in run {RunId}, continuing without it", job.JobId);
-                    }
-                }
+                    await TryCloneBrainRepoAsync(brainProvider, workspacePath, job.JobId, ct);
             });
 
-            // 2. Hotspot analysis — run git log to identify frequently-changed files
+            // 2. Hotspot analysis
             await RunWithTracingAsync("RefactoringDetection.HotspotAnalysis", job.JobId, async _ =>
             {
                 await WriteHotspotAnalysisAsync(workspacePath, job.PipelineConfiguration.HotspotAnalysisLookback, ct);
             });
 
             // 2b. Query open issues for deduplication context
-            string? issueContext = null;
-            try
-            {
-                var refactoringResult = await issueProvider.ListOpenIssuesAsync(
-                    1, 30, new[] { AgentLabels.Generated }, ct);
-                var openRefactoringIssues = refactoringResult.Items;
-
-                var allOpenResult = await issueProvider.ListOpenIssuesAsync(1, 50, null, ct);
-                var cutoff = DateTime.UtcNow.AddDays(-30);
-                var recentOpenIssues = allOpenResult.Items
-                    .Where(i => i.CreatedAt >= cutoff)
-                    .Where(i => !openRefactoringIssues.Any(r => r.Identifier == i.Identifier))
-                    .Take(50 - openRefactoringIssues.Count)
-                    .ToList();
-
-                issueContext = ConsolidationPromptBuilder.BuildOpenIssueContext(openRefactoringIssues, recentOpenIssues);
-                if (!string.IsNullOrEmpty(issueContext))
-                    Logger.Information("Including {Count} open issues as context for refactoring detection in run {RunId}",
-                        openRefactoringIssues.Count + recentOpenIssues.Count, job.JobId);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Logger.Warning(ex, "Failed to query open issues for context in run {RunId}, continuing without", job.JobId);
-            }
+            var issueContext = await TryBuildIssueContextAsync(issueProvider, job.JobId, ct);
 
             // 2c. Query past proposal outcomes for feedback context
-            string outcomeContext = string.Empty;
-            try
-            {
-                var since = DateTime.UtcNow - job.PipelineConfiguration.RefactoringOutcomeLookback;
-                var closedResult = await issueProvider.ListClosedIssuesAsync(
-                    page: 1, pageSize: 20,
-                    labels: new[] { AgentLabels.Generated },
-                    since: since, ct);
-                outcomeContext = ConsolidationPromptBuilder.BuildProposalOutcomeContext(closedResult.Items);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                Logger.Warning(ex, "Failed to query closed issues for feedback context in run {RunId}", job.JobId);
-            }
+            var outcomeContext = await TryBuildOutcomeContextAsync(issueProvider, job.PipelineConfiguration, job.JobId, ct);
 
             // ── Phased Refactoring Detection ──
-            var phasedResult = await ExecutePhasedRefactoringAsync(
-                job, agentProvider, workspacePath, issueContext, outcomeContext, ct);
+            var phasedResult = await ExecutePhasedRefactoringAsync(job, agentProvider, workspacePath, issueContext, outcomeContext, ct);
             if (!phasedResult.Success) return phasedResult;
 
-            // Phased path wrote proposals to workspace — finalize with review + issue creation
             return await FinalizeProposalsAsync(job, agentProvider, issueProvider, workspacePath, onOutputLine, ct);
         }, ct);
+    }
+
+    private async Task TryCloneBrainRepoAsync(IRepositoryProvider brainProvider, string workspacePath, string jobId, CancellationToken ct)
+    {
+        var brainPath = Path.Combine(workspacePath, ".brain");
+        try
+        {
+            await brainProvider.CloneAsync(brainPath, ct);
+            Logger.Information("Brain repo cloned for architectural context in run {RunId}", jobId);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Failed to clone brain repo for context in run {RunId}, continuing without it", jobId);
+        }
+    }
+
+    private async Task<string?> TryBuildIssueContextAsync(IIssueProvider issueProvider, string jobId, CancellationToken ct)
+    {
+        try
+        {
+            var refactoringResult = await issueProvider.ListOpenIssuesAsync(1, 30, new[] { AgentLabels.Generated }, ct);
+            var openRefactoringIssues = refactoringResult.Items;
+            var allOpenResult = await issueProvider.ListOpenIssuesAsync(1, 50, null, ct);
+            var cutoff = DateTime.UtcNow.AddDays(-30);
+            var recentOpenIssues = allOpenResult.Items
+                .Where(i => i.CreatedAt >= cutoff)
+                .Where(i => !openRefactoringIssues.Any(r => r.Identifier == i.Identifier))
+                .Take(50 - openRefactoringIssues.Count)
+                .ToList();
+            var context = ConsolidationPromptBuilder.BuildOpenIssueContext(openRefactoringIssues, recentOpenIssues);
+            if (!string.IsNullOrEmpty(context))
+                Logger.Information("Including {Count} open issues as context for refactoring detection in run {RunId}",
+                    openRefactoringIssues.Count + recentOpenIssues.Count, jobId);
+            return context;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Failed to query open issues for context in run {RunId}, continuing without", jobId);
+            return null;
+        }
+    }
+
+    private async Task<string> TryBuildOutcomeContextAsync(
+        IIssueProvider issueProvider, PipelineConfiguration config, string jobId, CancellationToken ct)
+    {
+        try
+        {
+            var since = DateTime.UtcNow - config.RefactoringOutcomeLookback;
+            var closedResult = await issueProvider.ListClosedIssuesAsync(
+                page: 1, pageSize: 20, labels: new[] { AgentLabels.Generated }, since: since, ct);
+            return ConsolidationPromptBuilder.BuildProposalOutcomeContext(closedResult.Items);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Logger.Warning(ex, "Failed to query closed issues for feedback context in run {RunId}", jobId);
+            return string.Empty;
+        }
     }
 
     /// <summary>

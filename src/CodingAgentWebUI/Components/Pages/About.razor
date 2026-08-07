@@ -152,10 +152,7 @@
                 : avg.Value.ToString(@"hh\:mm\:ss"))
             : "—";
 
-        _lastRun = history.Count > 0
-            ? (history[0].StartedAtOffset == default
-                ? "—"
-                : history[0].StartedAtOffset.ToLocalTime().ToString("g"))
-            : "—";
+        var lastEntry = history.Count > 0 ? history[0].StartedAtOffset : default;
+        _lastRun = lastEntry == default ? "—" : lastEntry.ToLocalTime().ToString("g");
     }
 }

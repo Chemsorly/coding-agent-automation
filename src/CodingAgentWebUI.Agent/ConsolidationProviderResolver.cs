@@ -96,26 +96,9 @@ internal sealed class ConsolidationProviderResolver
             var issueProvider = CreateIssueProviderForConsolidation(issueConfig);
             if (issueProvider is IAsyncDisposable id) disposables.Add(id);
 
-            IRepositoryProvider? brainProvider = null;
-            if (brainConfig is not null)
-            {
-                try
-                {
-                    brainProvider = factory.CreateRepositoryProvider(brainConfig);
-                    if (brainProvider is IAsyncDisposable bd) disposables.Add(bd);
-                    await brainProvider.ValidateAsync(ct);
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    _logger.Warning(ex, "Brain provider validation failed for consolidation job {JobId}, continuing without it", job.JobId);
-                    if (brainProvider is IAsyncDisposable bd2)
-                    {
-                        await bd2.DisposeAsync();
-                        disposables.Remove(bd2);
-                    }
-                    brainProvider = null;
-                }
-            }
+            var brainProvider = brainConfig is not null
+                ? await TryCreateAndValidateBrainProviderAsync(factory, brainConfig, disposables, job.JobId, ct)
+                : null;
 
             await repoProvider.ValidateAsync(ct);
             await agentProvider.ValidateAsync(ct);
@@ -124,6 +107,37 @@ internal sealed class ConsolidationProviderResolver
             return ProviderResolutionResult<RefactoringProviders>.Succeed(
                 new RefactoringProviders(repoProvider, agentProvider, issueProvider, brainProvider));
         }, ct);
+    }
+
+    /// <summary>
+    /// Creates and validates a brain repository provider, registering it in <paramref name="disposables"/>.
+    /// Returns null (and removes from disposables) if validation fails, so the job can proceed without it.
+    /// </summary>
+    private async Task<IRepositoryProvider?> TryCreateAndValidateBrainProviderAsync(
+        AgentProviderFactory factory,
+        ProviderConfig brainConfig,
+        List<IAsyncDisposable> disposables,
+        string jobId,
+        CancellationToken ct)
+    {
+        IRepositoryProvider? brainProvider = null;
+        try
+        {
+            brainProvider = factory.CreateRepositoryProvider(brainConfig);
+            if (brainProvider is IAsyncDisposable bd) disposables.Add(bd);
+            await brainProvider.ValidateAsync(ct);
+            return brainProvider;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.Warning(ex, "Brain provider validation failed for consolidation job {JobId}, continuing without it", jobId);
+            if (brainProvider is IAsyncDisposable bd2)
+            {
+                await bd2.DisposeAsync();
+                disposables.Remove(bd2);
+            }
+            return null;
+        }
     }
 
     public Task<ProviderResolutionResult<HarnessProviders>> ResolveHarnessProvidersAsync(

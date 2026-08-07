@@ -33,7 +33,7 @@ RUN dotnet restore tests/CodingAgentWebUI.E2ETests/CodingAgentWebUI.E2ETests.csp
 # NOTE: Do NOT use --no-restore here. The prior restore step doesn't fully resolve
 # Blazor framework static web assets (blazor.web.js). Letting build do its own restore
 # ensures the staticwebassets.runtime.json manifest includes the NuGet _framework/ path.
-COPY . . # nosonar: docker:S6470 - COPY . is required to build the full solution; .dockerignore excludes sensitive files
+COPY . . # NOSONAR - COPY . is required to build the full solution; .dockerignore explicitly excludes sensitive files (.env, .git, .kiro, config/, *credentials*)
 RUN dotnet build tests/CodingAgentWebUI.E2ETests/ -c Debug -p:IsTestProject=true
 
 # Ensure the test host runs in Development mode so static web assets

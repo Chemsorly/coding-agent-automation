@@ -104,7 +104,7 @@
     // Template management
     private string? _selectedTemplateToAdd;
 
-    private CancellationTokenSource _cts = new();
+    private readonly CancellationTokenSource _cts = new();
 
     // Secrets management
     private List<SecretEntry> _secrets = new();
@@ -1005,17 +1005,21 @@
     {
         try
         {
-            var servers = _mcpServers.Select(s => new McpServerConfig
+            var servers = _mcpServers.Select(s =>
             {
-                Name = s.Name.Trim(),
-                Type = s.Type,
-                Command = s.Type == "http" ? null : (string.IsNullOrWhiteSpace(s.Command) ? null : s.Command.Trim()),
-                Args = string.IsNullOrWhiteSpace(s.Args) ? [] : s.Args.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList(),
-                Url = s.Type == "http" ? s.Url.Trim() : null,  // TODO [WARNING]: s.Url could be null if a future McpServerFormModel is constructed without enforcing the "" default; consider s.Url?.Trim() ?? "" for defensive safety.
-                Env = ParseMcpEnvVars(s.EnvVars),
-                Headers = s.Type == "http" ? ParseMcpEnvVars(s.Headers) : new Dictionary<string, string>(),
-                Disabled = !s.Enabled,
-                AutoApprove = []
+                var command = s.Type == "http" ? null : (string.IsNullOrWhiteSpace(s.Command) ? null : s.Command.Trim());
+                return new McpServerConfig
+                {
+                    Name = s.Name.Trim(),
+                    Type = s.Type,
+                    Command = command,
+                    Args = string.IsNullOrWhiteSpace(s.Args) ? [] : s.Args.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList(),
+                    Url = s.Type == "http" ? s.Url.Trim() : null,  // TODO [WARNING]: s.Url could be null if a future McpServerFormModel is constructed without enforcing the "" default; consider s.Url?.Trim() ?? "" for defensive safety.
+                    Env = ParseMcpEnvVars(s.EnvVars),
+                    Headers = s.Type == "http" ? ParseMcpEnvVars(s.Headers) : new Dictionary<string, string>(),
+                    Disabled = !s.Enabled,
+                    AutoApprove = []
+                };
             }).ToList();
 
             _project = _project with { McpServers = servers.Count > 0 ? servers : null };
@@ -1043,7 +1047,7 @@
         return dict;
     }
 
-    private class McpServerFormModel
+    private sealed class McpServerFormModel
     {
         public string Name { get; set; } = "";
         public string Type { get; set; } = "stdio";

@@ -228,71 +228,78 @@ public sealed class PipelineSignalRReporter : IAsyncDisposable
             metadata[key] = value;
         }
 
-        // CreatingBranch completed → include branch name
+        AddBranchAndBaselineMetadata(run, newStep, Add);
+        AddCodeChangeMetadata(run, newStep, Add);
+        AddCodeReviewMetadata(run, newStep, Add);
+        AddDecompositionMetadata(run, newStep, Add);
+        AddCostAndRetryMetadata(run, Add);
+
+        return metadata;
+    }
+
+    private static void AddBranchAndBaselineMetadata(PipelineRun run, PipelineStep newStep, Action<string, string?> add)
+    {
         if (newStep > PipelineStep.CreatingBranch && !string.IsNullOrEmpty(run.BranchName))
-            Add("BranchName", run.BranchName);
-
-        // VerifyingBaseline completed → include result
+            add("BranchName", run.BranchName);
         if (newStep > PipelineStep.VerifyingBaseline && run.BaselineHealthPassed.HasValue)
-            Add("BaselineHealthPassed", run.BaselineHealthPassed.Value.ToString());
-
-        // AnalyzingCode completed → include skip status
+            add("BaselineHealthPassed", run.BaselineHealthPassed.Value.ToString());
         if (newStep > PipelineStep.AnalyzingCode && run.AnalysisSkipped)
-            Add("AnalysisSkipped", "true");
+            add("AnalysisSkipped", "true");
+    }
 
-        // GeneratingCode completed → include file change stats
+    private static void AddCodeChangeMetadata(PipelineRun run, PipelineStep newStep, Action<string, string?> add)
+    {
         if (newStep > PipelineStep.GeneratingCode && run.FilesChangedCount > 0)
         {
-            Add("FilesChangedCount", run.FilesChangedCount.ToString());
-            Add("LinesAdded", run.LinesAdded.ToString());
-            Add("LinesRemoved", run.LinesRemoved.ToString());
+            add("FilesChangedCount", run.FilesChangedCount.ToString());
+            add("LinesAdded", run.LinesAdded.ToString());
+            add("LinesRemoved", run.LinesRemoved.ToString());
         }
+    }
 
-        // ReviewingCode progress/completion
+    private static void AddCodeReviewMetadata(PipelineRun run, PipelineStep newStep, Action<string, string?> add)
+    {
         if (newStep >= PipelineStep.ReviewingCode)
         {
             if (run.CodeReviewIterationsTotal > 0)
-                Add("CodeReviewIterationsTotal", run.CodeReviewIterationsTotal.ToString());
+                add("CodeReviewIterationsTotal", run.CodeReviewIterationsTotal.ToString());
             if (run.CodeReviewIterationsCompleted > 0)
-                Add("CodeReviewIterationsCompleted", run.CodeReviewIterationsCompleted.ToString());
+                add("CodeReviewIterationsCompleted", run.CodeReviewIterationsCompleted.ToString());
             if (run.CodeReviewIterationInProgress > 0)
-                Add("CodeReviewIterationInProgress", run.CodeReviewIterationInProgress.ToString());
+                add("CodeReviewIterationInProgress", run.CodeReviewIterationInProgress.ToString());
         }
 
-        // Decomposition: open issues downloaded
-        if (newStep > PipelineStep.DownloadingOpenIssues && run.OpenIssuesDownloaded > 0)
-            Add("OpenIssuesDownloaded", run.OpenIssuesDownloaded.ToString());
+        if (run.CodeReviewCriticalCount > 0)
+            add("CodeReviewCriticalCount", run.CodeReviewCriticalCount.ToString());
+        if (run.CodeReviewWarningCount > 0)
+            add("CodeReviewWarningCount", run.CodeReviewWarningCount.ToString());
+        if (run.CodeReviewSuggestionCount > 0)
+            add("CodeReviewSuggestionCount", run.CodeReviewSuggestionCount.ToString());
+        if (run.CodeReviewAgentsRun.Count > 0)
+            add("CodeReviewAgentsRun", string.Join("\x1F", run.CodeReviewAgentsRun));
+    }
 
-        // Decomposition: sub-issue creation results
+    private static void AddDecompositionMetadata(PipelineRun run, PipelineStep newStep, Action<string, string?> add)
+    {
+        if (newStep > PipelineStep.DownloadingOpenIssues && run.OpenIssuesDownloaded > 0)
+            add("OpenIssuesDownloaded", run.OpenIssuesDownloaded.ToString());
         if (newStep > PipelineStep.CreatingIssues && run.DecompositionSubIssuesAttempted > 0)
         {
-            Add("DecompositionSubIssuesCreated", run.DecompositionSubIssuesCreated.ToString());
-            Add("DecompositionSubIssuesAttempted", run.DecompositionSubIssuesAttempted.ToString());
+            add("DecompositionSubIssuesCreated", run.DecompositionSubIssuesCreated.ToString());
+            add("DecompositionSubIssuesAttempted", run.DecompositionSubIssuesAttempted.ToString());
         }
+    }
 
-        // Quality gate retry count — report whenever retries have occurred
+    private static void AddCostAndRetryMetadata(PipelineRun run, Action<string, string?> add)
+    {
         if (run.RetryCount > 0)
-            Add("RetryCount", run.RetryCount.ToString());
+            add("RetryCount", run.RetryCount.ToString());
         if (run.InfrastructureRetryCount > 0)
-            Add("InfrastructureRetryCount", run.InfrastructureRetryCount.ToString());
-
-        // Token/cost accumulation — allows UI to show running totals
+            add("InfrastructureRetryCount", run.InfrastructureRetryCount.ToString());
         if (run.TotalTokens > 0)
-            Add("TotalTokens", run.TotalTokens.ToString());
+            add("TotalTokens", run.TotalTokens.ToString());
         if (run.TotalCost is > 0m)
-            Add("TotalCost", run.TotalCost.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
-
-        // Code review findings — populated during ReviewingCode step
-        if (run.CodeReviewCriticalCount > 0)
-            Add("CodeReviewCriticalCount", run.CodeReviewCriticalCount.ToString());
-        if (run.CodeReviewWarningCount > 0)
-            Add("CodeReviewWarningCount", run.CodeReviewWarningCount.ToString());
-        if (run.CodeReviewSuggestionCount > 0)
-            Add("CodeReviewSuggestionCount", run.CodeReviewSuggestionCount.ToString());
-        if (run.CodeReviewAgentsRun.Count > 0)
-            Add("CodeReviewAgentsRun", string.Join("\x1F", run.CodeReviewAgentsRun));
-
-        return metadata;
+            add("TotalCost", run.TotalCost.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     // ── IAsyncDisposable ────────────────────────────────────────────────

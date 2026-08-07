@@ -299,9 +299,7 @@ public static class FeedbackPromptBuilder
 
     private static void AppendQualityGateReport(StringBuilder sb, QualityGateReport report)
     {
-        sb.AppendLine($"- **Compilation:** {(report.Compilation.Passed ? "PASSED" : "FAILED")}");
-        if (!string.IsNullOrEmpty(report.Compilation.Details))
-            sb.AppendLine($"  - Details: {report.Compilation.Details}");
+        AppendGateResult(sb, "Compilation", report.Compilation.Passed, report.Compilation.Details);
 
         sb.AppendLine($"- **Tests:** {(report.Tests.Passed ? "PASSED" : "FAILED")}");
         if (!string.IsNullOrEmpty(report.Tests.Details))
@@ -319,27 +317,24 @@ public static class FeedbackPromptBuilder
         }
 
         if (report.SecurityScan is not null)
-        {
-            sb.AppendLine($"- **Security Scan:** {(report.SecurityScan.Passed ? "PASSED" : "FAILED")}");
-            if (!string.IsNullOrEmpty(report.SecurityScan.Details))
-                sb.AppendLine($"  - Details: {report.SecurityScan.Details}");
-        }
+            AppendGateResult(sb, "Security Scan", report.SecurityScan.Passed, report.SecurityScan.Details);
 
         if (report.ExternalCi is not null)
-        {
-            sb.AppendLine($"- **External CI:** {(report.ExternalCi.Passed ? "PASSED" : "FAILED")}");
-            if (!string.IsNullOrEmpty(report.ExternalCi.Details))
-                sb.AppendLine($"  - Details: {report.ExternalCi.Details}");
-        }
+            AppendGateResult(sb, "External CI", report.ExternalCi.Passed, report.ExternalCi.Details);
 
         if (report.QgcResults.Count > 0)
         {
             sb.AppendLine("- **QGC Results:**");
             foreach (var qgc in report.QgcResults)
-            {
                 sb.AppendLine($"  - {qgc.DisplayName}: {(qgc.Passed ? "PASSED" : "FAILED")}");
-            }
         }
+    }
+
+    private static void AppendGateResult(StringBuilder sb, string name, bool passed, string? details)
+    {
+        sb.AppendLine($"- **{name}:** {(passed ? "PASSED" : "FAILED")}");
+        if (!string.IsNullOrEmpty(details))
+            sb.AppendLine($"  - Details: {details}");
     }
 
     private static string FormatElapsed(TimeSpan elapsed)

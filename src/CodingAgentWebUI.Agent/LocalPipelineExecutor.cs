@@ -40,10 +40,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 {
     private readonly IKiroCliOrchestrator _orchestrator;
     private readonly IHttpClientFactory _httpClientFactory;
-    private readonly PipelineConfiguration _defaultPipelineConfig;
-    private readonly IQualityGateValidator _qualityGateValidator;
-    private readonly IBrainUpdateService? _brainUpdateService;
-    private readonly IPipelineRunHistoryService? _historyService;
     private readonly IOpenIssueContextWriter _openIssueContextWriter;
     private readonly AgentId _agentId;
     private readonly AgentProviderResolver _providerResolver;
@@ -61,10 +57,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
         _orchestrator = deps.Orchestrator;
         _httpClientFactory = deps.HttpClientFactory;
-        _defaultPipelineConfig = deps.DefaultPipelineConfig;
-        _qualityGateValidator = deps.QualityGateValidator;
-        _brainUpdateService = deps.BrainUpdateService;
-        _historyService = deps.HistoryService;
         _openIssueContextWriter = deps.OpenIssueContextWriter ?? new OpenIssueContextWriter(deps.Logger);
         _agentId = deps.AgentIdentity ?? new AgentId(Environment.MachineName);
         _providerResolver = new AgentProviderResolver(deps.Logger);
@@ -98,10 +90,6 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
 
         _orchestrator = orchestrator;
         _httpClientFactory = httpClientFactory;
-        _defaultPipelineConfig = defaultPipelineConfig;
-        _qualityGateValidator = qualityGateValidator;
-        _brainUpdateService = brainUpdateService;
-        _historyService = historyService;
         _openIssueContextWriter = openIssueContextWriter ?? new OpenIssueContextWriter(logger);
         _agentId = agentIdentity ?? new AgentId(Environment.MachineName);
         _providerResolver = new AgentProviderResolver(logger);

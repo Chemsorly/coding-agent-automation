@@ -145,7 +145,7 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
                 }
 
                 var acquired = await _lockConnection!.TryAcquireLockAsync(_options.LockKey, stoppingToken);
-                await HandleLockAcquisitionResultAsync(acquired, stoppingToken);
+                await HandleLockAcquisitionResultAsync(acquired);
 
                 // If we're the leader, periodically verify the lock is still held
                 if (IsLeader)
@@ -181,9 +181,7 @@ public sealed class PostgresLeaderElectionService : ILeaderElectionService, IHos
 
     // TODO: [WARNING] `stoppingToken` is accepted but never forwarded to `HandleLeadershipLostAsync()`.
     // If leadership is lost during a host stop sequence, the cleanup work cannot be short-circuited by
-    // the host's cancellation signal. Either remove the parameter (update the call-site accordingly)
-    // or propagate it into `HandleLeadershipLostAsync` so the cancellation contract is honoured.
-    private async Task HandleLockAcquisitionResultAsync(bool acquired, CancellationToken stoppingToken)
+    private async Task HandleLockAcquisitionResultAsync(bool acquired)
     {
         if (acquired && !IsLeader)
         {

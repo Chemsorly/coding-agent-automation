@@ -45,7 +45,7 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Activity.Current?.RecordError(ex);
+            Activity.Current?.RecordError(ex, ct);
             context.Logger.Error(ex, "Failed to post decomposition summary comment on issue {IssueId}, proceeding with label swap",
                 context.Run.IssueIdentifier);
         }
@@ -58,7 +58,7 @@ public sealed class PostDecompositionSummaryStep : IPipelineStep
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Activity.Current?.RecordError(ex);
+            Activity.Current?.RecordError(ex, ct);
             context.Logger.Error(ex, "Failed to swap label to {Label} on issue {IssueId}, run will complete without label transition",
                 targetLabel, context.Run.IssueIdentifier);
         }

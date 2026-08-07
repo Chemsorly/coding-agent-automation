@@ -96,7 +96,7 @@ public sealed class LoopStatePersistenceService : IHostedLifecycleService, IDisp
     {
         try
         {
-            await _writeLock.WaitAsync();
+            await _writeLock.WaitAsync(CancellationToken.None);
             try
             {
                 var state = new LoopState

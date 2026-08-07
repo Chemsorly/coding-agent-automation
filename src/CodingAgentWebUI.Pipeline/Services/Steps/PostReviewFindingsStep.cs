@@ -71,7 +71,7 @@ public sealed class PostReviewFindingsStep : IPipelineStep
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Activity.Current?.RecordError(ex);
+            Activity.Current?.RecordError(ex, ct);
             // Outer non-fatal handler: catches double-failures and any unexpected exceptions.
             // The step NEVER throws — all failures are non-fatal.
             context.Logger.Warning(ex, "Failed to post review findings to PR #{PrNumber}", prNumber);
@@ -194,12 +194,10 @@ public sealed class PostReviewFindingsStep : IPipelineStep
     private static string AppendLocationSection(
         string body, IReadOnlyDictionary<string, string> agentFindings)
     {
-        var findings = new List<StructuredFinding>();
-        foreach (var kvp in agentFindings)
-        {
-            if (!string.IsNullOrEmpty(kvp.Value))
-                findings.AddRange(FindingsParser.Parse(kvp.Value, kvp.Key));
-        }
+        var findings = agentFindings
+            .Where(kvp => !string.IsNullOrEmpty(kvp.Value))
+            .SelectMany(kvp => FindingsParser.Parse(kvp.Value, kvp.Key))
+            .ToList();
 
         var locationSection = ReviewFindingsFormatter.FormatFindingsByLocation(findings);
         return string.IsNullOrEmpty(locationSection) ? body : body + "\n" + locationSection;

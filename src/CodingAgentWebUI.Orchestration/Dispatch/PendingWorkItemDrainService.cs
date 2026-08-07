@@ -115,93 +115,64 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         foreach (var item in pendingItems)
         {
             if (ct.IsCancellationRequested) break;
-            if (!await ProcessPendingItemAsync(item, ct)) break;
+
+            var (stopDrain, resolveResult) = TryResolveAgentForItem(item);
+            if (stopDrain) break;
+            if (resolveResult is null) continue;
+
+            var request = TryDeserializePayload(item, resolveResult.AgentId);
+            if (request is null) continue;
+
+            var connectionId = resolveResult.ConnectionId;
+            var agentId = resolveResult.AgentId;
+
+            // --- Consolidation items: dispatch via IConsolidationDispatchService (token vending at drain time) ---
+            if (item.TaskType == WorkItemTaskType.Consolidation)
+            {
+                await DispatchConsolidationItemAsync(item, request, agentId, ct);
+                continue;
+            }
+
+            // --- Pipeline items ---
+            if (!await DispatchPipelineItemAsync(item, request, agentId, connectionId, ct)) continue;
+
+            await SwapLabelWithRetryAsync(item.Id, request, ct); // Swap label to agent:in-progress (#997, retries #1579)
+            _logger.LogInformation("PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
+                item.Id, item.IssueIdentifier, agentId);
         }
 
         WorkDistributionTelemetry.DispatcherPollCount.Add(1); // TODO: placed at end — see comment in original for metric inconsistency risk
     }
 
     /// <summary>
-    /// Processes a single pending work item: resolves an agent, deserializes payload, and dispatches.
-    /// Returns <c>false</c> when no idle agents are available at all and the drain loop should stop.
-    /// Returns <c>true</c> to continue processing the next item (including the case where this item
-    /// was skipped because no agent matched the selector).
+    /// Attempts to resolve an idle agent for the given pending item.
+    /// Returns (stopDrain=true, null) when no agents are available at all (caller should break).
+    /// Returns (false, null) when no agent matches the selector (caller should continue).
+    /// Returns (false, resolveResult) on success.
     /// </summary>
-    private async Task<bool> ProcessPendingItemAsync(WorkItemEntity item, CancellationToken ct)
+    private (bool stopDrain, AgentResolveResult? resolveResult) TryResolveAgentForItem(WorkItemEntity item)
     {
-        if (!TryResolveAgentForItem(item, out var agentId, out var connectionId))
-        {
-            // Break on "no idle agents at all", continue on "no agent for selector"
-            return !string.IsNullOrWhiteSpace(item.AgentSelector);
-        }
-
-        if (!TryDeserializePayload(item, agentId, out var request))
-            return true;
-
-        // --- Consolidation items: dispatch via IConsolidationDispatchService (token vending at drain time) ---
-        if (item.TaskType == WorkItemTaskType.Consolidation)
-        {
-            await DispatchConsolidationItemAsync(item, request!, agentId, ct);
-            return true;
-        }
-
-        // --- Pipeline items ---
-        // TODO: connectionId is out string? (nullable) from TryResolveAgentForItem but is passed here with
-        // null-forgiving operator (!). If resolveResult.ConnectionId is ever null (e.g. agent registered
-        // without a connection ID), the null-forgiving silently passes null to DispatchPipelineItemAsync
-        // which then forwards it to _agentComm.AssignJobAsync, causing a NullReferenceException at point
-        // of use. Add a null-check on connectionId before this call and treat null as a resolution failure.
-        // See review finding: Correctness WARNING PendingWorkItemDrainService.cs:150
-        if (!await DispatchPipelineItemAsync(item, request!, agentId, connectionId!, ct)) return true;
-
-        await SwapLabelWithRetryAsync(item.Id, request!, ct); // Swap label to agent:in-progress (#997, retries #1579)
-        _logger.LogInformation("PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
-            item.Id, item.IssueIdentifier, agentId);
-        return true;
-    }
-
-    /// <summary>
-    /// Attempts to resolve an idle agent for the given work item.
-    /// Sets <paramref name="agentId"/> and <paramref name="connectionId"/> on success.
-    /// Returns false when no agent is available; the caller is responsible for deciding
-    /// whether to <c>break</c> (no idle agents at all) or <c>continue</c> (no agent for selector).
-    /// </summary>
-    private bool TryResolveAgentForItem(
-        WorkItemEntity item,
-        out AgentId agentId,
-        out string? connectionId)
-    {
-        agentId = default;
-        connectionId = null;
-
         var resolveResult = _agentResolver.ResolveAgent(item.AgentSelector ?? "");
-        if (resolveResult is null)
+        if (resolveResult is not null) return (false, resolveResult);
+
+        if (string.IsNullOrWhiteSpace(item.AgentSelector))
         {
-            if (string.IsNullOrWhiteSpace(item.AgentSelector))
-                _logger.LogDebug("PendingWorkItemDrainService: no idle agents at all, stopping drain");
-            else
-                _logger.LogDebug(
-                    "PendingWorkItemDrainService: no agent for selector '{Selector}', skipping WorkItem {WorkItemId}",
-                    item.AgentSelector, item.Id);
-            return false;
+            _logger.LogDebug("PendingWorkItemDrainService: no idle agents at all, stopping drain");
+            return (stopDrain: true, null);
         }
 
-        agentId = resolveResult.AgentId;
-        connectionId = resolveResult.ConnectionId;
-        return true;
+        _logger.LogDebug(
+            "PendingWorkItemDrainService: no agent for selector '{Selector}', skipping WorkItem {WorkItemId}",
+            item.AgentSelector, item.Id);
+        return (false, null);
     }
 
     /// <summary>
-    /// Attempts to deserialize the work item's JSON payload into a <see cref="JobDistributionRequest"/>.
-    /// Releases the reserved agent and logs an error on failure. Returns false when deserialization fails
-    /// or the payload is null (caller should <c>continue</c> to the next item).
+    /// Deserializes the work item payload, releasing the agent and returning null on failure.
     /// </summary>
-    private bool TryDeserializePayload(
-        WorkItemEntity item,
-        AgentId agentId,
-        out JobDistributionRequest? request)
+    private JobDistributionRequest? TryDeserializePayload(WorkItemEntity item, string agentId)
     {
-        request = null;
+        JobDistributionRequest? request;
         try
         {
             request = JsonSerializer.Deserialize<JobDistributionRequest>(item.Payload ?? "", PipelineJsonOptions.Default);
@@ -210,17 +181,16 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         {
             _logger.LogError(ex, "PendingWorkItemDrainService: failed to deserialize payload for WorkItem {WorkItemId}", item.Id);
             _agentResolver.ReleaseAgent(agentId);
-            return false;
+            return null;
         }
 
         if (request is null)
         {
             _logger.LogError("PendingWorkItemDrainService: null payload for WorkItem {WorkItemId}", item.Id);
             _agentResolver.ReleaseAgent(agentId);
-            return false;
         }
 
-        return true;
+        return request;
     }
 
     /// <summary>

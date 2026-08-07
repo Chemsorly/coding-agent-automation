@@ -151,7 +151,7 @@ public partial class GitHubRepositoryProvider
                             DeriveGraphQlUri(),
                             graphqlBody,
                             "application/json",
-                            "application/json");
+                            "application/json"); // NOSONAR S8949 — Octokit IConnection.Post has no CancellationToken overload
                         Log.Information("Marked PR #{PrNumber} as ready for review", pullRequestNumber);
                     }
                 }

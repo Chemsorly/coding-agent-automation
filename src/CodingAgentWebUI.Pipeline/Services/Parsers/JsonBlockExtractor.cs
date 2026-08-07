@@ -39,52 +39,46 @@ public static partial class JsonBlockExtractor
             if (braceStart < 0)
                 break;
 
-            var depth = 0;
-            var inString = false;
-            var escaped = false;
-
-            for (var i = braceStart; i < responseText.Length; i++)
-            {
-                var c = responseText[i];
-
-                if (escaped)
-                {
-                    escaped = false;
-                    continue;
-                }
-
-                if (c == '\\' && inString)
-                {
-                    escaped = true;
-                    continue;
-                }
-
-                if (c == '"')
-                {
-                    inString = !inString;
-                    continue;
-                }
-
-                if (inString)
-                    continue;
-
-                if (c == '{') depth++;
-                else if (c == '}') depth--;
-
-                if (depth == 0)
-                {
-                    var candidate = responseText[braceStart..(i + 1)];
-                    if (candidateValidator is null || candidateValidator(candidate))
-                        return candidate;
-                    searchStart = i + 1;
-                    break;
-                }
-            }
-
-            if (depth != 0)
+            var endIndex = FindMatchingBrace(responseText, braceStart);
+            if (endIndex < 0)
                 break;
+
+            var candidate = responseText[braceStart..(endIndex + 1)];
+            if (candidateValidator is null || candidateValidator(candidate))
+                return candidate;
+
+            searchStart = endIndex + 1;
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// Finds the index of the closing brace that matches the opening brace at <paramref name="start"/>.
+    /// Returns -1 if the string ends before the brace is closed.
+    /// </summary>
+    private static int FindMatchingBrace(string text, int start)
+    {
+        var depth = 0;
+        var inString = false;
+        var escaped = false;
+
+        for (var i = start; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (escaped) { escaped = false; continue; }
+            if (c == '\\' && inString) { escaped = true; continue; }
+            if (c == '"') { inString = !inString; continue; }
+            if (inString) continue;
+
+            if (c == '{') depth++;
+            else if (c == '}') depth--;
+
+            if (depth == 0)
+                return i;
+        }
+
+        return -1; // unclosed brace
     }
 }

@@ -123,7 +123,7 @@ public sealed class ModelFetchService : IModelFetchReceiver
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(TimeSpan.FromSeconds(30));
-            await using var reg = timeoutCts.Token.Register(() => tcs.TrySetCanceled());
+            await using var reg = timeoutCts.Token.Register(() => tcs.TrySetCanceled(ct));
 
             var response = await tcs.Task;
 

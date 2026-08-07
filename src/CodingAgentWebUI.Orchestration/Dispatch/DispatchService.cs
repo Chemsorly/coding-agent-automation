@@ -88,58 +88,35 @@ public sealed class DispatchService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            await WaitForLeadershipAsync(stoppingToken);
+            // Wait for leadership
+            while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
+                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
 
             if (stoppingToken.IsCancellationRequested) break;
 
             Log.Information("DispatchService: leader acquired, entering poll loop");
-
-            // Reset so validation re-runs on each leadership tenure.
-            // Allows detection of ConfigMap changes during leadership loss/re-acquisition.
             _startupValidationRun = false;
 
-            // Create linked token: cancels on EITHER host stop OR leadership loss.
-            // The using block must remain here so the CTS is disposed after RunLeaderPollLoopAsync
-            // returns — not inside the extracted method.
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(
                 stoppingToken, _leaderElection.LeaderToken);
-            var ct = linked.Token;
-
-            await RunLeaderPollLoopAsync(ct);
+            await RunLeadershipTenureAsync(linked.Token);
 
             if (!stoppingToken.IsCancellationRequested)
-            {
                 Log.Information("DispatchService: leadership lost, re-entering wait loop");
-            }
         }
 
         Log.Information("DispatchService: exiting (stopping)");
     }
 
-    /// <summary>
-    /// Waits until this instance becomes the leader or <paramref name="stoppingToken"/> is cancelled.
-    /// </summary>
-    private async Task WaitForLeadershipAsync(CancellationToken stoppingToken)
+    private async Task RunLeadershipTenureAsync(CancellationToken ct)
     {
-        while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
-        {
-            await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
-        }
-    }
-
-    /// <summary>
-    /// Runs the poll loop while this instance holds leadership. Returns when
-    /// <paramref name="linkedCt"/> is cancelled (either host stop or leadership loss).
-    /// </summary>
-    private async Task RunLeaderPollLoopAsync(CancellationToken linkedCt)
-    {
-        while (!linkedCt.IsCancellationRequested)
+        while (!ct.IsCancellationRequested)
         {
             try
             {
-                await PollAndDispatchAsync(linkedCt);
+                await PollAndDispatchAsync(ct);
             }
-            catch (OperationCanceledException) when (linkedCt.IsCancellationRequested)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 break;
             }
@@ -150,7 +127,7 @@ public sealed class DispatchService : BackgroundService
 
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), linkedCt);
+                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
             }
             catch (OperationCanceledException)
             {

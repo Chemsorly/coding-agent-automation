@@ -11,7 +11,7 @@ namespace CodingAgentWebUI.Agent;
 /// Extension methods for registering K8s-mode agent services.
 /// Extracted from Program.cs to reduce top-level statement complexity.
 /// </summary>
-internal static class AgentK8sModeRegistration
+internal static class AgentK8SModeRegistration
 {
     internal static IServiceCollection AddK8sModeServices(
         this IServiceCollection services,

@@ -50,7 +50,6 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         _cancellationSender = cancellationSender;
     }
 
-    /// <inheritdoc />
     public override async Task<DistributionResult> DistributeAsync(JobDistributionRequest request, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -73,9 +72,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         // Resolve agent connection and push via SignalR
         var resolveResult = _agentResolver.ResolveAgent(request.AgentSelector);
         if (resolveResult is null)
-        {
-            return await RevertToQueuedPendingAsync(workItemId, request, ct);
-        }
+            return await HandleNoIdleAgentAsync(request, workItemId, ct);
 
         return await DeliverJobToAgentAsync(workItemId, request, resolveResult, ct);
     }
@@ -159,7 +156,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
             return new DistributionResult(false, workItemId.ToString(), $"SignalR delivery failed: {ex.Message}");
         }
 
-        await PersistAssignedAgentIdAsync(workItemId, resolvedAgentId, ct);
+        await UpdateAssignedAgentIdAsync(workItemId, resolvedAgentId, ct);
 
         Logger.LogInformation(
             "WorkItem {WorkItemId} pushed via SignalR to connection {ConnectionId}",
@@ -169,30 +166,40 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
     }
 
     /// <summary>
-    /// Notifies the lifecycle manager (or falls back to <see cref="ISignalRWorkDistributorAgentResolver.AssignJob"/>)
-    /// that the agent has accepted the run. Called inside the delivery try/catch.
+    /// Handles the case where no idle agent is available: reverts WorkItem to Pending for drain service pickup.
     /// </summary>
-    private async Task NotifyAgentAcceptedAsync(
-        Guid workItemId, JobDistributionRequest request, AgentId resolvedAgentId, CancellationToken ct)
+    private async Task<DistributionResult> HandleNoIdleAgentAsync(
+        JobDistributionRequest request, Guid workItemId, CancellationToken ct)
     {
-        if (_lifecycleManager is not null)
+        await using var pendingDb = await DbFactory.CreateDbContextAsync(ct);
+        var pendingItem = await pendingDb.WorkItems.FindAsync([workItemId], ct);
+        if (pendingItem is not null)
         {
-            await _lifecycleManager.AgentAcceptedRunAsync(
-                request.RunId ?? workItemId.ToString(), resolvedAgentId,
-                request.IssueIdentifier, request.IssueProviderConfigId,
-                request.RepoProviderConfigId, request.RunType, ct);
+            pendingItem.Status = WorkItemStatus.Pending;
+            pendingItem.DispatchedAt = null;
+            await pendingDb.SaveChangesAsync(ct);
         }
-        else
+
+        Logger.LogInformation(
+            "WorkItem {WorkItemId} for issue {IssueIdentifier} queued as Pending (no idle agent)",
+            workItemId, request.IssueIdentifier);
+
+        // Clear the in-memory PipelineRun's AgentId so HeartbeatMonitor Phase 3
+        // doesn't orphan it (it checks GetByAgentId which returns null for "pending").
+        if (!string.IsNullOrEmpty(request.RunId))
         {
-            _agentResolver.AssignJob(resolvedAgentId, workItemId.ToString());
+            var run = _runService.GetRun(request.RunId);
+            if (run is not null)
+                run.AgentId = null;
         }
+
+        return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available", Queued: true);
     }
 
     /// <summary>
-    /// Updates the WorkItem row with the resolved agent ID after successful SignalR delivery.
-    /// Failures here are logged as warnings and swallowed — the agent already has the job.
+    /// Post-delivery: updates WorkItem with the resolved agent ID for UI display. Best-effort.
     /// </summary>
-    private async Task PersistAssignedAgentIdAsync(Guid workItemId, AgentId resolvedAgentId, CancellationToken ct)
+    private async Task UpdateAssignedAgentIdAsync(Guid workItemId, string resolvedAgentId, CancellationToken ct)
     {
         try
         {

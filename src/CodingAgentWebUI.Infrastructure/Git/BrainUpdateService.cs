@@ -334,7 +334,6 @@ public partial class BrainUpdateService : IBrainUpdateService
     private async Task RebaseOntoRemoteAsync(
         string brainPath, IRepositoryProvider brainProvider, string commitMessage, CancellationToken ct)
     {
-        // Fetch latest via PullAsync (which does fetch internally).
         try
         {
             await brainProvider.PullAsync(brainPath, ct);
@@ -359,60 +358,39 @@ public partial class BrainUpdateService : IBrainUpdateService
 
         if (ourChanges.Count == 0)
         {
-            throw new InvalidOperationException(
-                "Cannot rebase brain changes: no changes detected in HEAD commit.");
-        }
+            var ourChanges = _git.GetHeadCommitChanges(brainPath);
 
-        var (ourFileContents, baseFileContents) = SnapshotHeadContents(brainPath, ourChanges);
+            if (ourChanges.Count == 0)
+                throw new InvalidOperationException("Cannot rebase brain changes: no changes detected in HEAD commit.");
 
-        _git.ResetHardToRemote(brainPath, remoteBranch);
-
-        var conflictCount = ReapplyEachChange(brainPath, ourChanges, ourFileContents, baseFileContents, ct);
-
-        if (conflictCount > 0)
-        {
-            _logger.Information(
-                "Brain rebase resolved {ConflictCount} conflicts using accept-both strategy",
-                conflictCount);
-        }
-
-        try
-        {
-            _git.StageAllAndCommit(brainPath, commitMessage);
-        }
-        catch (EmptyCommitException)
-        {
-            // Remote already has identical changes — nothing to recommit after rebase
-            _logger.Warning("Brain rebase produced empty commit (remote already has identical changes), skipping");
-        }
-    }
-
-    /// <summary>
-    /// Snapshots the HEAD and HEAD-parent file contents for all changed files before the reset.
-    /// Returns (ourContents, baseContents) dictionaries keyed by relative path.
-    /// </summary>
-    private (Dictionary<string, string?> OurContents, Dictionary<string, string?> BaseContents)
-        SnapshotHeadContents(string brainPath, IReadOnlyList<FileChange> ourChanges)
-    {
-        var ourFileContents = new Dictionary<string, string?>();
-        var baseFileContents = new Dictionary<string, string?>();
-        foreach (var change in ourChanges)
-        {
-            if (change.Status != FileChangeStatus.Deleted)
+            var ourFileContents = new Dictionary<string, string?>();
+            var baseFileContents = new Dictionary<string, string?>();
+            foreach (var change in ourChanges)
             {
-                ourFileContents[change.Path] = _git.GetFileContentFromHead(brainPath, change.Path);
+                if (change.Status != FileChangeStatus.Deleted)
+                    ourFileContents[change.Path] = _git.GetFileContentFromHead(brainPath, change.Path);
+                baseFileContents[change.Path] = _git.GetFileContentFromHeadParent(brainPath, change.Path);
             }
-            baseFileContents[change.Path] = _git.GetFileContentFromHeadParent(brainPath, change.Path);
-        }
-        return (ourFileContents, baseFileContents);
+
+            _git.ResetHardToRemote(brainPath, brainProvider.BaseBranch);
+
+            var conflictCount = ApplyChangesAfterRebase(brainPath, ourChanges, ourFileContents, baseFileContents, ct);
+
+            if (conflictCount > 0)
+                _logger.Information("Brain rebase resolved {ConflictCount} conflicts using accept-both strategy", conflictCount);
+
+            try
+            {
+                _git.StageAllAndCommit(brainPath, commitMessage);
+            }
+            catch (EmptyCommitException)
+            {
+                _logger.Warning("Brain rebase produced empty commit (remote already has identical changes), skipping");
+            }
+        }, ct);
     }
 
-    /// <summary>
-    /// Re-applies each changed file after the remote reset: deletes files that were deleted,
-    /// uses accept-both merge for files modified on both sides, and applies our version for
-    /// files only we modified. Returns the number of conflicts resolved.
-    /// </summary>
-    private int ReapplyEachChange(
+    private int ApplyChangesAfterRebase(
         string brainPath,
         IReadOnlyList<FileChange> ourChanges,
         Dictionary<string, string?> ourFileContents,
@@ -440,8 +418,7 @@ public partial class BrainUpdateService : IBrainUpdateService
             {
                 // Both sides modified — resolve with accept-both
                 conflictCount++;
-                var resolved = ResolveConflictAcceptBoth(remoteContent, ourContent);
-                _git.WriteAllText(fullPath, resolved);
+                _git.WriteAllText(fullPath, ResolveConflictAcceptBoth(remoteContent, ourContent));
             }
             else
             {

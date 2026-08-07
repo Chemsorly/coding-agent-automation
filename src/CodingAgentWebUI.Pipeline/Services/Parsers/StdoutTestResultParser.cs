@@ -30,85 +30,78 @@ public static class StdoutTestResultParser
 
     private static (int Passed, int Failed, int Skipped) ParseTestCountsCore(string output)
     {
-        var summaryMatch = Regex.Match(output,
+        return TryParseDotNetSummaryLine(output)
+            ?? TryParsePytestSummary(output)
+            ?? TryParseMavenSummary(output)
+            ?? ParseDotNetPerAssemblyLines(output);
+    }
+
+    private static (int Passed, int Failed, int Skipped)? TryParseDotNetSummaryLine(string output)
+    {
+        var match = Regex.Match(output,
             @"Test summary:.*?failed:\s*(\d+).*?succeeded:\s*(\d+).*?skipped:\s*(\d+)",
             RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2));
-        if (summaryMatch.Success)
-        {
-            int.TryParse(summaryMatch.Groups[2].Value, out var succeeded);
-            int.TryParse(summaryMatch.Groups[1].Value, out var summaryFailed);
-            int.TryParse(summaryMatch.Groups[3].Value, out var summarySkipped);
-            return (succeeded, summaryFailed, summarySkipped);
-        }
+        if (!match.Success) return null;
+        int.TryParse(match.Groups[2].Value, out var passed);
+        int.TryParse(match.Groups[1].Value, out var failed);
+        int.TryParse(match.Groups[3].Value, out var skipped);
+        return (passed, failed, skipped);
+    }
 
-        // Try pytest format: "5 passed, 2 failed, 1 skipped in 3.45s" or "5 passed in 1.23s"
+    private static (int Passed, int Failed, int Skipped)? TryParsePytestSummary(string output)
+    {
         var pytestMatch = Regex.Match(output,
             @"=+\s*(.*?)\s*in\s+[\d.]+s\s*=+",
             RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2));
-        if (pytestMatch.Success)
-        {
-            var pytestSummary = pytestMatch.Groups[1].Value;
-            var pytestPassed = 0;
-            var pytestFailed = 0;
-            var pytestSkipped = 0;
+        if (!pytestMatch.Success) return null;
 
-            var passedMatch = Regex.Match(pytestSummary, @"(\d+)\s+passed", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
-            if (passedMatch.Success) int.TryParse(passedMatch.Groups[1].Value, out pytestPassed);
+        var summary = pytestMatch.Groups[1].Value;
+        var passed = ParseRegexInt(summary, @"(\d+)\s+passed");
+        var failed = ParseRegexInt(summary, @"(\d+)\s+failed");
+        var skipped = ParseRegexInt(summary, @"(\d+)\s+skipped");
+        var errors = ParseRegexInt(summary, @"(\d+)\s+error");
 
-            var failedMatch = Regex.Match(pytestSummary, @"(\d+)\s+failed", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
-            if (failedMatch.Success) int.TryParse(failedMatch.Groups[1].Value, out pytestFailed);
+        if (passed == 0 && failed == 0 && skipped == 0) return null;
+        return (passed, failed + errors, skipped);
+    }
 
-            var skippedMatch = Regex.Match(pytestSummary, @"(\d+)\s+skipped", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
-            if (skippedMatch.Success) int.TryParse(skippedMatch.Groups[1].Value, out pytestSkipped);
-
-            var errorMatch = Regex.Match(pytestSummary, @"(\d+)\s+error", RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
-            if (errorMatch.Success && int.TryParse(errorMatch.Groups[1].Value, out var pytestErrors))
-                pytestFailed += pytestErrors;
-
-            if (pytestPassed > 0 || pytestFailed > 0 || pytestSkipped > 0)
-                return (pytestPassed, pytestFailed, pytestSkipped);
-        }
-
-        // Try Maven/JUnit format: "Tests run: 10, Failures: 2, Errors: 1, Skipped: 3"
-        var mavenPassed = 0;
-        var mavenFailed = 0;
-        var mavenSkipped = 0;
-        var mavenMatched = false;
-
+    private static (int Passed, int Failed, int Skipped)? TryParseMavenSummary(string output)
+    {
+        var passed = 0; var failed = 0; var skipped = 0;
+        var matched = false;
         foreach (var match in Regex.Matches(output,
             @"Tests run:\s*(\d+),\s*Failures:\s*(\d+),\s*Errors:\s*(\d+),\s*Skipped:\s*(\d+)",
-            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2))
-            .Cast<Match>())
+            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2)).Cast<Match>())
         {
-            mavenMatched = true;
+            matched = true;
             int.TryParse(match.Groups[1].Value, out var run);
             int.TryParse(match.Groups[2].Value, out var failures);
             int.TryParse(match.Groups[3].Value, out var errors);
             int.TryParse(match.Groups[4].Value, out var skip);
-
-            mavenPassed += run - failures - errors - skip;
-            mavenFailed += failures + errors;
-            mavenSkipped += skip;
+            passed += run - failures - errors - skip;
+            failed += failures + errors;
+            skipped += skip;
         }
+        return matched ? (passed, failed, skipped) : null;
+    }
 
-        if (mavenMatched)
-            return (mavenPassed, mavenFailed, mavenSkipped);
-
-        // Fall back to summing per-assembly lines: "Passed:  10, Failed:   2, Skipped:   1"
-        var passed = 0;
-        var failed = 0;
-        var skipped = 0;
-
+    private static (int Passed, int Failed, int Skipped) ParseDotNetPerAssemblyLines(string output)
+    {
+        var passed = 0; var failed = 0; var skipped = 0;
         foreach (var match in Regex.Matches(output,
             @"Passed:\s*(\d+),\s*Failed:\s*(\d+),\s*Skipped:\s*(\d+)",
-            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2))
-            .Cast<Match>())
+            RegexOptions.IgnoreCase, TimeSpan.FromSeconds(2)).Cast<Match>())
         {
             if (int.TryParse(match.Groups[1].Value, out var p)) passed += p;
             if (int.TryParse(match.Groups[2].Value, out var f)) failed += f;
             if (int.TryParse(match.Groups[3].Value, out var s)) skipped += s;
         }
-
         return (passed, failed, skipped);
+    }
+
+    private static int ParseRegexInt(string input, string pattern)
+    {
+        var m = Regex.Match(input, pattern, RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+        return m.Success && int.TryParse(m.Groups[1].Value, out var n) ? n : 0;
     }
 }

@@ -476,7 +476,7 @@ public partial class AgentCoding : IDisposable
 
     private async Task ClearRecentlyToggledAfterDelay(string templateId)
     {
-        await Task.Delay(3000);
+        await Task.Delay(3000, CancellationToken.None);
         _recentlyToggled.Remove(templateId);
         try { await InvokeAsync(() => { if (!_disposed) StateHasChanged(); }); }
         catch (ObjectDisposedException) { }
@@ -484,7 +484,7 @@ public partial class AgentCoding : IDisposable
 
     private async Task ClearSuccessAfterDelay()
     {
-        await Task.Delay(3000);
+        await Task.Delay(3000, CancellationToken.None);
         try { await InvokeAsync(() => { if (_disposed) return; _successMessage = null; StateHasChanged(); }); }
         catch (ObjectDisposedException) { }
     }
@@ -495,14 +495,14 @@ public partial class AgentCoding : IDisposable
 
     private async Task AutoDismissAgentSummary()
     {
-        await Task.Delay(8000);
+        await Task.Delay(8000, CancellationToken.None);
         try { await InvokeAsync(() => { if (_disposed) return; _showAgentSummary = false; StateHasChanged(); }); }
         catch (ObjectDisposedException) { }
     }
 
     private async Task AutoDismissLoopToast()
     {
-        await Task.Delay(5000);
+        await Task.Delay(5000, CancellationToken.None);
         try { await InvokeAsync(() => { if (_disposed) return; _hideLoopToast = true; StateHasChanged(); }); }
         catch (ObjectDisposedException) { }
     }

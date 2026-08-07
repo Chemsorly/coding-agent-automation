@@ -135,7 +135,7 @@
         {
             await OnDelete.InvokeAsync(id);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) { /* user navigation — swallow */ }
         catch (Exception ex)
         {
             await OnShowStatus.InvokeAsync(($"Failed to delete: {ex.Message}", true));

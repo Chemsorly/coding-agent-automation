@@ -182,7 +182,6 @@ internal sealed class DispatchStateBuilder
             if (ct.IsCancellationRequested || !leaderElection.IsLeader)
                 yield break;
 
-            // Rate limit
             using var lease = await rateLimiter.AcquireAsync(1, ct);
             if (!lease.IsAcquired)
             {
@@ -192,23 +191,45 @@ internal sealed class DispatchStateBuilder
 
             // Check concurrency limit from template
             var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
-            if (IsAtConcurrencyLimit(item.AgentSelector, state.ConcurrencyBySelector, maxConcurrent))
+            if (IsConcurrencyLimitReached(state.ConcurrencyBySelector, item.AgentSelector, maxConcurrent))
             {
-                // TODO: The log message was simplified during complexity refactoring — the original included
-                // {Current}/{Max} structured properties that are useful for diagnosing why items are stuck.
-                // Restore: Log.Debug("{CallerName}: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
-                //     callerName, item.AgentSelector, state.ConcurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0), maxConcurrent, item.Id);
-                // See review finding: Correctness WARNING DispatchStateBuilder.cs:220
-                Log.Debug("{CallerName}: selector {Selector} at concurrency limit, skipping {WorkItemId}",
-                    callerName, item.AgentSelector, item.Id);
+                Log.Debug("{CallerName}: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
+                    callerName, item.AgentSelector,
+                    state.ConcurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0),
+                    maxConcurrent, item.Id);
+                continue;
+            }
+
+            // Resolve template — fail immediately if no match (before PVC gating)
+            var (template, effectiveSelector, skipItem) = await ResolveTemplateAsync(
+                item, state.ConcurrencyBySelector, callerName, ct);
+
+            if (skipItem) continue;
+
+            if (template is null)
+            {
+                await onNoTemplate(item, $"No job template for selector: {item.AgentSelector}", ct);
                 continue;
             }
 
             var candidate = await TryResolveCandidateAsync(item, state, callerName, onNoTemplate, ct);
             if (candidate is null) continue;
 
-            yield return candidate;
+            if (isKiroAgent && state.AvailablePvcs.Count == 0)
+            {
+                Log.Information("{CallerName}: no PVC available for kiro agent, skipping WorkItem {WorkItemId}",
+                    callerName, item.Id);
+                continue;
+            }
+
+            yield return new DispatchCandidate(item, template, effectiveSelector, isKiroAgent);
         }
+    }
+
+    private static bool IsConcurrencyLimitReached(Dictionary<string, int> concurrencyBySelector, string? agentSelector, int maxConcurrent)
+    {
+        if (maxConcurrent <= 0) return false;
+        return concurrencyBySelector.GetValueOrDefault(agentSelector ?? string.Empty, 0) >= maxConcurrent;
     }
 
     /// <summary>

@@ -47,7 +47,7 @@ public sealed class WritePrConversationContextStep : IPipelineStep
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            Activity.Current?.RecordError(ex);
+            Activity.Current?.RecordError(ex, ct);
             context.Logger.Warning(ex,
                 "Failed to write PR conversation context for PR #{PrNumber}, review will proceed without it",
                 prNumber);

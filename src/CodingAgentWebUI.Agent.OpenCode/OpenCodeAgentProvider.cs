@@ -196,8 +196,8 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         {
             Interlocked.Decrement(ref _activeExecutionCount);
             // Stop polling
-            try { await pollCts.CancelAsync(); } catch (OperationCanceledException) { }
-            try { await pollTask.ConfigureAwait(false); } catch (OperationCanceledException) { }
+            try { await pollCts.CancelAsync(); } catch (OperationCanceledException) { /* expected during shutdown */ }
+            try { await pollTask.ConfigureAwait(false); } catch (OperationCanceledException) { /* expected during shutdown */ }
             pollCts.Dispose();
         }
     }
@@ -659,55 +659,7 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         {
             try
             {
-                // GET /session/status returns all sessions globally — no directory header needed.
-                using var client = CreateDirectoryClient();
-                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
-
-                var response = await client.GetAsync("/session/status", timeoutCts.Token);
-                if (response.IsSuccessStatusCode)
-                {
-                    var json = await response.Content.ReadAsStringAsync(timeoutCts.Token);
-                    var statuses = JsonSerializer.Deserialize<Dictionary<string, SseSessionStatus>>(json, OpenCodeJson.JsonOptions);
-
-                    if (statuses is not null && statuses.Count > 0)
-                    {
-                        var parts = new List<string>();
-                        var retryCount = 0;
-                        var busyCount = 0;
-                        var idleCount = 0;
-
-                        foreach (var (_, status) in statuses)
-                        {
-                            if (string.Equals(status.Type, "retry", StringComparison.OrdinalIgnoreCase))
-                                retryCount++;
-                            else if (string.Equals(status.Type, "busy", StringComparison.OrdinalIgnoreCase))
-                                busyCount++;
-                            else
-                                idleCount++;
-                        }
-
-                        parts.Add($"{statuses.Count} total");
-                        if (retryCount > 0) parts.Add($"{retryCount} retrying");
-                        if (busyCount > 0) parts.Add($"{busyCount} busy");
-                        if (idleCount > 0) parts.Add($"{idleCount} idle");
-
-                        // Add retry details (first 3)
-                        var retryDetails = statuses
-                            .Where(kv => string.Equals(kv.Value.Type, "retry", StringComparison.OrdinalIgnoreCase))
-                            .Take(3)
-                            .Select(kv => $"attempt {kv.Value.Attempt}: {kv.Value.Message ?? "unknown"}")
-                            .ToList();
-                        if (retryDetails.Count > 0)
-                            parts.Add($"detail: {string.Join("; ", retryDetails)}");
-
-                        _allSessionsSummary = string.Join(", ", parts);
-                    }
-                    else
-                    {
-                        _allSessionsSummary = null;
-                    }
-                }
+                await TryRefreshAllSessionStatusSummaryAsync(ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -722,6 +674,50 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
 
             try { await Task.Delay(10_000, ct); } catch (OperationCanceledException) { break; }
         }
+    }
+
+    private async Task TryRefreshAllSessionStatusSummaryAsync(CancellationToken ct)
+    {
+        // GET /session/status returns all sessions globally — no directory header needed.
+        using var client = CreateDirectoryClient();
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(TimeSpan.FromSeconds(5));
+
+        var response = await client.GetAsync("/session/status", timeoutCts.Token);
+        if (!response.IsSuccessStatusCode) return;
+
+        var json = await response.Content.ReadAsStringAsync(timeoutCts.Token);
+        var statuses = JsonSerializer.Deserialize<Dictionary<string, SseSessionStatus>>(json, OpenCodeJson.JsonOptions);
+
+        _allSessionsSummary = statuses is { Count: > 0 }
+            ? BuildSessionStatusSummary(statuses)
+            : null;
+    }
+
+    private static string BuildSessionStatusSummary(Dictionary<string, SseSessionStatus> statuses)
+    {
+        var retryCount = 0; var busyCount = 0; var idleCount = 0;
+        foreach (var (_, status) in statuses)
+        {
+            if (string.Equals(status.Type, "retry", StringComparison.OrdinalIgnoreCase)) retryCount++;
+            else if (string.Equals(status.Type, "busy", StringComparison.OrdinalIgnoreCase)) busyCount++;
+            else idleCount++;
+        }
+
+        var parts = new List<string> { $"{statuses.Count} total" };
+        if (retryCount > 0) parts.Add($"{retryCount} retrying");
+        if (busyCount > 0) parts.Add($"{busyCount} busy");
+        if (idleCount > 0) parts.Add($"{idleCount} idle");
+
+        var retryDetails = statuses
+            .Where(kv => string.Equals(kv.Value.Type, "retry", StringComparison.OrdinalIgnoreCase))
+            .Take(3)
+            .Select(kv => $"attempt {kv.Value.Attempt}: {kv.Value.Message ?? "unknown"}")
+            .ToList();
+        if (retryDetails.Count > 0)
+            parts.Add($"detail: {string.Join("; ", retryDetails)}");
+
+        return string.Join(", ", parts);
     }
 
     /// <summary>
@@ -829,38 +825,10 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
                 if (line is null)
                     break; // stream closed by server
 
-                // SSE format: lines starting with "data:" contain JSON payload
-                if (!line.StartsWith("data:", StringComparison.Ordinal))
+                var sseEvent = TryParseSseLine(line);
+                if (sseEvent is null || sseEvent.SessionId != sessionId)
                     continue;
 
-                var json = line["data:".Length..].Trim();
-                if (string.IsNullOrEmpty(json))
-                    continue;
-
-                SseEvent? sseEvent;
-                try
-                {
-                    sseEvent = JsonSerializer.Deserialize<SseEvent>(json, OpenCodeJson.JsonOptions);
-                }
-                catch (JsonException)
-                {
-                    // Malformed SSE data line — skip
-                    continue;
-                }
-
-                if (sseEvent is null)
-                    continue;
-
-                // Filter: only process events for the active session
-                if (sseEvent.SessionId != sessionId)
-                    continue;
-
-                // Route events based on type — only update LastOutputTime on events
-                // that represent meaningful progress (text output, tool calls, token streaming).
-                // Metadata-only events (session.idle, session.status, session.updated,
-                // session.diff, message.updated) are excluded so the stall monitor can
-                // detect extended LLM thinking/reasoning phases where no visible output
-                // is being produced.
                 await ProcessSseEventAsync(sseEvent, sessionId, onOutputLine, onSseEmitted, workspacePath, ct);
             }
         }
@@ -871,6 +839,26 @@ public sealed class OpenCodeAgentProvider : IAgentProvider, IOpenCodeDiffProvide
         catch (Exception ex)
         {
             _logger.Warning(ex, "SSE stream disconnected unexpectedly");
+        }
+    }
+
+    /// <summary>
+    /// Parses a raw SSE stream line into an <see cref="SseEvent"/>. Returns null if the line
+    /// is not a data line, is empty, or cannot be deserialized.
+    /// </summary>
+    private static SseEvent? TryParseSseLine(string line)
+    {
+        if (!line.StartsWith("data:", StringComparison.Ordinal))
+            return null;
+        var json = line["data:".Length..].Trim();
+        if (string.IsNullOrEmpty(json)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<SseEvent>(json, OpenCodeJson.JsonOptions);
+        }
+        catch (JsonException)
+        {
+            return null; // Malformed SSE data line — skip
         }
     }
 

@@ -1181,7 +1181,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHubWithOrchestration();
 
         // Should not throw even when run is not found
-        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
+        var act = () => hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
+        await act.Should().NotThrowAsync("hub must handle null run gracefully");
     }
 
     [Fact]
