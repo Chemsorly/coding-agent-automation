@@ -40,6 +40,10 @@ jobs:
         run: |
           mkdir -p ${{ runner.temp }}/scanner
           dotnet tool update dotnet-sonarscanner --tool-path ${{ runner.temp }}/scanner
+      - name: Create test workspace directories
+        run: |
+          sudo mkdir -p /app/workspaces/chat /app/workspaces/chat-sessions
+          sudo chmod 777 /app/workspaces/chat /app/workspaces/chat-sessions
       - name: Build and analyze
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
