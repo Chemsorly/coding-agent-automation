@@ -28,10 +28,13 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
     // Currently uses CancellationToken.None for GetRunHistoryAsync — a pre-existing issue preserved
     // in the refactoring, but this operation hits history storage and should be cancellable.
     /// <inheritdoc />
-    public async Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, string agentId)
+    public async Task RecoverOrphanedStateAsync(AgentRegistrationMessage message, AgentId agentId)
     {
         ArgumentNullException.ThrowIfNull(message);
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) — ThrowIfNull on a struct
+        // field reports "Value" as the parameter name in exceptions rather than "agentId".
+        ArgumentNullException.ThrowIfNull(agentId.Value);
 
         // Re-track active job from agent state (handles orchestrator restart scenario)
         if (message.ActiveJob is not null)
@@ -54,7 +57,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         }
     }
 
-    private async Task RestoreActiveJobAsync(AgentRegistrationMessage message, string agentId)
+    private async Task RestoreActiveJobAsync(AgentRegistrationMessage message, AgentId agentId)
     {
         var activeJob = message.ActiveJob!;
         var existingRun = _facade.GetRun(activeJob.RunId);
@@ -70,7 +73,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
     }
 
     private async Task RestoreRunFromAgentStateAsync(
-        AgentRegistrationMessage message, string agentId, ActiveJobState activeJob)
+        AgentRegistrationMessage message, AgentId agentId, ActiveJobState activeJob)
     {
         // Check history — don't re-register a completed run.
         // Only treat runs with successful terminal states as stale.
@@ -92,7 +95,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         }
     }
 
-    private async Task RestoreNewRunAsync(string agentId, ActiveJobState activeJob)
+    private async Task RestoreNewRunAsync(AgentId agentId, ActiveJobState activeJob)
     {
         // Skip restoration for consolidation runs — they have their own
         // completion path (ReportConsolidationComplete) and should not
@@ -113,7 +116,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         await Task.CompletedTask; // Preserved async signature for future use
     }
 
-    private void RestoreConsolidationTracking(string agentId, ActiveJobState activeJob)
+    private void RestoreConsolidationTracking(AgentId agentId, ActiveJobState activeJob)
     {
         _logger.Information(
             "Agent {AgentId} reported active consolidation job {RunId} — skipping pipeline run restoration (handled by ReportConsolidationComplete)",
@@ -130,9 +133,9 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         _changeNotifier.NotifyChange();
     }
 
-    private void RestorePipelineRun(string agentId, ActiveJobState activeJob)
+    private void RestorePipelineRun(AgentId agentId, ActiveJobState activeJob)
     {
-        var restoredRun = CreateRestoredPipelineRun(agentId, activeJob);
+        var restoredRun = CreateRestoredPipelineRun(agentId.Value, activeJob);
         restoredRun.CurrentStep = activeJob.CurrentStep;
         restoredRun.PipelineProviderConfigId = activeJob.PipelineProviderConfigId;
         restoredRun.ResolvedProfileId = activeJob.ResolvedProfileId;
@@ -202,15 +205,15 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
     }
 
     private void LinkAgentToExistingRun(
-        PipelineRun existingRun, AgentRegistrationMessage message, string agentId, ActiveJobState activeJob)
+        PipelineRun existingRun, AgentRegistrationMessage message, AgentId agentId, ActiveJobState activeJob)
     {
         // Run already exists in-memory (e.g., created by K8s DispatchService with AgentId=null).
         // Ensure the agent is linked to it and transitioned to Busy.
         // Guard: only link if the run is unowned OR already owned by this agent (idempotent re-registration).
-        if (existingRun.AgentId is null || existingRun.AgentId == agentId)
+        if (existingRun.AgentId is null || existingRun.AgentId == agentId.Value)
         {
             if (existingRun.AgentId is null)
-                existingRun.AgentId = agentId;
+                existingRun.AgentId = agentId.Value;
 
             var trackedEntry = _facade.GetByAgentId(agentId);
             if (trackedEntry is not null)
@@ -231,7 +234,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
             agentId, activeJob.RunId);
     }
 
-    private void DetectAndRestoreOrphans(string agentId, AgentEntry entry)
+    private void DetectAndRestoreOrphans(AgentId agentId, AgentEntry entry)
     {
         var orphanedRuns = _facade.GetActiveRunsByAgent(agentId);
         if (orphanedRuns.Count > 0)
@@ -275,7 +278,7 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         }
     }
 
-    private void HandleCrashRecovery(AgentRegistrationMessage message, string agentId, AgentEntry entry)
+    private void HandleCrashRecovery(AgentRegistrationMessage message, AgentId agentId, AgentEntry entry)
     {
         // Crash recovery detection: agent registered without an active job but the
         // registry already restored ActiveJobId (from its own prior state in the update factory).
@@ -301,3 +304,4 @@ public sealed class AgentOrphanRecoveryService : IAgentOrphanRecoveryService
         }
     }
 }
+

@@ -1,3 +1,6 @@
+using MessagePack;
+using MessagePack.Formatters;
+
 namespace CodingAgentWebUI.Pipeline.Models;
 
 /// <summary>
@@ -18,4 +21,31 @@ public readonly record struct AgentId(string Value)
     }
 
     public override string ToString() => Value ?? string.Empty;
+}
+
+/// <summary>
+/// Custom MessagePack formatter that serializes <see cref="AgentId"/> as a bare string
+/// on the wire, maintaining wire compatibility with existing string-based callers.
+/// Without this formatter, <c>ContractlessStandardResolver</c> would serialize the struct
+/// as a map <c>{"Value":"..."}</c> instead of a plain string.
+/// </summary>
+public sealed class AgentIdFormatter : IMessagePackFormatter<AgentId>
+{
+    public void Serialize(ref MessagePackWriter writer, AgentId value, MessagePackSerializerOptions options)
+    {
+        if (value.Value is null)
+            throw new MessagePackSerializationException("AgentId cannot serialize a null Value (e.g., default(AgentId)).");
+        writer.Write(value.Value);
+    }
+
+    public AgentId Deserialize(ref MessagePackReader reader, MessagePackSerializerOptions options)
+    {
+        var value = reader.ReadString();
+        if (value is null)
+            throw new MessagePackSerializationException("AgentId cannot be deserialized from a nil token.");
+        // TODO: Also reject empty strings to match the implicit operator's ThrowIfNullOrEmpty guard:
+        // if (string.IsNullOrEmpty(value)) throw new MessagePackSerializationException("AgentId cannot be deserialized from an empty string.");
+        // Currently an empty fixstr on the wire produces AgentId { Value = "" } which passes all null guards.
+        return new(value);
+    }
 }

@@ -914,11 +914,12 @@ public class QualityGateValidatorTests
             "bash", $"-c \"{script}\"", Directory.GetCurrentDirectory(), CancellationToken.None, TimeSpan.FromSeconds(30));
         sw.Stop();
 
-        // Assert: method returns within a reasonable bound. The pipe drain timeout is 5s, but
-        // process creation, bash startup, and subshell forking add variable overhead in CI.
-        // Use a generous bound (30s) that still catches degenerate behavior while tolerating
-        // slow CI environments (GitHub Actions shared runners regularly exceed 15s under load).
-        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(30));
+        // Assert: method returns within a reasonable bound. The pipe drain timeout is 20s, so
+        // the degenerate sequential bug would take ~40s (timeout fires twice). Use 60s as the
+        // bound: it catches the sequential regression while tolerating heavily-loaded CI runners
+        // where bash startup, grandchild fork/exec, and parallel test suite overhead can push
+        // wall-clock time well past 30s even when behaviour is correct.
+        sw.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(60));
 
         // Assert: stderr content is preserved — the concurrent drain + fallback ensures that
         // stderr (which completed before the timeout) is not lost when stdout times out.

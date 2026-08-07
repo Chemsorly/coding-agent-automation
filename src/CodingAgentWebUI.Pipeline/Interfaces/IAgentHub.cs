@@ -10,13 +10,13 @@ public interface IAgentHub
 {
     // Registration
     Task RegisterAgent(AgentRegistrationMessage message);
-    Task DeregisterAgent(string agentId);
+    Task DeregisterAgent(AgentId agentId);
 
     // Job lifecycle
     Task JobAccepted(JobId jobId);
     Task JobRejected(JobId jobId, string reason);
     Task ReportJobCompleted(JobId jobId, JobCompletionPayload payload);
-    Task AgentReady(string agentId);
+    Task AgentReady(AgentId agentId);
 
     // Real-time status
     Task ReportStepTransition(JobId jobId, PipelineStep step, DateTimeOffset timestamp, Dictionary<string, string>? metadata = null);
@@ -66,5 +66,5 @@ public interface IAgentHubClient
     Task CancelChat(string sessionId);
     Task ForceDisconnect();
     Task RequestFetchModels(FetchModelsRequest request);
-    Task AssignConsolidationJob(string agentId, ConsolidationJobMessage job);
+    Task AssignConsolidationJob(AgentId agentId, ConsolidationJobMessage job);
 }

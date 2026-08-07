@@ -20,12 +20,12 @@ public interface IAgentRegistryService
     /// <summary>
     /// Removes an agent from the registry entirely.
     /// </summary>
-    bool Deregister(string agentId);
+    bool Deregister(AgentId agentId);
 
     /// <summary>
     /// Looks up an agent by its unique agent identifier.
     /// </summary>
-    AgentEntry? GetByAgentId(string agentId);
+    AgentEntry? GetByAgentId(AgentId agentId);
 
     /// <summary>
     /// Looks up an agent by its current SignalR connection ID.
@@ -35,12 +35,12 @@ public interface IAgentRegistryService
     /// <summary>
     /// Updates the heartbeat timestamp for the specified agent.
     /// </summary>
-    void UpdateHeartbeat(string agentId, DateTimeOffset timestamp);
+    void UpdateHeartbeat(AgentId agentId, DateTimeOffset timestamp);
 
     /// <summary>
     /// Transitions an agent to a new status.
     /// </summary>
-    void TransitionStatus(string agentId, AgentStatus newStatus);
+    void TransitionStatus(AgentId agentId, AgentStatus newStatus);
 
     /// <summary>
     /// Returns all agents currently in <see cref="AgentStatus.Idle"/> status.

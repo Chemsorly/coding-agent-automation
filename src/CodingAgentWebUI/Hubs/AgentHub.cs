@@ -159,13 +159,16 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// Deregisters an agent from the registry.
     /// Only allows the caller to deregister their own agent identity.
     /// </summary>
-    public Task DeregisterAgent(string agentId)
+    public Task DeregisterAgent(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)).
+        // ThrowIfNull on a struct field reports "Value" as the parameter name in exceptions, not "agentId".
+        ArgumentNullException.ThrowIfNull(agentId.Value);
 
         // Security: verify caller owns this agentId (prevents cross-agent deregistration)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "DeregisterAgent rejected — caller connection {ConnectionId} does not own agent {AgentId}",
@@ -231,13 +234,15 @@ public sealed partial class AgentHub : Hub<IAgentHubClient>, IAgentHub
     /// <summary>
     /// Agent signals it is ready for the next job. Triggers job dequeue.
     /// </summary>
-    public Task AgentReady(string agentId)
+    public Task AgentReady(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) — see DeregisterAgent.
+        ArgumentNullException.ThrowIfNull(agentId.Value);
 
         // Security: verify caller owns this agentId (prevents spurious drain signals)
         var callerAgent = _facade.GetByConnectionId(Context.ConnectionId);
-        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId, StringComparison.Ordinal))
+        if (callerAgent is null || !string.Equals(callerAgent.AgentId, agentId.Value, StringComparison.Ordinal))
         {
             _logger.Warning(
                 "AgentReady rejected — caller connection {ConnectionId} does not own agent {AgentId}",

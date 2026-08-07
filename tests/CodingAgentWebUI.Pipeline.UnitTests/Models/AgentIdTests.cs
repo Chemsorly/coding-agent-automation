@@ -1,5 +1,7 @@
 using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Models;
+using MessagePack;
+using System.Buffers;
 
 namespace CodingAgentWebUI.Pipeline.UnitTests.Models;
 
@@ -115,3 +117,87 @@ public class AgentIdTests
         act.Should().Throw<ArgumentException>();
     }
 }
+
+public class AgentIdFormatterTests
+{
+    private readonly AgentIdFormatter _formatter = new();
+
+    [Fact]
+    public void Serialize_WritesValueAsBareString()
+    {
+        var id = new AgentId("agent-42");
+        var writer = new ArrayBufferWriter<byte>();
+        var msgpackWriter = new MessagePackWriter(writer);
+
+        _formatter.Serialize(ref msgpackWriter, id, MessagePackSerializerOptions.Standard);
+        msgpackWriter.Flush();
+
+        // Deserialize the bytes back as a plain string to verify it's a bare string on the wire
+        var reader = new MessagePackReader(writer.WrittenMemory);
+        var decoded = reader.ReadString();
+        decoded.Should().Be("agent-42");
+    }
+
+    [Fact]
+    public void Deserialize_FromBareStringBytes_ProducesCorrectAgentId()
+    {
+        // Encode "agent-99" as a bare MessagePack string
+        var writer = new ArrayBufferWriter<byte>();
+        var msgpackWriter = new MessagePackWriter(writer);
+        msgpackWriter.Write("agent-99");
+        msgpackWriter.Flush();
+
+        var reader = new MessagePackReader(writer.WrittenMemory);
+        var id = _formatter.Deserialize(ref reader, MessagePackSerializerOptions.Standard);
+
+        id.Value.Should().Be("agent-99");
+    }
+
+    [Fact]
+    public void RoundTrip_SerializeThenDeserialize_PreservesValue()
+    {
+        var original = new AgentId("agent-roundtrip");
+        var writer = new ArrayBufferWriter<byte>();
+        var msgpackWriter = new MessagePackWriter(writer);
+
+        _formatter.Serialize(ref msgpackWriter, original, MessagePackSerializerOptions.Standard);
+        msgpackWriter.Flush();
+
+        var reader = new MessagePackReader(writer.WrittenMemory);
+        var restored = _formatter.Deserialize(ref reader, MessagePackSerializerOptions.Standard);
+
+        restored.Should().Be(original);
+        restored.Value.Should().Be("agent-roundtrip");
+    }
+
+    [Fact]
+    public void Serialize_NullValue_Throws()
+    {
+        var id = default(AgentId); // Value is null
+        var bufferWriter = new ArrayBufferWriter<byte>();
+        var msgpackWriter = new MessagePackWriter(bufferWriter);
+
+        MessagePackSerializationException? caughtEx = null;
+        try
+        {
+            _formatter.Serialize(ref msgpackWriter, id, MessagePackSerializerOptions.Standard);
+        }
+        catch (MessagePackSerializationException ex)
+        {
+            caughtEx = ex;
+        }
+
+        caughtEx.Should().NotBeNull();
+        caughtEx!.Message.Should().Contain("AgentId cannot serialize a null Value");
+    }
+}
+
+// TODO: Add Deserialize_NilToken_Throws test to AgentIdFormatterTests — the Deserialize path that
+// throws MessagePackSerializationException on a nil wire token has no test coverage. A regression
+// that swallowed nil and returned default(AgentId) would go undetected.
+
+// TODO: Add an end-to-end CompositeResolver test that verifies MessagePackSerializer.Serialize/
+// Deserialize<AgentId>(value, options) using the full registered resolver options (matching the
+// configuration in SignalRRegistration.cs and HubConnectionManager.cs) produces a bare string
+// on the wire rather than a map {"Value":"..."}. Without this, a regression where the formatter
+// is de-registered or resolver order is wrong would not be caught by existing tests.
