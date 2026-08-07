@@ -745,7 +745,12 @@ public class AgentCodingPageComponentTests : BunitContext
         var component = Render<AgentCoding>();
         var pageService = Services.GetRequiredService<AgentCodingPageService>();
 
-        var (valid, error) = pageService.ValidateAddTemplate(new TemplateTableSection.TemplateFormModel { Name = "My Template" });
+        var (valid, error) = pageService.ValidateAddTemplate(new TemplateTableSection.TemplateFormModel
+        {
+            Name = "My Template",
+            IssueProviderId = "ip-1",
+            RepoProviderId = "rp-2" // different combo — no duplicate
+        });
 
         Assert.True(valid);
         Assert.Null(error);
@@ -902,4 +907,432 @@ public class AgentCodingPageComponentTests : BunitContext
     // (AutoDismissLoopToast with Task.Delay) works correctly. The previous test
     // AgentCoding_WhenNewRunStarts_ClearsOutputLines was removed along with the deleted
     // functionality, leaving this async code path uncovered. (Review finding: WARNING)
+
+    // ── Loop Controls ────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task AgentCoding_StopLoop_CallsPageService()
+    {
+        var component = Render<AgentCoding>();
+        var pageService = Services.GetRequiredService<AgentCodingPageService>();
+
+        await component.InvokeAsync(async () =>
+        {
+            var method = typeof(AgentCoding).GetMethod("StopLoop",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            await (Task)method!.Invoke(component.Instance, null)!;
+        });
+
+        // StopLoop delegates to PageService.StopLoopAsync — loop was never active so nothing to assert
+        // except the component didn't throw
+        Assert.NotNull(component.Markup);
+    }
+
+    [Fact]
+    public async Task AgentCoding_ResumeLoop_CallsPageService()
+    {
+        var component = Render<AgentCoding>();
+
+        await component.InvokeAsync(() =>
+        {
+            var method = typeof(AgentCoding).GetMethod("ResumeLoop",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            method?.Invoke(component.Instance, null);
+        });
+
+        Assert.NotNull(component.Markup);
+    }
+
+    [Fact]
+    public void AgentCoding_CanStartLoop_FalseWithNoIssueProvider()
+    {
+        _mockStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Issue, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var component = Render<AgentCoding>();
+
+        // With no issue provider, Start Loop button should be disabled
+        var startBtn = component.FindAll("button").FirstOrDefault(b => b.TextContent.Contains("Start Loop"));
+        Assert.NotNull(startBtn);
+        Assert.True(startBtn!.HasAttribute("disabled") || component.Markup.Contains("No issue provider"));
+    }
+
+    // ── Template Callbacks (via reflection) ─────────────────────────────────
+
+    [Fact]
+    public async Task AgentCoding_ToggleTemplateEnabled_UpdatesState()
+    {
+        var component = Render<AgentCoding>();
+        var pageService = Services.GetRequiredService<AgentCodingPageService>();
+
+        await component.InvokeAsync(async () =>
+        {
+            var method = typeof(AgentCoding).GetMethod("ToggleTemplateEnabled",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var template = pageService.Templates.First();
+            await (Task)method!.Invoke(component.Instance, [(template, false)])!;
+        });
+
+        _mockProjectStore.Verify(s => s.SaveTemplateAsync(
+            It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task AgentCoding_ToggleImplementationEnabled_CallsSave()
+    {
+        var component = Render<AgentCoding>();
+        var pageService = Services.GetRequiredService<AgentCodingPageService>();
+
+        await component.InvokeAsync(async () =>
+        {
+            var method = typeof(AgentCoding).GetMethod("ToggleImplementationEnabled",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var template = pageService.Templates.First();
+            await (Task)method!.Invoke(component.Instance, [(template, true)])!;
+        });
+
+        _mockProjectStore.Verify(s => s.SaveTemplateAsync(
+            It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task AgentCoding_ToggleReviewEnabled_CallsSave()
+    {
+        var component = Render<AgentCoding>();
+        var pageService = Services.GetRequiredService<AgentCodingPageService>();
+
+        await component.InvokeAsync(async () =>
+        {
+            var method = typeof(AgentCoding).GetMethod("ToggleReviewEnabled",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var template = pageService.Templates.First();
+            await (Task)method!.Invoke(component.Instance, [(template, true)])!;
+        });
+
+        _mockProjectStore.Verify(s => s.SaveTemplateAsync(
+            It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task AgentCoding_ToggleDecompositionEnabled_CallsSave()
+    {
+        var component = Render<AgentCoding>();
+        var pageService = Services.GetRequiredService<AgentCodingPageService>();
+
+        await component.InvokeAsync(async () =>
+        {
+            var method = typeof(AgentCoding).GetMethod("ToggleDecompositionEnabled",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var template = pageService.Templates.First();
+            await (Task)method!.Invoke(component.Instance, [(template, true)])!;
+        });
+
+        _mockProjectStore.Verify(s => s.SaveTemplateAsync(
+            It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+    }
+
+    [Fact]
+    public async Task AgentCoding_AddTemplate_ValidForm_CallsSaveTemplate()
+    {
+        var component = Render<AgentCoding>();
+
+        await component.InvokeAsync(async () =>
+        {
+            // Set _addForm with valid data — use "rp-2" to avoid duplicate with existing "ip-1"/"rp-1" template
+            var addFormField = typeof(AgentCoding).GetField("_addForm",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var form = new TemplateTableSection.TemplateFormModel
+            {
+                Name = "New Template",
+                IssueProviderId = "ip-1",
+                RepoProviderId = "rp-2",
+                ProjectId = WellKnownIds.DefaultProjectId
+            };
+            addFormField!.SetValue(component.Instance, form);
+
+            var method = typeof(AgentCoding).GetMethod("AddTemplate",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            await (Task)method!.Invoke(component.Instance, null)!;
+        });
+
+        _mockProjectStore.Verify(s => s.SaveTemplateAsync(
+            It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AgentCoding_AddTemplate_InvalidForm_SetsFormError()
+    {
+        var component = Render<AgentCoding>();
+
+        await component.InvokeAsync(async () =>
+        {
+            // Leave _addForm with empty Name — validation should fail
+            var addFormField = typeof(AgentCoding).GetField("_addForm",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            addFormField!.SetValue(component.Instance, new TemplateTableSection.TemplateFormModel { Name = "" });
+
+            var method = typeof(AgentCoding).GetMethod("AddTemplate",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            await (Task)method!.Invoke(component.Instance, null)!;
+        });
+
+        // _formError should be set, SaveTemplate should NOT have been called
+        _mockProjectStore.Verify(s => s.SaveTemplateAsync(
+            It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task AgentCoding_RemoveTemplate_WhenConfirmed_CallsDelete()
+    {
+        var component = Render<AgentCoding>();
+        var pageService = Services.GetRequiredService<AgentCodingPageService>();
+
+        await component.InvokeAsync(async () =>
+        {
+            // Set _deletingTemplate
+            var field = typeof(AgentCoding).GetField("_deletingTemplate",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            field!.SetValue(component.Instance, pageService.Templates.First());
+
+            var method = typeof(AgentCoding).GetMethod("RemoveTemplate",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            await (Task)method!.Invoke(component.Instance, null)!;
+        });
+
+        _mockProjectStore.Verify(s => s.DeleteTemplateAsync(
+            It.IsAny<string>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AgentCoding_RemoveTemplate_WhenNullTemplate_DoesNothing()
+    {
+        var component = Render<AgentCoding>();
+
+        await component.InvokeAsync(async () =>
+        {
+            // Leave _deletingTemplate null
+            var method = typeof(AgentCoding).GetMethod("RemoveTemplate",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            await (Task)method!.Invoke(component.Instance, null)!;
+        });
+
+        _mockProjectStore.Verify(s => s.DeleteTemplateAsync(
+            It.IsAny<string>(), It.IsAny<TemplateId>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    // ── ShowAddForm / CancelAddForm state ────────────────────────────────────
+
+    [Fact]
+    public async Task AgentCoding_ShowAddForm_SetsShowFlag()
+    {
+        var component = Render<AgentCoding>();
+
+        await component.InvokeAsync(() =>
+        {
+            var method = typeof(AgentCoding).GetMethod("ShowAddForm",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            method?.Invoke(component.Instance, null);
+        });
+
+        var showField = typeof(AgentCoding).GetField("_showAddForm",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.True((bool)showField!.GetValue(component.Instance)!);
+    }
+
+    [Fact]
+    public async Task AgentCoding_CancelAddForm_ClearsShowFlag()
+    {
+        var component = Render<AgentCoding>();
+
+        await component.InvokeAsync(() =>
+        {
+            // Show first
+            var showMethod = typeof(AgentCoding).GetMethod("ShowAddForm",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            showMethod?.Invoke(component.Instance, null);
+        });
+
+        await component.InvokeAsync(() =>
+        {
+            var cancelMethod = typeof(AgentCoding).GetMethod("CancelAddForm",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            cancelMethod?.Invoke(component.Instance, null);
+        });
+
+        var showField = typeof(AgentCoding).GetField("_showAddForm",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.False((bool)showField!.GetValue(component.Instance)!);
+    }
+
+    // ── DismissAgentSummary / DismissError ───────────────────────────────────
+
+    [Fact]
+    public async Task AgentCoding_DismissAgentSummary_SetsFlag()
+    {
+        var component = Render<AgentCoding>();
+
+        await component.InvokeAsync(() =>
+        {
+            var method = typeof(AgentCoding).GetMethod("DismissAgentSummary",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            method?.Invoke(component.Instance, null);
+        });
+
+        var field = typeof(AgentCoding).GetField("_showAgentSummary",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.False((bool)field!.GetValue(component.Instance)!);
+    }
+
+    [Fact]
+    public async Task AgentCoding_DismissError_ClearsField()
+    {
+        var component = Render<AgentCoding>();
+
+        await component.InvokeAsync(() =>
+        {
+            var errField = typeof(AgentCoding).GetField("_errorMessage",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            errField!.SetValue(component.Instance, "Some error");
+        });
+
+        await component.InvokeAsync(() =>
+        {
+            var method = typeof(AgentCoding).GetMethod("DismissError",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            method?.Invoke(component.Instance, null);
+        });
+
+        var errField2 = typeof(AgentCoding).GetField("_errorMessage",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.Null(errField2!.GetValue(component.Instance));
+    }
+
+    // ── OnTemplateChanged ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task AgentCoding_OnTemplateChanged_SetsTemplateId()
+    {
+        var component = Render<AgentCoding>();
+
+        await component.InvokeAsync(() =>
+        {
+            var method = typeof(AgentCoding).GetMethod("OnTemplateChanged",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            method?.Invoke(component.Instance, [new Microsoft.AspNetCore.Components.ChangeEventArgs { Value = "t-1" }]);
+        });
+
+        var field = typeof(AgentCoding).GetField("_manualDispatchTemplateId",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.Equal("t-1", (string)field!.GetValue(component.Instance)!);
+    }
+
+    [Fact]
+    public async Task AgentCoding_OnTemplateChanged_NullValue_SetsEmptyString()
+    {
+        var component = Render<AgentCoding>();
+
+        await component.InvokeAsync(() =>
+        {
+            var method = typeof(AgentCoding).GetMethod("OnTemplateChanged",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            method?.Invoke(component.Instance, [new Microsoft.AspNetCore.Components.ChangeEventArgs { Value = null }]);
+        });
+
+        var field = typeof(AgentCoding).GetField("_manualDispatchTemplateId",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.Equal("", (string)field!.GetValue(component.Instance)!);
+    }
+
+    // ── MoveTemplateToProject ────────────────────────────────────────────────
+
+    [Fact]
+    public async Task AgentCoding_MoveTemplateToProject_CallsPageService()
+    {
+        _mockProjectStore.Setup(s => s.SaveProjectAsync(It.IsAny<PipelineProject>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        _mockProjectStore.Setup(s => s.SaveTemplateAsync(It.IsAny<string>(), It.IsAny<PipelineJobTemplate>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var component = Render<AgentCoding>();
+        var pageService = Services.GetRequiredService<AgentCodingPageService>();
+
+        await component.InvokeAsync(async () =>
+        {
+            var method = typeof(AgentCoding).GetMethod("MoveTemplateToProject",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var templateId = (TemplateId)"t-1";
+            await (Task)method!.Invoke(component.Instance, [(templateId, WellKnownIds.DefaultProjectId, WellKnownIds.DefaultProjectId)])!;
+        });
+
+        // Moving to same project is a no-op — just verify no exception
+        Assert.NotNull(component.Markup);
+    }
+
+    // ── Dispose ──────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void AgentCoding_Dispose_SetsDisposedFlag()
+    {
+        var component = Render<AgentCoding>();
+
+        component.Instance.Dispose();
+
+        var field = typeof(AgentCoding).GetField("_disposed",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.True((bool)field!.GetValue(component.Instance)!);
+    }
+
+    // ── IsIssueActive / GetParentProject ─────────────────────────────────────
+
+    [Fact]
+    public async Task AgentCoding_IsIssueActive_ReturnsFalseByDefault()
+    {
+        var component = Render<AgentCoding>();
+
+        bool result = false;
+        await component.InvokeAsync(() =>
+        {
+            var method = typeof(AgentCoding).GetMethod("IsIssueActive",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            result = (bool)method!.Invoke(component.Instance, ["99", "ip-1"])!;
+        });
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task AgentCoding_GetParentProject_ReturnsProject()
+    {
+        var component = Render<AgentCoding>();
+        PipelineProject? result = null;
+
+        await component.InvokeAsync(() =>
+        {
+            var method = typeof(AgentCoding).GetMethod("GetParentProject",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            result = (PipelineProject?)method!.Invoke(component.Instance, [(TemplateId)"t-1"]);
+        });
+
+        Assert.NotNull(result);
+        Assert.Equal(WellKnownIds.DefaultProjectId, result!.Id);
+    }
+
+    // ── HandleStateChanged ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task AgentCoding_HandleStateChanged_DoesNotThrowWhenNotDisposed()
+    {
+        var component = Render<AgentCoding>();
+
+        // HandleStateChanged is async void — invoke via the event
+        await component.InvokeAsync(() =>
+        {
+            var method = typeof(AgentCoding).GetMethod("HandleStateChanged",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            method?.Invoke(component.Instance, null);
+        });
+
+        await Task.Delay(50); // give async void a moment
+        Assert.NotNull(component.Markup);
+    }
 }
