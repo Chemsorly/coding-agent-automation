@@ -4,7 +4,8 @@
     <DataCollectors>
       <DataCollector friendlyName="XPlat Code Coverage">
         <Configuration>
-          <Include>[CodingAgentWebUI.Pipeline*]*,[CodingAgentWebUI.Orchestration]*</Include>
+          <Include>[CodingAgentWebUI.Pipeline*]*,[CodingAgentWebUI.Orchestration]*,[CodingAgentWebUI]*</Include>
+          <Exclude>[CodingAgentWebUI.Pipeline.UnitTests]*,[CodingAgentWebUI.Pipeline.CodeReview.UnitTests]*,[CodingAgentWebUI.Infrastructure]*,[CodingAgentWebUI.Agent]*,[CodingAgentWebUI.Agent.*]*,[CodingAgentWebUI.Orchestration.UnitTests]*</Exclude>
           <IncludeTestAssembly>false</IncludeTestAssembly>
           <SkipAutoProps>true</SkipAutoProps>
         </Configuration>
