@@ -684,14 +684,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
     }
 
-    private static bool IsTerminal(V1Job job)
+    internal static bool IsTerminal(V1Job job)
         => job.Status?.Conditions?.Any(c =>
                (c.Type == "Complete" || c.Type == "Failed") && c.Status == "True") == true;
 
-    private static bool IsKiroAgent(string providerType)
+    internal static bool IsKiroAgent(string providerType)
         => string.Equals(providerType, "kiro", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsOpencodeAgent(string providerType)
+    internal static bool IsOpencodeAgent(string providerType)
         => string.Equals(providerType, "opencode", StringComparison.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> ValidEffortValues =

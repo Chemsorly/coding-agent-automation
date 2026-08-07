@@ -782,4 +782,76 @@ public class ChatJobDispatcherTests
             It.IsAny<CancellationToken>()),
             Times.Once);
     }
+
+    // ─── IsTerminal / IsKiroAgent / IsOpencodeAgent static helpers ────────────
+
+    [Fact]
+    public void IsTerminal_CompleteConditionTrue_ReturnsTrue()
+    {
+        var job = new V1Job { Status = new V1JobStatus { Conditions = [new V1JobCondition { Type = "Complete", Status = "True" }] } };
+        ChatJobDispatcher.IsTerminal(job).Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsTerminal_FailedConditionTrue_ReturnsTrue()
+    {
+        var job = new V1Job { Status = new V1JobStatus { Conditions = [new V1JobCondition { Type = "Failed", Status = "True" }] } };
+        ChatJobDispatcher.IsTerminal(job).Should().BeTrue();
+    }
+
+    [Fact]
+    public void IsTerminal_CompleteConditionFalse_ReturnsFalse()
+    {
+        var job = new V1Job { Status = new V1JobStatus { Conditions = [new V1JobCondition { Type = "Complete", Status = "False" }] } };
+        ChatJobDispatcher.IsTerminal(job).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsTerminal_NullStatus_ReturnsFalse()
+    {
+        var job = new V1Job { Status = null };
+        ChatJobDispatcher.IsTerminal(job).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsTerminal_NullConditions_ReturnsFalse()
+    {
+        var job = new V1Job { Status = new V1JobStatus { Conditions = null } };
+        ChatJobDispatcher.IsTerminal(job).Should().BeFalse();
+    }
+
+    [Fact]
+    public void IsTerminal_EmptyConditions_ReturnsFalse()
+    {
+        var job = new V1Job { Status = new V1JobStatus { Conditions = [] } };
+        ChatJobDispatcher.IsTerminal(job).Should().BeFalse();
+    }
+
+    [Theory]
+    [InlineData("kiro")]
+    [InlineData("KIRO")]
+    [InlineData("Kiro")]
+    public void IsKiroAgent_KiroVariants_ReturnsTrue(string providerType)
+        => ChatJobDispatcher.IsKiroAgent(providerType).Should().BeTrue();
+
+    [Theory]
+    [InlineData("opencode")]
+    [InlineData("")]
+    [InlineData("kiro-dotnet")]
+    public void IsKiroAgent_NonKiro_ReturnsFalse(string providerType)
+        => ChatJobDispatcher.IsKiroAgent(providerType).Should().BeFalse();
+
+    [Theory]
+    [InlineData("opencode")]
+    [InlineData("OPENCODE")]
+    [InlineData("OpenCode")]
+    public void IsOpencodeAgent_OpencodeVariants_ReturnsTrue(string providerType)
+        => ChatJobDispatcher.IsOpencodeAgent(providerType).Should().BeTrue();
+
+    [Theory]
+    [InlineData("kiro")]
+    [InlineData("")]
+    [InlineData("opencode-dotnet")]
+    public void IsOpencodeAgent_NonOpencode_ReturnsFalse(string providerType)
+        => ChatJobDispatcher.IsOpencodeAgent(providerType).Should().BeFalse();
 }

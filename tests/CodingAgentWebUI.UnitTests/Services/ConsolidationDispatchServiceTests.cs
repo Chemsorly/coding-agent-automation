@@ -882,4 +882,109 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     }
 
     #endregion
+
+    #region ResolveRequiredLabelsAsync and ResolveAgentSelectorLabelsAsync
+
+    [Fact]
+    public async Task ResolveRequiredLabelsAsync_WhenNullTemplateId_UsesDefaultLabels()
+    {
+        var config = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = "/tmp",
+            DefaultRequiredAgentLabels = "dotnet,kiro"
+        };
+        var svc = CreateService(config);
+
+        var labels = await svc.ResolveRequiredLabelsAsync(null, config, CancellationToken.None);
+
+        labels.Should().NotBeEmpty("null templateId should fall back to default required labels from config");
+    }
+
+    [Fact]
+    public async Task ResolveRequiredLabelsAsync_WhenTemplateNotFound_UsesDefaultLabels()
+    {
+        // No projects configured → template not found
+        _mockProjectStore.Setup(s => s.LoadProjectsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineProject>());
+        _mockProjectStore.Setup(s => s.LoadAllTemplatesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineJobTemplate>());
+
+        var config = new PipelineConfiguration
+        {
+            WorkspaceBaseDirectory = "/tmp",
+            DefaultRequiredAgentLabels = "opencode"
+        };
+        var svc = CreateService(config);
+
+        var labels = await svc.ResolveRequiredLabelsAsync((TemplateId)"unknown-template", config, CancellationToken.None);
+
+        labels.Should().NotBeEmpty("missing template should fall back to default config labels");
+    }
+
+    [Fact]
+    public async Task ResolveAgentSelectorLabelsAsync_WhenNoMatchingProfile_ReturnsSameLabels()
+    {
+        // No profiles → should fall back to the input labels
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile>());
+
+        var svc = CreateService();
+        var input = new[] { "dotnet", "kiro" };
+
+        var result = await svc.ResolveAgentSelectorLabelsAsync(input, CancellationToken.None);
+
+        result.Should().BeEquivalentTo(input, "no matching profile means raw required labels are returned as-is");
+    }
+
+    [Fact]
+    public async Task ResolveAgentSelectorLabelsAsync_WhenProfileMatches_ReturnsProfileMatchLabels()
+    {
+        var profile = new AgentProfile
+        {
+            Id = "prof-1",
+            DisplayName = "Kiro Dotnet",
+            Enabled = true,
+            MatchLabels = ["dotnet", "dotnet10", "kiro"],
+            AgentProviderConfigId = "agent-cfg"
+        };
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile> { profile });
+
+        var svc = CreateService();
+        var input = new[] { "dotnet", "kiro" }; // subset of profile MatchLabels
+
+        var result = await svc.ResolveAgentSelectorLabelsAsync(input, CancellationToken.None);
+
+        result.Should().BeEquivalentTo(new[] { "dotnet", "dotnet10", "kiro" },
+            "matching profile should return its full MatchLabels set");
+    }
+
+    [Fact]
+    public async Task ResolveAgentSelectorLabelsAsync_WhenMultipleProfiles_SelectsFirstMatch()
+    {
+        var profile1 = new AgentProfile
+        {
+            Id = "prof-1", DisplayName = "OpenCode", Enabled = true,
+            MatchLabels = ["opencode", "python"],
+            AgentProviderConfigId = "oc-cfg", Priority = 1
+        };
+        var profile2 = new AgentProfile
+        {
+            Id = "prof-2", DisplayName = "Kiro", Enabled = true,
+            MatchLabels = ["dotnet", "kiro"],
+            AgentProviderConfigId = "kiro-cfg", Priority = 2
+        };
+        _mockConfigStore.Setup(s => s.LoadAgentProfilesAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<AgentProfile> { profile1, profile2 });
+
+        var svc = CreateService();
+        var input = new[] { "dotnet", "kiro" };
+
+        var result = await svc.ResolveAgentSelectorLabelsAsync(input, CancellationToken.None);
+
+        result.Should().BeEquivalentTo(new[] { "dotnet", "kiro" },
+            "should select the profile whose MatchLabels cover the input labels");
+    }
+
+    #endregion
 }
