@@ -35,6 +35,43 @@ public sealed class GitLabValidationService
     public async Task<GitLabValidationResult> ValidateAsync(
         string apiUrl, string accessToken, string projectId, CancellationToken ct)
     {
+        var inputError = ValidateInputParameters(apiUrl, accessToken, projectId);
+        if (inputError is not null)
+            return inputError;
+
+        // Input is valid — parse is guaranteed to succeed after ValidateInputParameters
+        // TODO: Prefer int.Parse(projectId) here to surface any drift between ValidateInputParameters
+        // and this call site immediately (throws instead of silently defaulting numericProjectId to 0,
+        // which is a valid GitLab project ID and would cause a mis-targeted API call).
+        // See review finding: DotNetSpecialist WARNING GitLabValidationService.cs:42
+        int.TryParse(projectId, out var numericProjectId);
+
+        IGitLabClient client;
+        try
+        {
+            var options = new RequestOptions(retryCount: 0, retryInterval: TimeSpan.Zero)
+            {
+                UserAgent = "CodingAgentAutomation/1.0"
+            };
+            client = new GitLabClient(apiUrl, accessToken, options);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to create GitLab client for validation");
+            return new GitLabValidationResult(false, null, null,
+                $"Failed to create GitLab client: {ex.Message}");
+        }
+
+        return await FetchAndMapProjectAsync(client, numericProjectId, apiUrl, ct);
+    }
+
+    /// <summary>
+    /// Validates all input parameters for <see cref="ValidateAsync"/>.
+    /// Returns a failure result if any parameter is invalid, or <c>null</c> if all inputs are valid.
+    /// </summary>
+    private static GitLabValidationResult? ValidateInputParameters(
+        string apiUrl, string accessToken, string projectId)
+    {
         if (string.IsNullOrWhiteSpace(apiUrl))
             return new GitLabValidationResult(false, null, null, "API URL is required.");
 
@@ -53,26 +90,20 @@ public sealed class GitLabValidationService
         if (string.IsNullOrWhiteSpace(projectId))
             return new GitLabValidationResult(false, null, null, "Project ID is required.");
 
-        if (!int.TryParse(projectId, out var numericProjectId))
+        if (!int.TryParse(projectId, out _))
             return new GitLabValidationResult(false, null, null,
                 $"Invalid project ID: '{projectId}'. Expected a numeric value.");
 
-        IGitLabClient client;
-        try
-        {
-            var options = new RequestOptions(retryCount: 0, retryInterval: TimeSpan.Zero)
-            {
-                UserAgent = "CodingAgentAutomation/1.0"
-            };
-            client = new GitLabClient(apiUrl, accessToken, options);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to create GitLab client for validation");
-            return new GitLabValidationResult(false, null, null,
-                $"Failed to create GitLab client: {ex.Message}");
-        }
+        return null;
+    }
 
+    /// <summary>
+    /// Fetches the GitLab project and maps the result to a <see cref="GitLabValidationResult"/>.
+    /// Handles per-status-code GitLab exceptions and connectivity errors.
+    /// </summary>
+    private async Task<GitLabValidationResult> FetchAndMapProjectAsync(
+        IGitLabClient client, int numericProjectId, string apiUrl, CancellationToken ct)
+    {
         try
         {
             // Task.Run wraps the synchronous NGitLab indexer call. Cancellation relies on

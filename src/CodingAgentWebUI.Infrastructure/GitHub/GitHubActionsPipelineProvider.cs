@@ -216,6 +216,29 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         if (failedJobIds.Count == 0)
             return status;
 
+        var logsByJobId = await FetchLogsForFailedJobsAsync(failedJobIds, ct);
+
+        if (logsByJobId.Count == 0)
+            return status;
+
+        return new PipelineRunStatus
+        {
+            State = status.State,
+            Jobs = BuildEnrichedJobList(status.Jobs, logsByJobId),
+            Url = status.Url,
+            StartedAt = status.StartedAt,
+            CompletedAt = status.CompletedAt,
+            CommitSha = status.CommitSha
+        };
+    }
+
+    /// <summary>
+    /// Fetches log content for a set of failed job IDs. Returns a dictionary mapping
+    /// job ID to log content for each job where logs were successfully retrieved.
+    /// </summary>
+    private async Task<Dictionary<long, string>> FetchLogsForFailedJobsAsync(
+        IEnumerable<long> failedJobIds, CancellationToken ct)
+    {
         var logsByJobId = new Dictionary<long, string>();
         foreach (var jobId in failedJobIds)
         {
@@ -227,11 +250,18 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
                     logContent.Length, jobId);
             }
         }
+        return logsByJobId;
+    }
 
-        if (logsByJobId.Count == 0)
-            return status;
-
-        var enrichedJobs = status.Jobs.Select(job =>
+    /// <summary>
+    /// Produces a new job list with log content injected for jobs whose IDs appear in
+    /// <paramref name="logsByJobId"/>. Jobs not in the dictionary are returned unchanged.
+    /// </summary>
+    private static IReadOnlyList<PipelineJobResult> BuildEnrichedJobList(
+        IReadOnlyList<PipelineJobResult> originalJobs,
+        Dictionary<long, string> logsByJobId)
+    {
+        return originalJobs.Select(job =>
         {
             if (logsByJobId.TryGetValue(job.JobId, out var content))
             {
@@ -247,16 +277,6 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
             }
             return job;
         }).ToList();
-
-        return new PipelineRunStatus
-        {
-            State = status.State,
-            Jobs = enrichedJobs,
-            Url = status.Url,
-            StartedAt = status.StartedAt,
-            CompletedAt = status.CompletedAt,
-            CommitSha = status.CommitSha
-        };
     }
 
     internal static PipelineRunState MapJobState(WorkflowJobStatus status, WorkflowJobConclusion? conclusion)
