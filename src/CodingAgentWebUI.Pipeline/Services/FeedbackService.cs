@@ -347,33 +347,22 @@ public sealed class FeedbackService
 
     private IReadOnlyList<string> TruncateList(IReadOnlyList<string> items, int maxItems, int maxStringLength, string fieldName)
     {
-        var truncatedItems = items;
-
         if (items.Count > maxItems)
         {
             _logger.Warning("Truncating {FieldName} from {OriginalCount} to {MaxCount} items",
                 fieldName, items.Count, maxItems);
-            truncatedItems = items.Take(maxItems).ToList();
+            items = items.Take(maxItems).ToList();
         }
 
-        // Also truncate individual string items
-        var result = new List<string>(truncatedItems.Count);
-        for (var i = 0; i < truncatedItems.Count; i++)
-        {
-            var item = truncatedItems[i];
-            if (item.Length > maxStringLength)
+        return items
+            .Select((item, i) =>
             {
+                if (item.Length <= maxStringLength) return item;
                 _logger.Warning("Truncating {FieldName}[{Index}] from {OriginalLength} to {MaxLength} characters",
                     fieldName, i, item.Length, maxStringLength);
-                result.Add(item[..maxStringLength]);
-            }
-            else
-            {
-                result.Add(item);
-            }
-        }
-
-        return result;
+                return item[..maxStringLength];
+            })
+            .ToList();
     }
 
     private static string Truncate(string value, int maxLength) =>

@@ -109,7 +109,7 @@ public sealed class DecompositionStep : IPipelineStep
         }
         catch (Exception ex)
         {
-            Activity.Current?.RecordError(ex);
+            Activity.Current?.RecordError(ex, ct);
             var reason = $"Decomposition agent execution failed: {ex.Message}";
             logger.Warning(ex, "Pipeline {RunId} decomposition agent failed", run.RunId);
             context.Callbacks.EmitOutputLine($"❌ {reason}");

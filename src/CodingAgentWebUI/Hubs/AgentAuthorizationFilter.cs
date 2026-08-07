@@ -41,17 +41,17 @@ public sealed class AgentAuthorizationFilter : IHubFilter
     }
 
     public async ValueTask<object?> InvokeMethodAsync(
-        HubInvocationContext context,
+        HubInvocationContext invocationContext,
         Func<HubInvocationContext, ValueTask<object?>> next)
     {
         // Only apply authorization to AgentHub — skip Blazor's internal ComponentHub and other hubs
-        if (context.Hub is not AgentHub)
+        if (invocationContext.Hub is not AgentHub)
         {
-            return await next(context);
+            return await next(invocationContext);
         }
 
-        var connectionId = context.Context.ConnectionId;
-        var methodName = context.HubMethodName;
+        var connectionId = invocationContext.Context.ConnectionId;
+        var methodName = invocationContext.HubMethodName;
 
         // RegisterAgent is the only method that doesn't require a registered agent
         if (!string.Equals(methodName, nameof(AgentHub.RegisterAgent), StringComparison.Ordinal))
@@ -66,10 +66,10 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             }
 
             // Methods with [RequiresActiveJob] validate jobId (always first parameter)
-            var requiresActiveJob = context.HubMethod.GetCustomAttribute<RequiresActiveJobAttribute>() is not null;
+            var requiresActiveJob = invocationContext.HubMethod.GetCustomAttribute<RequiresActiveJobAttribute>() is not null;
             if (requiresActiveJob)
             {
-                if (context.HubMethodArguments.Count == 0 || context.HubMethodArguments[0] is not JobId jobId)
+                if (invocationContext.HubMethodArguments.Count == 0 || invocationContext.HubMethodArguments[0] is not JobId jobId)
                 {
                     _logger.Warning(
                         "Hub method {Method} rejected — missing or invalid jobId parameter from agent {AgentId}",
@@ -87,6 +87,6 @@ public sealed class AgentAuthorizationFilter : IHubFilter
             }
         }
 
-        return await next(context);
+        return await next(invocationContext);
     }
 }

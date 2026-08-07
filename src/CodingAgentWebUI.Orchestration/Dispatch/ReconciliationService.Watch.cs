@@ -28,7 +28,7 @@ public sealed partial class ReconciliationService
             catch (HttpOperationException httpEx) when (httpEx.Response.StatusCode == System.Net.HttpStatusCode.Gone)
             {
                 // 410 Gone: resourceVersion too old — re-list to rebuild state
-                Log.Warning("ReconciliationService: Watch got 410 Gone, performing full re-list");
+                Log.Warning(httpEx, "ReconciliationService: Watch got 410 Gone, performing full re-list");
                 _lastResourceVersion = null;
                 await RelistJobsAsync(ct);
             }
@@ -176,9 +176,9 @@ public sealed partial class ReconciliationService
 
             Log.Information("ReconciliationService: cascaded K8s Job failure to ConsolidationRun {RunId}", workItem.IssueIdentifier);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
-            Log.Debug("ReconciliationService: cascade to ConsolidationRun for WorkItem {WorkItemId} cancelled (shutdown)", workItemId);
+            Log.Debug(ex, "ReconciliationService: cascade to ConsolidationRun for WorkItem {WorkItemId} cancelled (shutdown)", workItemId);
         }
         catch (Exception ex)
         {

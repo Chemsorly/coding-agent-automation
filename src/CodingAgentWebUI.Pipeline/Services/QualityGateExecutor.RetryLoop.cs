@@ -19,7 +19,6 @@ public partial class QualityGateExecutor
         var callbacks = context.Callbacks;
         callbacks.TransitionTo(PipelineStep.RunningQualityGates);
 
-        // TODO: Consider checking ct.ThrowIfCancellationRequested() before starting stopwatch to avoid recording near-zero durations on pre-cancelled tokens
         var qgStopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
@@ -36,78 +35,13 @@ public partial class QualityGateExecutor
 
             LogAndRecordReport(context, report, "quality gates");
 
-            // Initial retry loop
             report = await RunRetryLoopAsync(context, report, "Quality gate retry agent", linkedCt);
             if (run.CurrentStep == PipelineStep.Failed) return;
 
             if (report.AllPassed)
-            {
-                // Cleanup step: ask the agent to clean up before PR creation
-                callbacks.TransitionTo(PipelineStep.PreparingForPullRequest);
-                callbacks.EmitOutputLine("🧹 Preparing for pull request — running cleanup...");
-                _logger.Information("Pipeline {RunId} quality gates passed, entering PreparingForPullRequest cleanup step", run.RunId);
-
-                var cleanupPrompt = PromptBuilder.BuildCleanupPrompt();
-                run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = cleanupPrompt });
-                callbacks.NotifyChange();
-
-                try
-                {
-                    var cleanupResult = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
-                        new AgentExecutionRequest
-                        {
-                            AgentProvider = context.AgentProvider,
-                            Prompt = cleanupPrompt,
-                            Run = run,
-                            Config = config,
-                            Description = "Pre-PR cleanup agent",
-                            Logger = _logger
-                        },
-                        callbacks, linkedCt);
-
-                    if (cleanupResult != null)
-                        await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
-                }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception ex)
-                {
-                    _logger.Warning(ex, "Pipeline {RunId} cleanup agent call failed, continuing to final quality gates", run.RunId);
-                    run.ChatHistory.Enqueue(new ChatEntry
-                    {
-                        Role = ChatRole.System,
-                        Content = $"Agent error during cleanup: {ex.Message}"
-                    });
-                }
-
-                // Final quality gate run after cleanup
-                callbacks.EmitOutputLine("🏗️ Running final quality gates after cleanup...");
-                _logger.Information("Pipeline {RunId} running final quality gates after cleanup", run.RunId);
-                callbacks.TransitionTo(PipelineStep.RunningQualityGates);
-                report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
-
-                report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt,
-                    skipCiIfNoChanges: true);
-                if (run.CurrentStep == PipelineStep.Failed) return;
-
-                LogAndRecordReport(context, report, "final quality gates");
-
-                // If final gates fail, re-enter the retry loop using the existing retry budget
-                report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
-                if (run.CurrentStep == PipelineStep.Failed) return;
-
-                if (report.AllPassed)
-                {
-                    await callbacks.FinalizePullRequest(run, report, false, linkedCt);
-                }
-                else
-                {
-                    await FinalizeDraftPrAsync(context, run, report, "exhausted after cleanup", linkedCt);
-                }
-            }
+                await RunPostRetryCleanupAndFinalizeAsync(context, report, linkedCt);
             else
-            {
                 await FinalizeDraftPrAsync(context, run, report, "exhausted", linkedCt);
-            }
         }
         catch (OperationCanceledException)
         {
@@ -139,6 +73,65 @@ public partial class QualityGateExecutor
                 qgStopwatch.Elapsed.TotalSeconds,
                 PipelineTelemetry.BuildTags(run.RunType, run.ProjectId, run.ProjectName));
         }
+    }
+
+    /// <summary>
+    /// Runs the pre-PR cleanup agent, then the final quality gate pass, and finalizes the PR.
+    /// Called after the initial retry loop passes all quality gates.
+    /// </summary>
+    private async Task RunPostRetryCleanupAndFinalizeAsync(QualityGateContext context, QualityGateReport report, CancellationToken linkedCt)
+    {
+        var run = context.Run;
+        var config = context.Config;
+        var callbacks = context.Callbacks;
+
+        callbacks.TransitionTo(PipelineStep.PreparingForPullRequest);
+        callbacks.EmitOutputLine("🧹 Preparing for pull request — running cleanup...");
+        _logger.Information("Pipeline {RunId} quality gates passed, entering PreparingForPullRequest cleanup step", run.RunId);
+
+        var cleanupPrompt = PromptBuilder.BuildCleanupPrompt();
+        run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = cleanupPrompt });
+        callbacks.NotifyChange();
+
+        try
+        {
+            var cleanupResult = await AgentPhaseExecutor.ExecuteAgentAndRecordAsync(
+                new AgentExecutionRequest
+                {
+                    AgentProvider = context.AgentProvider,
+                    Prompt = cleanupPrompt,
+                    Run = run,
+                    Config = config,
+                    Description = "Pre-PR cleanup agent",
+                    Logger = _logger
+                },
+                callbacks, linkedCt);
+
+            if (cleanupResult != null)
+                await _prOrchestrator.UpdateFileChangeStatsAsync(run, context.RepoProvider);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Pipeline {RunId} cleanup agent call failed, continuing to final quality gates", run.RunId);
+            run.ChatHistory.Enqueue(new ChatEntry { Role = ChatRole.System, Content = $"Agent error during cleanup: {ex.Message}" });
+        }
+
+        callbacks.EmitOutputLine("🏗️ Running final quality gates after cleanup...");
+        _logger.Information("Pipeline {RunId} running final quality gates after cleanup", run.RunId);
+        callbacks.TransitionTo(PipelineStep.RunningQualityGates);
+        report = await RunQualityGateValidationAsync(context, run.WorkspacePath!, config, linkedCt);
+        report = await AppendExternalCiIfNeededAsync(context, report, allowEmptyCommit: true, linkedCt, skipCiIfNoChanges: true);
+        if (run.CurrentStep == PipelineStep.Failed) return;
+
+        LogAndRecordReport(context, report, "final quality gates");
+        report = await RunRetryLoopAsync(context, report, "Final QG retry agent", linkedCt);
+        if (run.CurrentStep == PipelineStep.Failed) return;
+
+        if (report.AllPassed)
+            await callbacks.FinalizePullRequest(run, report, false, linkedCt);
+        else
+            await FinalizeDraftPrAsync(context, run, report, "exhausted after cleanup", linkedCt);
     }
 
     /// <summary>

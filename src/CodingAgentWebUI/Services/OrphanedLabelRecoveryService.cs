@@ -201,11 +201,9 @@ public sealed class OrphanedLabelRecoveryService : BackgroundService
 
             foreach (var issue in result.Items)
             {
-                if (!_runService.IsIssueBeingProcessed(issue.Identifier, providerConfigId))
-                {
-                    if (await TryRecoverSingleIssueAsync(issue, issueProvider, providerConfigId, ct))
-                        recovered++;
-                }
+                if (!_runService.IsIssueBeingProcessed(issue.Identifier, providerConfigId)
+                    && await TryRecoverSingleIssueAsync(issue, issueProvider, providerConfigId, ct))
+                    recovered++;
             }
 
             if (!result.HasMore)

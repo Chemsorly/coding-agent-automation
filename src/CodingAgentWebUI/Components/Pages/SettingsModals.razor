@@ -142,21 +142,7 @@
                 _ => new List<ProviderConfig>()
             };
 
-            bool alreadyExists;
-            if (savedConfig.ProviderType == "GitLab")
-            {
-                var projectId = savedConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, "");
-                alreadyExists = existingList.Any(p =>
-                    p.ProviderType == "GitLab"
-                    && p.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, "") == projectId);
-            }
-            else
-            {
-                alreadyExists = existingList.Any(p =>
-                    p.ProviderType == "GitHub"
-                    && p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "") == _relatedModalOwner
-                    && p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "") == _relatedModalRepo);
-            }
+            var alreadyExists = ProviderAlreadyExists(savedConfig, existingList);
 
             if (!alreadyExists)
                 _relatedModalItems.Add(new RelatedProviderItem { Kind = kind, Selected = true });
@@ -167,13 +153,27 @@
         StateHasChanged();
     }
 
+    private bool ProviderAlreadyExists(ProviderConfig savedConfig, List<ProviderConfig> existingList)
+    {
+        if (savedConfig.ProviderType == "GitLab")
+        {
+            var projectId = savedConfig.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, "");
+            return existingList.Any(p =>
+                p.ProviderType == "GitLab"
+                && p.Settings.GetValueOrDefault(ProviderSettingKeys.ProjectId, "") == projectId);
+        }
+        return existingList.Any(p =>
+            p.ProviderType == "GitHub"
+            && p.Settings.GetValueOrDefault(ProviderSettingKeys.Owner, "") == _relatedModalOwner
+            && p.Settings.GetValueOrDefault(ProviderSettingKeys.Repo, "") == _relatedModalRepo);
+    }
+
     private void DismissConfigureLabelsModal()
     {
         _showConfigureLabelsModal = false;
         if (_configureLabelsProviderConfig is not null)
             ShowRelatedProviders(_configureLabelsProviderConfig);
     }
-
     private void HandleConfigureLabelsKeyDown(KeyboardEventArgs e)
     {
         if (e.Key == "Escape") DismissConfigureLabelsModal();

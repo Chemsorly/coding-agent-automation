@@ -71,7 +71,7 @@ public static class AgentJobRunner
     /// <summary>
     /// Executes a pipeline job via the provided executor delegate (backward-compatible overload).
     /// </summary>
-    public static Task<JobCompletionPayload> ExecuteAsync(
+    public static Task<JobCompletionPayload> ExecuteAsync( // NOSONAR S107 — convenience overload delegates to AgentJobExecutionRequest
         PipelineExecuteDelegate execute,
         JobAssignmentMessage assignment,
         HubConnection connection,
@@ -83,7 +83,7 @@ public static class AgentJobRunner
         => ExecuteAsync(new AgentJobExecutionRequest(execute, assignment, connection, outputBatcher, onStepChanged, cancelledLabel, ct, rethrowOnSigterm));
 
     /// <summary>Convenience overload accepting <see cref="IPipelineExecutor"/> directly.</summary>
-    public static Task<JobCompletionPayload> ExecuteAsync(
+    public static Task<JobCompletionPayload> ExecuteAsync( // NOSONAR S107 — convenience overload delegates to AgentJobExecutionRequest
         IPipelineExecutor executor,
         JobAssignmentMessage assignment,
         HubConnection connection,

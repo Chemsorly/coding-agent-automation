@@ -53,7 +53,7 @@
 @code {
     private bool _initialized;
     private bool _dismissed;
-    private CancellationTokenSource _cts = new();
+    private readonly CancellationTokenSource _cts = new();
 
     [Parameter, EditorRequired] public bool HasIssueProvider { get; set; }
     [Parameter, EditorRequired] public bool HasRepoProvider { get; set; }

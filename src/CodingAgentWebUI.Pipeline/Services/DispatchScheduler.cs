@@ -12,6 +12,7 @@ namespace CodingAgentWebUI.Pipeline.Services;
 /// </summary>
 internal sealed class DispatchScheduler
 {
+    private const string UnknownProjectName = "Unknown";
     private readonly IDispatchRunCreator _orchestration;
     private readonly IDispatchOrchestrationService? _dispatchOrchestration;
     private readonly IWorkDistributor? _workDistributor;
@@ -133,20 +134,13 @@ internal sealed class DispatchScheduler
         int remaining = request.MaxRunsPerCycle > 0 ? request.MaxRunsPerCycle : int.MaxValue;
         int processedCount = 0;
         int failedCount = 0;
-
-        // Per-cycle dependency state cache shared across all issue evaluations
-        var cycleStateCache = new Dictionary<int, bool>();
-
-        // Build template → project lookup for passing project context at dispatch time
-        var templateProjectLookup = request.FlattenedTemplates.ToDictionary(ft => ft.Template.Id, ft => ft.Project);
-
-        // Count active decomposition runs for concurrency enforcement
-        var activeDecompositionCount = _orchestration.GetAllActiveRuns()
+        int activeDecompositionCount = _orchestration.GetAllActiveRuns()
             .Count(r => r.RunType is PipelineRunType.DecompositionAnalysis or PipelineRunType.Decomposition);
 
+        var cycleStateCache = new Dictionary<int, bool>();
+        var templateProjectLookup = request.FlattenedTemplates.ToDictionary(ft => ft.Template.Id, ft => ft.Project);
         var currentTurn = DispatchTurn.Issues;
 
-        // Track last reported issue identifier for error logging in DispatchRoundAsync
         string? lastReportedIssue = null;
         var trackingReportIssue = (string? id) => { lastReportedIssue = id; request.ReportIssue(id); };
 
@@ -154,16 +148,9 @@ internal sealed class DispatchScheduler
         {
             if (ct.IsCancellationRequested) break;
 
-            bool issueMadeProgress = false;
-            bool prMadeProgress = false;
-            bool decompMadeProgress = false;
-
             var (hasIssues, hasPrs, hasDecomp) = ComputeQueueAvailability(request, activeDecompositionCount);
-
-            // Determine which queue to dispatch from this iteration.
-            // If the current turn's queue is empty, try the next non-empty queue.
             var (foundTurn, selectedTurn) = TrySelectNextTurn(currentTurn, hasIssues, hasPrs, hasDecomp);
-            if (!foundTurn) break; // All queues exhausted
+            if (!foundTurn) break;
             currentTurn = selectedTurn;
 
             var roundCtx = new RoundDispatchContext
@@ -178,82 +165,107 @@ internal sealed class DispatchScheduler
                 GetCurrentIssueIdentifier = () => lastReportedIssue
             };
 
-            // ── Issue dispatch (one per template per pass) ──
-            if (currentTurn == DispatchTurn.Issues && hasIssues)
-            {
-                var (progress, count, processed, failed) = await DispatchIssueRoundAsync(
-                    roundCtx, request.IssueQueues, cycleStateCache, stoppingToken, ct);
-                issueMadeProgress = progress;
-                remaining -= count;
-                processedCount += processed;
-                failedCount += failed;
-            }
+            var turnResult = await ExecuteTurnAsync(
+                currentTurn, request, roundCtx, cycleStateCache,
+                hasIssues, hasPrs, hasDecomp,
+                activeDecompositionCount, stoppingToken, ct);
+
+            remaining -= turnResult.Consumed;
+            processedCount += turnResult.Processed;
+            failedCount += turnResult.Failed;
+            activeDecompositionCount += turnResult.AdditionalDecomp;
 
             if (ct.IsCancellationRequested || remaining <= 0) break;
+            if (!turnResult.AnyProgress) break;
 
-            // ── PR review dispatch (one per template per pass) ──
-            if (currentTurn == DispatchTurn.PullRequests && hasPrs)
-            {
-                var (progress, count, processed, failed) = await DispatchPrRoundAsync(
-                    roundCtx, request.PrQueues, stoppingToken, ct);
-                prMadeProgress = progress;
-                remaining -= count;
-                processedCount += processed;
-                failedCount += failed;
-            }
-
-            if (ct.IsCancellationRequested || remaining <= 0) break;
-
-            // ── Decomposition dispatch (one per template per pass) ──
-            if (currentTurn == DispatchTurn.Decomposition && hasDecomp)
-            {
-                var (progress, count, processed, failed, additionalDecomp) = await DispatchDecompositionRoundAsync(
-                    roundCtx, request.DecompositionQueues, request.Config, activeDecompositionCount, stoppingToken, ct);
-                decompMadeProgress = progress;
-                remaining -= count;
-                processedCount += processed;
-                failedCount += failed;
-                activeDecompositionCount += additionalDecomp;
-            }
-
-            // ── Project-level decomposition dispatch ──
-            if (currentTurn == DispatchTurn.Decomposition && !decompMadeProgress && request.ProjectLevelDecompositionQueues.Count > 0
-                && activeDecompositionCount < request.Config.MaxConcurrentDecompositions)
-            {
-                var (progress, count, processed, failed, additionalDecomp) = await DispatchProjectLevelDecompositionRoundAsync(
-                    roundCtx, request.ProjectLevelDecompositionQueues, request.Config, activeDecompositionCount, stoppingToken, ct);
-                decompMadeProgress = progress;
-                remaining -= count;
-                processedCount += processed;
-                failedCount += failed;
-                activeDecompositionCount += additionalDecomp;
-            }
-
-            // If no queue made progress, all are exhausted
-            if (!issueMadeProgress && !prMadeProgress && !decompMadeProgress) break;
-
-            // Advance to next turn for fair alternation
             currentTurn = NextTurn(currentTurn);
         }
 
-        // Emit skipped_max_runs for items remaining in queues after budget exhaustion
-        if (remaining <= 0)
-        {
-            var remainingItems = request.IssueQueues.Values.Sum(q => q.Count)
-                + request.PrQueues.Values.Sum(q => q.Count)
-                + request.DecompositionQueues.Values.Sum(q => q.Count)
-                + request.ProjectLevelDecompositionQueues.Values.Sum(q => q.Count);
-            if (remainingItems > 0)
-                PipelineTelemetry.LoopDispatchDecisions.Add(remainingItems, new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedMaxRuns));
-        }
+        EmitSkippedMaxRunsTelemetry(request, remaining);
 
         return new DispatchResult(processedCount, failedCount);
+    }
+
+    private readonly record struct TurnResult(
+        bool IssueMadeProgress, bool PrMadeProgress, bool DecompMadeProgress,
+        int Consumed, int Processed, int Failed, int AdditionalDecomp)
+    {
+        public bool AnyProgress => IssueMadeProgress || PrMadeProgress || DecompMadeProgress;
+    }
+
+    /// <summary>
+    /// Executes the dispatch logic for the selected turn (Issues, PullRequests, or Decomposition).
+    /// Also handles the project-level decomposition fallback when the regular decomposition queue
+    /// makes no progress.
+    /// </summary>
+    private async Task<TurnResult> ExecuteTurnAsync(
+        DispatchTurn currentTurn,
+        DispatchRoundRobinRequest request,
+        RoundDispatchContext roundCtx,
+        Dictionary<int, bool> cycleStateCache,
+        bool hasIssues, bool hasPrs, bool hasDecomp,
+        int activeDecompositionCount,
+        CancellationToken stoppingToken,
+        CancellationToken ct)
+    {
+        bool issueMadeProgress = false, prMadeProgress = false, decompMadeProgress = false;
+        int consumed = 0, processed = 0, failed = 0, additionalDecomp = 0;
+
+        if (currentTurn == DispatchTurn.Issues && hasIssues)
+        {
+            var (progress, count, p, f) = await DispatchIssueRoundAsync(
+                roundCtx, request.IssueQueues, cycleStateCache, stoppingToken, ct);
+            issueMadeProgress = progress; consumed += count; processed += p; failed += f;
+        }
+
+        if (currentTurn == DispatchTurn.PullRequests && hasPrs)
+        {
+            var (progress, count, p, f) = await DispatchPrRoundAsync(
+                roundCtx, request.PrQueues, stoppingToken, ct);
+            prMadeProgress = progress; consumed += count; processed += p; failed += f;
+        }
+
+        if (currentTurn == DispatchTurn.Decomposition && hasDecomp)
+        {
+            var (progress, count, p, f, addl) = await DispatchDecompositionRoundAsync(
+                roundCtx, request.DecompositionQueues, request.Config, activeDecompositionCount, stoppingToken, ct);
+            decompMadeProgress = progress; consumed += count; processed += p; failed += f; additionalDecomp += addl;
+        }
+
+        // Project-level decomposition fallback — runs when regular decomposition made no progress
+        bool canDispatchProjectLevel = currentTurn == DispatchTurn.Decomposition
+            && !decompMadeProgress
+            && request.ProjectLevelDecompositionQueues.Count > 0
+            && (activeDecompositionCount + additionalDecomp) < request.Config.MaxConcurrentDecompositions;
+
+        if (canDispatchProjectLevel)
+        {
+            var (progress, count, p, f, addl) = await DispatchProjectLevelDecompositionRoundAsync(
+                roundCtx, request.ProjectLevelDecompositionQueues, request.Config,
+                activeDecompositionCount + additionalDecomp, stoppingToken, ct);
+            decompMadeProgress = progress; consumed += count; processed += p; failed += f; additionalDecomp += addl;
+        }
+
+        return new TurnResult(issueMadeProgress, prMadeProgress, decompMadeProgress,
+            consumed, processed, failed, additionalDecomp);
+    }
+
+    private static void EmitSkippedMaxRunsTelemetry(DispatchRoundRobinRequest request, int remaining)
+    {
+        if (remaining > 0) return;
+        var remainingItems = request.IssueQueues.Values.Sum(q => q.Count)
+            + request.PrQueues.Values.Sum(q => q.Count)
+            + request.DecompositionQueues.Values.Sum(q => q.Count)
+            + request.ProjectLevelDecompositionQueues.Values.Sum(q => q.Count);
+        if (remainingItems > 0)
+            PipelineTelemetry.LoopDispatchDecisions.Add(remainingItems,
+                new KeyValuePair<string, object?>(ActivityTags.Decision, PipelineTelemetry.LoopDecisions.SkippedMaxRuns));
     }
 
     /// <summary>
     /// Computes whether each queue type has eligible work, respecting decomposition concurrency limits.
     /// </summary>
-    private (bool hasIssues, bool hasPrs, bool hasDecomp) ComputeQueueAvailability(
+    private static (bool hasIssues, bool hasPrs, bool hasDecomp) ComputeQueueAvailability(
         DispatchRoundRobinRequest request, int activeDecompositionCount)
     {
         var hasIssues = HasEligible(request.PollableTemplates, request.IssueQueues, t => t.ImplementationEnabled);
@@ -323,7 +335,7 @@ internal sealed class DispatchScheduler
                         BrainProviderId = template.BrainProviderId,
                         PipelineProviderId = template.PipelineProviderId,
                         InitiatedBy = "loop",
-                        Project = dispatchProject ?? new PipelineProject { Id = "", Name = "Unknown" }
+                        Project = dispatchProject ?? new PipelineProject { Id = "", Name = UnknownProjectName }
                     },
                     ct),
                 () => JobDistributionRequest.FromTemplate(
@@ -456,7 +468,7 @@ internal sealed class DispatchScheduler
                     // to guard against regression (KeyNotFoundException) and validate the fallback behavior.
                     return await _dispatchOrchestration!.PrepareReviewDistributionRequestAsync(
                         reviewDispatchReq,
-                        reviewProject ?? new PipelineProject { Id = "", Name = "Unknown" },
+                        reviewProject ?? new PipelineProject { Id = "", Name = UnknownProjectName },
                         ct);
                 },
                 () => JobDistributionRequest.FromTemplate(
@@ -562,7 +574,7 @@ internal sealed class DispatchScheduler
                         InitiatedBy = "loop",
                         // TODO: Add a test where templateProjectLookup is missing an entry for a pollable template
                         // to guard against regression and validate fallback PipelineProject behavior downstream.
-                        Project = decompProject ?? new PipelineProject { Id = "", Name = "Unknown" }
+                        Project = decompProject ?? new PipelineProject { Id = "", Name = UnknownProjectName }
                     },
                     ct),
                 () => JobDistributionRequest.FromTemplate(
@@ -634,8 +646,10 @@ internal sealed class DispatchScheduler
 
         foreach (var kvp in projectLevelDecompositionQueues.ToList())
         {
-            if (ctx.RemainingBudget - consumed <= 0 || ct.IsCancellationRequested) break;
-            if (activeDecompositionCount + additionalDecompDispatches >= config.MaxConcurrentDecompositions) break;
+            bool limitReached = ctx.RemainingBudget - consumed <= 0
+                || ct.IsCancellationRequested
+                || activeDecompositionCount + additionalDecompDispatches >= config.MaxConcurrentDecompositions;
+            if (limitReached) break;
 
             // Fair alternation: TryDequeueValidProjectLevelEpic may drain multiple already-processing items
             // before returning the first valid candidate (or null). Combined with the snapshot ToList() above,
@@ -654,8 +668,8 @@ internal sealed class DispatchScheduler
                 consumed++;
                 madeProgress = true;
                 processed++;
-                if (dispatched) additionalDecompDispatches++;
-                if (epicFailed) failed++;
+                additionalDecompDispatches += dispatched ? 1 : 0;
+                failed += epicFailed ? 1 : 0;
             }
         }
 
@@ -738,7 +752,7 @@ internal sealed class DispatchScheduler
                         RepoProviderId = candidate.Template.RepoProviderId,
                         BrainProviderId = candidate.Template.BrainProviderId,
                         InitiatedBy = "loop",
-                        Project = projLevelProject ?? new PipelineProject { Id = "", Name = "Unknown" },
+                        Project = projLevelProject ?? new PipelineProject { Id = "", Name = UnknownProjectName },
                         DecompositionSource = "project-level"
                     },
                     ct),

@@ -203,7 +203,7 @@ public sealed class OutputBatcher : IAsyncDisposable
     /// </summary>
     private async Task SendBatchAsync(List<string> batch)
     {
-        await _flushGate.WaitAsync();
+        await _flushGate.WaitAsync(CancellationToken.None);
         try
         {
             if (OnFlush is not null)

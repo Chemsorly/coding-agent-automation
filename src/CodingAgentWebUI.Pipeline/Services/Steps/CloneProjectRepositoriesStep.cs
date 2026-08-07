@@ -112,7 +112,7 @@ public sealed class CloneProjectRepositoriesStep : IPipelineStep
             }
             catch (Exception ex)
             {
-                Activity.Current?.RecordError(ex);
+                Activity.Current?.RecordError(ex, ct);
                 context.Logger.Warning(ex, "Failed to clone additional repo '{TemplateName}' — marking unavailable: {Error}",
                     templateName, ex.Message);
             }

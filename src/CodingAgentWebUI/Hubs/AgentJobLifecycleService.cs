@@ -481,59 +481,58 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                     run.BranchName = value;
                     break;
                 case "BaselineHealthPassed":
-                    run.BaselineHealthPassed = bool.TryParse(value, out var bhp) ? bhp : null;
+                    run.BaselineHealthPassed = TryParseBool(value);
                     break;
                 case "AnalysisSkipped":
-                    run.AnalysisSkipped = bool.TryParse(value, out var ask) && ask;
+                    run.AnalysisSkipped = TryParseBool(value) == true;
                     break;
                 case "FilesChangedCount":
-                    if (int.TryParse(value, out var fcc)) run.FilesChangedCount = fcc;
+                    run.FilesChangedCount = TryParseInt(value) ?? run.FilesChangedCount;
                     break;
                 case "LinesAdded":
-                    if (int.TryParse(value, out var la)) run.LinesAdded = la;
+                    run.LinesAdded = TryParseInt(value) ?? run.LinesAdded;
                     break;
                 case "LinesRemoved":
-                    if (int.TryParse(value, out var lr)) run.LinesRemoved = lr;
+                    run.LinesRemoved = TryParseInt(value) ?? run.LinesRemoved;
                     break;
                 case "CodeReviewIterationsCompleted":
-                    if (int.TryParse(value, out var cric)) run.CodeReviewIterationsCompleted = cric;
+                    run.CodeReviewIterationsCompleted = TryParseInt(value) ?? run.CodeReviewIterationsCompleted;
                     break;
                 case "CodeReviewIterationsTotal":
-                    if (int.TryParse(value, out var crit)) run.CodeReviewIterationsTotal = crit;
+                    run.CodeReviewIterationsTotal = TryParseInt(value) ?? run.CodeReviewIterationsTotal;
                     break;
                 case "CodeReviewIterationInProgress":
-                    if (int.TryParse(value, out var crip)) run.CodeReviewIterationInProgress = crip;
+                    run.CodeReviewIterationInProgress = TryParseInt(value) ?? run.CodeReviewIterationInProgress;
                     break;
                 case "OpenIssuesDownloaded":
-                    if (int.TryParse(value, out var oid)) run.OpenIssuesDownloaded = oid;
+                    run.OpenIssuesDownloaded = TryParseInt(value) ?? run.OpenIssuesDownloaded;
                     break;
                 case "DecompositionSubIssuesCreated":
-                    if (int.TryParse(value, out var dsic)) run.DecompositionSubIssuesCreated = dsic;
+                    run.DecompositionSubIssuesCreated = TryParseInt(value) ?? run.DecompositionSubIssuesCreated;
                     break;
                 case "DecompositionSubIssuesAttempted":
-                    if (int.TryParse(value, out var dsia)) run.DecompositionSubIssuesAttempted = dsia;
+                    run.DecompositionSubIssuesAttempted = TryParseInt(value) ?? run.DecompositionSubIssuesAttempted;
                     break;
                 case "RetryCount":
-                    if (int.TryParse(value, out var rc)) run.RetryCount = rc;
+                    run.RetryCount = TryParseInt(value) ?? run.RetryCount;
                     break;
                 case "InfrastructureRetryCount":
-                    if (int.TryParse(value, out var irc)) run.InfrastructureRetryCount = irc;
+                    run.InfrastructureRetryCount = TryParseInt(value) ?? run.InfrastructureRetryCount;
                     break;
                 case "TotalTokens":
-                    if (long.TryParse(value, out var tt)) run.TotalTokens = tt;
+                    run.TotalTokens = TryParseLong(value) ?? run.TotalTokens;
                     break;
                 case "TotalCost":
-                    if (decimal.TryParse(value, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var tc))
-                        run.TotalCost = tc;
+                    run.TotalCost = TryParseDecimalInvariant(value) ?? run.TotalCost;
                     break;
                 case "CodeReviewCriticalCount":
-                    if (int.TryParse(value, out var crc)) pendingCritical = crc;
+                    pendingCritical = TryParseInt(value);
                     break;
                 case "CodeReviewWarningCount":
-                    if (int.TryParse(value, out var crw)) pendingWarning = crw;
+                    pendingWarning = TryParseInt(value);
                     break;
                 case "CodeReviewSuggestionCount":
-                    if (int.TryParse(value, out var crs)) pendingSuggestion = crs;
+                    pendingSuggestion = TryParseInt(value);
                     break;
                 case "CodeReviewAgentsRun":
                     run.CodeReviewAgentsRun = value.Split('\x1F', StringSplitOptions.RemoveEmptyEntries);
@@ -550,4 +549,17 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
                 pendingSuggestion ?? run.CodeReviewSuggestionCount);
         }
     }
+
+    private static int? TryParseInt(string value) =>
+        int.TryParse(value, out var n) ? n : null;
+
+    private static long? TryParseLong(string value) =>
+        long.TryParse(value, out var n) ? n : null;
+
+    private static bool? TryParseBool(string value) =>
+        bool.TryParse(value, out var b) ? b : null;
+
+    private static decimal? TryParseDecimalInvariant(string value) =>
+        decimal.TryParse(value, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var d) ? d : null;
 }

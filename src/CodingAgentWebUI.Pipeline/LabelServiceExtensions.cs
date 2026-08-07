@@ -33,7 +33,7 @@ public static class LabelServiceExtensions
     /// <summary>
     /// Best-effort label swap overload accepting individual parameters (backward-compatible).
     /// </summary>
-    public static Task TrySwapLabelAsync(
+    public static Task TrySwapLabelAsync( // NOSONAR S107 — convenience overload; delegates to LabelSwapContext
         this ILabelService labelService,
         ProviderConfigId providerConfigId,
         IssueIdentifier identifier,

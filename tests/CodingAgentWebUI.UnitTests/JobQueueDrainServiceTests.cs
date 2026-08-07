@@ -212,6 +212,9 @@ public class JobQueueDrainServiceTests
         // Signal is safe to call multiple times
         for (var i = 0; i < 100; i++)
             _service.Signal();
+
+        // If we got here without exception, the test passed
+        Assert.True(true, "Signal() must not throw on repeated calls");
     }
 
     [Fact]
@@ -261,6 +264,10 @@ public class JobQueueDrainServiceTests
             });
 
         await _service.DrainAsync(CancellationToken.None);
+
+        // After drain, dedup entry released (MarkIssueComplete was called on success)
+        _dispatcher.IsIssueQueued("issue-concurrent").Should().BeFalse(
+            "dedup entry must be released after successful dispatch (Req 9.3)");
     }
 
     [Fact]

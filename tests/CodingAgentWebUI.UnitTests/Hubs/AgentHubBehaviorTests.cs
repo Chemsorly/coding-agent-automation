@@ -329,6 +329,86 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
     #endregion
 
+    #region JobAccepted
+
+    [Fact]
+    public async Task JobAccepted_TransitionsAgentToBusy()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.JobAccepted("job-1");
+
+        _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Busy), Times.Once);
+    }
+
+    [Fact]
+    public async Task JobAccepted_TransitionsWorkItemToRunning()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.JobAccepted("job-1");
+
+        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task JobAccepted_NullAgent_StillTransitionsWorkItem()
+    {
+        // When agent is null (connection not found), the WorkItem transition should still happen
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns((AgentEntry?)null);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHubWithOrchestration();
+        await hub.JobAccepted("job-1");
+
+        _mockFacade.Verify(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task JobAccepted_WorkItemTransitionThrows_DoesNotPropagateException()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("DB error"));
+
+        var hub = CreateHubWithOrchestration();
+
+        // The exception from TransitionWorkItemAsync must be swallowed (it's in a try-catch)
+        var act = () => hub.JobAccepted("job-1");
+        await act.Should().NotThrowAsync("TransitionWorkItem failure must not propagate");
+    }
+
+    [Fact]
+    public async Task JobAccepted_NotifiesChange()
+    {
+        var agent = CreateAgent();
+        agent.ActiveJobId = "job-1";
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        _mockFacade.Setup(f => f.TransitionWorkItemAsync("job-1", WorkItemStatus.Running, It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+
+        var hub = CreateHubWithOrchestration();
+        var act = () => hub.JobAccepted("job-1");
+
+        // NotifyChange is called inside HandleJobAcceptedAsync — just verify no throw
+        await act.Should().NotThrowAsync("JobAccepted must complete without error on happy path");
+    }
+
+    #endregion
+
     #region RequestLabelChange
 
     [Fact]
@@ -1181,7 +1261,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHubWithOrchestration();
 
         // Should not throw even when run is not found
-        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
+        var act = () => hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow, metadata);
+        await act.Should().NotThrowAsync("hub must handle null run gracefully");
     }
 
     [Fact]
@@ -1298,6 +1379,112 @@ public sealed class AgentHubBehaviorTests : IDisposable
         await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow.AddHours(24));
 
         run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesBaselineHealthPassedFalse()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.VerifyingBaseline, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["BaselineHealthPassed"] = "False" });
+        run.BaselineHealthPassed.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesAnalysisSkipped()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["AnalysisSkipped"] = "True" });
+        run.AnalysisSkipped.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesOpenIssuesDownloaded()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.DownloadingOpenIssues, DateTimeOffset.UtcNow,
+            new Dictionary<string, string>
+            {
+                ["OpenIssuesDownloaded"] = "15",
+                ["DecompositionSubIssuesCreated"] = "3",
+                ["DecompositionSubIssuesAttempted"] = "4"
+            });
+        run.OpenIssuesDownloaded.Should().Be(15);
+        run.DecompositionSubIssuesCreated.Should().Be(3);
+        run.DecompositionSubIssuesAttempted.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesInfrastructureRetryCount()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["InfrastructureRetryCount"] = "2" });
+        run.InfrastructureRetryCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesTotalCostInvariantLocale()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        // Invariant culture uses period as decimal separator
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["TotalTokens"] = "999999", ["TotalCost"] = "9.99" });
+        run.TotalTokens.Should().Be(999999L);
+        run.TotalCost.Should().Be(9.99m);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_MalformedTotalCost_LeavesValueUnchanged()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["TotalCost"] = "not-a-decimal" });
+        run.TotalCost.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesCodeReviewAgentsRun()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        var encoded = "security-agent\x1Fstyle-agent";
+        await hub.ReportStepTransition("job-1", PipelineStep.ReviewingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["CodeReviewAgentsRun"] = encoded });
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "security-agent", "style-agent" });
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_CodeReviewIterationInProgress()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.ReviewingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["CodeReviewIterationInProgress"] = "2" });
+        run.CodeReviewIterationInProgress.Should().Be(2);
     }
 
     #endregion

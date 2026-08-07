@@ -98,7 +98,7 @@ internal static class AgentStallMonitor
 
                     var silence = ComputeSilence(health!, run);
 
-                    if (await HandleKillTimeoutAsync(health!, silence, killTimeout, run, agentProvider, phaseDescription, onChange, logger))
+                    if (await HandleKillTimeoutAsync(silence, killTimeout, run, agentProvider, phaseDescription, onChange, logger))
                         break;
 
                     HandleSilenceWarning(health!, silence, config, run, phaseDescription, onChange, logger, ref lastWarnTime);
@@ -165,7 +165,7 @@ internal static class AgentStallMonitor
     /// Logs, notifies, kills the agent, and returns true to break the monitor loop.
     /// </summary>
     private static async Task<bool> HandleKillTimeoutAsync(
-        AgentHealthStatus health, TimeSpan silence, TimeSpan killTimeout,
+        TimeSpan silence, TimeSpan killTimeout,
         PipelineRun run, IAgentProvider agentProvider,
         string phaseDescription, Action? onChange, Serilog.ILogger logger)
     {
@@ -187,7 +187,7 @@ internal static class AgentStallMonitor
     /// Emits a silence warning when the silence threshold is met and sufficient time has
     /// passed since the last warning. Updates <paramref name="lastWarnTime"/> on emit.
     /// </summary>
-    private static void HandleSilenceWarning(
+    private static void HandleSilenceWarning( // NOSONAR S107 — ref param prevents grouping; all args are distinct domain concepts
         AgentHealthStatus health, TimeSpan silence,
         PipelineConfiguration config, PipelineRun run,
         string phaseDescription, Action? onChange,

@@ -23,7 +23,6 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
     private readonly IAgentRegistryService _registry;
     private readonly IOrchestratorRunService _runService;
-    private readonly IPipelineRunHistoryService _historyService;
     private readonly IConfigurationStore _configStore;
     private readonly IConsolidationService? _consolidationService;
     private readonly IRunLifecycleManager _lifecycleManager;
@@ -42,7 +41,6 @@ public sealed class HeartbeatMonitorService : BackgroundService
 
         _registry = deps.Registry;
         _runService = deps.RunService;
-        _historyService = deps.HistoryService;
         _configStore = deps.ConfigStore;
         _consolidationService = deps.ConsolidationService;
         _lifecycleManager = deps.LifecycleManager;

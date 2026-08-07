@@ -25,7 +25,7 @@ public sealed class SignalRAgentCommunication : IAgentCommunication
     }
 
     /// <inheritdoc />
-    public Task AssignJobAsync(string connectionId, JobAssignmentMessage job, CancellationToken ct)
+    public Task AssignJobAsync(string connectionId, JobAssignmentMessage job, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(connectionId);
         ArgumentNullException.ThrowIfNull(job);
@@ -33,7 +33,7 @@ public sealed class SignalRAgentCommunication : IAgentCommunication
     }
 
     /// <inheritdoc />
-    public Task RequestFetchModelsAsync(string connectionId, FetchModelsRequest request, CancellationToken ct)
+    public Task RequestFetchModelsAsync(string connectionId, FetchModelsRequest request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(connectionId);
         ArgumentNullException.ThrowIfNull(request);
@@ -41,14 +41,14 @@ public sealed class SignalRAgentCommunication : IAgentCommunication
     }
 
     /// <inheritdoc />
-    public Task ForceDisconnectAsync(string connectionId, CancellationToken ct)
+    public Task ForceDisconnectAsync(string connectionId, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(connectionId);
         return _hubContext.Clients.Client(connectionId).ForceDisconnect();
     }
 
     /// <inheritdoc />
-    public Task CancelJobAsync(string connectionId, string jobId, CancellationToken ct)
+    public Task CancelJobAsync(string connectionId, string jobId, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(connectionId);
         ArgumentNullException.ThrowIfNull(jobId);
@@ -56,7 +56,7 @@ public sealed class SignalRAgentCommunication : IAgentCommunication
     }
 
     /// <inheritdoc />
-    public Task AssignConsolidationJobAsync(string connectionId, AgentId agentId, ConsolidationJobMessage job, CancellationToken ct)
+    public Task AssignConsolidationJobAsync(string connectionId, AgentId agentId, ConsolidationJobMessage job, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(connectionId);
         // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with

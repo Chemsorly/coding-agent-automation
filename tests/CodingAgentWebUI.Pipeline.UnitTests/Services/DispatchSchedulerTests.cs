@@ -606,6 +606,268 @@ public class DispatchSchedulerTests
 
     #endregion
 
+    #region ExecuteTurnAsync / ComputeQueueAvailability / TrySelectNextTurn coverage
+
+    /// <summary>
+    /// When hasIssues=false but hasPrs=true, TrySelectNextTurn skips the Issues turn and selects PullRequests.
+    /// </summary>
+    [Fact]
+    public async Task FairRoundRobin_NoIssues_StartsDispatchingFromPRQueue()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>(); // empty — no issues
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>
+        {
+            ["t1"] = new() { CreatePrSummary("pr-1", 1), CreatePrSummary("pr-2", 2) }
+        };
+        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>();
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(2, "both PRs should be dispatched when no issues are present");
+        _issueDispatchCount.Should().Be(0);
+        _prDispatchCount.Should().Be(2);
+    }
+
+    /// <summary>
+    /// When MaxConcurrentDecompositions is reached (active >= max), ComputeQueueAvailability
+    /// returns hasDecomp=false and no decomp items are dispatched even when the queue is non-empty.
+    /// </summary>
+    [Fact]
+    public async Task FairRoundRobin_DecompAtConcurrencyLimit_SkipsDecompQueue()
+    {
+        // Simulate 2 already-active decomposition runs at the limit
+        _mockOrchestration.Setup(o => o.GetAllActiveRuns())
+            .Returns(new List<PipelineRun>
+            {
+                new() { RunId = "active-1", IssueIdentifier = "a1", IssueTitle = "A1", IssueProviderConfigId = "ip-1", RepoProviderConfigId = "rp-1", RunType = PipelineRunType.DecompositionAnalysis },
+                new() { RunId = "active-2", IssueIdentifier = "a2", IssueTitle = "A2", IssueProviderConfigId = "ip-1", RepoProviderConfigId = "rp-1", RunType = PipelineRunType.Decomposition }
+            });
+
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = new() { CreateIssueSummary("issue-1") }
+        };
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>();
+        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        {
+            ["t1"] = new() { (CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis) }
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                // MaxConcurrentDecompositions = 2, and there are already 2 active → limit reached
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 2 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        _decompDispatchCount.Should().Be(0, "decomp queue should be skipped when at the concurrency limit");
+        _issueDispatchCount.Should().Be(1, "issue dispatch should still proceed");
+    }
+
+    /// <summary>
+    /// Project-level decomposition fallback fires when regular decomp queue is empty but
+    /// project-level queue has items and concurrency limit is not reached.
+    /// </summary>
+    [Fact]
+    public async Task FairRoundRobin_ProjectLevelDecomp_FallbackWhenRegularDecompEmpty()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>();
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>();
+        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(); // empty regular
+        var projectLevelDecompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>
+        {
+            ["p1"] = new() { (CreateIssueSummary("proj-epic-1"), PipelineRunType.DecompositionAnalysis, template) }
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(1, "project-level decomp fallback should fire when regular decomp queue is empty");
+        _decompDispatchCount.Should().Be(1);
+    }
+
+    /// <summary>
+    /// When regular decomp queue has items AND dispatches successfully in a turn, the project-level
+    /// decomp fallback does NOT fire in that same turn (decompMadeProgress=true guards the fallback).
+    /// On the next decomp turn, once regular is exhausted, project-level fires as fallback.
+    /// </summary>
+    [Fact]
+    public async Task FairRoundRobin_ProjectLevelDecomp_NotFiredInSameTurnAsRegularDecomp()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>();
+        var prQueues = new Dictionary<string, List<PullRequestSummary>>();
+        // Regular decomp queue with 1 item
+        var decompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>
+        {
+            ["t1"] = new() { (CreateIssueSummary("epic-1"), PipelineRunType.DecompositionAnalysis) }
+        };
+        // Project-level also has 1 item — should only fire AFTER regular is exhausted
+        var projectLevelDecompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>
+        {
+            ["p1"] = new() { (CreateIssueSummary("proj-epic-1"), PipelineRunType.DecompositionAnalysis, template) }
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = prQueues,
+                DecompositionQueues = decompQueues,
+                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        // Regular decomp fires first (decompMadeProgress=true → project-level blocked in same turn).
+        // Next decomp turn: regular is exhausted, project-level fires as fallback.
+        // Total: 2 dispatches, both from decomp queue.
+        result.ProcessedCount.Should().Be(2);
+        _decompDispatchCount.Should().Be(2, "regular decomp dispatches first, then project-level as fallback in the next turn");
+    }
+
+    /// <summary>
+    /// AllQueuesEmpty — TrySelectNextTurn returns found=false, loop breaks immediately, ProcessedCount=0.
+    /// </summary>
+    [Fact]
+    public async Task FairRoundRobin_AllQueuesEmpty_BreaksImmediately()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(0);
+        result.FailedCount.Should().Be(0);
+        _issueDispatchCount.Should().Be(0);
+        _prDispatchCount.Should().Be(0);
+        _decompDispatchCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Only issues remain (PRs and decomp empty). Verifies remaining turns are skipped when
+    /// a queue type has no eligible items (exercising TrySelectNextTurn skip-ahead path).
+    /// </summary>
+    [Fact]
+    public async Task FairRoundRobin_OnlyIssues_AllBudgetUsedByIssueQueue()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        var issueQueues = new Dictionary<string, List<IssueSummary>>
+        {
+            ["t1"] = new() { CreateIssueSummary("i-1"), CreateIssueSummary("i-2"), CreateIssueSummary("i-3") }
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = issueQueues,
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = new Dictionary<string, List<(IssueSummary, PipelineRunType, PipelineJobTemplate)>>(),
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            CancellationToken.None, CancellationToken.None);
+
+        result.ProcessedCount.Should().Be(3);
+        _issueDispatchCount.Should().Be(3);
+        _prDispatchCount.Should().Be(0);
+        _decompDispatchCount.Should().Be(0);
+    }
+
+    #endregion
+
     #region Helpers
 
     private static PipelineJobTemplate CreateTemplate(

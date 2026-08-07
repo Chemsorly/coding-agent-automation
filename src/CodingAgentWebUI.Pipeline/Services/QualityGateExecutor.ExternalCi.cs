@@ -60,7 +60,7 @@ public partial class QualityGateExecutor
         GateResult? ciGate = null;
         try
         {
-            var skipCi = await CommitAndPushAsync(context, report, allowEmptyCommit, skipCiIfNoChanges, ct);
+            var skipCi = await CommitAndPushAsync(context, allowEmptyCommit, skipCiIfNoChanges, ct);
             if (skipCi)
                 return report;
 
@@ -128,10 +128,6 @@ public partial class QualityGateExecutor
     /// </summary>
     private async Task<bool> CommitAndPushAsync(
         QualityGateContext context,
-        // TODO: [WARNING] The `report` parameter is not used inside this method. It was retained
-        // from the original inline code where `report` was in the outer scope. Consider removing
-        // it to avoid misleading future readers into thinking the report is mutated here.
-        QualityGateReport report,
         bool allowEmptyCommit,
         bool skipCiIfNoChanges,
         CancellationToken ct)
@@ -212,7 +208,7 @@ public partial class QualityGateExecutor
                    && run.InfrastructureRetryCount < config.MaxInfrastructureRetries)
             {
                 (ciPassed, ciStatus, ciLogPaths) = await ExecuteInfraRetryAsync(
-                    context, config, callbacks, ciStatus, ct);
+                    context, config, callbacks, ct);
 
                 if (!ciPassed)
                     classification = CiFailureClassifier.Classify(ciStatus);
@@ -230,7 +226,6 @@ public partial class QualityGateExecutor
         QualityGateContext context,
         PipelineConfiguration config,
         IPipelineCallbacks callbacks,
-        PipelineRunStatus previousStatus,
         CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();

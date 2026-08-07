@@ -185,7 +185,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         return claimedPvc;
     }
 
-    private async Task BuildAndSubmitChatJobAsync(
+    private async Task BuildAndSubmitChatJobAsync( // NOSONAR S107 — private builder; all params are independent job-spec inputs
         string normalized, string selectorLabelValue, string? model, string? effort,
         string jobName, Guid dispatchId, string? claimedPvc,
         JobTemplate template,
@@ -237,7 +237,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         await _jobClient.CreateJobAsync(job, _options.Namespace, cancellationToken);
     }
 
-    private async Task<string> PollForAgentConnectionAsync(
+    private async Task<string> PollForAgentConnectionAsync( // NOSONAR S107 — private polling helper; params are independent timing/routing inputs
         Guid dispatchId, string jobName, string? claimedPvc, string normalized,
         string selectorLabelValue, DateTimeOffset dispatchStart,
         System.Diagnostics.Activity? activity, CancellationToken cancellationToken)
@@ -579,7 +579,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         activity?.SetTag("job_name", jobName);
 
         // 1. Send CancelChat — best-effort
-        await TrySendCancelChatAsync(agentId, session, jobName, cancellationToken);
+        await TrySendCancelChatAsync(agentId, session, jobName);
 
         // 2. Wait up to 10s for the watcher to confirm terminal
         using var graceCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -593,12 +593,12 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         catch (OperationCanceledException)
         {
             activity?.SetTag(TagOutcome, "force_delete");
-            await ForceDeleteAndCleanupAsync(agentId, jobName, session, cancellationToken);
+            await ForceDeleteAndCleanupAsync(agentId, jobName, session);
         }
     }
 
     private async Task TrySendCancelChatAsync(
-        string agentId, ChatSession session, string jobName, CancellationToken ct)
+        string agentId, ChatSession session, string jobName)
     {
         var agentEntry = _registry.GetByAgentId(agentId);
         if (agentEntry is null)
@@ -622,7 +622,7 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
     }
 
     private async Task ForceDeleteAndCleanupAsync(
-        string agentId, string jobName, ChatSession session, CancellationToken cancellationToken)
+        string agentId, string jobName, ChatSession session)
     {
         // Cancel watcher first so it exits without running its own cleanup
         try { await session.WatcherCts.CancelAsync(); } catch (OperationCanceledException) { }
@@ -684,14 +684,14 @@ public sealed partial class ChatJobDispatcher : IHostedService, IAsyncDisposable
         }
     }
 
-    private static bool IsTerminal(V1Job job)
+    internal static bool IsTerminal(V1Job job)
         => job.Status?.Conditions?.Any(c =>
                (c.Type == "Complete" || c.Type == "Failed") && c.Status == "True") == true;
 
-    private static bool IsKiroAgent(string providerType)
+    internal static bool IsKiroAgent(string providerType)
         => string.Equals(providerType, "kiro", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsOpencodeAgent(string providerType)
+    internal static bool IsOpencodeAgent(string providerType)
         => string.Equals(providerType, "opencode", StringComparison.OrdinalIgnoreCase);
 
     private static readonly HashSet<string> ValidEffortValues =
