@@ -7,9 +7,10 @@
   <!-- Exclude from all analysis: EF migrations (generated DDL) and test utilities (not production code) -->
   <Property Name="sonar.exclusions">**/Migrations/**,tests/CodingAgentWebUI.TestUtilities/**</Property>
 
-  <!-- Exclude from coverage only: entry points, Blazor markup, and ReconciliationService files
-       (service-host methods: K8s watch loops, job deletion, PVC management — require integration env) -->
-  <Property Name="sonar.coverage.exclusions">**/Program.cs,**/*.razor,**/Dispatch/ReconciliationService*.cs</Property>
+  <!-- Exclude from coverage only: entry points, Blazor markup, ReconciliationService files
+       (service-host methods: K8s watch loops, job deletion, PVC management — require integration env),
+       and AgentK8SModeRegistration (pure DI/service-registration wiring, requires full container) -->
+  <Property Name="sonar.coverage.exclusions">**/Program.cs,**/*.razor,**/Dispatch/ReconciliationService*.cs,**/AgentK8SModeRegistration.cs</Property>
 
   <!-- Exclude ReconciliationService partials from CPD: duplication with DatabaseMaintenanceService
        is pre-existing (was in monolithic ReconciliationService.cs before this structural split) -->
