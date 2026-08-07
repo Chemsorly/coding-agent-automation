@@ -292,7 +292,11 @@ public class LoopStatePersistenceServiceTests : IDisposable
         await Task.Delay(150);
 
         await sut.StopAsync(CancellationToken.None);
-        // Test passes if no unhandled exception propagated
+        // Verify the store was called (write was attempted) and exception was swallowed
+        mockStore.Verify(s => s.WriteAsync(It.IsAny<LoopState>(), It.IsAny<CancellationToken>()), Times.AtLeastOnce,
+            "WriteAsync should have been called — the exception path must be exercised");
+        // Service should still be stopped cleanly (no hung state)
+        sut.IsResuming.Should().BeFalse("service should remain in a clean state after store exception");
     }
 
     [Fact]
