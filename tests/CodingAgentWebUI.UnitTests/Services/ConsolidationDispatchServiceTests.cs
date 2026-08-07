@@ -1188,4 +1188,32 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     }
 
     #endregion
+
+    #region TryDispatchAsync — distributor failure path
+
+    [Fact]
+    public async Task TryDispatchAsync_DistributorReturnsFailed_ReturnsFailed()
+    {
+        // No idle agents → goes to distributor path
+        // Distributor returns failure → should return ConsolidationDispatchResult.Failed
+        _mockWorkDistributor
+            .Setup(w => w.DistributeAsync(It.IsAny<JobDistributionRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DistributionResult(false, "Queue is full", null, Queued: false));
+
+        var svc = CreateService();
+        var run = new ConsolidationRun
+        {
+            RunId = "dist-fail-run",
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            TemplateName = "Test"
+        };
+
+        var result = await svc.TryDispatchAsync(run, ConsolidationRunType.BrainConsolidation, null, null, "/tmp", CancellationToken.None);
+
+        result.Should().Be(ConsolidationDispatchResult.Failed,
+            "when the distributor fails to enqueue, dispatch should return Failed");
+    }
+
+    #endregion
 }
