@@ -106,4 +106,51 @@ public class StdoutTestResultParserTests
             result.Should().Be((t.passed, t.failed, t.skipped));
         });
     }
+
+    [Fact]
+    public void ParseTestCounts_PytestPassedOnly_ReturnsCorrectly()
+    {
+        var output = "========================= 8 passed in 2.10s =========================";
+        StdoutTestResultParser.ParseTestCounts(output).Should().Be((8, 0, 0));
+    }
+
+    [Fact]
+    public void ParseTestCounts_PytestAllZeroExceptErrors_FallsBackToZero()
+    {
+        // Pytest pattern won't match if only errors (no passed/failed/skipped counts)
+        // since the guard requires at least one non-zero count before accumulating errors
+        var output = "========================= 3 error in 0.5s =========================";
+        // Falls through all parsers and returns zeros
+        StdoutTestResultParser.ParseTestCounts(output).Should().Be((0, 0, 0));
+    }
+
+    [Fact]
+    public void ParseTestCounts_MavenAllPassed_NoneFailedOrSkipped()
+    {
+        var output = "Tests run: 5, Failures: 0, Errors: 0, Skipped: 0";
+        StdoutTestResultParser.ParseTestCounts(output).Should().Be((5, 0, 0));
+    }
+
+    [Fact]
+    public void ParseTestCounts_DotNet10SummaryAllZero_ReturnsZeros()
+    {
+        var output = "Test summary: total: 0; failed: 0; succeeded: 0; skipped: 0";
+        StdoutTestResultParser.ParseTestCounts(output).Should().Be((0, 0, 0));
+    }
+
+    [Fact]
+    public void ParseTestCounts_DotNetPerAssemblyAllPassed_ReturnsCorrectly()
+    {
+        var output = "Passed: 20, Failed: 0, Skipped: 0";
+        StdoutTestResultParser.ParseTestCounts(output).Should().Be((20, 0, 0));
+    }
+
+    [Fact]
+    public void ParseTestCounts_PytestNoMatch_FallsBackToPerAssembly()
+    {
+        // Pytest separator but no numbers that match — should fall back to per-assembly
+        var output = "===== test session starts =====\nPassed: 3, Failed: 0, Skipped: 1";
+        var result = StdoutTestResultParser.ParseTestCounts(output);
+        result.Should().Be((3, 0, 1));
+    }
 }

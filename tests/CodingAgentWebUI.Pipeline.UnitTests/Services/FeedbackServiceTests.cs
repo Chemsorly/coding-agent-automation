@@ -360,4 +360,53 @@ public class FeedbackServiceTests
     };
 
     #endregion
+
+    #region TruncateList via ApplyTruncation
+
+    [Fact]
+    public void ApplyTruncation_MissingContextListOverLimit_TruncatesToMax()
+    {
+        // Build a feedback where MissingContext has more than MaxMissingContextItems items
+        var items = Enumerable.Range(0, FeedbackConstraints.MaxMissingContextItems + 5)
+            .Select(i => $"item-{i}")
+            .ToList();
+
+        var feedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Failure,
+            CollectedAtUtc = TestTimestamp,
+            Harness = new HarnessFeedback
+            {
+                Category = "test",
+                MissingContext = items
+            }
+        };
+
+        var result = _sut.ParseFeedbackFromResponse(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                harness = new { category = "test", missingContext = items }
+            }),
+            FeedbackOutcome.Failure, TestTimestamp);
+
+        result.Harness.MissingContext.Count.Should().BeLessThanOrEqualTo(FeedbackConstraints.MaxMissingContextItems);
+    }
+
+    [Fact]
+    public void ApplyTruncation_ItemExceedsMaxStringLength_TruncatesItem()
+    {
+        var longItem = new string('x', FeedbackConstraints.MaxStringLength + 50);
+
+        var result = _sut.ParseFeedbackFromResponse(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                harness = new { category = "test", suggestions = new[] { longItem } }
+            }),
+            FeedbackOutcome.Success, TestTimestamp);
+
+        result.Harness.Suggestions.Should().HaveCount(1);
+        result.Harness.Suggestions[0].Length.Should().Be(FeedbackConstraints.MaxStringLength);
+    }
+
+    #endregion
 }

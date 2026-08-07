@@ -1301,6 +1301,112 @@ public sealed class AgentHubBehaviorTests : IDisposable
         run.LastStepChangeAt.Should().BeCloseTo(DateTimeOffset.UtcNow, TimeSpan.FromSeconds(5));
     }
 
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesBaselineHealthPassedFalse()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.VerifyingBaseline, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["BaselineHealthPassed"] = "False" });
+        run.BaselineHealthPassed.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesAnalysisSkipped()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.AnalyzingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["AnalysisSkipped"] = "True" });
+        run.AnalysisSkipped.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesOpenIssuesDownloaded()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.DownloadingOpenIssues, DateTimeOffset.UtcNow,
+            new Dictionary<string, string>
+            {
+                ["OpenIssuesDownloaded"] = "15",
+                ["DecompositionSubIssuesCreated"] = "3",
+                ["DecompositionSubIssuesAttempted"] = "4"
+            });
+        run.OpenIssuesDownloaded.Should().Be(15);
+        run.DecompositionSubIssuesCreated.Should().Be(3);
+        run.DecompositionSubIssuesAttempted.Should().Be(4);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesInfrastructureRetryCount()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["InfrastructureRetryCount"] = "2" });
+        run.InfrastructureRetryCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesTotalCostInvariantLocale()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        // Invariant culture uses period as decimal separator
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["TotalTokens"] = "999999", ["TotalCost"] = "9.99" });
+        run.TotalTokens.Should().Be(999999L);
+        run.TotalCost.Should().Be(9.99m);
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_MalformedTotalCost_LeavesValueUnchanged()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.GeneratingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["TotalCost"] = "not-a-decimal" });
+        run.TotalCost.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_AppliesCodeReviewAgentsRun()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        var encoded = "security-agent\x1Fstyle-agent";
+        await hub.ReportStepTransition("job-1", PipelineStep.ReviewingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["CodeReviewAgentsRun"] = encoded });
+        run.CodeReviewAgentsRun.Should().BeEquivalentTo(new[] { "security-agent", "style-agent" });
+    }
+
+    [Fact]
+    public async Task ReportStepTransition_WithMetadata_CodeReviewIterationInProgress()
+    {
+        var run = CreateRun();
+        _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(CreateAgent());
+        var hub = CreateHubWithOrchestration();
+        await hub.ReportStepTransition("job-1", PipelineStep.ReviewingCode, DateTimeOffset.UtcNow,
+            new Dictionary<string, string> { ["CodeReviewIterationInProgress"] = "2" });
+        run.CodeReviewIterationInProgress.Should().Be(2);
+    }
+
     #endregion
 
     #region ReportChatResponse / ReportChatCompleted — Session Ownership

@@ -229,4 +229,98 @@ public class CoberturaParserTests
     {
         try { File.Delete(path); } catch { }
     }
+
+    [Fact]
+    public void ParseCoverage_MultipleFilesOverlapLines_TakesMaxHits()
+    {
+        // Report 1: line 1 hit=1, line 2 hit=0
+        // Report 2: line 1 hit=0, line 2 hit=2
+        // Expected: both lines covered (max hits: line1=1, line2=2) → 100%
+        var file1 = CreateCoberturaFile("""
+            <?xml version="1.0"?>
+            <coverage>
+              <packages><package><classes>
+                <class filename="Shared.cs">
+                  <lines>
+                    <line number="1" hits="1"/>
+                    <line number="2" hits="0"/>
+                  </lines>
+                </class>
+              </classes></package></packages>
+            </coverage>
+            """);
+        var file2 = CreateCoberturaFile("""
+            <?xml version="1.0"?>
+            <coverage>
+              <packages><package><classes>
+                <class filename="Shared.cs">
+                  <lines>
+                    <line number="1" hits="0"/>
+                    <line number="2" hits="2"/>
+                  </lines>
+                </class>
+              </classes></package></packages>
+            </coverage>
+            """);
+        try
+        {
+            var result = CoberturaParser.ParseCoverage([file1, file2]);
+            result.Should().Be(100.0, "both lines are covered when taking max hits across reports");
+        }
+        finally { Cleanup(file1); Cleanup(file2); }
+    }
+
+    [Fact]
+    public void ParseCoverage_MultipleClassesSameFile_MergesAllLines()
+    {
+        // Two classes in same file: 2 lines each, all covered
+        var file = CreateCoberturaFile("""
+            <?xml version="1.0"?>
+            <coverage>
+              <packages><package><classes>
+                <class filename="Mixed.cs">
+                  <lines>
+                    <line number="1" hits="1"/>
+                    <line number="2" hits="0"/>
+                  </lines>
+                </class>
+                <class filename="Mixed.cs">
+                  <lines>
+                    <line number="3" hits="1"/>
+                    <line number="4" hits="1"/>
+                  </lines>
+                </class>
+              </classes></package></packages>
+            </coverage>
+            """);
+        try
+        {
+            var result = CoberturaParser.ParseCoverage([file]);
+            result.Should().Be(75.0, "3 of 4 lines are covered");
+        }
+        finally { Cleanup(file); }
+    }
+
+    [Fact]
+    public void ParseCoverage_AllLinesMissed_ReturnsZero()
+    {
+        var file = CreateCoberturaFile("""
+            <?xml version="1.0"?>
+            <coverage>
+              <packages><package><classes>
+                <class filename="Cold.cs">
+                  <lines>
+                    <line number="1" hits="0"/>
+                    <line number="2" hits="0"/>
+                  </lines>
+                </class>
+              </classes></package></packages>
+            </coverage>
+            """);
+        try
+        {
+            CoberturaParser.ParseCoverage([file]).Should().Be(0.0);
+        }
+        finally { Cleanup(file); }
+    }
 }
