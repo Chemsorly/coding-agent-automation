@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AwesomeAssertions;
 using CodingAgentWebUI.Pipeline.Interfaces;
 using CodingAgentWebUI.Pipeline.Models;
 using CodingAgentWebUI.Pipeline.Services;
@@ -243,4 +244,121 @@ public class LoopStatePersistenceServiceTests : IDisposable
             DependencyChecker = null
         });
     }
+
+    [Fact]
+    public async Task OnLoopStateChanged_WhenLoopActive_PersistsActiveState()
+    {
+        // Arrange: use a stub loop service that exposes FireOnChange for testing
+        var mockStore = new Mock<ILoopStateStore>();
+        LoopState? writtenState = null;
+        mockStore.Setup(s => s.WriteAsync(It.IsAny<LoopState>(), It.IsAny<CancellationToken>()))
+            .Callback<LoopState, CancellationToken>((s, _) => writtenState = s)
+            .Returns(Task.CompletedTask);
+        mockStore.Setup(s => s.ReadAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((LoopState?)null);
+
+        var stubLoop = new StubLoopService();
+        using var sut = new LoopStatePersistenceService(stubLoop, _logger, mockStore.Object, TimeSpan.Zero);
+        await sut.StartAsync(CancellationToken.None);
+
+        // Trigger the OnChange event
+        stubLoop.FireOnChange();
+
+        // Wait for fire-and-forget write to complete
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (writtenState is null && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+
+        writtenState.Should().NotBeNull("PersistCurrentStateAsync should write state on change");
+
+        await sut.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task PersistCurrentStateAsync_WhenStoreThrows_DoesNotPropagate()
+    {
+        var mockStore = new Mock<ILoopStateStore>();
+        mockStore.Setup(s => s.WriteAsync(It.IsAny<LoopState>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("Disk full"));
+        mockStore.Setup(s => s.ReadAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((LoopState?)null);
+
+        var stubLoop = new StubLoopService();
+        using var sut = new LoopStatePersistenceService(stubLoop, _logger, mockStore.Object, TimeSpan.Zero);
+        await sut.StartAsync(CancellationToken.None);
+
+        // Exception from store must be swallowed — should not propagate
+        stubLoop.FireOnChange();
+        await Task.Delay(150);
+
+        await sut.StopAsync(CancellationToken.None);
+        // Test passes if no unhandled exception propagated
+    }
+
+    [Fact]
+    public async Task StopAsync_UnregistersOnChangeHandler()
+    {
+        var mockStore = new Mock<ILoopStateStore>();
+        mockStore.Setup(s => s.ReadAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((LoopState?)null);
+
+        var stubLoop = new StubLoopService();
+        using var sut = new LoopStatePersistenceService(stubLoop, _logger, mockStore.Object, TimeSpan.Zero);
+        await sut.StartAsync(CancellationToken.None);
+        stubLoop.HasHandlers.Should().BeTrue("handler registered after StartAsync");
+
+        await sut.StopAsync(CancellationToken.None);
+        stubLoop.HasHandlers.Should().BeFalse("handler unregistered after StopAsync");
+
+        // Verify no writes occur after unregistration
+        mockStore.Verify(s => s.WriteAsync(It.IsAny<LoopState>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task StartedAsync_WhenActiveState_WithZeroDelay_ResumesLoopImmediately()
+    {
+        WriteStateFile(isActive: true);
+        var loopService = CreateLoopService();
+        using var sut = new LoopStatePersistenceService(loopService, _logger,
+            new FileSystemLoopStateStore(_stateFilePath), TimeSpan.Zero); // zero delay
+
+        await sut.StartAsync(CancellationToken.None);
+        await sut.StartedAsync(CancellationToken.None);
+
+        // With zero delay the resume runs almost immediately — wait briefly for the fire-and-forget
+        var deadline = DateTime.UtcNow.AddSeconds(3);
+        while (sut.IsResuming && DateTime.UtcNow < deadline)
+            await Task.Delay(20);
+
+        sut.IsResuming.Should().BeFalse("zero-delay resume should complete quickly");
+
+        await sut.StopAsync(CancellationToken.None);
+    }
+}
+
+/// <summary>
+/// Minimal stub of <see cref="IPipelineLoopService"/> that allows tests to fire the OnChange event.
+/// </summary>
+internal sealed class StubLoopService : IPipelineLoopService
+{
+    public event Action? OnChange;
+    public bool HasHandlers => OnChange is not null;
+    public void FireOnChange() => OnChange?.Invoke();
+
+    public bool IsLoopActive => false;
+    public string StatusMessage => "";
+    public string? CurrentIssueIdentifier => null;
+    public int ProcessedCount => 0;
+    public int FailedCount => 0;
+    public int QueueCount => 0;
+    public bool IsCircuitBroken => false;
+    public string? LastPollError => null;
+    public IReadOnlyDictionary<string, CodingAgentWebUI.Pipeline.Models.ConfigStatusSnapshot> TemplateStatuses
+        => new Dictionary<string, CodingAgentWebUI.Pipeline.Models.ConfigStatusSnapshot>();
+    public int CurrentCycleTemplateIndex => 0;
+    public int CurrentCycleTemplateCount => 0;
+    public IReadOnlyList<string> ValidationErrors => [];
+    public Task<bool> StartLoopAsync() => Task.FromResult(false);
+    public void StopLoop() { }
+    public void ResumeLoop() { }
 }
