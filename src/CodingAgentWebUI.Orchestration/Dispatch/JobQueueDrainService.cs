@@ -202,111 +202,111 @@ public sealed class JobQueueDrainService : BackgroundService
                 break;
             }
 
-            try
-            {
-                var dispatched = pendingJob.IsConsolidation
-                    ? await TryDispatchConsolidationJobAsync(pendingJob, agent, ct)
-                    : await TryDispatchPipelineJobAsync(pendingJob, agent, ct);
+            var dispatched = pendingJob.IsConsolidation
+                ? await TryDispatchConsolidationJobAsync(pendingJob, agent, ct)
+                : await TryDispatchPipelineJobAsync(pendingJob, agent, ct);
 
-                if (dispatched)
-                    dispatchedCount++;
-            }
-            catch (Exception ex)
-            {
-                _logger.Error(ex,
-                    "Drain: exception dispatching job for issue {IssueIdentifier} to agent {AgentId}",
-                    pendingJob.IssueIdentifier, agent.AgentId);
-                await HandleDispatchExceptionAsync(pendingJob, ct);
-            }
+            if (dispatched)
+                dispatchedCount++;
         }
 
         return dispatchedCount;
     }
 
     /// <summary>
-    /// Dispatches a consolidation job to the given agent.
-    /// Returns true if the job was successfully dispatched (and dedup entry released).
+    /// Attempts to dispatch a consolidation job. Handles the run-cancellation race guard,
+    /// success (MarkIssueComplete), and failure (HandleConsolidationDispatchFailureAsync)
+    /// internally. Returns true if the job was dispatched successfully.
     /// </summary>
     private async Task<bool> TryDispatchConsolidationJobAsync(
-        Pipeline.Models.PendingJob pendingJob,
+        PendingJob pendingJob,
         AgentEntry agent,
         CancellationToken ct)
     {
-        // Cancel-during-dispatch race guard: discard if the run is already cancelled/failed.
-        if (_consolidationRunStore is not null)
+        try
         {
-            var run = await _consolidationRunStore.GetByIdAsync(pendingJob.IssueIdentifier, ct);
-            if (run is null ||
-                run.Status == Pipeline.Models.ConsolidationRunStatus.Cancelled ||
-                run.Status == Pipeline.Models.ConsolidationRunStatus.Failed)
+            // Cancel-during-dispatch race guard
+            if (_consolidationRunStore is not null)
             {
-                _logger.Information(
-                    "Drain: consolidation job {RunId} is cancelled/failed, discarding",
-                    pendingJob.IssueIdentifier);
-                _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
-                return false;
+                var run = await _consolidationRunStore.GetByIdAsync(pendingJob.IssueIdentifier, ct);
+                if (run is null ||
+                    run.Status == Pipeline.Models.ConsolidationRunStatus.Cancelled ||
+                    run.Status == Pipeline.Models.ConsolidationRunStatus.Failed)
+                {
+                    _logger.Information(
+                        "Drain: consolidation job {RunId} is cancelled/failed, discarding",
+                        pendingJob.IssueIdentifier);
+                    _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
+                    return false;
+                }
             }
+
+            var consolidationDispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
+                pendingJob.IssueIdentifier,
+                pendingJob.ConsolidationRunType!.Value,
+                string.IsNullOrEmpty(pendingJob.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)pendingJob.ConsolidationTemplateId,
+                pendingJob.ConsolidationWorkspacePath ?? "",
+                agent.AgentId,
+                ct);
+
+            if (consolidationDispatched)
+            {
+                _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
+                return true;
+            }
+
+            await HandleConsolidationDispatchFailureAsync(pendingJob, ct);
+            return false;
         }
-
-        var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
-            pendingJob.IssueIdentifier,
-            pendingJob.ConsolidationRunType!.Value,
-            string.IsNullOrEmpty(pendingJob.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)pendingJob.ConsolidationTemplateId,
-            pendingJob.ConsolidationWorkspacePath ?? "",
-            agent.AgentId,
-            ct);
-
-        if (dispatched)
+        catch (Exception ex)
         {
-            _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
-            return true;
+            _logger.Error(ex,
+                "Drain: exception dispatching consolidation job for issue {IssueIdentifier} to agent {AgentId}",
+                pendingJob.IssueIdentifier, agent.AgentId);
+            await HandleConsolidationDispatchFailureAsync(pendingJob, ct);
+            return false;
         }
-
-        await HandleConsolidationDispatchFailureAsync(pendingJob, ct);
-        return false;
     }
 
     /// <summary>
-    /// Dispatches a pipeline job to the given agent.
-    /// Returns true if the job was successfully dispatched (and dedup entry released).
+    /// Attempts to dispatch a pipeline job. Handles success (MarkIssueComplete) and
+    /// failure (ReEnqueue) internally. Returns true if the job was dispatched successfully.
     /// </summary>
     private async Task<bool> TryDispatchPipelineJobAsync(
-        Pipeline.Models.PendingJob pendingJob,
+        PendingJob pendingJob,
         AgentEntry agent,
         CancellationToken ct)
     {
-        var requiredLabels = await ResolveRequiredLabelsAsync(pendingJob, ct);
-
-        var dispatched = await _jobDispatcher.DispatchToAgentDirectAsync(
-            agent, pendingJob, requiredLabels, ct);
-
-        if (dispatched)
+        try
         {
-            // Release the dedup entry after successful dispatch.
-            // NOTE: There is a narrow race window between this call and the next poll cycle —
-            // the run is already registered in OrchestratorRunService (via CreateDispatchedRunAsync),
-            // so IsIssueBeingProcessed at the loop level guards against re-enqueue.
-            _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
-            return true;
+            var requiredLabels = await ResolveRequiredLabelsAsync(pendingJob, ct);
+            var dispatched = await _jobDispatcher.DispatchToAgentDirectAsync(agent, pendingJob, requiredLabels, ct);
+
+            if (dispatched)
+            {
+                // Release the dedup entry after successful dispatch.
+                // NOTE: There is a narrow race window between this call and the next poll cycle —
+                // the run is already registered in OrchestratorRunService (via CreateDispatchedRunAsync),
+                // so IsIssueBeingProcessed at the loop level guards against re-enqueue.
+                _dispatcher.MarkIssueComplete(pendingJob.IssueIdentifier, pendingJob.IssueProviderId);
+                return true;
+            }
+
+            _logger.Warning(
+                "Drain: failed to dispatch job for issue {IssueIdentifier}, re-enqueuing",
+                pendingJob.IssueIdentifier);
+            _dispatcher.ReEnqueue(pendingJob);
+            return false;
         }
-
-        _logger.Warning(
-            "Drain: failed to dispatch job for issue {IssueIdentifier}, re-enqueuing",
-            pendingJob.IssueIdentifier);
-        _dispatcher.ReEnqueue(pendingJob);
-        return false;
-    }
-
-    /// <summary>
-    /// Handles an unhandled exception during dispatch, routing to the appropriate
-    /// failure path depending on whether it is a consolidation or pipeline job.
-    /// </summary>
-    private async Task HandleDispatchExceptionAsync(Pipeline.Models.PendingJob pendingJob, CancellationToken ct)
-    {
-        if (pendingJob.IsConsolidation)
-            await HandleConsolidationDispatchFailureAsync(pendingJob, ct);
-        else
-            _dispatcher.ReEnqueue(pendingJob); // Pipeline jobs: re-enqueue unconditionally (no retry limit)
+        catch (Exception ex)
+        {
+            _logger.Error(ex,
+                "Drain: exception dispatching pipeline job for issue {IssueIdentifier} to agent {AgentId}",
+                pendingJob.IssueIdentifier, agent.AgentId);
+            // Pipeline jobs: re-enqueue unconditionally (no retry limit)
+            _dispatcher.ReEnqueue(pendingJob);
+            return false;
+        }
     }
 
     private async Task<IReadOnlyList<string>> ResolveRequiredLabelsAsync(Pipeline.Models.PendingJob job, CancellationToken ct)

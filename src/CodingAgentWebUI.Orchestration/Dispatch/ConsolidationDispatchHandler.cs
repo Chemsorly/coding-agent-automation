@@ -105,18 +105,20 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
         {
             // Wait for leadership
             while (!stoppingToken.IsCancellationRequested && !_leaderElection.IsLeader)
+            {
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            }
 
             if (stoppingToken.IsCancellationRequested) break;
 
             Log.Information("ConsolidationDispatchHandler: leader acquired, entering poll loop");
 
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(
-                stoppingToken, _leaderElection.LeaderToken);
-            await RunLeadershipTenureAsync(linked.Token);
+            await RunLeaderPollLoopAsync(stoppingToken);
 
             if (!stoppingToken.IsCancellationRequested)
+            {
                 Log.Information("ConsolidationDispatchHandler: leadership lost, re-entering wait loop");
+            }
         }
 
         Log.Information("ConsolidationDispatchHandler: exiting (stopping)");
@@ -164,34 +166,6 @@ internal sealed class ConsolidationDispatchHandler : BackgroundService
     {
         _rateLimiter.Dispose();
         base.Dispose();
-    }
-
-    private async Task RunLeadershipTenureAsync(CancellationToken ct)
-    {
-        while (!ct.IsCancellationRequested)
-        {
-            try
-            {
-                await PollAndDispatchConsolidationAsync(ct);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex, "ConsolidationDispatchHandler: unhandled error in poll cycle");
-            }
-
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(_options.PollIntervalSeconds), ct);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
-        }
     }
 
     internal async Task PollAndDispatchConsolidationAsync(CancellationToken ct)

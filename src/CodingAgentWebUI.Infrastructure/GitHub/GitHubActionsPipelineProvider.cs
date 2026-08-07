@@ -311,13 +311,11 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
 
         foreach (var run in runs)
         {
-            switch (ClassifyRunState(run))
-            {
-                case RunClass.InProgress: hasRunning = true; break;
-                case RunClass.Pending: hasPending = true; break;
-                case RunClass.Failed: hasFailed = true; break;
-                case RunClass.Cancelled: hasCancelled = true; break;
-            }
+            var state = ClassifyRun(run);
+            if (state == PipelineRunState.Running)       hasRunning = true;
+            else if (state == PipelineRunState.Pending)  hasPending = true;
+            else if (state == PipelineRunState.Failed)   hasFailed = true;
+            else if (state == PipelineRunState.Cancelled) hasCancelled = true;
         }
 
         // Early-return: surface failures immediately even if other runs are still in progress.
@@ -329,19 +327,24 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         return PipelineRunState.Passed;
     }
 
-    private enum RunClass { InProgress, Pending, Failed, Cancelled, Passed }
-
-    private static RunClass ClassifyRunState(WorkflowRun run)
+    /// <summary>
+    /// Classifies a single workflow run into a <see cref="PipelineRunState"/>.
+    /// Returns <c>null</c>-equivalent (Passed) for completed runs with a success conclusion.
+    /// </summary>
+    private static PipelineRunState ClassifyRun(WorkflowRun run)
     {
         if (run.Status.Value is WorkflowRunStatus.InProgress or WorkflowRunStatus.Waiting)
-            return RunClass.InProgress;
+            return PipelineRunState.Running;
+
         if (run.Status.Value is WorkflowRunStatus.Queued or WorkflowRunStatus.Requested or WorkflowRunStatus.Pending)
-            return RunClass.Pending;
+            return PipelineRunState.Pending;
+
         if (run.Status.Value == WorkflowRunStatus.Completed)
         {
-            if (run.Conclusion?.Value == WorkflowRunConclusion.Failure) return RunClass.Failed;
-            if (run.Conclusion?.Value == WorkflowRunConclusion.Cancelled) return RunClass.Cancelled;
+            if (run.Conclusion?.Value == WorkflowRunConclusion.Failure)  return PipelineRunState.Failed;
+            if (run.Conclusion?.Value == WorkflowRunConclusion.Cancelled) return PipelineRunState.Cancelled;
         }
-        return RunClass.Passed;
+
+        return PipelineRunState.Passed;
     }
 }

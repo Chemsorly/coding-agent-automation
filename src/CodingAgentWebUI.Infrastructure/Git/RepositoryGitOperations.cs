@@ -124,7 +124,51 @@ internal static class RepositoryGitOperations
             Log.Debug("CommitAllAsync status: {FilePath} = {State}", entry.FilePath, entry.State);
         }
 
-        if (StageWorkingDirectoryChanges(repo, preStatus))
+        StageAllChangedFiles(repo, preStatus);
+
+        // Hardcoded: ALWAYS unstage pipeline-injected paths regardless of configured blacklist.
+        var universalHardcoded = new[] { ".agent", ".brain" };
+        var hardcodedBlacklist = pipelineInjectedPaths is { Count: > 0 }
+            ? universalHardcoded.Concat(pipelineInjectedPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+            : universalHardcoded;
+
+        var unstaged = UnstageBlacklistedPaths(repo, hardcodedBlacklist, blacklistedPaths);
+
+        return ValidateStagedCountAndCommit(repo, workspacePath, message, allowEmpty, unstaged);
+    }
+
+    /// <summary>
+    /// Stages all changed, new, deleted, renamed, type-changed, and conflicted files from
+    /// <paramref name="preStatus"/> into the repository index.
+    /// </summary>
+    private static void StageAllChangedFiles(IRepository repo, RepositoryStatus preStatus)
+    {
+        var stagedAny = false;
+        foreach (var entry in preStatus)
+        {
+            if (entry.State.HasFlag(FileStatus.Conflicted))
+            {
+                Log.Debug("CommitAllAsync staging conflicted (resolved) file via Index.Add: {FilePath}", entry.FilePath);
+                repo.Index.Add(entry.FilePath);
+                stagedAny = true;
+            }
+            else if (entry.State.HasFlag(FileStatus.DeletedFromWorkdir))
+            {
+                Log.Debug("CommitAllAsync staging deleted file via Index.Remove: {FilePath}", entry.FilePath);
+                repo.Index.Remove(entry.FilePath);
+                stagedAny = true;
+            }
+            else if (entry.State.HasFlag(FileStatus.NewInWorkdir)
+                || entry.State.HasFlag(FileStatus.ModifiedInWorkdir)
+                || entry.State.HasFlag(FileStatus.RenamedInWorkdir)
+                || entry.State.HasFlag(FileStatus.TypeChangeInWorkdir))
+            {
+                Log.Debug("CommitAllAsync staging workdir file via Index.Add: {FilePath}", entry.FilePath);
+                repo.Index.Add(entry.FilePath);
+                stagedAny = true;
+            }
+        }
+        if (stagedAny)
             repo.Index.Write();
     }
 
@@ -139,11 +183,33 @@ internal static class RepositoryGitOperations
         IReadOnlyList<string>? configurableBlacklist)
     {
         var unstaged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var hardcodedBlacklist = BuildHardcodedBlacklist(pipelineInjectedPaths);
 
-        UnstageBlacklistedPaths(repo, hardcodedBlacklist, unstaged);
-        if (blacklistedPaths is { Count: > 0 })
-            UnstageBlacklistedPaths(repo, blacklistedPaths, unstaged);
+        {
+            var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
+            foreach (var change in indexChanges)
+            {
+                if (PathBlacklistHelper.IsPathBlacklisted(change.Path, hardcodedBlacklist))
+                {
+                    Commands.Unstage(repo, change.Path);
+                    unstaged.Add(change.Path.Replace('\\', '/'));
+                }
+            }
+        }
+
+        // Apply configurable blacklist (may overlap with hardcoded — skip already-unstaged paths)
+        if (configurableBlacklist is { Count: > 0 })
+        {
+            var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
+            foreach (var change in indexChanges)
+            {
+                var normalized = change.Path.Replace('\\', '/');
+                if (!unstaged.Contains(normalized) && PathBlacklistHelper.IsPathBlacklisted(change.Path, configurableBlacklist))
+                {
+                    Commands.Unstage(repo, change.Path);
+                    unstaged.Add(normalized);
+                }
+            }
+        }
 
         return unstaged;
     }
@@ -178,65 +244,6 @@ internal static class RepositoryGitOperations
         repo.Commit(message, signature, signature, commitOptions);
 
         return unstaged.ToList();
-    }
-
-    private static bool StageWorkingDirectoryChanges(Repository repo, RepositoryStatus preStatus)
-    {
-        var staged = false;
-        foreach (var entry in preStatus)
-        {
-            if (entry.State.HasFlag(FileStatus.Conflicted))
-            {
-                Log.Debug("CommitAllAsync staging conflicted (resolved) file via Index.Add: {FilePath}", entry.FilePath);
-                repo.Index.Add(entry.FilePath);
-                staged = true;
-            }
-            else if (entry.State.HasFlag(FileStatus.DeletedFromWorkdir))
-            {
-                Log.Debug("CommitAllAsync staging deleted file via Index.Remove: {FilePath}", entry.FilePath);
-                repo.Index.Remove(entry.FilePath);
-                staged = true;
-            }
-            else if (entry.State.HasFlag(FileStatus.NewInWorkdir)
-                || entry.State.HasFlag(FileStatus.ModifiedInWorkdir)
-                || entry.State.HasFlag(FileStatus.RenamedInWorkdir)
-                || entry.State.HasFlag(FileStatus.TypeChangeInWorkdir))
-            {
-                Log.Debug("CommitAllAsync staging workdir file via Index.Add: {FilePath}", entry.FilePath);
-                repo.Index.Add(entry.FilePath);
-                staged = true;
-            }
-        }
-        return staged;
-    }
-
-    private static string[] BuildHardcodedBlacklist(IReadOnlyList<string>? pipelineInjectedPaths)
-    {
-        // Hardcoded: ALWAYS unstage pipeline-injected paths regardless of configured blacklist.
-        // These directories/files contain pipeline metadata and steering content that must
-        // never be committed by the pipeline under any circumstances:
-        //   .agent  — MCP configs, prompt files, analysis output, review findings
-        //   .brain  — cloned brain/knowledge repository
-        //   + provider-specific paths from IAgentProvider.PipelineInjectedPaths
-        //     (e.g., .kiro for Kiro CLI, AGENTS.md for OpenCode)
-        var universal = new[] { ".agent", ".brain" };
-        return pipelineInjectedPaths is { Count: > 0 }
-            ? universal.Concat(pipelineInjectedPaths).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
-            : universal;
-    }
-
-    private static void UnstageBlacklistedPaths(Repository repo, IReadOnlyList<string> blacklist, HashSet<string> unstaged)
-    {
-        var indexChanges = repo.Diff.Compare<TreeChanges>(repo.Head.Tip?.Tree, DiffTargets.Index);
-        foreach (var change in indexChanges)
-        {
-            var normalized = change.Path.Replace('\\', '/');
-            if (!unstaged.Contains(normalized) && PathBlacklistHelper.IsPathBlacklisted(change.Path, blacklist))
-            {
-                Commands.Unstage(repo, change.Path);
-                unstaged.Add(normalized);
-            }
-        }
     }
 
     public static async Task Push(

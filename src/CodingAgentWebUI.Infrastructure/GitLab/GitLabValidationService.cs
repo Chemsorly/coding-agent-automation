@@ -35,15 +35,67 @@ public sealed class GitLabValidationService
     public async Task<GitLabValidationResult> ValidateAsync(
         string apiUrl, string accessToken, string projectId, CancellationToken ct)
     {
-        var inputError = ValidateInputs(apiUrl, accessToken, projectId);
-        if (inputError is not null) return inputError;
+        var inputError = ValidateInputParameters(apiUrl, accessToken, projectId);
+        if (inputError is not null)
+            return inputError;
+
+        // Input is valid — parse is guaranteed to succeed after ValidateInputParameters
+        // TODO: Prefer int.Parse(projectId) here to surface any drift between ValidateInputParameters
+        // and this call site immediately (throws instead of silently defaulting numericProjectId to 0,
+        // which is a valid GitLab project ID and would cause a mis-targeted API call).
+        // See review finding: DotNetSpecialist WARNING GitLabValidationService.cs:42
+        int.TryParse(projectId, out var numericProjectId);
+
+        IGitLabClient client;
+        try
+        {
+            var options = new RequestOptions(retryCount: 0, retryInterval: TimeSpan.Zero)
+            {
+                UserAgent = "CodingAgentAutomation/1.0"
+            };
+            client = new GitLabClient(apiUrl, accessToken, options);
+        }
+        catch (Exception ex)
+        {
+            _logger.Warning(ex, "Failed to create GitLab client for validation");
+            return new GitLabValidationResult(false, null, null,
+                $"Failed to create GitLab client: {ex.Message}");
+        }
+
+        return await FetchAndMapProjectAsync(client, numericProjectId, apiUrl, ct);
+    }
+
+    /// <summary>
+    /// Validates all input parameters for <see cref="ValidateAsync"/>.
+    /// Returns a failure result if any parameter is invalid, or <c>null</c> if all inputs are valid.
+    /// </summary>
+    private static GitLabValidationResult? ValidateInputParameters(
+        string apiUrl, string accessToken, string projectId)
+    {
+        if (string.IsNullOrWhiteSpace(apiUrl))
+            return new GitLabValidationResult(false, null, null, "API URL is required.");
+
+        // Validate URL scheme — only HTTP/HTTPS allowed
+        if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out var parsedUri)
+            || (parsedUri.Scheme != "https" && parsedUri.Scheme != "http"))
+        {
+            var truncatedUrl = apiUrl.Length > 200 ? apiUrl[..200] + "…" : apiUrl;
+            return new GitLabValidationResult(false, null, null,
+                $"API URL must use https:// or http:// scheme. Got: '{truncatedUrl}'.");
+        }
+
+        if (string.IsNullOrWhiteSpace(accessToken))
+            return new GitLabValidationResult(false, null, null, "Access token is required.");
+
+        if (string.IsNullOrWhiteSpace(projectId))
+            return new GitLabValidationResult(false, null, null, "Project ID is required.");
 
         if (!int.TryParse(projectId, out _))
             return new GitLabValidationResult(false, null, null,
                 $"Invalid project ID: '{projectId}'. Expected a numeric value.");
 
-        var (client, clientError) = TryCreateGitLabClient(apiUrl, accessToken);
-        if (clientError is not null) return clientError;
+        return null;
+    }
 
     /// <summary>
     /// Fetches the GitLab project and maps the result to a <see cref="GitLabValidationResult"/>.
@@ -54,12 +106,22 @@ public sealed class GitLabValidationService
     {
         try
         {
-            var project = await Task.Run(() => client!.Projects[numericProjectId], ct);
+            // Task.Run wraps the synchronous NGitLab indexer call. Cancellation relies on
+            // the HttpClient.Timeout configured in NGitLab rather than the CancellationToken,
+            // because the sync indexer does not accept a token parameter.
+            var project = await Task.Run(() => client.Projects[numericProjectId], ct);
+
             var accessLevel = MapAccessLevel(project);
+
             _logger.Information(
                 "GitLab validation succeeded for project {ProjectId} ({ProjectPath}), access: {AccessLevel}",
                 numericProjectId, project.PathWithNamespace, accessLevel);
-            return new GitLabValidationResult(true, project.PathWithNamespace, accessLevel, null);
+
+            return new GitLabValidationResult(
+                true,
+                project.PathWithNamespace,
+                accessLevel,
+                null);
         }
         catch (GitLabException ex) when ((int)ex.StatusCode == 401)
         {
@@ -83,18 +145,18 @@ public sealed class GitLabValidationService
         }
         catch (HttpRequestException ex)
         {
-            var truncatedUrl = TruncateUrl(apiUrl);
+            var truncatedUrl = apiUrl.Length > 200 ? apiUrl[..200] + "…" : apiUrl;
             _logger.Warning(ex, "GitLab validation failed: connectivity error for {ApiUrl}", truncatedUrl);
             return new GitLabValidationResult(false, null, null,
                 $"Unable to connect to GitLab at '{truncatedUrl}'. Verify the URL is correct and the server is reachable.");
         }
         catch (TaskCanceledException) when (ct.IsCancellationRequested)
         {
-            throw;
+            throw; // Propagate user-initiated cancellation
         }
         catch (TaskCanceledException ex)
         {
-            var truncatedUrl = TruncateUrl(apiUrl);
+            var truncatedUrl = apiUrl.Length > 200 ? apiUrl[..200] + "…" : apiUrl;
             _logger.Warning(ex, "GitLab validation timed out for {ApiUrl}", truncatedUrl);
             return new GitLabValidationResult(false, null, null,
                 $"Request timed out connecting to GitLab at '{truncatedUrl}'.");
@@ -102,50 +164,10 @@ public sealed class GitLabValidationService
         catch (Exception ex)
         {
             _logger.Warning(ex, "GitLab validation failed with unexpected error for project {ProjectId}", numericProjectId);
-            return new GitLabValidationResult(false, null, null, $"Validation failed: {ex.Message}");
-        }
-    }
-
-    private static GitLabValidationResult? ValidateInputs(string apiUrl, string accessToken, string projectId)
-    {
-        if (string.IsNullOrWhiteSpace(apiUrl))
-            return new GitLabValidationResult(false, null, null, "API URL is required.");
-
-        if (!Uri.TryCreate(apiUrl, UriKind.Absolute, out var parsedUri)
-            || (parsedUri.Scheme != "https" && parsedUri.Scheme != "http"))
-        {
             return new GitLabValidationResult(false, null, null,
-                $"API URL must use https:// or http:// scheme. Got: '{TruncateUrl(apiUrl)}'.");
-        }
-
-        if (string.IsNullOrWhiteSpace(accessToken))
-            return new GitLabValidationResult(false, null, null, "Access token is required.");
-
-        if (string.IsNullOrWhiteSpace(projectId))
-            return new GitLabValidationResult(false, null, null, "Project ID is required.");
-
-        return null;
-    }
-
-    private (IGitLabClient? client, GitLabValidationResult? error) TryCreateGitLabClient(string apiUrl, string accessToken)
-    {
-        try
-        {
-            var options = new RequestOptions(retryCount: 0, retryInterval: TimeSpan.Zero)
-            {
-                UserAgent = "CodingAgentAutomation/1.0"
-            };
-            return (new GitLabClient(apiUrl, accessToken, options), null);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "Failed to create GitLab client for validation");
-            return (null, new GitLabValidationResult(false, null, null, $"Failed to create GitLab client: {ex.Message}"));
+                $"Validation failed: {ex.Message}");
         }
     }
-
-    private static string TruncateUrl(string url) =>
-        url.Length > 200 ? url[..200] + "…" : url;
 
     /// <summary>
     /// Maps the project's access level to a human-readable string.
