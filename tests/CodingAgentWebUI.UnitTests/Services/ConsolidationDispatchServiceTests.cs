@@ -1070,4 +1070,122 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     }
 
     #endregion
+
+    #region TryDispatchToAgentAsync guard clauses
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_NullRunId_ThrowsArgumentNullException()
+    {
+        var svc = CreateService();
+        await svc.Invoking(s => s.TryDispatchToAgentAsync(null!, ConsolidationRunType.BrainConsolidation, null, "/tmp", "agent-1", CancellationToken.None))
+            .Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_NullWorkspacePath_ThrowsArgumentNullException()
+    {
+        var svc = CreateService();
+        await svc.Invoking(s => s.TryDispatchToAgentAsync("run-1", ConsolidationRunType.BrainConsolidation, null, null!, "agent-1", CancellationToken.None))
+            .Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_NullAgentId_ThrowsArgumentNullException()
+    {
+        var svc = CreateService();
+        await svc.Invoking(s => s.TryDispatchToAgentAsync("run-1", ConsolidationRunType.BrainConsolidation, null, "/tmp", null!, CancellationToken.None))
+            .Should().ThrowAsync<ArgumentNullException>();
+    }
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_RunNotFound_ReturnsFalse()
+    {
+        // Run store is empty — no run for this ID
+        var svc = CreateService(runsDir: _tempDir);
+        var result = await svc.TryDispatchToAgentAsync("nonexistent-run", ConsolidationRunType.BrainConsolidation, null, "/tmp", "agent-1", CancellationToken.None);
+        result.Should().BeFalse("missing run should not be dispatched");
+    }
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_RunIsCancelled_ReturnsFalse()
+    {
+        Directory.CreateDirectory(_tempDir);
+        var runId = "cancel-test-run";
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Status = ConsolidationRunStatus.Cancelled,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+        await new FileSystemConsolidationRunStore(_tempDir).SaveRunAsync(run, CancellationToken.None);
+
+        var svc = CreateService(runsDir: _tempDir);
+        var result = await svc.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp", "agent-1", CancellationToken.None);
+        result.Should().BeFalse("cancelled runs must not be dispatched");
+    }
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_RunIsFailed_ReturnsFalse()
+    {
+        Directory.CreateDirectory(_tempDir);
+        var runId = "failed-test-run";
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Status = ConsolidationRunStatus.Failed,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+        await new FileSystemConsolidationRunStore(_tempDir).SaveRunAsync(run, CancellationToken.None);
+
+        var svc = CreateService(runsDir: _tempDir);
+        var result = await svc.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp", "agent-1", CancellationToken.None);
+        result.Should().BeFalse("failed runs must not be dispatched");
+    }
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_AgentNotInRegistry_ReturnsFalse()
+    {
+        Directory.CreateDirectory(_tempDir);
+        var runId = "queued-no-agent";
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Status = ConsolidationRunStatus.Queued,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+        await new FileSystemConsolidationRunStore(_tempDir).SaveRunAsync(run, CancellationToken.None);
+
+        var svc = CreateService(runsDir: _tempDir);
+        var result = await svc.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp", "ghost-agent", CancellationToken.None);
+        result.Should().BeFalse("agent not in registry should return false");
+    }
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_AgentBusyWithActiveJob_ReturnsFalse()
+    {
+        RegisterIdleAgent("busy-agent", "conn-busy");
+        var agent = _registry.GetByAgentId("busy-agent")!;
+        agent.ActiveJobId = "some-other-job";
+        _registry.TransitionStatus("busy-agent", AgentStatus.Busy);
+
+        Directory.CreateDirectory(_tempDir);
+        var runId = "queued-busy-agent";
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Status = ConsolidationRunStatus.Queued,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow
+        };
+        await new FileSystemConsolidationRunStore(_tempDir).SaveRunAsync(run, CancellationToken.None);
+
+        var svc = CreateService(runsDir: _tempDir);
+        var result = await svc.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp", "busy-agent", CancellationToken.None);
+        result.Should().BeFalse("busy agent with active job should not accept consolidation dispatch");
+    }
+
+    #endregion
 }

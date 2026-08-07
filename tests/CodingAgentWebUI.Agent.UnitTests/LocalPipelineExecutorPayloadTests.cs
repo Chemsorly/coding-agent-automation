@@ -373,4 +373,93 @@ public class LocalPipelineExecutorPayloadTests
         var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
         payload.CodeReviewAgentsRun.Should().BeEquivalentTo(["sec-agent"]);
     }
+
+    // ── BuildPayloadBase — Feedback/AnalysisConcerns/AnalysisBlockingIssues ──
+
+    [Fact]
+    public void BuildCompletionPayload_Feedback_CopiedWhenSet()
+    {
+        var run = MakeRun();
+        run.Feedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Success,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback()
+        };
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.Feedback.Should().BeSameAs(run.Feedback);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_Feedback_NullWhenNotSet()
+    {
+        var run = MakeRun();
+        // Feedback defaults to null
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.Feedback.Should().BeNull();
+    }
+
+    [Fact]
+    public void BuildFailurePayload_Feedback_CopiedWhenSet()
+    {
+        var run = MakeRun();
+        run.Feedback = new RunFeedback
+        {
+            Outcome = FeedbackOutcome.Failure,
+            CollectedAtUtc = DateTime.UtcNow,
+            Harness = new HarnessFeedback()
+        };
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "error");
+
+        payload.Feedback.Should().BeSameAs(run.Feedback);
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_AnalysisConcerns_Copied()
+    {
+        var run = MakeRun();
+        run.AnalysisConcerns = ["concern-a", "concern-b"];
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.AnalysisConcerns.Should().BeEquivalentTo(new[] { "concern-a", "concern-b" });
+    }
+
+    [Fact]
+    public void BuildCompletionPayload_AnalysisBlockingIssues_Copied()
+    {
+        var run = MakeRun();
+        run.AnalysisBlockingIssues = ["blocker-1"];
+
+        var payload = LocalPipelineExecutor.BuildCompletionPayload(run);
+
+        payload.AnalysisBlockingIssues.Should().BeEquivalentTo(new[] { "blocker-1" });
+    }
+
+    [Fact]
+    public void BuildFailurePayload_AnalysisConcerns_Copied()
+    {
+        var run = MakeRun();
+        run.AnalysisConcerns = ["fail-concern"];
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
+
+        payload.AnalysisConcerns.Should().BeEquivalentTo(new[] { "fail-concern" });
+    }
+
+    [Fact]
+    public void BuildFailurePayload_AnalysisBlockingIssues_Copied()
+    {
+        var run = MakeRun();
+        run.AnalysisBlockingIssues = ["block-a", "block-b"];
+
+        var payload = LocalPipelineExecutor.BuildFailurePayload(run, "err");
+
+        payload.AnalysisBlockingIssues.Should().BeEquivalentTo(new[] { "block-a", "block-b" });
+    }
 }
