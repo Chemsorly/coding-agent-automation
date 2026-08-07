@@ -110,7 +110,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
             {
                 var run = _runService.GetRun(request.RunId);
                 if (run is not null)
-                    run.AgentId = resolvedAgentId;
+                    run.AgentId = resolvedAgentId.Value; // bridge: PipelineRun.AgentId is string?
             }
 
             var message = BuildJobAssignmentMessage(workItemId, request);
@@ -156,7 +156,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
             var workItem = await updateDb.WorkItems.FindAsync([workItemId], ct);
             if (workItem is not null)
             {
-                workItem.AssignedAgentId = resolvedAgentId;
+                workItem.AssignedAgentId = resolvedAgentId.Value; // bridge: DB field is string
                 await updateDb.SaveChangesAsync(ct);
             }
         }

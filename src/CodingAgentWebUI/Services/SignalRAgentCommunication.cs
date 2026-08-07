@@ -56,10 +56,13 @@ public sealed class SignalRAgentCommunication : IAgentCommunication
     }
 
     /// <inheritdoc />
-    public Task AssignConsolidationJobAsync(string connectionId, string agentId, ConsolidationJobMessage job, CancellationToken ct)
+    public Task AssignConsolidationJobAsync(string connectionId, AgentId agentId, ConsolidationJobMessage job, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(connectionId);
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) — ThrowIfNull on a struct
+        // field reports "Value" as the parameter name in exceptions rather than "agentId".
+        ArgumentNullException.ThrowIfNull(agentId.Value);
         ArgumentNullException.ThrowIfNull(job);
         return _hubContext.Clients.Client(connectionId).AssignConsolidationJob(agentId, job);
     }

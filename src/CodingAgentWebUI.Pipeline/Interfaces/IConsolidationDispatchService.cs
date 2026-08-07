@@ -52,6 +52,9 @@ public interface IConsolidationDispatchService
     /// <param name="agentId">The agent ID to dispatch to.</param>
     /// <param name="ct">Cancellation token.</param>
     /// <returns><c>true</c> if dispatched successfully; <c>false</c> otherwise.</returns>
+    // TODO: Migrate agentId parameter from string to AgentId to complete the type-safety adoption
+    // started in issue #1759. This interface was deliberately left with string as a bridge,
+    // but callers (PendingWorkItemDrainService) must unwrap agentId.Value at the call site.
     Task<bool> TryDispatchToAgentAsync(
         string runId,
         ConsolidationRunType type,

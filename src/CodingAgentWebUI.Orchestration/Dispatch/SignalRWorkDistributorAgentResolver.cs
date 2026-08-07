@@ -40,9 +40,13 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     }
 
     /// <inheritdoc />
-    public void ReleaseAgent(string agentId)
+    public void ReleaseAgent(AgentId agentId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) throughout this class.
+        // ThrowIfNull on a struct field reports parameter name "Value" instead of "agentId" in exceptions,
+        // making failures harder to diagnose. ThrowIfNullOrEmpty also catches empty strings (default(AgentId)-like states).
+        ArgumentNullException.ThrowIfNull(agentId.Value);
 
         var entry = _registry.GetByAgentId(agentId);
         if (entry is not null)
@@ -61,9 +65,11 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
     }
 
     /// <inheritdoc />
-    public void AssignJob(string agentId, string jobId)
+    public void AssignJob(AgentId agentId, string jobId)
     {
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: Same as ReleaseAgent — replace ArgumentNullException.ThrowIfNull(agentId.Value) with
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) for a meaningful exception message.
+        ArgumentNullException.ThrowIfNull(agentId.Value);
         ArgumentNullException.ThrowIfNull(jobId);
 
         var entry = _registry.GetByAgentId(agentId);

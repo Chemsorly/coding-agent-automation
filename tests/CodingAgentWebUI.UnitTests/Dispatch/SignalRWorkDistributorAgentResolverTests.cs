@@ -44,7 +44,11 @@ public class SignalRWorkDistributorAgentResolverTests
         // Assert
         result.Should().NotBeNull();
         result!.ConnectionId.Should().Be("conn-abc");
-        result.AgentId.Should().Be("agent-1");
+        // TODO: Strengthen this assertion — result.AgentId.Should().Be((AgentId)"agent-1") relies on
+        // implicit conversion on both sides, which could silently pass if AgentResolveResult.AgentId
+        // were accidentally left as string. Prefer result.AgentId.Value.Should().Be("agent-1") and
+        // a type check to make the AgentId type change explicitly verified.
+        result.AgentId.Should().Be((AgentId)"agent-1");
         var agent = _registry.GetByAgentId("agent-1");
         agent!.Status.Should().Be(AgentStatus.Busy);
     }

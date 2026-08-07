@@ -795,7 +795,7 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         var method = typeof(PendingWorkItemDrainService).GetMethod("DispatchConsolidationItemAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
             ?? throw new InvalidOperationException("DispatchConsolidationItemAsync not found");
-        var task = (Task<bool>)method.Invoke(service, [item, request, agentId, ct])!;
+        var task = (Task<bool>)method.Invoke(service, [item, request, (AgentId)agentId, ct])!;
         return await task;
     }
 

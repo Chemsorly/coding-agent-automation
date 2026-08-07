@@ -212,17 +212,20 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
     }
 
     /// <inheritdoc />
-    public async Task AgentAcceptedRunAsync(RunId runId, string agentId, string issueIdentifier,
+    public async Task AgentAcceptedRunAsync(RunId runId, AgentId agentId, string issueIdentifier,
         string issueProviderConfigId, string repoProviderConfigId,
         PipelineRunType runType, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrEmpty(runId.Value);
-        ArgumentNullException.ThrowIfNull(agentId);
+        // TODO: Replace ArgumentNullException.ThrowIfNull(agentId.Value) with
+        // ArgumentException.ThrowIfNullOrEmpty(agentId.Value, nameof(agentId)) — ThrowIfNull on a struct
+        // field reports "Value" as the parameter name in exceptions rather than "agentId".
+        ArgumentNullException.ThrowIfNull(agentId.Value);
 
         // 1. Set AgentId on the in-memory PipelineRun
         var run = _runService.GetRun(runId);
         if (run is not null)
-            run.AgentId = agentId;
+            run.AgentId = agentId.Value;
 
         // 2. Set ActiveJobId on agent + transition to Busy
         var agent = _registry.GetByAgentId(agentId);
