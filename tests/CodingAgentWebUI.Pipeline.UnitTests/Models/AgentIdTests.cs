@@ -190,14 +190,30 @@ public class AgentIdFormatterTests
         caughtEx.Should().NotBeNull();
         caughtEx!.Message.Should().Contain("AgentId cannot serialize a null Value");
     }
+
+    [Fact]
+    public void Deserialize_NilToken_Throws()
+    {
+        // Write a nil token on the wire
+        var writer = new ArrayBufferWriter<byte>();
+        var msgpackWriter = new MessagePackWriter(writer);
+        msgpackWriter.WriteNil();
+        msgpackWriter.Flush();
+
+        // MessagePackReader is a ref struct — cannot be captured in a lambda.
+        // Use try/catch directly, matching the Serialize_NullValue_Throws pattern.
+        var reader = new MessagePackReader(writer.WrittenMemory);
+        MessagePackSerializationException? caughtEx = null;
+        try
+        {
+            _formatter.Deserialize(ref reader, MessagePackSerializerOptions.Standard);
+        }
+        catch (MessagePackSerializationException ex)
+        {
+            caughtEx = ex;
+        }
+
+        caughtEx.Should().NotBeNull();
+        caughtEx!.Message.Should().Contain("AgentId cannot be deserialized from a nil token");
+    }
 }
-
-// TODO: Add Deserialize_NilToken_Throws test to AgentIdFormatterTests — the Deserialize path that
-// throws MessagePackSerializationException on a nil wire token has no test coverage. A regression
-// that swallowed nil and returned default(AgentId) would go undetected.
-
-// TODO: Add an end-to-end CompositeResolver test that verifies MessagePackSerializer.Serialize/
-// Deserialize<AgentId>(value, options) using the full registered resolver options (matching the
-// configuration in SignalRRegistration.cs and HubConnectionManager.cs) produces a bare string
-// on the wire rather than a map {"Value":"..."}. Without this, a regression where the formatter
-// is de-registered or resolver order is wrong would not be caught by existing tests.
