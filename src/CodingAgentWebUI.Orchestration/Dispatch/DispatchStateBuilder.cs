@@ -192,43 +192,86 @@ internal sealed class DispatchStateBuilder
 
             // Check concurrency limit from template
             var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
-            if (maxConcurrent > 0)
+            if (IsAtConcurrencyLimit(item.AgentSelector, state.ConcurrencyBySelector, maxConcurrent))
             {
-                var current = state.ConcurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0);
-                if (current >= maxConcurrent)
-                {
-                    Log.Debug("{CallerName}: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
-                        callerName, item.AgentSelector, current, maxConcurrent, item.Id);
-                    continue;
-                }
-            }
-
-            // Resolve template — fail immediately if no match (before PVC gating)
-            var (template, effectiveSelector, skipItem) = await ResolveTemplateAsync(
-                item, state.ConcurrencyBySelector, callerName, ct);
-
-            if (skipItem)
-                continue;
-
-            if (template is null)
-            {
-                await onNoTemplate(item, $"No job template for selector: {item.AgentSelector}", ct);
+                // TODO: The log message was simplified during complexity refactoring — the original included
+                // {Current}/{Max} structured properties that are useful for diagnosing why items are stuck.
+                // Restore: Log.Debug("{CallerName}: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
+                //     callerName, item.AgentSelector, state.ConcurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0), maxConcurrent, item.Id);
+                // See review finding: Correctness WARNING DispatchStateBuilder.cs:220
+                Log.Debug("{CallerName}: selector {Selector} at concurrency limit, skipping {WorkItemId}",
+                    callerName, item.AgentSelector, item.Id);
                 continue;
             }
 
-            var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+            var candidate = await TryResolveCandidateAsync(item, state, callerName, onNoTemplate, ct);
+            if (candidate is null) continue;
 
-            if (isKiroAgent && state.AvailablePvcs.Count == 0)
-            {
-                // No PVC available — skip, leave Pending for next poll cycle (NOT failed)
-                Log.Information("{CallerName}: no PVC available for kiro agent, skipping WorkItem {WorkItemId}",
-                    callerName, item.Id);
-                continue;
-            }
-
-            yield return new DispatchCandidate(item, template, effectiveSelector, isKiroAgent);
+            yield return candidate;
         }
     }
+
+    /// <summary>
+    /// Resolves the job template and PVC gate for a single item.
+    /// Returns a <see cref="DispatchCandidate"/> if the item is eligible, or <c>null</c> to skip it.
+    /// </summary>
+    private async Task<DispatchCandidate?> TryResolveCandidateAsync(
+        PendingWorkItemProjection item,
+        DispatchState state,
+        string callerName,
+        Func<PendingWorkItemProjection, string, CancellationToken, Task> onNoTemplate,
+        CancellationToken ct)
+    {
+        var (template, effectiveSelector, skipItem) = await ResolveTemplateAsync(
+            item, state.ConcurrencyBySelector, callerName, ct);
+
+        if (skipItem || template is null)
+        {
+            // TODO: When skipItem=true and template is also null simultaneously, the onNoTemplate
+            // callback is correctly suppressed (the !skipItem guard below prevents it). However this
+            // reduces observability: there is no log/metric indicating that onNoTemplate was suppressed
+            // rather than invoked, which could mask misconfigured selectors. Consider adding a
+            // diagnostic log here for the (skipItem && template is null) case.
+            // See review finding: DotNetSpecialist WARNING DispatchStateBuilder.cs:206
+            if (!skipItem)
+                await onNoTemplate(item, $"No job template for selector: {item.AgentSelector}", ct);
+            return null;
+        }
+
+        var isKiroAgent = string.Equals(template.ProviderType, "kiro", StringComparison.OrdinalIgnoreCase);
+
+        if (IsKiroAgentWithoutPvc(isKiroAgent, state.AvailablePvcs))
+        {
+            // No PVC available — skip, leave Pending for next poll cycle (NOT failed)
+            Log.Information("{CallerName}: no PVC available for kiro agent, skipping WorkItem {WorkItemId}",
+                callerName, item.Id);
+            return null;
+        }
+
+        return new DispatchCandidate(item, template, effectiveSelector, isKiroAgent);
+    }
+
+    /// <summary>
+    /// Returns true if the given selector group is at or above its concurrency limit.
+    /// A limit of 0 means no limit is configured — always returns false.
+    /// </summary>
+    internal static bool IsAtConcurrencyLimit(
+        string? agentSelector,
+        Dictionary<string, int> concurrencyBySelector,
+        int maxConcurrent)
+    {
+        if (maxConcurrent <= 0)
+            return false;
+        var current = concurrencyBySelector.GetValueOrDefault(agentSelector ?? "", 0);
+        return current >= maxConcurrent;
+    }
+
+    /// <summary>
+    /// Returns true if the template targets a kiro agent but no PVCs are available.
+    /// Non-kiro agents always return false (they do not require PVCs).
+    /// </summary>
+    internal static bool IsKiroAgentWithoutPvc(bool isKiroAgent, List<string> availablePvcs)
+        => isKiroAgent && availablePvcs.Count == 0;
 
     /// <summary>
     /// Resolves the job template for a pending work item, applying profile-based fallback when needed.

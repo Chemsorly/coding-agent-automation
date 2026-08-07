@@ -195,6 +195,98 @@ public class GitHubActionsPipelineProviderTests
         _mockJobs.Verify(j => j.GetLogs("owner", "repo", failedJobId), Times.Once);
     }
 
+    // --- AggregateState Tests ---
+    // These tests exercise the AggregateState method and its extracted ClassifyRun helper,
+    // covering all run-status classification paths (running, pending, failed, cancelled, passed).
+
+    [Fact]
+    public void AggregateState_EmptyList_ReturnsPending()
+    {
+        GitHubActionsPipelineProvider.AggregateState(Array.Empty<WorkflowRun>())
+            .Should().Be(PipelineRunState.Pending);
+    }
+
+    [Fact]
+    public void AggregateState_AllPassed_ReturnsPassed()
+    {
+        var runs = new[]
+        {
+            CreateWorkflowRun(1, "a", WorkflowRunStatus.Completed, WorkflowRunConclusion.Success),
+            CreateWorkflowRun(2, "a", WorkflowRunStatus.Completed, WorkflowRunConclusion.Success)
+        };
+        GitHubActionsPipelineProvider.AggregateState(runs).Should().Be(PipelineRunState.Passed);
+    }
+
+    [Fact]
+    public void AggregateState_OneInProgress_ReturnsRunning()
+    {
+        var runs = new[]
+        {
+            CreateWorkflowRun(1, "a", WorkflowRunStatus.Completed, WorkflowRunConclusion.Success),
+            CreateWorkflowRun(2, "a", WorkflowRunStatus.InProgress, null)
+        };
+        GitHubActionsPipelineProvider.AggregateState(runs).Should().Be(PipelineRunState.Running);
+    }
+
+    [Fact]
+    public void AggregateState_OneWaiting_ReturnsRunning()
+    {
+        var runs = new[]
+        {
+            CreateWorkflowRun(1, "a", WorkflowRunStatus.Waiting, null)
+        };
+        GitHubActionsPipelineProvider.AggregateState(runs).Should().Be(PipelineRunState.Running);
+    }
+
+    [Fact]
+    public void AggregateState_OneQueued_ReturnsPending()
+    {
+        var runs = new[]
+        {
+            CreateWorkflowRun(1, "a", WorkflowRunStatus.Queued, null)
+        };
+        GitHubActionsPipelineProvider.AggregateState(runs).Should().Be(PipelineRunState.Pending);
+    }
+
+    [Fact]
+    public void AggregateState_OneFailed_ReturnsFailed_EvenWithRunning()
+    {
+        // Early-return semantics: failed is surfaced immediately
+        var runs = new[]
+        {
+            CreateWorkflowRun(1, "a", WorkflowRunStatus.InProgress, null),
+            CreateWorkflowRun(2, "a", WorkflowRunStatus.Completed, WorkflowRunConclusion.Failure)
+        };
+        GitHubActionsPipelineProvider.AggregateState(runs).Should().Be(PipelineRunState.Failed);
+    }
+
+    [Fact]
+    public void AggregateState_OneCancelled_ReturnsCancelled()
+    {
+        var runs = new[]
+        {
+            CreateWorkflowRun(1, "a", WorkflowRunStatus.Completed, WorkflowRunConclusion.Cancelled)
+        };
+        GitHubActionsPipelineProvider.AggregateState(runs).Should().Be(PipelineRunState.Cancelled);
+    }
+
+    [Fact]
+    public void AggregateState_FailedTakesPriorityOverCancelled()
+    {
+        var runs = new[]
+        {
+            CreateWorkflowRun(1, "a", WorkflowRunStatus.Completed, WorkflowRunConclusion.Cancelled),
+            CreateWorkflowRun(2, "a", WorkflowRunStatus.Completed, WorkflowRunConclusion.Failure)
+        };
+        GitHubActionsPipelineProvider.AggregateState(runs).Should().Be(PipelineRunState.Failed);
+    }
+
+    // TODO: Missing test coverage — the `hasPending && hasFailed` combined state is not tested.
+    // The production code's early-return ("surface failures immediately even if other runs are still
+    // in progress") is only tested for the hasFailed && hasRunning combination. A test with one
+    // Queued/Requested run alongside one Failed run would pin the priority semantics for that path.
+    // See review finding: TestQualityReviewer WARNING GitHubActionsPipelineProviderTests.cs:195
+
     // --- Helpers ---
 
     private void SetupWorkflowRuns(IReadOnlyList<WorkflowRun> runs)

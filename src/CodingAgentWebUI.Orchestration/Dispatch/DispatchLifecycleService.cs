@@ -113,7 +113,7 @@ internal sealed class DispatchLifecycleService
             if (workItem is null || workItem.Status != WorkItemStatus.Pending)
             {
                 // Item was modified by another process
-                if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+                ReleaseClaimedPvc(claimedPvc, availablePvcs);
                 return;
             }
 
@@ -122,13 +122,13 @@ internal sealed class DispatchLifecycleService
         }
         catch
         {
-            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+            ReleaseClaimedPvc(claimedPvc, availablePvcs);
             throw;
         }
         var (shouldProceed, projectSecrets) = prepareResult;
         if (!shouldProceed)
         {
-            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+            ReleaseClaimedPvc(claimedPvc, availablePvcs);
             return;
         }
 
@@ -145,12 +145,12 @@ internal sealed class DispatchLifecycleService
         catch (DbUpdateConcurrencyException)
         {
             Log.Warning("DispatchLifecycleService: concurrency conflict pre-writing {LogPrefix}K8sJobName for {WorkItemId}", logPrefix, item.Id);
-            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+            ReleaseClaimedPvc(claimedPvc, availablePvcs);
             return;
         }
         catch
         {
-            if (claimedPvc is not null) { availablePvcs.Add(claimedPvc); }
+            ReleaseClaimedPvc(claimedPvc, availablePvcs);
             throw;
         }
 
@@ -172,6 +172,16 @@ internal sealed class DispatchLifecycleService
         workItem.DispatchedAt = DateTimeOffset.UtcNow;
 
         await FinalizeDispatchAsync(db, workItem, item, logPrefix, concurrencyBySelector, onDispatchSuccess, ct);
+    }
+
+    /// <summary>
+    /// Returns the claimed PVC to the available pool.
+    /// A no-op when <paramref name="claimedPvc"/> is null (non-kiro agents never claim a PVC).
+    /// </summary>
+    private static void ReleaseClaimedPvc(string? claimedPvc, List<string> availablePvcs)
+    {
+        if (claimedPvc is not null)
+            availablePvcs.Add(claimedPvc);
     }
 
     /// <summary>

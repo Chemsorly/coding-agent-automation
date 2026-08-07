@@ -273,6 +273,73 @@ public class DispatchStateBuilderTests : IDisposable
         candidates.Should().HaveCount(1, "should stop after cancellation");
     }
 
+    // TODO: Missing test — GetEligibleCandidatesAsync path where ResolveTemplateAsync returns
+    // skipItem=true is untested. The merged guard `if (skipItem || template is null)` with inner
+    // `if (!skipItem) await onNoTemplate(...)` correctly suppresses the callback when skipItem=true,
+    // but no test exercises this branch. If the !skipItem guard were accidentally removed, onNoTemplate
+    // would be called spuriously for profile-fallback-skip items and no test would catch it.
+    // Add a test: item with selector that triggers concurrency-limit skip in ResolveTemplateAsync
+    // → verify onNoTemplate is NOT invoked and the item is not yielded.
+    // See review finding: TestQualityReviewer WARNING DispatchStateBuilderTests.cs:273
+
+    // ── IsAtConcurrencyLimit predicate tests ────────────────────────────
+
+    [Fact]
+    public void IsAtConcurrencyLimit_NoEntry_ReturnsFalse()
+    {
+        var concurrency = new Dictionary<string, int>(); // empty — no active runs
+        DispatchStateBuilder.IsAtConcurrencyLimit("kiro,dotnet", concurrency, maxConcurrent: 2)
+            .Should().BeFalse("no active runs, selector not in map");
+    }
+
+    [Fact]
+    public void IsAtConcurrencyLimit_AtLimit_ReturnsTrue()
+    {
+        var concurrency = new Dictionary<string, int> { ["kiro,dotnet"] = 2 };
+        DispatchStateBuilder.IsAtConcurrencyLimit("kiro,dotnet", concurrency, maxConcurrent: 2)
+            .Should().BeTrue("current == maxConcurrent means at limit");
+    }
+
+    [Fact]
+    public void IsAtConcurrencyLimit_BelowLimit_ReturnsFalse()
+    {
+        var concurrency = new Dictionary<string, int> { ["kiro,dotnet"] = 1 };
+        DispatchStateBuilder.IsAtConcurrencyLimit("kiro,dotnet", concurrency, maxConcurrent: 2)
+            .Should().BeFalse("1 active run with limit 2 is below limit");
+    }
+
+    [Fact]
+    public void IsAtConcurrencyLimit_ZeroMaxConcurrent_AlwaysReturnsFalse()
+    {
+        // maxConcurrent == 0 means no limit is configured
+        var concurrency = new Dictionary<string, int> { ["kiro,dotnet"] = 100 };
+        DispatchStateBuilder.IsAtConcurrencyLimit("kiro,dotnet", concurrency, maxConcurrent: 0)
+            .Should().BeFalse("maxConcurrent=0 means no limit");
+    }
+
+    // ── IsKiroAgentWithoutPvc predicate tests ────────────────────────────
+
+    [Fact]
+    public void IsKiroAgentWithoutPvc_NonKiroAgent_ReturnsFalse()
+    {
+        DispatchStateBuilder.IsKiroAgentWithoutPvc(isKiroAgent: false, availablePvcs: [])
+            .Should().BeFalse("non-kiro agents do not require PVCs");
+    }
+
+    [Fact]
+    public void IsKiroAgentWithoutPvc_KiroAgentEmptyPool_ReturnsTrue()
+    {
+        DispatchStateBuilder.IsKiroAgentWithoutPvc(isKiroAgent: true, availablePvcs: [])
+            .Should().BeTrue("kiro agent with no available PVCs should be skipped");
+    }
+
+    [Fact]
+    public void IsKiroAgentWithoutPvc_KiroAgentWithPvcs_ReturnsFalse()
+    {
+        DispatchStateBuilder.IsKiroAgentWithoutPvc(isKiroAgent: true, availablePvcs: ["pvc-1"])
+            .Should().BeFalse("kiro agent with a PVC available can proceed");
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private DispatchStateBuilder CreateBuilder(

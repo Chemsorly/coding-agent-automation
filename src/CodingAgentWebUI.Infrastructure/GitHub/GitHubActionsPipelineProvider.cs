@@ -216,6 +216,29 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         if (failedJobIds.Count == 0)
             return status;
 
+        var logsByJobId = await FetchLogsForFailedJobsAsync(failedJobIds, ct);
+
+        if (logsByJobId.Count == 0)
+            return status;
+
+        return new PipelineRunStatus
+        {
+            State = status.State,
+            Jobs = BuildEnrichedJobList(status.Jobs, logsByJobId),
+            Url = status.Url,
+            StartedAt = status.StartedAt,
+            CompletedAt = status.CompletedAt,
+            CommitSha = status.CommitSha
+        };
+    }
+
+    /// <summary>
+    /// Fetches log content for a set of failed job IDs. Returns a dictionary mapping
+    /// job ID to log content for each job where logs were successfully retrieved.
+    /// </summary>
+    private async Task<Dictionary<long, string>> FetchLogsForFailedJobsAsync(
+        IEnumerable<long> failedJobIds, CancellationToken ct)
+    {
         var logsByJobId = new Dictionary<long, string>();
         foreach (var jobId in failedJobIds)
         {
@@ -227,11 +250,18 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
                     logContent.Length, jobId);
             }
         }
+        return logsByJobId;
+    }
 
-        if (logsByJobId.Count == 0)
-            return status;
-
-        var enrichedJobs = status.Jobs.Select(job =>
+    /// <summary>
+    /// Produces a new job list with log content injected for jobs whose IDs appear in
+    /// <paramref name="logsByJobId"/>. Jobs not in the dictionary are returned unchanged.
+    /// </summary>
+    private static IReadOnlyList<PipelineJobResult> BuildEnrichedJobList(
+        IReadOnlyList<PipelineJobResult> originalJobs,
+        Dictionary<long, string> logsByJobId)
+    {
+        return originalJobs.Select(job =>
         {
             if (logsByJobId.TryGetValue(job.JobId, out var content))
             {
@@ -247,16 +277,6 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
             }
             return job;
         }).ToList();
-
-        return new PipelineRunStatus
-        {
-            State = status.State,
-            Jobs = enrichedJobs,
-            Url = status.Url,
-            StartedAt = status.StartedAt,
-            CompletedAt = status.CompletedAt,
-            CommitSha = status.CommitSha
-        };
     }
 
     internal static PipelineRunState MapJobState(WorkflowJobStatus status, WorkflowJobConclusion? conclusion)
@@ -291,17 +311,11 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
 
         foreach (var run in runs)
         {
-            if (run.Status.Value == WorkflowRunStatus.InProgress || run.Status.Value == WorkflowRunStatus.Waiting)
-                hasRunning = true;
-            else if (run.Status.Value == WorkflowRunStatus.Queued || run.Status.Value == WorkflowRunStatus.Requested || run.Status.Value == WorkflowRunStatus.Pending)
-                hasPending = true;
-            else if (run.Status.Value == WorkflowRunStatus.Completed)
-            {
-                if (run.Conclusion?.Value == WorkflowRunConclusion.Failure)
-                    hasFailed = true;
-                else if (run.Conclusion?.Value == WorkflowRunConclusion.Cancelled)
-                    hasCancelled = true;
-            }
+            var state = ClassifyRun(run);
+            if (state == PipelineRunState.Running)       hasRunning = true;
+            else if (state == PipelineRunState.Pending)  hasPending = true;
+            else if (state == PipelineRunState.Failed)   hasFailed = true;
+            else if (state == PipelineRunState.Cancelled) hasCancelled = true;
         }
 
         // Early-return: surface failures immediately even if other runs are still in progress.
@@ -310,6 +324,27 @@ public class GitHubActionsPipelineProvider : GitHubProviderBase, IPipelineProvid
         if (hasCancelled) return PipelineRunState.Cancelled;
         if (hasRunning) return PipelineRunState.Running;
         if (hasPending) return PipelineRunState.Pending;
+        return PipelineRunState.Passed;
+    }
+
+    /// <summary>
+    /// Classifies a single workflow run into a <see cref="PipelineRunState"/>.
+    /// Returns <c>null</c>-equivalent (Passed) for completed runs with a success conclusion.
+    /// </summary>
+    private static PipelineRunState ClassifyRun(WorkflowRun run)
+    {
+        if (run.Status.Value is WorkflowRunStatus.InProgress or WorkflowRunStatus.Waiting)
+            return PipelineRunState.Running;
+
+        if (run.Status.Value is WorkflowRunStatus.Queued or WorkflowRunStatus.Requested or WorkflowRunStatus.Pending)
+            return PipelineRunState.Pending;
+
+        if (run.Status.Value == WorkflowRunStatus.Completed)
+        {
+            if (run.Conclusion?.Value == WorkflowRunConclusion.Failure)  return PipelineRunState.Failed;
+            if (run.Conclusion?.Value == WorkflowRunConclusion.Cancelled) return PipelineRunState.Cancelled;
+        }
+
         return PipelineRunState.Passed;
     }
 }

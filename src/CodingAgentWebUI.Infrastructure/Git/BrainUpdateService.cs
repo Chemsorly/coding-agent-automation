@@ -344,83 +344,112 @@ public partial class BrainUpdateService : IBrainUpdateService
             _logger.Warning(ex, "Brain repo fetch during rebase failed, attempting manual rebase");
         }
 
-        await Task.Run(() =>
+        await Task.Run(() => ReapplyChangesAfterReset(brainPath, brainProvider.BaseBranch, commitMessage, ct), ct);
+    }
+
+    /// <summary>
+    /// Synchronous rebase body (run inside <see cref="Task.Run"/> by <see cref="RebaseOntoRemoteAsync"/>):
+    /// reads head-commit changes, resets to remote, re-applies each file with accept-both conflict
+    /// resolution, then stages and recommits.
+    /// </summary>
+    private void ReapplyChangesAfterReset(
+        string brainPath, string remoteBranch, string commitMessage, CancellationToken ct)
+    {
+        var ourChanges = _git.GetHeadCommitChanges(brainPath);
+
+        if (ourChanges.Count == 0)
         {
-            // Get our changes before reset
-            var ourChanges = _git.GetHeadCommitChanges(brainPath);
+            throw new InvalidOperationException(
+                "Cannot rebase brain changes: no changes detected in HEAD commit.");
+        }
 
-            if (ourChanges.Count == 0)
+        var (ourFileContents, baseFileContents) = SnapshotHeadContents(brainPath, ourChanges);
+
+        _git.ResetHardToRemote(brainPath, remoteBranch);
+
+        var conflictCount = ReapplyEachChange(brainPath, ourChanges, ourFileContents, baseFileContents, ct);
+
+        if (conflictCount > 0)
+        {
+            _logger.Information(
+                "Brain rebase resolved {ConflictCount} conflicts using accept-both strategy",
+                conflictCount);
+        }
+
+        try
+        {
+            _git.StageAllAndCommit(brainPath, commitMessage);
+        }
+        catch (EmptyCommitException)
+        {
+            // Remote already has identical changes — nothing to recommit after rebase
+            _logger.Warning("Brain rebase produced empty commit (remote already has identical changes), skipping");
+        }
+    }
+
+    /// <summary>
+    /// Snapshots the HEAD and HEAD-parent file contents for all changed files before the reset.
+    /// Returns (ourContents, baseContents) dictionaries keyed by relative path.
+    /// </summary>
+    private (Dictionary<string, string?> OurContents, Dictionary<string, string?> BaseContents)
+        SnapshotHeadContents(string brainPath, IReadOnlyList<FileChange> ourChanges)
+    {
+        var ourFileContents = new Dictionary<string, string?>();
+        var baseFileContents = new Dictionary<string, string?>();
+        foreach (var change in ourChanges)
+        {
+            if (change.Status != FileChangeStatus.Deleted)
             {
-                throw new InvalidOperationException(
-                    "Cannot rebase brain changes: no changes detected in HEAD commit.");
+                ourFileContents[change.Path] = _git.GetFileContentFromHead(brainPath, change.Path);
+            }
+            baseFileContents[change.Path] = _git.GetFileContentFromHeadParent(brainPath, change.Path);
+        }
+        return (ourFileContents, baseFileContents);
+    }
+
+    /// <summary>
+    /// Re-applies each changed file after the remote reset: deletes files that were deleted,
+    /// uses accept-both merge for files modified on both sides, and applies our version for
+    /// files only we modified. Returns the number of conflicts resolved.
+    /// </summary>
+    private int ReapplyEachChange(
+        string brainPath,
+        IReadOnlyList<FileChange> ourChanges,
+        Dictionary<string, string?> ourFileContents,
+        Dictionary<string, string?> baseFileContents,
+        CancellationToken ct)
+    {
+        var conflictCount = 0;
+        foreach (var change in ourChanges)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var fullPath = Path.Combine(brainPath, change.Path);
+
+            if (change.Status == FileChangeStatus.Deleted)
+            {
+                _git.DeleteFile(fullPath);
+                continue;
             }
 
-            // Save our file contents before reset
-            var ourFileContents = new Dictionary<string, string?>();
-            var baseFileContents = new Dictionary<string, string?>();
-            foreach (var change in ourChanges)
+            var ourContent = ourFileContents.GetValueOrDefault(change.Path) ?? "";
+            var baseContent = baseFileContents.GetValueOrDefault(change.Path) ?? "";
+            var remoteContent = _git.FileExists(fullPath) ? _git.ReadAllText(fullPath) : "";
+
+            if (remoteContent != baseContent && ourContent != baseContent)
             {
-                if (change.Status != FileChangeStatus.Deleted)
-                {
-                    ourFileContents[change.Path] = _git.GetFileContentFromHead(brainPath, change.Path);
-                }
-                baseFileContents[change.Path] = _git.GetFileContentFromHeadParent(brainPath, change.Path);
+                // Both sides modified — resolve with accept-both
+                conflictCount++;
+                var resolved = ResolveConflictAcceptBoth(remoteContent, ourContent);
+                _git.WriteAllText(fullPath, resolved);
             }
-
-            // Reset to remote branch tip
-            _git.ResetHardToRemote(brainPath, brainProvider.BaseBranch);
-
-            // Re-apply our changes
-            var conflictCount = 0;
-            foreach (var change in ourChanges)
+            else
             {
-                ct.ThrowIfCancellationRequested();
-
-                var filePath = change.Path;
-                var fullPath = Path.Combine(brainPath, filePath);
-
-                if (change.Status == FileChangeStatus.Deleted)
-                {
-                    _git.DeleteFile(fullPath);
-                    continue;
-                }
-
-                var ourContent = ourFileContents.GetValueOrDefault(change.Path) ?? "";
-                var baseContent = baseFileContents.GetValueOrDefault(change.Path) ?? "";
-                var remoteContent = _git.FileExists(fullPath) ? _git.ReadAllText(fullPath) : "";
-
-                if (remoteContent != baseContent && ourContent != baseContent)
-                {
-                    // Both sides modified — resolve with accept-both
-                    conflictCount++;
-                    var resolved = ResolveConflictAcceptBoth(remoteContent, ourContent);
-                    _git.WriteAllText(fullPath, resolved);
-                }
-                else
-                {
-                    // Only we modified — apply our version
-                    _git.WriteAllText(fullPath, ourContent);
-                }
+                // Only we modified — apply our version
+                _git.WriteAllText(fullPath, ourContent);
             }
-
-            if (conflictCount > 0)
-            {
-                _logger.Information(
-                    "Brain rebase resolved {ConflictCount} conflicts using accept-both strategy",
-                    conflictCount);
-            }
-
-            // Stage and recommit
-            try
-            {
-                _git.StageAllAndCommit(brainPath, commitMessage);
-            }
-            catch (EmptyCommitException)
-            {
-                // Remote already has identical changes — nothing to recommit after rebase
-                _logger.Warning("Brain rebase produced empty commit (remote already has identical changes), skipping");
-            }
-        }, ct);
+        }
+        return conflictCount;
     }
 
     [GeneratedRegex(@"###\s+\d{4}-\d{2}-\d{2}")]

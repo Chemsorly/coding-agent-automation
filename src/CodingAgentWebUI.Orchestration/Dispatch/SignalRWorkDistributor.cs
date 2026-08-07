@@ -74,32 +74,53 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
         var resolveResult = _agentResolver.ResolveAgent(request.AgentSelector);
         if (resolveResult is null)
         {
-            // No idle agent available — revert to Pending for drain service pickup.
-            await using var pendingDb = await DbFactory.CreateDbContextAsync(ct);
-            var pendingItem = await pendingDb.WorkItems.FindAsync([workItemId], ct);
-            if (pendingItem is not null)
-            {
-                pendingItem.Status = WorkItemStatus.Pending;
-                pendingItem.DispatchedAt = null;
-                await pendingDb.SaveChangesAsync(ct);
-            }
-
-            Logger.LogInformation(
-                "WorkItem {WorkItemId} for issue {IssueIdentifier} queued as Pending (no idle agent)",
-                workItemId, request.IssueIdentifier);
-
-            // Clear the in-memory PipelineRun's AgentId so HeartbeatMonitor Phase 3
-            // doesn't orphan it (it checks GetByAgentId which returns null for "pending").
-            if (!string.IsNullOrEmpty(request.RunId))
-            {
-                var run = _runService.GetRun(request.RunId);
-                if (run is not null)
-                    run.AgentId = null;
-            }
-
-            return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available", Queued: true);
+            return await RevertToQueuedPendingAsync(workItemId, request, ct);
         }
 
+        return await DeliverJobToAgentAsync(workItemId, request, resolveResult, ct);
+    }
+
+    /// <summary>
+    /// Reverts the newly inserted Dispatched WorkItem to Pending when no idle agent is available,
+    /// clears the in-memory run's AgentId, and returns a Queued result.
+    /// </summary>
+    private async Task<DistributionResult> RevertToQueuedPendingAsync(
+        Guid workItemId, JobDistributionRequest request, CancellationToken ct)
+    {
+        await using var pendingDb = await DbFactory.CreateDbContextAsync(ct);
+        var pendingItem = await pendingDb.WorkItems.FindAsync([workItemId], ct);
+        if (pendingItem is not null)
+        {
+            pendingItem.Status = WorkItemStatus.Pending;
+            pendingItem.DispatchedAt = null;
+            await pendingDb.SaveChangesAsync(ct);
+        }
+
+        Logger.LogInformation(
+            "WorkItem {WorkItemId} for issue {IssueIdentifier} queued as Pending (no idle agent)",
+            workItemId, request.IssueIdentifier);
+
+        // Clear the in-memory PipelineRun's AgentId so HeartbeatMonitor Phase 3
+        // doesn't orphan it (it checks GetByAgentId which returns null for "pending").
+        if (!string.IsNullOrEmpty(request.RunId))
+        {
+            var run = _runService.GetRun(request.RunId);
+            if (run is not null)
+                run.AgentId = null;
+        }
+
+        return new DistributionResult(true, workItemId.ToString(), "Queued — no idle agent available", Queued: true);
+    }
+
+    /// <summary>
+    /// Delivers the job to the resolved agent via SignalR, notifies the lifecycle manager,
+    /// and persists the assigned agent ID to the WorkItem row.
+    /// Returns a success or failure <see cref="DistributionResult"/>.
+    /// </summary>
+    private async Task<DistributionResult> DeliverJobToAgentAsync(
+        Guid workItemId, JobDistributionRequest request,
+        AgentResolveResult resolveResult, CancellationToken ct)
+    {
         var connectionId = resolveResult.ConnectionId;
         var resolvedAgentId = resolveResult.AgentId;
 
@@ -125,18 +146,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
 
             await _agentComm.AssignJobAsync(connectionId, message, ct);
 
-            // Signal the lifecycle manager that an agent accepted this run.
-            if (_lifecycleManager is not null)
-            {
-                await _lifecycleManager.AgentAcceptedRunAsync(
-                    request.RunId ?? workItemId.ToString(), resolvedAgentId,
-                    request.IssueIdentifier, request.IssueProviderConfigId,
-                    request.RepoProviderConfigId, request.RunType, ct);
-            }
-            else
-            {
-                _agentResolver.AssignJob(resolvedAgentId, workItemId.ToString());
-            }
+            await NotifyAgentAcceptedAsync(workItemId, request, resolvedAgentId, ct);
         }
         catch (Exception ex)
         {
@@ -149,7 +159,41 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
             return new DistributionResult(false, workItemId.ToString(), $"SignalR delivery failed: {ex.Message}");
         }
 
-        // Post-delivery: update WorkItem with resolved agent ID for UI display.
+        await PersistAssignedAgentIdAsync(workItemId, resolvedAgentId, ct);
+
+        Logger.LogInformation(
+            "WorkItem {WorkItemId} pushed via SignalR to connection {ConnectionId}",
+            workItemId, connectionId);
+
+        return new DistributionResult(true, workItemId.ToString(), null);
+    }
+
+    /// <summary>
+    /// Notifies the lifecycle manager (or falls back to <see cref="ISignalRWorkDistributorAgentResolver.AssignJob"/>)
+    /// that the agent has accepted the run. Called inside the delivery try/catch.
+    /// </summary>
+    private async Task NotifyAgentAcceptedAsync(
+        Guid workItemId, JobDistributionRequest request, AgentId resolvedAgentId, CancellationToken ct)
+    {
+        if (_lifecycleManager is not null)
+        {
+            await _lifecycleManager.AgentAcceptedRunAsync(
+                request.RunId ?? workItemId.ToString(), resolvedAgentId,
+                request.IssueIdentifier, request.IssueProviderConfigId,
+                request.RepoProviderConfigId, request.RunType, ct);
+        }
+        else
+        {
+            _agentResolver.AssignJob(resolvedAgentId, workItemId.ToString());
+        }
+    }
+
+    /// <summary>
+    /// Updates the WorkItem row with the resolved agent ID after successful SignalR delivery.
+    /// Failures here are logged as warnings and swallowed — the agent already has the job.
+    /// </summary>
+    private async Task PersistAssignedAgentIdAsync(Guid workItemId, AgentId resolvedAgentId, CancellationToken ct)
+    {
         try
         {
             await using var updateDb = await DbFactory.CreateDbContextAsync(ct);
@@ -166,12 +210,6 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
                 "Failed to update AssignedAgentId on WorkItem {WorkItemId} (cosmetic, agent already has the job)",
                 workItemId);
         }
-
-        Logger.LogInformation(
-            "WorkItem {WorkItemId} pushed via SignalR to connection {ConnectionId}",
-            workItemId, connectionId);
-
-        return new DistributionResult(true, workItemId.ToString(), null);
     }
 
     // ── Consolidation insertion (always Pending, drained by PendingWorkItemDrainService) ──

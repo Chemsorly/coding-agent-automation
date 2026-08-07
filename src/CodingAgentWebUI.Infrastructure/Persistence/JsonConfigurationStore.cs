@@ -119,44 +119,8 @@ public class JsonConfigurationStore : IConfigurationStore
 
         try
         {
-            // Collect all project files and their TemplateIds
-            var projectFiles = Directory.GetFiles(projectsDir, JsonFilePattern);
-            var projects = new List<(string Path, PipelineProject Project)>();
-            var allReferencedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var file in projectFiles)
-            {
-                try
-                {
-                    var json = File.ReadAllText(file);
-                    var project = JsonSerializer.Deserialize<PipelineProject>(json, JsonOptions);
-                    if (project is not null)
-                    {
-                        projects.Add((file, project));
-                        foreach (var id in project.TemplateIds)
-                            allReferencedIds.Add(id);
-                    }
-                }
-                catch (Exception ex) when (ex is IOException or JsonException)
-                {
-                    _logger.Warning(ex, "Failed to read project file during orphan check: {Path}: {Error}", file, ex.Message);
-                }
-            }
-
-            // Scan all template directories for template IDs on disk
-            var allTemplateIdsOnDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var projDir in Directory.GetDirectories(projectsDir))
-            {
-                var templatesDir = Path.Combine(projDir, "templates");
-                if (!Directory.Exists(templatesDir))
-                    continue;
-                foreach (var templateFile in Directory.GetFiles(templatesDir, JsonFilePattern))
-                {
-                    var templateId = Path.GetFileNameWithoutExtension(templateFile);
-                    if (IsValidGuidFormat(templateId))
-                        allTemplateIdsOnDisk.Add(templateId);
-                }
-            }
+            var (projects, allReferencedIds) = CollectProjectsAndReferencedIds(projectsDir);
+            var allTemplateIdsOnDisk = ScanTemplateIdsOnDisk(projectsDir);
 
             // Find orphans: on disk but not in any project's TemplateIds
             var orphanedIds = allTemplateIdsOnDisk
@@ -166,31 +130,96 @@ public class JsonConfigurationStore : IConfigurationStore
             if (orphanedIds.Count == 0)
                 return;
 
-            // Find the Default project and add orphans to its TemplateIds
-            var defaultEntry = projects.FirstOrDefault(p => p.Project.Id == WellKnownIds.DefaultProjectId);
-            if (defaultEntry.Project is null)
-                return;
-
-            var updatedIds = defaultEntry.Project.TemplateIds.ToList();
-            updatedIds.AddRange(orphanedIds);
-            var updated = defaultEntry.Project with { TemplateIds = updatedIds };
-            var updatedJson = JsonSerializer.Serialize(updated, JsonOptions);
-
-            // Atomic write: write to temp file then rename, consistent with the store's
-            // write discipline. Prevents partial/corrupt files if process is killed mid-write.
-            var tempPath = defaultEntry.Path + ".tmp";
-            File.WriteAllText(tempPath, updatedJson);
-            File.Move(tempPath, defaultEntry.Path, overwrite: true);
-
-            _logger.Information(
-                "Claimed {Count} orphaned template(s) into Default project: [{Ids}]",
-                orphanedIds.Count,
-                string.Join(", ", orphanedIds.Select(id => id[..8])));
+            AddOrphanedTemplatesToDefaultProject(projects, orphanedIds);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             _logger.Warning(ex, "Failed to claim orphaned templates: {Error}", ex.Message);
         }
+    }
+
+    /// <summary>
+    /// Reads all project files in <paramref name="projectsDir"/> and returns the loaded project list
+    /// together with a set of all template IDs already referenced by any project.
+    /// </summary>
+    private (List<(string Path, PipelineProject Project)> Projects, HashSet<string> AllReferencedIds)
+        CollectProjectsAndReferencedIds(string projectsDir)
+    {
+        var projectFiles = Directory.GetFiles(projectsDir, JsonFilePattern);
+        var projects = new List<(string Path, PipelineProject Project)>();
+        var allReferencedIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var file in projectFiles)
+        {
+            try
+            {
+                var json = File.ReadAllText(file);
+                var project = JsonSerializer.Deserialize<PipelineProject>(json, JsonOptions);
+                if (project is not null)
+                {
+                    projects.Add((file, project));
+                    foreach (var id in project.TemplateIds)
+                        allReferencedIds.Add(id);
+                }
+            }
+            catch (Exception ex) when (ex is IOException or JsonException)
+            {
+                _logger.Warning(ex, "Failed to read project file during orphan check: {Path}: {Error}", file, ex.Message);
+            }
+        }
+
+        return (projects, allReferencedIds);
+    }
+
+    /// <summary>
+    /// Scans all template subdirectories under <paramref name="projectsDir"/> and returns a set of
+    /// all GUID-named template IDs found on disk.
+    /// </summary>
+    private static HashSet<string> ScanTemplateIdsOnDisk(string projectsDir)
+    {
+        var allTemplateIdsOnDisk = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var projDir in Directory.GetDirectories(projectsDir))
+        {
+            var templatesDir = Path.Combine(projDir, "templates");
+            if (!Directory.Exists(templatesDir))
+                continue;
+            foreach (var templateFile in Directory.GetFiles(templatesDir, JsonFilePattern))
+            {
+                var templateId = Path.GetFileNameWithoutExtension(templateFile);
+                if (IsValidGuidFormat(templateId))
+                    allTemplateIdsOnDisk.Add(templateId);
+            }
+        }
+        return allTemplateIdsOnDisk;
+    }
+
+    /// <summary>
+    /// Adds the given <paramref name="orphanedIds"/> to the Default project's template list and
+    /// atomically writes the updated project file to disk.
+    /// </summary>
+    private void AddOrphanedTemplatesToDefaultProject(
+        List<(string Path, PipelineProject Project)> projects,
+        List<string> orphanedIds)
+    {
+        var defaultEntry = projects.FirstOrDefault(p => p.Project.Id == WellKnownIds.DefaultProjectId);
+        if (defaultEntry.Project is null)
+            return;
+
+        var updatedIds = defaultEntry.Project.TemplateIds.ToList();
+        updatedIds.AddRange(orphanedIds);
+        var updated = defaultEntry.Project with { TemplateIds = updatedIds };
+        var updatedJson = JsonSerializer.Serialize(updated, JsonOptions);
+
+        // Atomic write: write to temp file then rename, consistent with the store's
+        // write discipline. Prevents partial/corrupt files if process is killed mid-write.
+        var tempPath = defaultEntry.Path + ".tmp";
+        File.WriteAllText(tempPath, updatedJson);
+        File.Move(tempPath, defaultEntry.Path, overwrite: true);
+
+        _logger.Information(
+            "Claimed {Count} orphaned template(s) into Default project: [{Ids}]",
+            orphanedIds.Count,
+            string.Join(", ", orphanedIds.Select(id => id[..8])));
     }
 
     public async Task<PipelineConfiguration> LoadPipelineConfigAsync(CancellationToken ct)
