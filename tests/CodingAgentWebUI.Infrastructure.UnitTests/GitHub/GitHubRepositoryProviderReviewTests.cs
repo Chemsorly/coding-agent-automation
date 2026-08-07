@@ -549,6 +549,129 @@ public class GitHubRepositoryProviderReviewTests : WireMockTestBase
 
     #endregion
 
+    #region FindExistingReviewCommentAsync
+
+    [Fact]
+    public async Task FindExistingReviewCommentAsync_CommentWithMarkerExists_ReturnsCommentId()
+    {
+        const string marker = "<!-- agent:review-marker -->";
+        var commentsPath = ApiPath($"/repos/{Owner}/{Repo}/issues/30/comments");
+        StubGet(commentsPath, new[]
+        {
+            BuildCommentJson(101, "No marker here", "user1"),
+            BuildCommentJson(202, $"Some content {marker} rest of body", "bot"),
+            BuildCommentJson(303, "Another comment", "user2")
+        });
+
+        await using var provider = CreateProvider();
+        var id = await provider.FindExistingReviewCommentAsync(30, marker, CancellationToken.None);
+
+        id.Should().Be(202, "should return the ID of the comment containing the marker");
+    }
+
+    [Fact]
+    public async Task FindExistingReviewCommentAsync_NoMatchingComment_ReturnsNull()
+    {
+        const string marker = "<!-- agent:nonexistent -->";
+        var commentsPath = ApiPath($"/repos/{Owner}/{Repo}/issues/31/comments");
+        StubGet(commentsPath, new[]
+        {
+            BuildCommentJson(401, "Comment without the marker", "user1"),
+            BuildCommentJson(402, "Another comment without it", "user2")
+        });
+
+        await using var provider = CreateProvider();
+        var id = await provider.FindExistingReviewCommentAsync(31, marker, CancellationToken.None);
+
+        id.Should().BeNull("no matching comment should return null");
+    }
+
+    [Fact]
+    public async Task FindExistingReviewCommentAsync_EmptyCommentList_ReturnsNull()
+    {
+        var commentsPath = ApiPath($"/repos/{Owner}/{Repo}/issues/32/comments");
+        StubGet(commentsPath, Array.Empty<object>());
+
+        await using var provider = CreateProvider();
+        var id = await provider.FindExistingReviewCommentAsync(32, "<!-- marker -->", CancellationToken.None);
+
+        id.Should().BeNull("empty comment list should return null");
+    }
+
+    [Fact]
+    public async Task FindExistingReviewCommentAsync_MultipleMatches_ReturnsFirst()
+    {
+        const string marker = "<!-- agent:dupe -->";
+        var commentsPath = ApiPath($"/repos/{Owner}/{Repo}/issues/33/comments");
+        StubGet(commentsPath, new[]
+        {
+            BuildCommentJson(501, $"First {marker}", "bot"),
+            BuildCommentJson(502, $"Second {marker}", "bot")
+        });
+
+        await using var provider = CreateProvider();
+        var id = await provider.FindExistingReviewCommentAsync(33, marker, CancellationToken.None);
+
+        id.Should().Be(501, "FirstOrDefault should return the first matching comment");
+    }
+
+    [Fact]
+    public async Task FindExistingReviewCommentAsync_NullMarker_ThrowsArgumentNullException()
+    {
+        await using var provider = CreateProvider();
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => provider.FindExistingReviewCommentAsync(34, null!, CancellationToken.None));
+    }
+
+    #endregion
+
+    #region UpdateReviewCommentAsync
+
+    [Fact]
+    public async Task UpdateReviewCommentAsync_PatchesCommentViaRawApi()
+    {
+        const long commentId = 9999999999L; // >int.MaxValue to verify raw API usage
+        var patchPath = ApiPath($"/repos/{Owner}/{Repo}/issues/comments/{commentId}");
+        StubPatch(patchPath, BuildCommentJson(commentId, "Updated body", "bot"));
+
+        await using var provider = CreateProvider();
+        await provider.UpdateReviewCommentAsync(35, commentId, "Updated body", CancellationToken.None);
+
+        var entries = Server.LogEntries
+            .Where(e => e.RequestMessage.Path?.Contains($"/issues/comments/{commentId}") == true
+                        && e.RequestMessage.Method == "PATCH")
+            .ToList();
+        entries.Should().HaveCount(1, "should issue exactly one PATCH request");
+        entries[0].RequestMessage.Body.Should().Contain("Updated body");
+    }
+
+    [Fact]
+    public async Task UpdateReviewCommentAsync_SendsCorrectBodyPayload()
+    {
+        const long commentId = 12345L;
+        var patchPath = ApiPath($"/repos/{Owner}/{Repo}/issues/comments/{commentId}");
+        StubPatch(patchPath, BuildCommentJson(commentId, "New content", "bot"));
+
+        await using var provider = CreateProvider();
+        await provider.UpdateReviewCommentAsync(36, commentId, "New content", CancellationToken.None);
+
+        var body = Server.LogEntries
+            .First(e => e.RequestMessage.Path?.Contains($"/issues/comments/{commentId}") == true)
+            .RequestMessage.Body;
+        body.Should().NotBeNull();
+        body!.Should().Contain("New content");
+    }
+
+    [Fact]
+    public async Task UpdateReviewCommentAsync_NullBody_ThrowsArgumentNullException()
+    {
+        await using var provider = CreateProvider();
+        await Assert.ThrowsAsync<ArgumentNullException>(
+            () => provider.UpdateReviewCommentAsync(37, 1L, null!, CancellationToken.None));
+    }
+
+    #endregion
+
     #region Helpers
 
     private static object BuildReviewResponseJson(long id) => new

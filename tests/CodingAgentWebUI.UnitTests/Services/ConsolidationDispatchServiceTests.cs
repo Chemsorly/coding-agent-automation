@@ -1189,6 +1189,166 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
 
     #endregion
 
+    #region TryDispatchToAgentAsync — dispatch paths
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_IdleAgentAndQueuedRun_DispatchesAndReturnsTrue()
+    {
+        // Arrange: write a Queued run to disk — run ID must be a valid GUID (FileSystemConsolidationRunStore requirement)
+        Directory.CreateDirectory(_tempDir);
+        var runId = Guid.NewGuid().ToString();
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Status = ConsolidationRunStatus.Queued,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            TemplateName = "Test"
+        };
+        await new FileSystemConsolidationRunStore(_tempDir).SaveRunAsync(run, CancellationToken.None);
+
+        RegisterIdleAgent("agent-dispatch", "conn-dispatch");
+
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
+
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var svc = CreateService(runsDir: _tempDir);
+
+        // Act
+        var result = await svc.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp", "agent-dispatch", CancellationToken.None);
+
+        // Assert
+        result.Should().BeTrue("queued run with idle agent should dispatch successfully");
+        _mockAgentComm.Verify(c => c.AssignConsolidationJobAsync(
+            "conn-dispatch", It.Is<AgentId>(a => a.Value == "agent-dispatch"),
+            It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_BusyAgentNoActiveJob_DispatchesAndReturnsTrue()
+    {
+        // Agent is Busy but has no ActiveJobId — pre-reserved by drain service
+        Directory.CreateDirectory(_tempDir);
+        var runId = Guid.NewGuid().ToString();
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Status = ConsolidationRunStatus.Queued,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            TemplateName = "Test"
+        };
+        await new FileSystemConsolidationRunStore(_tempDir).SaveRunAsync(run, CancellationToken.None);
+
+        RegisterIdleAgent("prereserved-agent", "conn-prereserved");
+        // Manually transition agent to Busy with no active job (pre-reserved state)
+        var agent = _registry.GetByAgentId("prereserved-agent")!;
+        _registry.TransitionStatus(agent.AgentId, AgentStatus.Busy);
+        agent.ActiveJobId = null;
+
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
+
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        var svc = CreateService(runsDir: _tempDir);
+
+        var result = await svc.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp", "prereserved-agent", CancellationToken.None);
+
+        result.Should().BeTrue("pre-reserved agent (Busy, no active job) should accept dispatch");
+    }
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_AssignThrows_ResetsAgentAndReturnsFalse()
+    {
+        // Arrange: run on disk, idle agent, but AssignConsolidationJobAsync throws
+        Directory.CreateDirectory(_tempDir);
+        var runId = Guid.NewGuid().ToString();
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Status = ConsolidationRunStatus.Queued,
+            Type = ConsolidationRunType.BrainConsolidation,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            TemplateName = "Test"
+        };
+        await new FileSystemConsolidationRunStore(_tempDir).SaveRunAsync(run, CancellationToken.None);
+
+        RegisterIdleAgent("agent-throws", "conn-throws");
+
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
+
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        _mockAgentComm.Setup(c => c.AssignConsolidationJobAsync(It.IsAny<string>(), It.IsAny<AgentId>(), It.IsAny<ConsolidationJobMessage>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Connection lost"));
+
+        var svc = CreateService(runsDir: _tempDir);
+
+        var result = await svc.TryDispatchToAgentAsync(runId, ConsolidationRunType.BrainConsolidation, null, "/tmp", "agent-throws", CancellationToken.None);
+
+        result.Should().BeFalse("dispatch exception should result in false");
+        var agentState = _registry.GetByAgentId("agent-throws");
+        agentState!.Status.Should().Be(AgentStatus.Idle, "agent should be reset to Idle on dispatch failure");
+        agentState.ActiveJobId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task TryDispatchToAgentAsync_HarnessSuggestionsType_ReturnsTrue()
+    {
+        // Covers RegenerateFeedbackDataAsync code path (no prior runs → feedbackDataJson = null)
+        Directory.CreateDirectory(_tempDir);
+        var runId = Guid.NewGuid().ToString();
+        var run = new ConsolidationRun
+        {
+            RunId = runId,
+            Status = ConsolidationRunStatus.Queued,
+            Type = ConsolidationRunType.HarnessSuggestions,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            TemplateName = "Test"
+        };
+        await new FileSystemConsolidationRunStore(_tempDir).SaveRunAsync(run, CancellationToken.None);
+
+        RegisterIdleAgent("agent-harness", "conn-harness");
+
+        _mockConfigStore.Setup(s => s.LoadProviderConfigsAsync(ProviderKind.Agent, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<ProviderConfig> { new() { Id = "agent-cfg", Kind = ProviderKind.Agent, ProviderType = "Kiro", DisplayName = "Agent" } });
+
+        _mockTokenVending.Setup(t => t.PrepareAgentConfigsAsync(It.IsAny<IReadOnlyList<ProviderConfig>>(), It.IsAny<string>(), It.IsAny<CancellationToken>(), It.IsAny<bool>()))
+            .ReturnsAsync(new List<ProviderConfig>());
+
+        // RunHistoryService returns empty list → no feedback entries → null feedbackDataJson (line 295-297)
+        var mockRunHistory = new Mock<IPipelineRunHistoryService>();
+        mockRunHistory.Setup(r => r.GetRunHistoryAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new List<PipelineRunSummary>());
+
+        var svc = new ConsolidationDispatchService(
+            new ConsolidationDispatchDependencies(
+                _registry,
+                _dispatcher,
+                _mockAgentComm.Object,
+                _mockConfigStore.Object,
+                _mockProjectStore.Object,
+                _mockTokenVending.Object,
+                new PipelineConfiguration { WorkspaceBaseDirectory = "/tmp" },
+                _mockWorkDistributor.Object,
+                mockRunHistory.Object,
+                _mockLogger.Object,
+                new FileSystemConsolidationRunStore(_tempDir)));
+
+        var result = await svc.TryDispatchToAgentAsync(runId, ConsolidationRunType.HarnessSuggestions, null, "/tmp", "agent-harness", CancellationToken.None);
+
+        result.Should().BeTrue("harness suggestion run with no prior history should still dispatch with null feedbackDataJson");
+    }
+
+    #endregion
+
     #region TryDispatchAsync — distributor failure path
 
     [Fact]
