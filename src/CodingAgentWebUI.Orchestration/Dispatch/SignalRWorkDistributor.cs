@@ -199,7 +199,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
     /// <summary>
     /// Post-delivery: updates WorkItem with the resolved agent ID for UI display. Best-effort.
     /// </summary>
-    private async Task UpdateAssignedAgentIdAsync(Guid workItemId, string resolvedAgentId, CancellationToken ct)
+    private async Task UpdateAssignedAgentIdAsync(Guid workItemId, AgentId resolvedAgentId, CancellationToken ct)
     {
         try
         {

@@ -170,7 +170,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     /// <summary>
     /// Deserializes the work item payload, releasing the agent and returning null on failure.
     /// </summary>
-    private JobDistributionRequest? TryDeserializePayload(WorkItemEntity item, string agentId)
+    private JobDistributionRequest? TryDeserializePayload(WorkItemEntity item, AgentId agentId)
     {
         JobDistributionRequest? request;
         try
