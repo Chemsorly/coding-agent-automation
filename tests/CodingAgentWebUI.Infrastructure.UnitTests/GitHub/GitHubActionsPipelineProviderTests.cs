@@ -281,6 +281,12 @@ public class GitHubActionsPipelineProviderTests
         GitHubActionsPipelineProvider.AggregateState(runs).Should().Be(PipelineRunState.Failed);
     }
 
+    // TODO: Missing test coverage — the `hasPending && hasFailed` combined state is not tested.
+    // The production code's early-return ("surface failures immediately even if other runs are still
+    // in progress") is only tested for the hasFailed && hasRunning combination. A test with one
+    // Queued/Requested run alongside one Failed run would pin the priority semantics for that path.
+    // See review finding: TestQualityReviewer WARNING GitHubActionsPipelineProviderTests.cs:195
+
     // --- Helpers ---
 
     private void SetupWorkflowRuns(IReadOnlyList<WorkflowRun> runs)

@@ -51,6 +51,13 @@ public class DispatchStateBuilderCandidateTests : IDisposable
 
     // ── TryResolveCandidateAsync — no template path ──────────────────────────
 
+    // TODO: GetEligibleCandidatesAsync_NoTemplate_InvokesOnNoTemplateAndSkipsItem and the equivalent
+    // test in DispatchStateBuilderTests (GetEligibleCandidatesAsync_NoTemplate_CallsOnNoTemplateCallback)
+    // are functionally identical — same production code path, same in-memory DB setup, different assertion
+    // style only. A defect in the onNoTemplate invocation must be fixed in both projects to keep the suite
+    // green. Consider consolidating or parameterizing to reduce maintenance overhead.
+    // See review finding: TestQualityReviewer WARNING DispatchStateBuilderCandidateTests.cs:69
+
     [Fact]
     public async Task GetEligibleCandidatesAsync_NoTemplate_InvokesOnNoTemplateAndSkipsItem()
     {
@@ -230,6 +237,13 @@ public class DispatchStateBuilderCandidateTests : IDisposable
 
     private static LeaderElectionService CreateAlwaysLeaderElection()
     {
+        // TODO: This helper uses reflection to set private fields (_isLeader, _leaderCts) on
+        // LeaderElectionService. A field rename or backing-store change in LeaderElectionService
+        // silently breaks this helper at runtime rather than compile time. The identical pattern
+        // exists in DispatchStateBuilderTests.CreateAlwaysLeaderElection. Consider introducing a
+        // TestLeaderElectionService stub or a ForceLeader() factory method on the real type so
+        // both test files can use a compile-safe seam.
+        // See review finding: TestQualityReviewer WARNING DispatchStateBuilderCandidateTests.cs:270
         var les = new LeaderElectionService(Options.Create(new LeaderElectionOptions()));
         var isLeaderField = typeof(LeaderElectionService).GetField("_isLeader",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);

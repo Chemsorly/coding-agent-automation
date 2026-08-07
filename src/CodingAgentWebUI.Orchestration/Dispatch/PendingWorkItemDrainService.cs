@@ -146,6 +146,12 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         }
 
         // --- Pipeline items ---
+        // TODO: connectionId is out string? (nullable) from TryResolveAgentForItem but is passed here with
+        // null-forgiving operator (!). If resolveResult.ConnectionId is ever null (e.g. agent registered
+        // without a connection ID), the null-forgiving silently passes null to DispatchPipelineItemAsync
+        // which then forwards it to _agentComm.AssignJobAsync, causing a NullReferenceException at point
+        // of use. Add a null-check on connectionId before this call and treat null as a resolution failure.
+        // See review finding: Correctness WARNING PendingWorkItemDrainService.cs:150
         if (!await DispatchPipelineItemAsync(item, request!, agentId, connectionId!, ct)) return true;
 
         await SwapLabelWithRetryAsync(item.Id, request!, ct); // Swap label to agent:in-progress (#997, retries #1579)
@@ -162,10 +168,10 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     /// </summary>
     private bool TryResolveAgentForItem(
         WorkItemEntity item,
-        out string agentId,
+        out AgentId agentId,
         out string? connectionId)
     {
-        agentId = string.Empty;
+        agentId = default;
         connectionId = null;
 
         var resolveResult = _agentResolver.ResolveAgent(item.AgentSelector ?? "");
@@ -192,7 +198,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     /// </summary>
     private bool TryDeserializePayload(
         WorkItemEntity item,
-        string agentId,
+        AgentId agentId,
         out JobDistributionRequest? request)
     {
         request = null;
@@ -225,7 +231,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     /// </summary>
     private async Task<bool> DispatchConsolidationItemAsync(
         WorkItemEntity item, JobDistributionRequest request,
-        string agentId,
+        AgentId agentId,
         CancellationToken ct)
     {
         if (_consolidationDispatcher is null || _consolidationRunStore is null)
@@ -260,7 +266,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 entity =>
                 {
                     entity.DispatchedAt = DateTimeOffset.UtcNow;
-                    entity.AssignedAgentId = agentId;
+                    entity.AssignedAgentId = agentId.Value;
                 }, ct: ct);
 
             var dispatched = await _consolidationDispatcher.TryDispatchToAgentAsync(
@@ -268,7 +274,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 request.ConsolidationRunType ?? ConsolidationRunType.BrainConsolidation,
                 string.IsNullOrEmpty(request.ConsolidationTemplateId) ? (TemplateId?)null : (TemplateId)request.ConsolidationTemplateId,
                 request.ConsolidationWorkspacePath ?? "",
-                agentId,
+                agentId.Value,
                 ct);
 
             if (dispatched)
@@ -326,7 +332,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
     private async Task<bool> DispatchPipelineItemAsync(
         WorkItemEntity item, JobDistributionRequest request,
-        string agentId, string connectionId,
+        AgentId agentId, string connectionId,
         CancellationToken ct)
     {
         var dispatchedSuccessfully = false;
@@ -343,13 +349,13 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 entity =>
                 {
                     entity.DispatchedAt = dispatchTime;
-                    entity.AssignedAgentId = agentId;
+                    entity.AssignedAgentId = agentId.Value;
                 },
                 ct: ct);
 
             dispatchedSuccessfully = true;
 
-            EnsureInMemoryRunRegistered(request, agentId, dispatchTime, item);
+            EnsureInMemoryRunRegistered(request, agentId.Value, dispatchTime, item);
 
             var message = DbWorkDistributorBase.BuildJobAssignmentMessage(item.Id, request);
 
@@ -427,7 +433,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private async Task HandlePipelineDispatchFailureAsync(
         WorkItemEntity item,
         JobDistributionRequest request,
-        string agentId,
+        AgentId agentId,
         bool dispatchedSuccessfully,
         Exception ex)
     {
@@ -524,30 +530,10 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         {
             for (int attempt = 1; attempt <= maxLabelSwapAttempts; attempt++)
             {
-                try
+                if (await TrySwapLabelOnceAsync(workItemId, request, providerForLabel, targetKind, attempt, maxLabelSwapAttempts, ct))
                 {
-                    await _labelService.SwapLabelStrictAsync(
-                        providerForLabel, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
                     labelSwapCompleted = true;
                     break;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    if (attempt < maxLabelSwapAttempts)
-                    {
-                        var delay = TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt - 1)); // 200ms, 400ms
-                        _logger.LogWarning(ex,
-                            "PendingWorkItemDrainService: label swap attempt {Attempt}/{Max} failed, retrying in {Delay}ms",
-                            attempt, maxLabelSwapAttempts, delay.TotalMilliseconds);
-                        await Task.Delay(delay, ct);
-                    }
-                    else
-                    {
-                        _logger.LogWarning(ex,
-                            "PendingWorkItemDrainService: label swap exhausted all {Max} attempts for WorkItem {WorkItemId} — flagging for reconciliation",
-                            maxLabelSwapAttempts, workItemId);
-                        await FlagForLabelReconciliationAsync(workItemId);
-                    }
                 }
             }
         }
@@ -560,6 +546,49 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             {
                 await FlagForLabelReconciliationAsync(workItemId);
             }
+        }
+    }
+
+    /// <summary>
+    /// Performs a single label swap attempt. Returns <c>true</c> if the swap succeeded
+    /// (caller should set <c>labelSwapCompleted = true</c> and break). Returns <c>false</c>
+    /// if the attempt failed with a non-cancellation exception (caller should proceed to the
+    /// next attempt or stop if retries are exhausted). Propagates <see cref="OperationCanceledException"/>
+    /// so the outer <c>finally</c> block can flag for reconciliation on shutdown.
+    /// </summary>
+    private async Task<bool> TrySwapLabelOnceAsync(
+        Guid workItemId,
+        JobDistributionRequest request,
+        ProviderConfigId providerForLabel,
+        LabelTargetKind targetKind,
+        int attempt,
+        int maxAttempts,
+        CancellationToken ct)
+    {
+        try
+        {
+            await _labelService.SwapLabelStrictAsync(
+                providerForLabel, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
+            return true;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (attempt < maxAttempts)
+            {
+                var delay = TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt - 1)); // 200ms, 400ms
+                _logger.LogWarning(ex,
+                    "PendingWorkItemDrainService: label swap attempt {Attempt}/{Max} failed, retrying in {Delay}ms",
+                    attempt, maxAttempts, delay.TotalMilliseconds);
+                await Task.Delay(delay, ct);
+            }
+            else
+            {
+                _logger.LogWarning(ex,
+                    "PendingWorkItemDrainService: label swap exhausted all {Max} attempts for WorkItem {WorkItemId} — flagging for reconciliation",
+                    maxAttempts, workItemId);
+                await FlagForLabelReconciliationAsync(workItemId);
+            }
+            return false;
         }
     }
 

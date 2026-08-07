@@ -194,6 +194,11 @@ internal sealed class DispatchStateBuilder
             var maxConcurrent = _templateProvider.GetMaxConcurrent(item.AgentSelector);
             if (IsAtConcurrencyLimit(item.AgentSelector, state.ConcurrencyBySelector, maxConcurrent))
             {
+                // TODO: The log message was simplified during complexity refactoring — the original included
+                // {Current}/{Max} structured properties that are useful for diagnosing why items are stuck.
+                // Restore: Log.Debug("{CallerName}: selector {Selector} at concurrency limit ({Current}/{Max}), skipping {WorkItemId}",
+                //     callerName, item.AgentSelector, state.ConcurrencyBySelector.GetValueOrDefault(item.AgentSelector, 0), maxConcurrent, item.Id);
+                // See review finding: Correctness WARNING DispatchStateBuilder.cs:220
                 Log.Debug("{CallerName}: selector {Selector} at concurrency limit, skipping {WorkItemId}",
                     callerName, item.AgentSelector, item.Id);
                 continue;
