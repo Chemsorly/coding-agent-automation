@@ -83,7 +83,7 @@ public sealed record DrainServiceDependencies(
     IOrchestratorRunService RunService,
     WorkItemTransitionService TransitionService,
     IPendingWorkQuery PendingWorkQuery,
-    ILabelService LabelService,
+    ILabelSwapService LabelSwapper,
     Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService> Logger);
 
 /// <summary>

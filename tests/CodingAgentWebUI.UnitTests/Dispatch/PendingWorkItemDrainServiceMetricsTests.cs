@@ -30,7 +30,7 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<ILabelSwapService> _mockLabelSwapper = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly Mock<IProjectStore> _mockProjectStore = new();
     private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
@@ -190,7 +190,7 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
                 _runService,
                 _transitionService,
                 _mockPendingWork.Object,
-                _mockLabelService.Object,
+                _mockLabelSwapper.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance),
             _mockProjectStore.Object);
     }
@@ -205,7 +205,7 @@ public sealed class PendingWorkItemDrainServiceMetricsTests : IDisposable
                 _runService,
                 _transitionService,
                 _mockPendingWork.Object,
-                _mockLabelService.Object,
+                _mockLabelSwapper.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance),
             _mockProjectStore.Object,
             _mockConsolidationDispatchService.Object,

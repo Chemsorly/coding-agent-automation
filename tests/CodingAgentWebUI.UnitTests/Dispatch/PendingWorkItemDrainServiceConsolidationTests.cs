@@ -26,7 +26,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<ILabelSwapService> _mockLabelSwapper = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
     private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
@@ -261,7 +261,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationTests : IDisposable
     private DrainServiceDependencies MakeDeps() =>
         new(_dbFactory, _mockResolver.Object, _mockAgentComm.Object,
             _runService, _transitionService, _mockPendingWork.Object,
-            _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance);
+            _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance);
 
     private async Task InsertConsolidationWorkItem(
         Guid workItemId, string runId, ConsolidationRunType runType, string? templateId, string workspacePath,
@@ -348,7 +348,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<ILabelSwapService> _mockLabelSwapper = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
     private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
@@ -443,7 +443,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
                     new CancellationAwareDbContextFactory(_dbOptions),
                     NullLogger<WorkItemTransitionService>.Instance),
                 _mockPendingWork.Object,
-                _mockLabelService.Object,
+                _mockLabelSwapper.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance),
             null, // IProjectStore
             _mockConsolidationDispatchService.Object,
@@ -484,7 +484,7 @@ public sealed class PendingWorkItemDrainServiceConsolidationExceptionTests : IDi
     private DrainServiceDependencies MakeDeps() =>
         new(_dbFactory, _mockResolver.Object, _mockAgentComm.Object,
             _runService, _transitionService, _mockPendingWork.Object,
-            _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance);
+            _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance);
 
     private async Task InsertConsolidationWorkItem(
         Guid workItemId, string runId, ConsolidationRunType runType, string? templateId, string workspacePath)
@@ -588,7 +588,7 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<ILabelSwapService> _mockLabelSwapper = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly Mock<IConsolidationDispatchService> _mockConsolidationDispatchService = new();
     private readonly Mock<IConsolidationRunStore> _mockConsolidationRunStore = new();
@@ -781,7 +781,7 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
             new DrainServiceDependencies(
                 _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
                 _runService, cancellingTransitionService, _mockPendingWork.Object,
-                _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance),
+                _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance),
             null,
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -809,7 +809,7 @@ public sealed class DispatchConsolidationItemAsyncTests : IDisposable
         new(new DrainServiceDependencies(
                 _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
                 _runService, _transitionService, _mockPendingWork.Object,
-                _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance),
+                _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance),
             null,
             _mockConsolidationDispatchService.Object,
             _mockConsolidationRunStore.Object);
@@ -908,7 +908,7 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
     private readonly InMemoryDbContextFactory _dbFactory;
     private readonly Mock<ISignalRWorkDistributorAgentResolver> _mockResolver = new();
     private readonly Mock<IAgentCommunication> _mockAgentComm = new();
-    private readonly Mock<ILabelService> _mockLabelService = new();
+    private readonly Mock<ILabelSwapService> _mockLabelSwapper = new();
     private readonly Mock<IPendingWorkQuery> _mockPendingWork = new();
     private readonly OrchestratorRunService _runService;
 
@@ -1020,7 +1020,7 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
         new(new DrainServiceDependencies(
             _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
             _runService, transitionService, _mockPendingWork.Object,
-            _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance));
+            _mockLabelSwapper.Object, NullLogger<PendingWorkItemDrainService>.Instance));
 
     private async Task<Guid> InsertDispatchedWorkItem(int initialRetryCount)
     {

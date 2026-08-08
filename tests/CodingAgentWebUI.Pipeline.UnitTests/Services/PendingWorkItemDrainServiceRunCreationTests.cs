@@ -30,7 +30,7 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
     private readonly Mock<IOrchestratorRunService> _mockRunService;
     private readonly Mock<IPendingWorkQuery> _mockPendingWorkQuery;
     private readonly Mock<IProjectStore> _mockProjectStore;
-    private readonly Mock<ILabelService> _mockLabelService;
+    private readonly Mock<ILabelSwapService> _mockLabelSwapper;
 
     public PendingWorkItemDrainServiceRunCreationTests()
     {
@@ -51,7 +51,7 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
         _mockRunService = new Mock<IOrchestratorRunService>();
         _mockPendingWorkQuery = new Mock<IPendingWorkQuery>();
         _mockProjectStore = new Mock<IProjectStore>();
-        _mockLabelService = new Mock<ILabelService>();
+        _mockLabelSwapper = new Mock<ILabelSwapService>();
 
         _mockPendingWorkQuery
             .Setup(q => q.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
@@ -231,7 +231,7 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
                 _mockRunService.Object,
                 _transitionService,
                 _mockPendingWorkQuery.Object,
-                _mockLabelService.Object,
+                _mockLabelSwapper.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance));
     }
 
