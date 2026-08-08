@@ -648,6 +648,7 @@ internal sealed class DispatchScheduler
         {
             bool limitReached = ctx.RemainingBudget - consumed <= 0
                 || ct.IsCancellationRequested
+                || stoppingToken.IsCancellationRequested
                 || activeDecompositionCount + additionalDecompDispatches >= config.MaxConcurrentDecompositions;
             if (limitReached) break;
 
@@ -778,13 +779,14 @@ internal sealed class DispatchScheduler
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            // TODO: [WARNING] Returning (false, false) here causes the caller's foreach to `continue` to
-            // the next project even though stoppingToken is already cancelled. The original code used `break`
-            // to exit the entire project loop on cancellation. The difference: each subsequent
-            // DispatchProjectLevelEpicAsync call will re-enter and immediately hit the cancellation guard or
-            // throw again, spinning through remaining projects. This is wasteful but not data-corrupting —
-            // no incorrect dispatches occur and the loop exits correctly. Fix if latency during shutdown
-            // becomes a concern: check ct.IsCancellationRequested in the foreach loop condition directly.
+            // TODO: [WARNING] This catch handles the in-flight dispatch call that throws on cancellation
+            // (the first project to cancel). After returning (false, false), the caller's foreach body
+            // completes its tail (no-op since dispatched=false and epicFailed=false), then the limitReached
+            // guard at the top of the next iteration breaks the loop. This means the loop does not exit at
+            // the earliest possible point — one iteration tail executes after cancellation. The fix achieves
+            // the stated goal (no spinning through all remaining projects), but if earliest-possible exit is
+            // needed, restructure the caller's loop to check stoppingToken.IsCancellationRequested immediately
+            // after the await and break there before processing the result.
             return (false, false);
         }
         catch (Exception ex)
