@@ -209,15 +209,20 @@ public class OutputBatcherManualTriggerTests
     {
         var trigger = new ManualFlushTrigger();
         var secondFlushSaw = new List<string>();
+        var firstFlushAttempted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
         await using var batcher = new OutputBatcher(trigger);
 
         var callCount = 0;
         batcher.OnFlush += batch =>
         {
-            callCount++;
-            if (callCount == 1)
+            // Interlocked required: handler runs on flush loop thread, test reads on test thread
+            var myCount = Interlocked.Increment(ref callCount);
+            if (myCount == 1)
+            {
+                firstFlushAttempted.TrySetResult();
                 throw new InvalidOperationException("Simulated flush handler failure");
+            }
 
             secondFlushSaw.AddRange(batch);
             return Task.CompletedTask;
@@ -225,7 +230,10 @@ public class OutputBatcherManualTriggerTests
 
         await batcher.AddLineAsync("first");
         trigger.Tick(); // First tick — flush throws
-        await Task.Delay(50);
+
+        // Wait for the first flush attempt to complete before ticking again —
+        // event-driven avoids a fixed Task.Delay(50) that can be too short on loaded CI
+        await Task.WhenAny(firstFlushAttempted.Task, Task.Delay(TimeSpan.FromSeconds(5)));
 
         await batcher.AddLineAsync("second");
         trigger.Tick(); // Second tick — flush succeeds
@@ -248,8 +256,11 @@ public class OutputBatcherManualTriggerTests
         var callCount = 0;
         batcher.OnFlush += async batch =>
         {
-            callCount++;
-            if (callCount == 1)
+            // Interlocked.Increment is required: the abandoned first handler continues
+            // running concurrently after the timeout, so it races with subsequent
+            // invocations on the shared counter. A plain ++ has no memory barrier.
+            var myCount = Interlocked.Increment(ref callCount);
+            if (myCount == 1)
             {
                 // Hang longer than the timeout
                 await Task.Delay(500);
