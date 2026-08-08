@@ -226,24 +226,15 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
             "ReportJobCompleted: skipping pipeline persistence for consolidation run {JobId} (IssueIdentifier={IssueIdentifier})",
             jobId.Value, run.IssueIdentifier);
 
-        var workItemStatus = payload.FinalStep switch
-        {
-            PipelineStep.Completed => WorkItemStatus.Succeeded,
-            PipelineStep.Cancelled => WorkItemStatus.Cancelled,
-            _ => WorkItemStatus.Failed
-        };
+        var (workItemStatus, consolidationError, consolidationFailureEnum) =
+            CompletionOutcomeResolver.Resolve(payload.FinalStep, payload.FailureReason, payload.FailureCategory,
+                "Consolidation run failed");
 
         _facade.RemoveRun(jobId.Value);
         _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         try
         {
-            var consolidationError = workItemStatus == WorkItemStatus.Failed
-                ? payload.FailureReason ?? "Consolidation run failed"
-                : null;
-            var consolidationFailureEnum = workItemStatus == WorkItemStatus.Failed
-                ? payload.FailureCategory ?? FailureReason.AgentError
-                : (FailureReason?)null;
             await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct,
                 consolidationError, consolidationFailureEnum);
         }
@@ -271,23 +262,16 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         activity?.SetTag("success", payload.FinalStep == PipelineStep.Completed);
 
-        var workItemStatus = payload.FinalStep switch
-        {
-            PipelineStep.Completed => WorkItemStatus.Succeeded,
-            PipelineStep.Cancelled => WorkItemStatus.Cancelled,
-            _ => WorkItemStatus.Failed
-        };
+        var (workItemStatus, errorMsg, failureEnum) =
+            CompletionOutcomeResolver.Resolve(payload.FinalStep, run.FailureReason, payload.FailureCategory,
+                "Agent reported failure");
+        // run.FailureReason is used here because JobCompletionMapper.Apply has already been called above,
+        // copying payload.FailureReason → run.FailureReason. The values are equivalent at this point.
 
         // Use lifecycle manager to atomically: remove run, transition DB WorkItem,
         // persist history, and mark issue complete in dedup tracker.
         try
         {
-            var errorMsg = workItemStatus == WorkItemStatus.Failed
-                ? run.FailureReason ?? "Agent reported failure"
-                : null;
-            var failureEnum = workItemStatus == WorkItemStatus.Failed
-                ? payload.FailureCategory ?? FailureReason.AgentError
-                : (FailureReason?)null;
             var completedRun = await _lifecycleManager.CompleteRunAsync(jobId.Value, workItemStatus, ct,
                 errorMsg, failureEnum);
             if (completedRun is null)
@@ -326,12 +310,11 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         try
         {
-            var errorMsg = workItemStatus == WorkItemStatus.Failed
-                ? run.FailureReason ?? "Agent reported failure (defensive cleanup after exception)"
-                : null;
-            var failureEnum = workItemStatus == WorkItemStatus.Failed
-                ? payload.FailureCategory ?? FailureReason.AgentError
-                : (FailureReason?)null;
+            var (_, errorMsg, failureEnum) =
+                CompletionOutcomeResolver.Resolve(payload.FinalStep, run.FailureReason, payload.FailureCategory,
+                    "Agent reported failure (defensive cleanup after exception)");
+            // workItemStatus (from caller) is authoritative for the state transition.
+            // The resolver's returned Status is discarded — we call Resolve only for the error strings.
             await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, errorMsg, failureEnum);
         }
         catch (Exception innerEx)
@@ -346,23 +329,14 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // after a delivery timeout, but the agent actually received and completed the job.
         // Attempt direct DB recovery: if the WorkItem is in Failed with InfrastructureFailure reason,
         // transition it to the appropriate terminal status.
-        var workItemStatus = payload.FinalStep switch
-        {
-            PipelineStep.Completed => WorkItemStatus.Succeeded,
-            PipelineStep.Cancelled => WorkItemStatus.Cancelled,
-            _ => WorkItemStatus.Failed
-        };
+        var (workItemStatus, recoveryErrorMsg, recoveryFailureEnum) =
+            CompletionOutcomeResolver.Resolve(payload.FinalStep, payload.FailureReason, payload.FailureCategory,
+                "Agent reported failure (run not in memory)");
 
         _logger.Warning(
             "ReportJobCompleted for job {JobId} — run not found, attempting DB recovery (finalStep={FinalStep})",
             jobId.Value, payload.FinalStep);
 
-        var recoveryErrorMsg = workItemStatus == WorkItemStatus.Failed
-            ? payload.FailureReason ?? "Agent reported failure (run not in memory)"
-            : null;
-        var recoveryFailureEnum = workItemStatus == WorkItemStatus.Failed
-            ? payload.FailureCategory ?? FailureReason.AgentError
-            : (FailureReason?)null;
         await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, recoveryErrorMsg, recoveryFailureEnum);
 
         // TODO: Call _facade.MarkIssueComplete() after successful recovery to update the in-memory dedup tracker.
