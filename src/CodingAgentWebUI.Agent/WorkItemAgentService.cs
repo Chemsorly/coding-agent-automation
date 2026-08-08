@@ -169,12 +169,12 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         }
     }
 
-    private async Task FlushTelemetryProvidersAsync()
+    private Task FlushTelemetryProvidersAsync()
     {
         if (_serviceProvider is null)
         {
             _logger.Warning("ServiceProvider is null — cannot flush OpenTelemetry providers before exit");
-            return;
+            return Task.CompletedTask;
         }
 
         try
@@ -225,12 +225,8 @@ public sealed class WorkItemAgentService : BackgroundService, IAgentService
         {
             _logger.Warning(ex, "Failed to flush OpenTelemetry providers before shutdown");
         }
-        // TODO: [WARNING] This method is declared `async Task` but contains no genuine await — it ends with
-        // `await Task.CompletedTask` solely to satisfy the compiler. The async modifier causes an unnecessary
-        // state-machine to be generated and can mislead callers into thinking cancellation or true async I/O
-        // is involved. Consider converting to a synchronous method returning `Task.CompletedTask` directly,
-        // or switching to truly async flush APIs (e.g. MeterProvider does not currently expose async ForceFlush).
-        await Task.CompletedTask; // Preserve async signature for future async flush APIs
+
+        return Task.CompletedTask;
     }
 
     private async Task<int> RunWorkItemLifecycleAsync(CancellationToken ct)
