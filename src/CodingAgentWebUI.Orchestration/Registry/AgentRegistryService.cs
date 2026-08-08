@@ -275,4 +275,34 @@ public sealed class AgentRegistryService : IAgentRegistryService
         _agents.Clear();
         _connectionIndex.Clear();
     }
+
+    /// <inheritdoc />
+    public void ClearAgentState(string? agentId)
+    {
+        if (string.IsNullOrEmpty(agentId))
+            return;
+
+        var agent = GetByAgentId(agentId);
+        if (agent is null)
+            return;
+
+        // Two-phase lock: clear fields under SyncRoot, then call TransitionStatus which
+        // acquires SyncRoot internally. Do NOT call TransitionStatus while holding the lock
+        // — TransitionStatus acquires SyncRoot itself, causing a deadlock.
+        // This pattern matches RunLifecycleManager.ClearAgentState (the canonical reference).
+        // TODO: The two-phase pattern creates a brief observable window where ActiveJobId is null
+        // but Status is still Busy, between the lock block and TransitionStatus acquiring SyncRoot.
+        // Any concurrent reader checking (Status == Busy && ActiveJobId == null) — e.g. the guard
+        // in ConsolidationDispatchService — could briefly see the agent as a valid dispatch target.
+        // This is a pre-existing structural constraint (present in the original RunLifecycleManager
+        // pattern) and is accepted; the dispatch path re-checks ActiveJobId under its own guard
+        // before committing. Document any new callers that add checks against this window.
+        lock (agent.SyncRoot)
+        {
+            agent.ActiveJobId = null;
+            agent.OrphanRestoredAt = null;
+        }
+
+        TransitionStatus(agentId, AgentStatus.Idle);
+    }
 }

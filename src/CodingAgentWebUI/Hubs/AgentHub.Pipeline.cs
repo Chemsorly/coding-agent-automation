@@ -53,7 +53,12 @@ public sealed partial class AgentHub
     {
         _lifecycleService.HandleStepTransition(jobId, step, timestamp, metadata);
 
-        // Clear orphan-restored flag: agent is actively progressing on this job
+        // Clear orphan-restored flag: agent is actively progressing on this job.
+        // TODO: Confirm this single-field clear is intentionally excluded from ClearAgentState replacement.
+        // This clears ONLY OrphanRestoredAt (the agent is still Busy with the active job) — it is
+        // semantically different from a full ClearAgentState call which would also null ActiveJobId
+        // and transition to Idle. If this site should ever become a full state clear, replace with
+        // _facade.ClearAgentState(agent.AgentId). See issue #1869.
         var agent = _facade.GetByConnectionId(Context.ConnectionId);
         if (agent is { OrphanRestoredAt: not null })
         {

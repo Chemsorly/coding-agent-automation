@@ -379,11 +379,13 @@ public sealed partial class AgentJobDispatcher
 
         // Remove the orphaned run from OrchestratorRunService to unblock future dispatch.
         // Without this, IsIssueBeingProcessed returns true forever in legacy mode.
+        // NOTE: RemoveRun must be called BEFORE ClearAgentState so agent.ActiveJobId is still
+        // set when RemoveRun reads it here.
         if (agent.ActiveJobId is not null)
             _runService.RemoveRun(agent.ActiveJobId);
 
-        agent.ActiveJobId = null;
-        _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+        // ClearAgentState acquires SyncRoot, clears ActiveJobId + OrphanRestoredAt, then transitions to Idle.
+        _registry.ClearAgentState(agent.AgentId);
 
         if (targetKind.HasValue)
             await _infra.LabelService.SwapLabelAsync(providerConfigId, identifier, revertLabel, targetKind.Value, CancellationToken.None);

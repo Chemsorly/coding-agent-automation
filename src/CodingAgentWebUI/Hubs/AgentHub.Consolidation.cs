@@ -51,10 +51,10 @@ public sealed partial class AgentHub
 
         // Transition agent to Idle BEFORE slow I/O operations (file persistence).
         // This ensures agent availability is not gated on file system latency.
+        // ClearAgentState acquires SyncRoot, clears ActiveJobId + OrphanRestoredAt, then transitions to Idle.
         if (agent is not null)
         {
-            agent.ActiveJobId = null;
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+            _facade.ClearAgentState(agent.AgentId);
             _facade.Signal();
         }
 

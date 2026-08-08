@@ -99,6 +99,10 @@ public sealed class AgentHubFacade : IAgentHubFacade
         => _registry.TransitionStatus(agentId, newStatus);
 
     /// <inheritdoc />
+    public void ClearAgentState(string? agentId)
+        => _registry.ClearAgentState(agentId);
+
+    /// <inheritdoc />
     public void UpdateHeartbeat(AgentId agentId, DateTimeOffset timestamp)
         => _registry.UpdateHeartbeat(agentId, timestamp);
 

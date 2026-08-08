@@ -216,12 +216,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 {
                     // Race lost — another path (e.g., ReportJobCompleted) already processed the run.
                     // Clear agent state defensively in case the other path didn't.
-                    lock (agent.SyncRoot)
-                    {
-                        agent.ActiveJobId = null;
-                        agent.OrphanRestoredAt = null;
-                    }
-                    _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                    _registry.ClearAgentState(agent.AgentId);
                 }
             }
         }
@@ -302,12 +297,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         {
             // Race lost — another path already processed the run.
             // Clear agent state defensively.
-            lock (agent.SyncRoot)
-            {
-                agent.ActiveJobId = null;
-                agent.OrphanRestoredAt = null;
-            }
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+            _registry.ClearAgentState(agent.AgentId);
         }
     }
 
@@ -342,12 +332,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
                 await _consolidationService.UpdateRunAsync(
                     agent.ActiveJobId!, ConsolidationRunStatus.Failed, failReason, ct);
 
-                lock (agent.SyncRoot)
-                {
-                    agent.ActiveJobId = null;
-                    agent.OrphanRestoredAt = null;
-                }
-                _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+                _registry.ClearAgentState(agent.AgentId);
             }
         }
 
@@ -372,13 +357,7 @@ public sealed class HeartbeatMonitorService : BackgroundService
         _logger.Warning(
             "Agent {AgentId} is Busy with ActiveJobId {JobId} but run not found — resetting to Idle",
             agent.AgentId, agent.ActiveJobId);
-        lock (agent.SyncRoot)
-        {
-            agent.ActiveJobId = null;
-            agent.OrphanRestoredAt = null;
-        }
-
-        _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+        _registry.ClearAgentState(agent.AgentId);
     }
 
     /// <summary>
@@ -413,10 +392,8 @@ public sealed class HeartbeatMonitorService : BackgroundService
             {
                 // Race lost — run already processed by another path.
                 // Agent will still be deregistered below.
-                lock (agent.SyncRoot)
-                {
-                    agent.ActiveJobId = null;
-                }
+                // ClearAgentState acquires SyncRoot, clears ActiveJobId + OrphanRestoredAt, then transitions to Idle.
+                _registry.ClearAgentState(agent.AgentId);
             }
 
             _logger.Warning(

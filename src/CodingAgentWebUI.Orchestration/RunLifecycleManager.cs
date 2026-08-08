@@ -90,7 +90,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         // 5. Clear agent state
-        ClearAgentState(run.AgentId);
+        _registry.ClearAgentState(run.AgentId);
 
         // 6. Swap label to error
         await _labelService.TrySwapLabelAsync(run, AgentLabels.Error, _logger, "RunLifecycleManager", ct);
@@ -193,7 +193,7 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
         _dispatcher.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
 
         // 5. Clear agent state
-        ClearAgentState(run.AgentId);
+        _registry.ClearAgentState(run.AgentId);
 
         // 6. Swap label
         await _labelService.TrySwapLabelAsync(run, AgentLabels.Cancelled, _logger, "RunLifecycleManager", ct);
@@ -325,24 +325,6 @@ public sealed class RunLifecycleManager : IRunLifecycleManager
             if (recovered)
                 _logger.Warning("Recovered WorkItem {RunId} from delivery-timeout Failed to {Status} via lifecycle manager", runId, status);
         }
-    }
-
-    private void ClearAgentState(string? agentId)
-    {
-        if (string.IsNullOrEmpty(agentId))
-            return;
-
-        var agent = _registry.GetByAgentId(agentId);
-        if (agent is null)
-            return;
-
-        lock (agent.SyncRoot)
-        {
-            agent.ActiveJobId = null;
-            agent.OrphanRestoredAt = null;
-        }
-
-        _registry.TransitionStatus(agentId, AgentStatus.Idle);
     }
 
 }
