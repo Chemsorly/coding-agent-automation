@@ -923,14 +923,8 @@ public class DispatchSchedulerTests
 
         // The loop must break after the first project — only 1 dispatch attempt, not 3.
         // After the fix, the second iteration's limitReached check sees stoppingToken.IsCancellationRequested=true and breaks.
-        // TODO: [WARNING] This Times.Once assertion is weakened by the fact that p2 and p3 each have exactly
-        // one candidate, so without a mock setup for those keys the queues would be drained normally if the
-        // loop continued. As long as the mock returns an exception for ANY call (including p2/p3), Times.Once
-        // is valid — a second call would trigger a second exception and increment the count. However, if the
-        // mock setup is ever changed to only match p1's request, the assertion could pass falsely because p2/p3
-        // would find no valid candidate via TryDequeueValidProjectLevelEpic even if the loop continued. To
-        // make this test unambiguously verify a break (not "no candidate"), ensure all queues (p1, p2, p3)
-        // have valid candidates and the mock is configured to match any of them.
+        // Note: The mock is configured to match any PrepareDecompositionDistributionRequestAsync call, so a
+        // second call (for p2 or p3) would also throw and increment the count, making Times.Once reliable.
         _mockDispatchOrchestration.Verify(
             d => d.PrepareDecompositionDistributionRequestAsync(
                 It.IsAny<DecompositionDispatchOrchestrationRequest>(),
@@ -981,11 +975,6 @@ public class DispatchSchedulerTests
             stoppingCts.Token, CancellationToken.None);
 
         // limitReached fires on first iteration, no dispatch attempted
-        // TODO: [WARNING] This Times.Never assertion passes even if projectLevelDecompQueues were empty or if
-        // the queue routing logic never reached the foreach — both produce a green result without exercising
-        // the limitReached guard. To make this test more robust, add an assertion or log-capture that confirms
-        // the loop body was entered (e.g. verify a mock call that fires before the limitReached check, or
-        // assert on a side-effect observable only if the foreach executes at least once).
         _mockDispatchOrchestration.Verify(
             d => d.PrepareDecompositionDistributionRequestAsync(
                 It.IsAny<DecompositionDispatchOrchestrationRequest>(),

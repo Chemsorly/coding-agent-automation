@@ -779,14 +779,8 @@ internal sealed class DispatchScheduler
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            // TODO: [WARNING] This catch handles the in-flight dispatch call that throws on cancellation
-            // (the first project to cancel). After returning (false, false), the caller's foreach body
-            // completes its tail (no-op since dispatched=false and epicFailed=false), then the limitReached
-            // guard at the top of the next iteration breaks the loop. This means the loop does not exit at
-            // the earliest possible point — one iteration tail executes after cancellation. The fix achieves
-            // the stated goal (no spinning through all remaining projects), but if earliest-possible exit is
-            // needed, restructure the caller's loop to check stoppingToken.IsCancellationRequested immediately
-            // after the await and break there before processing the result.
+            // Returns (false, false) so the caller's foreach tail is a no-op (neither counter incremented).
+            // The limitReached guard at the top of the next iteration then breaks the loop.
             return (false, false);
         }
         catch (Exception ex)
