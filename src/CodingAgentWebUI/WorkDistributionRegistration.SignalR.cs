@@ -61,6 +61,13 @@ public static partial class WorkDistributionRegistration
             new DbPendingWorkQuery(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
         // PendingWorkItemDrainService: drains Pending WorkItems to idle agents
+        // LabelSwapService is a singleton; ILabelService must also be singleton (it is, via AddSingleton
+        // in IssueProviderRegistration). maxAttempts=3: one initial + two retries with exponential backoff. (#1868)
+        services.AddSingleton<ILabelSwapService>(sp => new LabelSwapService(
+            sp.GetRequiredService<ILabelService>(),
+            sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
+            sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<LabelSwapService>>(),
+            maxAttempts: 3));
         services.AddSingleton<PendingWorkItemDrainService>(sp => new PendingWorkItemDrainService(
             new DrainServiceDependencies(
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
@@ -69,7 +76,7 @@ public static partial class WorkDistributionRegistration
                 sp.GetRequiredService<IOrchestratorRunService>(),
                 sp.GetRequiredService<WorkItemTransitionService>(),
                 sp.GetRequiredService<IPendingWorkQuery>(),
-                sp.GetRequiredService<ILabelService>(),
+                sp.GetRequiredService<ILabelSwapService>(),
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PendingWorkItemDrainService>>()),
             sp.GetService<IProjectStore>(),
             sp.GetRequiredService<IConsolidationDispatchService>(),

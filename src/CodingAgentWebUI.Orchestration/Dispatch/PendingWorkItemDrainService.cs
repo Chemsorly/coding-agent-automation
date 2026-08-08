@@ -25,7 +25,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     private readonly IOrchestratorRunService _runService;
     private readonly WorkItemTransitionService _transitionService;
     private readonly IPendingWorkQuery _pendingWorkQuery;
-    private readonly ILabelService _labelService;
+    private readonly ILabelSwapService _labelSwapper;
     private readonly IProjectStore? _projectStore;
     private readonly IConsolidationDispatchService? _consolidationDispatcher;
     private readonly IConsolidationRunStore? _consolidationRunStore;
@@ -47,7 +47,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         _runService = deps.RunService;
         _transitionService = deps.TransitionService;
         _pendingWorkQuery = deps.PendingWorkQuery;
-        _labelService = deps.LabelService;
+        _labelSwapper = deps.LabelSwapper;
         _logger = deps.Logger;
         _projectStore = projectStore;
         _consolidationDispatcher = consolidationDispatcher;
@@ -154,7 +154,16 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         // See review finding: Correctness WARNING PendingWorkItemDrainService.cs:150
         if (!await DispatchPipelineItemAsync(item, request!, agentId, connectionId!, ct)) return true;
 
-        await SwapLabelWithRetryAsync(item.Id, request!, ct); // Swap label to agent:in-progress (#997, retries #1579)
+        // Determine provider and target kind from run type, then delegate to shared label swap service.
+        // The run-type selection logic (what to label) stays here; how to label (retry, reconciliation)
+        // is encapsulated in ILabelSwapService. (#1868)
+        var providerForLabel = request!.RunType == PipelineRunType.Review
+            ? request.RepoProviderConfigId
+            : request.IssueProviderConfigId;
+        var targetKind = request.RunType == PipelineRunType.Review
+            ? LabelTargetKind.PullRequest
+            : LabelTargetKind.Issue;
+        await _labelSwapper.SwapLabelWithRetryAsync(item.Id, providerForLabel, (IssueIdentifier)request.IssueIdentifier, targetKind, ct);
         _logger.LogInformation("PendingWorkItemDrainService: assigned WorkItem {WorkItemId} (issue {IssueIdentifier}) to agent {AgentId}",
             item.Id, item.IssueIdentifier, agentId);
         return true;
@@ -497,111 +506,6 @@ public sealed class PendingWorkItemDrainService : BackgroundService
         {
             _logger.LogWarning(revertEx,
                 "PendingWorkItemDrainService: failed to revert WorkItem {WorkItemId} to Pending after dispatch failure — stuck-item detector will handle",
-                workItemId);
-        }
-    }
-
-    /// <summary>
-    /// Swaps the work item label to agent:in-progress with exponential backoff retry.
-    /// Flags for reconciliation if all attempts fail or if shutdown occurs mid-retry.
-    /// </summary>
-    private async Task SwapLabelWithRetryAsync(Guid workItemId, JobDistributionRequest request, CancellationToken ct)
-    {
-        const int maxLabelSwapAttempts = 3; // 1 initial + 2 retries
-        var providerForLabel = request.RunType == PipelineRunType.Review
-            ? request.RepoProviderConfigId
-            : request.IssueProviderConfigId;
-        var targetKind = request.RunType == PipelineRunType.Review
-            ? LabelTargetKind.PullRequest
-            : LabelTargetKind.Issue;
-
-        bool labelSwapCompleted = false;
-        try
-        {
-            for (int attempt = 1; attempt <= maxLabelSwapAttempts; attempt++)
-            {
-                if (await TrySwapLabelOnceAsync(workItemId, request, providerForLabel, targetKind, attempt, maxLabelSwapAttempts, ct))
-                {
-                    labelSwapCompleted = true;
-                    break;
-                }
-            }
-        }
-        finally
-        {
-            // If shutdown occurred during backoff (Task.Delay throws OCE) or during
-            // SwapLabelStrictAsync itself, the label swap never completed. Flag for
-            // reconciliation so OrphanedLabelRecoveryService can fix the stale label. (#1681)
-            if (!labelSwapCompleted && ct.IsCancellationRequested)
-            {
-                await FlagForLabelReconciliationAsync(workItemId);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Performs a single label swap attempt. Returns <c>true</c> if the swap succeeded
-    /// (caller should set <c>labelSwapCompleted = true</c> and break). Returns <c>false</c>
-    /// if the attempt failed with a non-cancellation exception (caller should proceed to the
-    /// next attempt or stop if retries are exhausted). Propagates <see cref="OperationCanceledException"/>
-    /// so the outer <c>finally</c> block can flag for reconciliation on shutdown.
-    /// </summary>
-    private async Task<bool> TrySwapLabelOnceAsync(
-        Guid workItemId,
-        JobDistributionRequest request,
-        ProviderConfigId providerForLabel,
-        LabelTargetKind targetKind,
-        int attempt,
-        int maxAttempts,
-        CancellationToken ct)
-    {
-        try
-        {
-            await _labelService.SwapLabelStrictAsync(
-                providerForLabel, request.IssueIdentifier, AgentLabels.InProgress, targetKind, ct);
-            return true;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            if (attempt < maxAttempts)
-            {
-                var delay = TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt - 1)); // 200ms, 400ms
-                _logger.LogWarning(ex,
-                    "PendingWorkItemDrainService: label swap attempt {Attempt}/{Max} failed, retrying in {Delay}ms",
-                    attempt, maxAttempts, delay.TotalMilliseconds);
-                await Task.Delay(delay, ct);
-            }
-            else
-            {
-                _logger.LogWarning(ex,
-                    "PendingWorkItemDrainService: label swap exhausted all {Max} attempts for WorkItem {WorkItemId} — flagging for reconciliation",
-                    maxAttempts, workItemId);
-                await FlagForLabelReconciliationAsync(workItemId);
-            }
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Flags a work item for label reconciliation after the retry loop for SwapLabelStrictAsync
-    /// has been exhausted. Uses a separate DbContext to avoid interfering with the outer query.
-    /// </summary>
-    private async Task FlagForLabelReconciliationAsync(Guid workItemId)
-    {
-        try
-        {
-            await using var db = await _dbFactory.CreateDbContextAsync(CancellationToken.None);
-            var entity = await db.WorkItems.FindAsync([workItemId], CancellationToken.None);
-            if (entity is not null)
-            {
-                entity.NeedsLabelReconciliation = true;
-                await db.SaveChangesAsync(CancellationToken.None);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex,
-                "PendingWorkItemDrainService: failed to flag WorkItem {WorkItemId} for label reconciliation",
                 workItemId);
         }
     }
