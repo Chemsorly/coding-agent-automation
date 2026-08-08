@@ -868,6 +868,125 @@ public class DispatchSchedulerTests
 
     #endregion
 
+    #region StoppingToken Cancellation — Project-Level Decomp Loop (#1863)
+
+    /// <summary>
+    /// Regression test for #1863: when stoppingToken is cancelled during the first project-level
+    /// dispatch call, the loop must break after that project and not iterate the remaining ones.
+    /// Without the fix (adding stoppingToken.IsCancellationRequested to limitReached),
+    /// PrepareDecompositionDistributionRequestAsync would be called 3 times instead of once.
+    /// </summary>
+    [Fact]
+    public async Task WhenStoppingTokenCancelledDuringDispatch_ProjectLevelDecompLoop_BreaksAfterFirstProject()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        using var stoppingCts = new CancellationTokenSource();
+
+        // On the first call, cancel stoppingToken and throw OperationCanceledException to simulate shutdown
+        _mockDispatchOrchestration
+            .Setup(d => d.PrepareDecompositionDistributionRequestAsync(
+                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((DecompositionDispatchOrchestrationRequest req, CancellationToken ct) =>
+            {
+                stoppingCts.Cancel();
+                throw new OperationCanceledException("Simulated shutdown", stoppingCts.Token);
+            });
+
+        var projectLevelDecompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>
+        {
+            ["p1"] = new() { (CreateIssueSummary("proj-epic-1"), PipelineRunType.DecompositionAnalysis, template) },
+            ["p2"] = new() { (CreateIssueSummary("proj-epic-2"), PipelineRunType.DecompositionAnalysis, template) },
+            ["p3"] = new() { (CreateIssueSummary("proj-epic-3"), PipelineRunType.DecompositionAnalysis, template) },
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            stoppingCts.Token, CancellationToken.None);
+
+        // The loop must break after the first project — only 1 dispatch attempt, not 3.
+        // After the fix, the second iteration's limitReached check sees stoppingToken.IsCancellationRequested=true and breaks.
+        // Note: The mock is configured to match any PrepareDecompositionDistributionRequestAsync call, so a
+        // second call (for p2 or p3) would also throw and increment the count, making Times.Once reliable.
+        _mockDispatchOrchestration.Verify(
+            d => d.PrepareDecompositionDistributionRequestAsync(
+                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+
+        // No successful dispatches
+        result.ProcessedCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Regression test for #1863: when stoppingToken is pre-cancelled before the call,
+    /// the limitReached check at the top of the first foreach iteration fires immediately
+    /// and no dispatch is attempted.
+    /// </summary>
+    [Fact]
+    public async Task WhenStoppingTokenPreCancelled_ProjectLevelDecompLoop_NoDispatchAttempted()
+    {
+        var template = CreateTemplate("t1");
+        var project = CreateProject("p1");
+        var (pollable, flattened) = BuildTemplateLists(template, project);
+
+        using var stoppingCts = new CancellationTokenSource();
+        stoppingCts.Cancel(); // pre-cancel before the call
+
+        var projectLevelDecompQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase, PipelineJobTemplate Template)>>
+        {
+            ["p1"] = new() { (CreateIssueSummary("proj-epic-1"), PipelineRunType.DecompositionAnalysis, template) },
+            ["p2"] = new() { (CreateIssueSummary("proj-epic-2"), PipelineRunType.DecompositionAnalysis, template) },
+        };
+
+        var result = await _scheduler.DispatchFairRoundRobinAsync(
+            new DispatchRoundRobinRequest
+            {
+                PollableTemplates = pollable,
+                FlattenedTemplates = flattened,
+                Config = new PipelineConfiguration { MaxConcurrentDecompositions = 100 },
+                MaxRunsPerCycle = 10,
+                ActiveIssueIdentifiers = new HashSet<(IssueIdentifier, ProviderConfigId)>(),
+                IssueQueues = new Dictionary<string, List<IssueSummary>>(),
+                PrQueues = new Dictionary<string, List<PullRequestSummary>>(),
+                DecompositionQueues = new Dictionary<string, List<(IssueSummary Issue, PipelineRunType Phase)>>(),
+                ProjectLevelDecompositionQueues = projectLevelDecompQueues,
+                ReportStatus = _ => { },
+                ReportIssue = _ => { },
+                NotifyChange = () => { }
+            },
+            stoppingCts.Token, CancellationToken.None);
+
+        // limitReached fires on first iteration, no dispatch attempted
+        _mockDispatchOrchestration.Verify(
+            d => d.PrepareDecompositionDistributionRequestAsync(
+                It.IsAny<DecompositionDispatchOrchestrationRequest>(),
+                It.IsAny<CancellationToken>()),
+            Times.Never);
+
+        result.ProcessedCount.Should().Be(0);
+        result.FailedCount.Should().Be(0);
+    }
+
+    #endregion
+
     #region Helpers
 
     private static PipelineJobTemplate CreateTemplate(
