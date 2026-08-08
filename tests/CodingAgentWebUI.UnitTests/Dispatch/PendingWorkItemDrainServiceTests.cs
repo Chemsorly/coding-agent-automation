@@ -760,18 +760,20 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
                 throw new OperationCanceledException(cts.Token);
             });
 
+        var cancellingTransitionService = new WorkItemTransitionService(
+            new CancellationAwareDbContextFactory(_dbOptions),
+            NullLogger<WorkItemTransitionService>.Instance);
+
         var service = new PendingWorkItemDrainService(
             new DrainServiceDependencies(
                 _dbFactory,
                 _mockResolver.Object,
                 _mockAgentComm.Object,
-                _runService,
-                new WorkItemTransitionService(
-                    new CancellationAwareDbContextFactory(_dbOptions),
-                    NullLogger<WorkItemTransitionService>.Instance),
+                cancellingTransitionService,
                 _mockPendingWork.Object,
-                _mockLabelService.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance),
+            MakeLabelSwapService(),
+            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, cancellingTransitionService, NullLogger<DispatchRevertHandler>.Instance),
             _mockProjectStore.Object);
 
         // Act: start with the CTS that will be cancelled inside the mock
@@ -805,13 +807,19 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
                 _dbFactory,
                 _mockResolver.Object,
                 _mockAgentComm.Object,
-                _runService,
                 _transitionService,
                 _mockPendingWork.Object,
-                _mockLabelService.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance),
+            MakeLabelSwapService(),
+            MakeDispatchRevertHandler(),
             _mockProjectStore.Object);
     }
+
+    private LabelSwapService MakeLabelSwapService() =>
+        new(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance);
+
+    private DispatchRevertHandler MakeDispatchRevertHandler() =>
+        new(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance);
 
     /// <summary>
     /// Invokes DrainPendingItemsAsync directly via reflection to avoid BackgroundService
@@ -1046,11 +1054,11 @@ public sealed class PendingWorkItemDrainServiceTests : IDisposable
                 normalFactory,
                 _mockResolver.Object,
                 _mockAgentComm.Object,
-                _runService,
                 transitionService,
                 _mockPendingWork.Object,
-                _mockLabelService.Object,
                 NullLogger<PendingWorkItemDrainService>.Instance),
+            new LabelSwapService(normalFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
+            new DispatchRevertHandler(normalFactory, _mockResolver.Object, _runService, transitionService, NullLogger<DispatchRevertHandler>.Instance),
             _mockProjectStore.Object);
 
         // Act
@@ -1283,8 +1291,10 @@ public sealed class DispatchPipelineItemAsyncTests : IDisposable
         var service = new PendingWorkItemDrainService(
             new DrainServiceDependencies(
                 normalFactory, _mockResolver.Object, _mockAgentComm.Object,
-                _runService, failingTransition, _mockPendingWork.Object,
-                _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance),
+                failingTransition, _mockPendingWork.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance),
+            new LabelSwapService(normalFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
+            new DispatchRevertHandler(normalFactory, _mockResolver.Object, _runService, failingTransition, NullLogger<DispatchRevertHandler>.Instance),
             _mockProjectStore.Object);
 
         var item = new WorkItemEntity
@@ -1323,9 +1333,11 @@ public sealed class DispatchPipelineItemAsyncTests : IDisposable
 
     private PendingWorkItemDrainService CreateService() =>
         new(new DrainServiceDependencies(
-            _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
-            _runService, _transitionService, _mockPendingWork.Object,
-            _mockLabelService.Object, NullLogger<PendingWorkItemDrainService>.Instance),
+                _dbFactory, _mockResolver.Object, _mockAgentComm.Object,
+                _transitionService, _mockPendingWork.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance),
+            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
+            new DispatchRevertHandler(_dbFactory, _mockResolver.Object, _runService, _transitionService, NullLogger<DispatchRevertHandler>.Instance),
             _mockProjectStore.Object);
 
     private async Task<(WorkItemEntity item, JobDistributionRequest request)> InsertAndBuildItem(Guid workItemId, string agentId)
