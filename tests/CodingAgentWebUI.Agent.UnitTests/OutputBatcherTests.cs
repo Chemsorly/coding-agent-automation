@@ -274,8 +274,15 @@ public class OutputBatcherManualTriggerTests
         await batcher.AddLineAsync("timeout-line");
         trigger.Tick(); // First tick — flush will time out after 20ms
 
-        // Wait for the timeout to abandon the first flush
-        await Task.Delay(150);
+        // Wait until the first flush handler has been invoked (confirming the flush loop
+        // picked up the tick and entered SendBatchAsync), then give another 100ms for the
+        // 20ms flushTimeout to fire and release the gate. Polling is more reliable than a
+        // fixed sleep on loaded CI runners where task scheduling can be delayed.
+        var firstFlushDeadline = DateTime.UtcNow.AddSeconds(5);
+        while (callCount == 0 && DateTime.UtcNow < firstFlushDeadline)
+            await Task.Delay(10);
+        // Extra headroom: ensure the 20ms timeout has elapsed since the handler was entered
+        await Task.Delay(100);
 
         await batcher.AddLineAsync("post-timeout");
         trigger.Tick(); // Second tick — should proceed even though first was abandoned
