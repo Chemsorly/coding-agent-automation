@@ -111,7 +111,8 @@ public class LocalPipelineExecutorDepsConstructorTests
     [Fact]
     public void DepsConstructor_NullOpenIssueContextWriter_DefaultsToConcreteImpl()
     {
-        // OpenIssueContextWriter defaults to new OpenIssueContextWriter(logger) — must not throw
+        // OpenIssueContextWriter defaults to new OpenIssueContextWriter(logger) — must not throw.
+        // TODO: Assert the concrete default type once LocalPipelineExecutor exposes it externally.
         var deps = CreateValidDeps(openIssueContextWriter: null);
         var act = () => new LocalPipelineExecutor(deps);
         act.Should().NotThrow();
@@ -120,7 +121,8 @@ public class LocalPipelineExecutorDepsConstructorTests
     [Fact]
     public void DepsConstructor_NullAgentIdentity_DefaultsToMachineName()
     {
-        // AgentIdentity defaults to new AgentId(Environment.MachineName) — must not throw
+        // AgentIdentity defaults to new AgentId(Environment.MachineName) — must not throw.
+        // TODO: Assert the fallback value once LocalPipelineExecutor exposes AgentId externally.
         var deps = CreateValidDeps(agentIdentity: null);
         var act = () => new LocalPipelineExecutor(deps);
         act.Should().NotThrow();
@@ -129,7 +131,8 @@ public class LocalPipelineExecutorDepsConstructorTests
     [Fact]
     public void DepsConstructor_NullReporterFactory_DefaultsToConcrete()
     {
-        // ReporterFactory defaults to new PipelineReporterFactory(logger) — must not throw
+        // ReporterFactory defaults to new PipelineReporterFactory(logger) — must not throw.
+        // TODO: Assert the concrete default type once LocalPipelineExecutor exposes it externally.
         var deps = CreateValidDeps(reporterFactory: null);
         var act = () => new LocalPipelineExecutor(deps);
         act.Should().NotThrow();
