@@ -990,30 +990,24 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
         var transitionService = new WorkItemTransitionService(cancellationAwareFactory, NullLogger<WorkItemTransitionService>.Instance);
         var service = CreateServiceWithTransition(transitionService);
 
-        // Act: must not throw (exception is swallowed), but transition must fail → item stays Dispatched
-        var act = async () =>
-        {
-            // TODO: This test duplicates the reflection call inline rather than reusing/extending
-            // InvokeTryRevertToPendingAsync. If the TryRevertToPendingAsync signature changes
-            // (e.g., a new parameter is inserted before ct), the reflection array [workItemId, false, cts.Token]
-            // will silently pass wrong values without a compile error. Update InvokeTryRevertToPendingAsync
-            // to accept an optional CancellationToken and switch this test to use that helper.
-            var method = typeof(PendingWorkItemDrainService).GetMethod("TryRevertToPendingAsync",
-                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?? throw new InvalidOperationException("TryRevertToPendingAsync not found");
-            var task = (Task)method.Invoke(service, [workItemId, false, cts.Token])!;
-            await task;
-        };
-        await act.Should().NotThrowAsync("TryRevertToPendingAsync must swallow transition exceptions even with a provided token");
+        // Negative case: a cancelled token causes the revert to fail → item stays Dispatched.
+        // Uses the shared InvokeTryRevertToPendingAsync helper so that signature changes are caught at compile time.
+        var act = async () => await InvokeTryRevertToPendingAsync(service, workItemId, false, cts.Token);
+        await act.Should().NotThrowAsync("TryRevertToPendingAsync must swallow the OperationCanceledException from a cancelled token");
 
-        // The transition was cancelled via the provided token → item remains Dispatched (not reverted)
-        // TODO: Add a complementary positive assertion — pass an uncancelled token and verify the item
-        // transitions to Pending. Without it, the test would still pass if the implementation always
-        // failed the transition regardless of ct, making the ct-forwarding proof incomplete.
         await using var db = await _dbFactory.CreateDbContextAsync();
         var item = await db.WorkItems.FindAsync(workItemId);
         item!.Status.Should().Be(WorkItemStatus.Dispatched,
             "revert was cancelled via the provided ct — item must remain Dispatched (stuck-item detector will handle)");
+
+        // Positive case: an uncancelled token allows the revert to succeed → item transitions to Pending.
+        // This distinguishes "ct was forwarded and respected" from "transition always fails regardless of ct".
+        await InvokeTryRevertToPendingAsync(service, workItemId, false, CancellationToken.None);
+
+        await using var db2 = await _dbFactory.CreateDbContextAsync();
+        var itemAfter = await db2.WorkItems.FindAsync(workItemId);
+        itemAfter!.Status.Should().Be(WorkItemStatus.Pending,
+            "an uncancelled token must allow the revert to succeed — confirming ct forwarding is the cause of the difference");
     }
 
     private PendingWorkItemDrainService CreateService()
@@ -1052,12 +1046,13 @@ public sealed class TryRevertToPendingAsyncTests : IDisposable
     }
 
     private static async Task InvokeTryRevertToPendingAsync(
-        PendingWorkItemDrainService service, Guid workItemId, bool incrementRetryCount)
+        PendingWorkItemDrainService service, Guid workItemId, bool incrementRetryCount,
+        CancellationToken ct = default)
     {
         var method = typeof(PendingWorkItemDrainService).GetMethod("TryRevertToPendingAsync",
             System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
             ?? throw new InvalidOperationException("TryRevertToPendingAsync not found");
-        var task = (Task)method.Invoke(service, [workItemId, incrementRetryCount, CancellationToken.None])!;
+        var task = (Task)method.Invoke(service, [workItemId, incrementRetryCount, ct])!;
         await task;
     }
 
