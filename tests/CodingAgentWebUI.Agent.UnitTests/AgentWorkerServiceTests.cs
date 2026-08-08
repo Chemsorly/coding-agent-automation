@@ -190,7 +190,8 @@ public class AgentWorkerServiceTests : IDisposable
         // Arrange
         var service = CreateService();
         // Simulate an active job by setting _activeJobId via reflection
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "existing-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
 
         var message = CreateTestJobAssignment("new-job");
 
@@ -200,8 +201,8 @@ public class AgentWorkerServiceTests : IDisposable
         await task;
 
         // Assert — the active job should still be the original one (new job rejected)
-        var activeJobId = GetPrivateField<string?>(GetSlotManager(service), "_activeJobId");
-        activeJobId.Should().Be("existing-job");
+        var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
+        activeJobId.Should().Be((JobId)"existing-job");
     }
 
     // ── Requirement 4.3: Cancel Job for Active Job ──────────────────────
@@ -214,7 +215,8 @@ public class AgentWorkerServiceTests : IDisposable
         var cts = new CancellationTokenSource();
 
         // Set up internal state to simulate an active job
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "job-123");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"job-123");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", cts);
 
         // Act
@@ -236,7 +238,8 @@ public class AgentWorkerServiceTests : IDisposable
         var cts = new CancellationTokenSource();
 
         // Set up internal state with a different active job
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "job-123");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"job-123");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", cts);
 
         // Act — cancel a different job ID
@@ -274,7 +277,8 @@ public class AgentWorkerServiceTests : IDisposable
         var cts = new CancellationTokenSource();
         cts.Dispose();
 
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "job-123");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"job-123");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", cts);
 
         // Act — should not throw ObjectDisposedException
@@ -331,7 +335,8 @@ public class AgentWorkerServiceTests : IDisposable
         var cts = new CancellationTokenSource();
         var completionSource = new TaskCompletionSource();
 
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "active-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"active-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", cts);
         SetPrivateField(GetSlotManager(service), "_activeJobTask", completionSource.Task);
 
@@ -423,7 +428,8 @@ public class AgentWorkerServiceTests : IDisposable
     {
         // Arrange
         var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "busy-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"busy-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
 
         var message = new ChatPromptMessage
         {
@@ -488,8 +494,8 @@ public class AgentWorkerServiceTests : IDisposable
         if (hasPending)
         {
             // Verify the job slot is still held (buffer non-empty → slot held for replay)
-            var activeJobId = GetPrivateField<string?>(GetSlotManager(service), "_activeJobId");
-            activeJobId.Should().Be("cancel-test-job",
+            var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
+            activeJobId.Should().Be((JobId)"cancel-test-job",
                 "job slot should be held when buffer has pending messages");
         }
         else
@@ -539,7 +545,8 @@ public class AgentWorkerServiceTests : IDisposable
         // Arrange — the handler should complete without throwing even when
         // InvokeAsync("JobRejected") fails (disconnected connection).
         var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "existing-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
 
         var message = CreateTestJobAssignment("new-job");
 
@@ -549,8 +556,8 @@ public class AgentWorkerServiceTests : IDisposable
         await task;
 
         // Assert — handler completed without throwing, active job unchanged
-        var activeJobId = GetPrivateField<string?>(GetSlotManager(service), "_activeJobId");
-        activeJobId.Should().Be("existing-job");
+        var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
+        activeJobId.Should().Be((JobId)"existing-job");
     }
 
     [Fact]
@@ -559,7 +566,8 @@ public class AgentWorkerServiceTests : IDisposable
         // Arrange — the handler should complete without throwing even when
         // InvokeAsync("JobRejected") fails (disconnected connection).
         var service = CreateService();
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "existing-job");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"existing-job");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
 
         var message = new ConsolidationJobMessage
         {
@@ -575,8 +583,8 @@ public class AgentWorkerServiceTests : IDisposable
         await task;
 
         // Assert — handler completed without throwing, active job unchanged
-        var activeJobId = GetPrivateField<string?>(GetSlotManager(service), "_activeJobId");
-        activeJobId.Should().Be("existing-job");
+        var activeJobId = GetPrivateField<JobId?>(GetSlotManager(service), "_activeJobId");
+        activeJobId.Should().Be((JobId)"existing-job");
     }
 
     [Fact]
@@ -591,7 +599,8 @@ public class AgentWorkerServiceTests : IDisposable
         // Since we can't intercept mid-lock, we verify the invariant:
         // if _activeJobId is set, _jobCts must also be set.
         // Set both as the fixed code does:
-        SetPrivateField(GetSlotManager(service), "_activeJobId", "job-1");
+        SetPrivateField(GetSlotManager(service), "_activeJobId", (JobId?)(JobId)"job-1");
+        SetPrivateField(GetSlotManager(service), "_isBusy", true);
         SetPrivateField(GetSlotManager(service), "_jobCts", new CancellationTokenSource());
 
         // Now cancel should work

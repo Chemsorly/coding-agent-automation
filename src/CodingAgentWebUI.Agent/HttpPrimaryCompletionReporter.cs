@@ -44,9 +44,8 @@ public sealed class HttpPrimaryCompletionReporter : IJobCompletionReporter
     }
 
     /// <inheritdoc/>
-    public async Task ReportCompletionAsync(string jobId, JobCompletionPayload payload, CancellationToken ct)
+    public async Task ReportCompletionAsync(JobId jobId, JobCompletionPayload payload, CancellationToken ct)
     {
-        ArgumentNullException.ThrowIfNull(jobId);
         ArgumentNullException.ThrowIfNull(payload);
 
         // Primary channel: HTTP POST terminal status (durable)

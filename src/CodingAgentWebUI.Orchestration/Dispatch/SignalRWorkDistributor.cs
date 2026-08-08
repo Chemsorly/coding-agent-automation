@@ -224,15 +224,15 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
     // ── Override: Lifecycle-aware cancellation ────────────────────────────
 
     /// <inheritdoc />
-    public override async Task<bool> CancelJobAsync(string jobId, CancellationToken ct)
+    public override async Task<bool> CancelJobAsync(JobId jobId, CancellationToken ct)
     {
-        if (!Guid.TryParse(jobId, out _))
+        if (!Guid.TryParse(jobId.Value, out _))
             return false;
 
         // Use lifecycle manager for full cleanup (in-memory + DB + label + agent state)
         if (_lifecycleManager is not null)
         {
-            var cancelledRun = await _lifecycleManager.CancelRunAsync(jobId, ct);
+            var cancelledRun = await _lifecycleManager.CancelRunAsync(jobId.Value, ct);
             if (cancelledRun is not null)
             {
                 // Send cancel signal to the agent (best-effort)
@@ -240,7 +240,7 @@ public sealed class SignalRWorkDistributor : DbWorkDistributorBase
                 // without warning. The IsNullOrEmpty guard above makes this safe at runtime, but
                 // consider adding nullable annotation to AgentId's implicit operator or explicit cast.
                 if (!string.IsNullOrEmpty(cancelledRun.AgentId) && _cancellationSender is not null)
-                    await _cancellationSender.SendCancelJobAsync(cancelledRun.AgentId, jobId, ct);
+                    await _cancellationSender.SendCancelJobAsync(cancelledRun.AgentId, jobId.Value, ct);
                 return true;
             }
 

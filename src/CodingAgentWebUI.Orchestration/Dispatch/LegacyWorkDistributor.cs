@@ -142,12 +142,12 @@ public sealed class LegacyWorkDistributor : IWorkDistributor
 
     /// <inheritdoc />
     /// <remarks>Not supported in legacy mode — agents cannot be cancelled externally.</remarks>
-    public Task<bool> CancelJobAsync(string jobId, CancellationToken ct)
+    public Task<bool> CancelJobAsync(JobId jobId, CancellationToken ct)
         => Task.FromResult(false);
 
     /// <inheritdoc />
     /// <remarks>No persistent state in legacy mode.</remarks>
-    public Task<JobDistributionStatus> GetJobStatusAsync(string jobId, CancellationToken ct)
+    public Task<JobDistributionStatus> GetJobStatusAsync(JobId jobId, CancellationToken ct)
         => Task.FromResult(JobDistributionStatus.Unknown);
 
     /// <inheritdoc />

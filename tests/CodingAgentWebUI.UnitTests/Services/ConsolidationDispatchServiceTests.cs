@@ -1040,7 +1040,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     [Fact]
     public async Task NotifyRunCancelledAsync_CallsWorkDistributorCancelJob()
     {
-        _mockWorkDistributor.Setup(w => w.CancelJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockWorkDistributor.Setup(w => w.CancelJobAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var svc = CreateService();
@@ -1052,7 +1052,7 @@ public sealed class ConsolidationDispatchServiceTests : IDisposable
     [Fact]
     public async Task NotifyRunCancelledAsync_CallsDispatcherRemoveJob()
     {
-        _mockWorkDistributor.Setup(w => w.CancelJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _mockWorkDistributor.Setup(w => w.CancelJobAsync(It.IsAny<JobId>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(true);
 
         var svc = CreateService();

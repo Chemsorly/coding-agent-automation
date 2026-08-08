@@ -19,5 +19,5 @@ public interface IJobCompletionReporter
     /// <param name="jobId">The job ID to report completion for.</param>
     /// <param name="payload">The completion payload with final step, timing, and result metadata.</param>
     /// <param name="ct">Cancellation token.</param>
-    Task ReportCompletionAsync(string jobId, JobCompletionPayload payload, CancellationToken ct);
+    Task ReportCompletionAsync(JobId jobId, JobCompletionPayload payload, CancellationToken ct);
 }

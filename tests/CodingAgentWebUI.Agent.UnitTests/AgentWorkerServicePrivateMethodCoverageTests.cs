@@ -272,14 +272,15 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         var slotManager = GetSlotManager(service);
 
         // Simulate busy agent
-        SetPrivateField(slotManager, "_activeJobId", "existing-job");
+        SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"existing-job");
+        SetPrivateField(slotManager, "_isBusy", true);
 
         var handler = GetPrivateMethod(service, "HandleAssignJobAsync");
         var task = (Task)handler.Invoke(service, [CreateJobAssignment("new-job")])!;
         await task;
 
         // Existing slot unchanged — new job was rejected
-        GetPrivateField<string?>(slotManager, "_activeJobId").Should().Be("existing-job");
+        GetPrivateField<JobId?>(slotManager, "_activeJobId").Should().Be((JobId)"existing-job");
     }
 
     // ── SendJobAcceptedAsync — hub throws → returns false, releases slot ──
@@ -295,7 +296,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         await (Task)handler.Invoke(service, [CreateJobAssignment("job-send-fail")])!;
 
         // Slot was released because SendJobAccepted failed
-        GetPrivateField<string?>(slotManager, "_activeJobId")
+        GetPrivateField<JobId?>(slotManager, "_activeJobId")
             .Should().BeNull("slot should be released when SendJobAccepted fails");
     }
 
@@ -313,7 +314,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             .Invoke(service, ["null-payload-job", null])!;
 
         mockReporter.Verify(r => r.ReportCompletionAsync(
-            It.IsAny<string>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()),
+            It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
 
@@ -324,7 +325,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     {
         var mockReporter = new Mock<IJobCompletionReporter>();
         mockReporter.Setup(r => r.ReportCompletionAsync(
-                It.IsAny<string>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()))
+                It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var service = TestAgentWorkerServiceFactory.Create(completionReporter: mockReporter.Object);
@@ -341,7 +342,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             .Invoke(service, ["complete-job", payload])!;
 
         mockReporter.Verify(r => r.ReportCompletionAsync(
-            "complete-job", payload, CancellationToken.None), Times.Once);
+            new JobId("complete-job"), payload, CancellationToken.None), Times.Once);
     }
 
     // ── RunJobTaskAsync — executor throws → builds Failed payload ─────────
@@ -352,7 +353,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         // Build a service with a throwing IPipelineExecutor
         var mockReporter = new Mock<IJobCompletionReporter>();
         mockReporter.Setup(r => r.ReportCompletionAsync(
-                It.IsAny<string>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()))
+                It.IsAny<JobId>(), It.IsAny<JobCompletionPayload>(), It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
 
         var throwingExecutor = new Mock<IPipelineExecutor>();
@@ -392,7 +393,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             .Invoke(service, [CreateJobAssignment("throw-job"), cts.Token])!;
 
         mockReporter.Verify(r => r.ReportCompletionAsync(
-            "throw-job",
+            new JobId("throw-job"),
             It.Is<JobCompletionPayload>(p =>
                 p.FinalStep == PipelineStep.Failed &&
                 p.FailureReason == "executor boom"),
@@ -426,7 +427,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
     {
         var service = TestAgentWorkerServiceFactory.Create();
         var slotManager = GetSlotManager(service);
-        SetPrivateField(slotManager, "_activeJobId", "existing-consolidation");
+        SetPrivateField(slotManager, "_activeJobId", (JobId?)(JobId)"existing-consolidation");
+        SetPrivateField(slotManager, "_isBusy", true);
 
         var message = new ConsolidationJobMessage
         {
@@ -439,8 +441,8 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
         await (Task)GetPrivateMethod(service, "HandleAssignConsolidationJobAsync")
             .Invoke(service, [message])!;
 
-        GetPrivateField<string?>(slotManager, "_activeJobId")
-            .Should().Be("existing-consolidation");
+        GetPrivateField<JobId?>(slotManager, "_activeJobId")
+            .Should().Be((JobId)"existing-consolidation");
     }
 
     // ── RunConsolidationTaskAsync — executor throws → reports failure ─────
@@ -493,7 +495,7 @@ public class AgentWorkerServicePrivateMethodCoverageTests : IDisposable
             .Invoke(service, [message, cts.Token])!;
 
         // Slot released in the finally block even when executor throws
-        GetPrivateField<string?>(slotManager, "_activeJobId")
+        GetPrivateField<JobId?>(slotManager, "_activeJobId")
             .Should().BeNull("slot must be released in finally block");
     }
 
