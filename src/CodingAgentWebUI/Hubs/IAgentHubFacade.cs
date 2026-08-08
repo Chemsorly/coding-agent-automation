@@ -55,6 +55,13 @@ public interface IAgentHubFacade
     void TransitionStatus(AgentId agentId, AgentStatus newStatus);
 
     /// <summary>
+    /// Clears an agent's active job state and transitions it to <see cref="AgentStatus.Idle"/>.
+    /// Null-safe: does nothing if <paramref name="agentId"/> is null or empty, or if the agent is not found.
+    /// Acquires the agent's SyncRoot lock when clearing fields.
+    /// </summary>
+    void ClearAgentState(string? agentId);
+
+    /// <summary>
     /// Updates the heartbeat timestamp for the specified agent.
     /// </summary>
     void UpdateHeartbeat(AgentId agentId, DateTimeOffset timestamp);

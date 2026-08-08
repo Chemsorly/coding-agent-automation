@@ -152,8 +152,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
                 run.RunId, agent.AgentId);
 
             // Reset agent status on failure
-            agent.ActiveJobId = null;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+            _registry.ClearAgentState(agent.AgentId);
 
             return ConsolidationDispatchResult.Failed;
         }
@@ -226,8 +225,7 @@ public sealed class ConsolidationDispatchService : IConsolidationDispatchService
                 "Failed to dispatch queued consolidation job {RunId} to agent {AgentId}",
                 runId, agentId);
 
-            agent.ActiveJobId = null;
-            _registry.TransitionStatus(agent.AgentId, AgentStatus.Idle);
+            _registry.ClearAgentState(agent.AgentId);
             return false;
         }
     }

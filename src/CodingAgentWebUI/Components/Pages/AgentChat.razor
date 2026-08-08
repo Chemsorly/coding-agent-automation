@@ -628,9 +628,10 @@
         var agentEntry = Registry.GetByAgentId(_selectedAgentId);
         if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == ChatSessionJobId)
         {
-            agentEntry.ActiveJobId = null;
+            // ClearAgentState acquires SyncRoot, clears ActiveJobId + OrphanRestoredAt, and transitions to Idle.
+            // ActiveChatSessionId is a chat-specific field not managed by ClearAgentState — clear it separately.
+            Registry.ClearAgentState(agentEntry.AgentId);
             agentEntry.ActiveChatSessionId = null;
-            Registry.TransitionStatus(agentEntry.AgentId, AgentStatus.Idle);
         }
     }
 
@@ -736,9 +737,10 @@
         var agentEntry = Registry.GetByAgentId(_selectedAgentId);
         if (agentEntry is not null && agentEntry.Status == AgentStatus.Busy && agentEntry.ActiveJobId == ChatSessionJobId)
         {
-            agentEntry.ActiveJobId = null;
+            // ClearAgentState acquires SyncRoot, clears ActiveJobId + OrphanRestoredAt, and transitions to Idle.
+            // ActiveChatSessionId is a chat-specific field not managed by ClearAgentState — clear it separately.
+            Registry.ClearAgentState(agentEntry.AgentId);
             agentEntry.ActiveChatSessionId = null;
-            Registry.TransitionStatus(agentEntry.AgentId, AgentStatus.Idle);
         }
     }
 

@@ -51,17 +51,19 @@ public sealed class SignalRWorkDistributorAgentResolver : ISignalRWorkDistributo
         var entry = _registry.GetByAgentId(agentId);
         if (entry is not null)
         {
+            // Clear BusySince under SyncRoot — ClearAgentState does not handle this field.
+            // Without this, agents retain stale BusySince values that could grant undeserved
+            // grace periods and mask legitimately stuck agents on subsequent transitions.
+            // TODO: Add test coverage for BusySince being cleared on assignment failure.
             lock (entry.SyncRoot)
             {
-                entry.ActiveJobId = null;
-                // TODO: Add test coverage for BusySince being cleared on assignment failure.
-                // Without this, agents retain stale BusySince values that could grant undeserved
-                // grace periods and mask legitimately stuck agents on subsequent transitions.
                 entry.BusySince = null;
             }
         }
 
-        _registry.TransitionStatus(agentId, AgentStatus.Idle);
+        // ClearAgentState acquires SyncRoot, clears ActiveJobId + OrphanRestoredAt, then transitions to Idle.
+        // Called outside the BusySince lock block to avoid deadlock (ClearAgentState acquires SyncRoot internally).
+        _registry.ClearAgentState(agentId.Value);
     }
 
     /// <inheritdoc />

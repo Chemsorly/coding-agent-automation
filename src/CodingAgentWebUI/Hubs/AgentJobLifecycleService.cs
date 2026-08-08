@@ -82,9 +82,8 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // Transition agent back to Idle (it may still be marked Busy from reservation)
         if (agent is not null)
         {
-            agent.ActiveJobId = null;
+            _facade.ClearAgentState(agent.AgentId);
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow; // Push to back of FIFO queue to prevent same-agent re-dispatch loop
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
 
             // Signal drain service — agent is idle and may pick up a different job
             _facade.Signal();
@@ -197,10 +196,8 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // immediate rejection and permanent work item loss.
         if (agent is not null)
         {
-            agent.ActiveJobId = null;
-            agent.OrphanRestoredAt = null;
+            _facade.ClearAgentState(agent.AgentId);
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
 
         // Non-fatal post-completion bookkeeping: label swap and feedback comment.
@@ -254,10 +251,8 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         if (agent is not null)
         {
-            agent.ActiveJobId = null;
-            agent.OrphanRestoredAt = null;
+            _facade.ClearAgentState(agent.AgentId);
             agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
         }
 
         _changeNotifier.NotifyChange();

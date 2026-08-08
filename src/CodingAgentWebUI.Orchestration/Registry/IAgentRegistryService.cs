@@ -56,4 +56,16 @@ public interface IAgentRegistryService
     /// Returns the count of agents currently in <see cref="AgentStatus.Busy"/> status.
     /// </summary>
     int GetBusyAgentCount();
+
+    /// <summary>
+    /// Clears an agent's active job state and transitions it to <see cref="AgentStatus.Idle"/>.
+    /// Null-safe: does nothing if <paramref name="agentId"/> is null or empty, or if the agent is not found.
+    /// Acquires the agent's SyncRoot lock when clearing fields.
+    /// </summary>
+    /// <remarks>
+    /// Performs a two-phase operation: field clears under SyncRoot lock, then
+    /// <see cref="TransitionStatus"/> (which acquires SyncRoot internally).
+    /// Do NOT call <see cref="TransitionStatus"/> while holding SyncRoot — that would deadlock.
+    /// </remarks>
+    void ClearAgentState(string? agentId);
 }

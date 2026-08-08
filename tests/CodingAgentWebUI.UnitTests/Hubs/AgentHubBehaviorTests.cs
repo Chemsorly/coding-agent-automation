@@ -204,11 +204,13 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        // ClearAgentState clears ActiveJobId (simulate the side effect on the mock)
+        _mockFacade.Setup(f => f.ClearAgentState(agent.AgentId)).Callback<string?>(id => agent.ActiveJobId = null);
 
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
+        _mockFacade.Verify(f => f.ClearAgentState("agent-1"), Times.Once);
         // Signal is NOT called — agent sends AgentReady after clearing its local slot
         _mockFacade.Verify(f => f.Signal(), Times.Never);
         agent.ActiveJobId.Should().BeNull();
@@ -223,11 +225,13 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns((PipelineRun?)null);
+        // ClearAgentState clears ActiveJobId (simulate the side effect on the mock)
+        _mockFacade.Setup(f => f.ClearAgentState(agent.AgentId)).Callback<string?>(id => agent.ActiveJobId = null);
 
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
+        _mockFacade.Verify(f => f.ClearAgentState("agent-1"), Times.Once);
         // Signal is NOT called — agent sends AgentReady after clearing its local slot
         _mockFacade.Verify(f => f.Signal(), Times.Never);
         agent.ActiveJobId.Should().BeNull();
@@ -318,11 +322,13 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var agent = CreateAgent();
         agent.ActiveJobId = "job-1";
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        // ClearAgentState clears ActiveJobId (simulate the side effect on the mock)
+        _mockFacade.Setup(f => f.ClearAgentState(agent.AgentId)).Callback<string?>(id => agent.ActiveJobId = null);
 
         var hub = CreateHubWithOrchestration();
         await hub.JobRejected("job-1", "workspace full");
 
-        _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
+        _mockFacade.Verify(f => f.ClearAgentState("agent-1"), Times.Once);
         _mockFacade.Verify(f => f.Signal(), Times.Once);
         agent.ActiveJobId.Should().BeNull();
     }
@@ -489,6 +495,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var agent = CreateAgent();
         agent.ActiveJobId = "crun-1";
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
+        // ClearAgentState clears ActiveJobId (simulate the side effect on the mock)
+        _mockFacade.Setup(f => f.ClearAgentState(agent.AgentId)).Callback<string?>(id => agent.ActiveJobId = null);
 
         var hub = CreateHubWithOrchestration();
         var result = new ConsolidationJobResult { JobId = "crun-1", Success = true, Summary = "Done" };
@@ -496,7 +504,7 @@ public sealed class AgentHubBehaviorTests : IDisposable
         await hub.ReportConsolidationComplete(result);
 
         _mockConsolidation.Verify(s => s.UpdateRunAsync("crun-1", ConsolidationRunStatus.Succeeded, "Done", CancellationToken.None), Times.Once);
-        _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
+        _mockFacade.Verify(f => f.ClearAgentState("agent-1"), Times.Once);
         _mockFacade.Verify(f => f.Signal(), Times.Once);
         agent.ActiveJobId.Should().BeNull();
     }
@@ -1062,9 +1070,11 @@ public sealed class AgentHubBehaviorTests : IDisposable
 
         _mockFacade.Setup(f => f.GetByConnectionId("conn-1")).Returns(agent);
         _mockFacade.Setup(f => f.GetRun("job-1")).Returns(run);
+        // ClearAgentState clears ActiveJobId (simulate the side effect on the mock)
+        _mockFacade.Setup(f => f.ClearAgentState(agent.AgentId)).Callback<string?>(id => agent.ActiveJobId = null);
 
         _mockLifecycleManager
-            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
+            .Setup(l => l.CompleteRunAsync(It.IsAny<RunId>(), WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), It.IsAny<string?>(), It.IsAny<FailureReason?>()))
             .ThrowsAsync(new InvalidOperationException("Simulated DB failure"));
 
         var hub = CreateHubWithOrchestration();
@@ -1941,8 +1951,8 @@ public sealed class AgentHubBehaviorTests : IDisposable
         var hub = CreateHubWithOrchestration();
         await hub.ReportJobCompleted("job-1", payload);
 
-        // Agent should still transition to Idle (orchestrator-side registry)
-        _mockFacade.Verify(f => f.TransitionStatus("agent-1", AgentStatus.Idle), Times.Once);
+        // Agent should transition to Idle via ClearAgentState (orchestrator-side registry)
+        _mockFacade.Verify(f => f.ClearAgentState("agent-1"), Times.Once);
 
         // Signal MUST NOT be called — the agent will send AgentReady after clearing its slot
         _mockFacade.Verify(f => f.Signal(), Times.Never);
