@@ -281,11 +281,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             {
                 _agentResolver.AssignJob(agentId, item.Id.ToString());
 
-                var latency = (DateTimeOffset.UtcNow - (item.OriginalEnqueuedAt ?? item.CreatedAt)).TotalSeconds;
-                WorkDistributionTelemetry.DispatchLatency.Record(latency,
-                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
-                WorkDistributionTelemetry.PendingDuration.Record(latency,
-                    new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+                WorkDistributionTelemetry.RecordDispatchLatency(DateTimeOffset.UtcNow, item.OriginalEnqueuedAt, item.CreatedAt, item.AgentSelector);
 
                 _logger.LogInformation(
                     "PendingWorkItemDrainService: dispatched consolidation WorkItem {WorkItemId} (run {RunId}) to agent {AgentId}",
@@ -371,11 +367,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
             _agentResolver.AssignJob(agentId, item.Id.ToString());
 
-            var latency = (DateTimeOffset.UtcNow - (item.OriginalEnqueuedAt ?? item.CreatedAt)).TotalSeconds;
-            WorkDistributionTelemetry.DispatchLatency.Record(latency,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
-            WorkDistributionTelemetry.PendingDuration.Record(latency,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector ?? ""));
+            WorkDistributionTelemetry.RecordDispatchLatency(DateTimeOffset.UtcNow, item.OriginalEnqueuedAt, item.CreatedAt, item.AgentSelector);
 
             return true;
         }
