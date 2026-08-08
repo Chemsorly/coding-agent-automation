@@ -69,7 +69,9 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         _logger = deps.Logger;
     }
 
-    // Backward-compatible constructor used by tests that pass individual parameters
+    // Backward-compatible constructor used by tests that pass individual parameters.
+    // Delegates all initialization to the primary constructor via BuildDepsFromParams,
+    // which preserves the original parameter names in ArgumentNullException throws.
     public LocalPipelineExecutor(
         IKiroCliOrchestrator orchestrator,
         IHttpClientFactory httpClientFactory,
@@ -81,25 +83,37 @@ public sealed class LocalPipelineExecutor : IPipelineExecutor
         IOpenIssueContextWriter? openIssueContextWriter = null,
         AgentId? agentIdentity = null,
         IPipelineReporterFactory? reporterFactory = null)
+        : this(BuildDepsFromParams(orchestrator, httpClientFactory, defaultPipelineConfig,
+                                   qualityGateValidator, logger, brainUpdateService, historyService,
+                                   openIssueContextWriter, agentIdentity, reporterFactory))
+    { }
+
+    /// <summary>
+    /// Validates the individual required parameters and packages all arguments into a
+    /// <see cref="LocalPipelineExecutorDependencies"/> record for constructor chaining.
+    /// Using a static helper is the only way to perform null checks with the original
+    /// parameter names before the <c>: this(...)</c> chain executes.
+    /// </summary>
+    private static LocalPipelineExecutorDependencies BuildDepsFromParams(
+        IKiroCliOrchestrator orchestrator,
+        IHttpClientFactory httpClientFactory,
+        PipelineConfiguration defaultPipelineConfig,
+        IQualityGateValidator qualityGateValidator,
+        Serilog.ILogger logger,
+        IBrainUpdateService? brainUpdateService,
+        IPipelineRunHistoryService? historyService,
+        IOpenIssueContextWriter? openIssueContextWriter,
+        AgentId? agentIdentity,
+        IPipelineReporterFactory? reporterFactory)
     {
         ArgumentNullException.ThrowIfNull(orchestrator);
         ArgumentNullException.ThrowIfNull(httpClientFactory);
         ArgumentNullException.ThrowIfNull(defaultPipelineConfig);
         ArgumentNullException.ThrowIfNull(qualityGateValidator);
         ArgumentNullException.ThrowIfNull(logger);
-
-        _orchestrator = orchestrator;
-        _httpClientFactory = httpClientFactory;
-        _openIssueContextWriter = openIssueContextWriter ?? new OpenIssueContextWriter(logger);
-        _agentId = agentIdentity ?? new AgentId(Environment.MachineName);
-        _providerResolver = new AgentProviderResolver(logger);
-        var reporterFactoryLocal = reporterFactory ?? new PipelineReporterFactory(logger);
-        var feedbackService = new FeedbackService(logger);
-        var finalization = new PullRequestFinalizationService(logger);
-        _contextBuilder = new PipelineExecutionContextBuilder(
-            qualityGateValidator, reporterFactoryLocal, feedbackService, _agentId, logger,
-            brainUpdateService, historyService, finalization);
-        _logger = logger;
+        return new LocalPipelineExecutorDependencies(orchestrator, httpClientFactory, defaultPipelineConfig,
+            qualityGateValidator, logger, brainUpdateService, historyService, openIssueContextWriter,
+            agentIdentity, reporterFactory);
     }
 
     /// <summary>

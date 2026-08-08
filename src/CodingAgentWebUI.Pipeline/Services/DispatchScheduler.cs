@@ -648,6 +648,7 @@ internal sealed class DispatchScheduler
         {
             bool limitReached = ctx.RemainingBudget - consumed <= 0
                 || ct.IsCancellationRequested
+                || stoppingToken.IsCancellationRequested
                 || activeDecompositionCount + additionalDecompDispatches >= config.MaxConcurrentDecompositions;
             if (limitReached) break;
 
@@ -778,13 +779,8 @@ internal sealed class DispatchScheduler
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            // TODO: [WARNING] Returning (false, false) here causes the caller's foreach to `continue` to
-            // the next project even though stoppingToken is already cancelled. The original code used `break`
-            // to exit the entire project loop on cancellation. The difference: each subsequent
-            // DispatchProjectLevelEpicAsync call will re-enter and immediately hit the cancellation guard or
-            // throw again, spinning through remaining projects. This is wasteful but not data-corrupting —
-            // no incorrect dispatches occur and the loop exits correctly. Fix if latency during shutdown
-            // becomes a concern: check ct.IsCancellationRequested in the foreach loop condition directly.
+            // Returns (false, false) so the caller's foreach tail is a no-op (neither counter incremented).
+            // The limitReached guard at the top of the next iteration then breaks the loop.
             return (false, false);
         }
         catch (Exception ex)
