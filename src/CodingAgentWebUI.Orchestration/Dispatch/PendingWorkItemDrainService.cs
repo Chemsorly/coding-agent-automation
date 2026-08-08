@@ -295,12 +295,11 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 // TryRevertToPendingAsync swallows any exception internally, so a revert failure
                 // (e.g., OperationCanceledException during shutdown) will not re-enter the catch
                 // block below — the stuck-item detector handles items that could not be reverted.
-                // TODO: ReleaseAgent is called before TryRevertToPendingAsync. If the revert is
+                // NOTE: ReleaseAgent is called before TryRevertToPendingAsync. If the revert is
                 // cancelled (ct already cancelled during shutdown), the item is left in Dispatched
-                // state with the agent already released — a potential double-release if the catch
-                // block is also reached. Confirm that ReleaseAgent is idempotent (safe to call
-                // more than once for the same agentId), or restructure to call ReleaseAgent only
-                // after the transition completes successfully.
+                // state with the agent already released — the stuck-item detector handles recovery.
+                // ReleaseAgent is idempotent (safe to call more than once for the same agentId),
+                // so a double-release via the catch block below is not a correctness risk.
                 _agentResolver.ReleaseAgent(agentId);
                 await TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: ct);
                 return false;
@@ -313,8 +312,8 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                 item.Id);
             _agentResolver.ReleaseAgent(agentId);
             // Revert WorkItem from Dispatched to Pending so it's available for the next drain cycle.
-            // Uses CancellationToken.None so that graceful shutdown does not prevent the revert.
-            await TryRevertToPendingAsync(item.Id, incrementRetryCount: false);
+            // Uses CancellationToken.None explicitly: graceful shutdown must not prevent the revert.
+            await TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: CancellationToken.None);
             return false;
         }
     }
