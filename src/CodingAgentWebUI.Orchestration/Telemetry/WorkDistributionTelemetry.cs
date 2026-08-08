@@ -155,6 +155,39 @@ public static class WorkDistributionTelemetry
     }
 
     /// <summary>
+    /// Records the dispatch latency and pending duration metrics for a work item.
+    /// Called by all dispatch paths after a work item transitions to Dispatched.
+    /// </summary>
+    /// <param name="dispatchedAt">
+    /// The timestamp at which the work item was dispatched. Provided explicitly by the caller
+    /// so that each dispatch path can use its appropriate anchor (e.g., DB-persisted DispatchedAt
+    /// or DateTimeOffset.UtcNow at the moment of SignalR delivery).
+    /// </param>
+    /// <param name="originalEnqueuedAt">
+    /// The original enqueue time, if the item was re-dispatched. When set, this is used as the
+    /// latency anchor instead of <paramref name="createdAt"/> so that re-dispatch latency reflects
+    /// the full time the work item spent waiting.
+    /// </param>
+    /// <param name="createdAt">
+    /// The work item creation timestamp. Used as the latency anchor when
+    /// <paramref name="originalEnqueuedAt"/> is null.
+    /// </param>
+    /// <param name="agentSelector">
+    /// The agent selector label. Null is coalesced to empty string to avoid a null OTel tag value.
+    /// </param>
+    public static void RecordDispatchLatency(
+        DateTimeOffset dispatchedAt,
+        DateTimeOffset? originalEnqueuedAt,
+        DateTimeOffset createdAt,
+        string? agentSelector)
+    {
+        var latency = (dispatchedAt - (originalEnqueuedAt ?? createdAt)).TotalSeconds;
+        var tag = new KeyValuePair<string, object?>("agent_selector", agentSelector ?? "");
+        DispatchLatency.Record(latency, tag);
+        PendingDuration.Record(latency, tag);
+    }
+
+    /// <summary>
     /// Emits a structured Information-level log for terminal work item transitions.
     /// Satisfies Requirement 10.3: workItemId, status, duration, agentId, failureReason.
     /// </summary>
