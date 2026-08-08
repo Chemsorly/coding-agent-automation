@@ -70,7 +70,8 @@ public class LocalPipelineExecutorConstructorTests
     [Fact]
     public void Ctor_WithExplicitAgentIdentity_UsesProvidedIdentity()
     {
-        // Verifies the agentIdentity optional param is accepted without error
+        // Verifies the agentIdentity optional param is accepted without error.
+        // TODO: Assert provided identity is actually used once LocalPipelineExecutor exposes AgentId externally.
         var identity = new AgentId("test-agent-id");
         var act = () => new LocalPipelineExecutor(
             _orchestrator, _httpClientFactory, _config, _validator, _logger,
@@ -81,7 +82,8 @@ public class LocalPipelineExecutorConstructorTests
     [Fact]
     public void Ctor_NullAgentIdentity_DefaultsToMachineName()
     {
-        // Null agentIdentity falls back to new AgentId(Environment.MachineName) — just verify no throw
+        // Null agentIdentity falls back to new AgentId(Environment.MachineName) — just verify no throw.
+        // TODO: Assert the fallback value once LocalPipelineExecutor exposes AgentId externally.
         var act = () => new LocalPipelineExecutor(
             _orchestrator, _httpClientFactory, _config, _validator, _logger,
             agentIdentity: null);
