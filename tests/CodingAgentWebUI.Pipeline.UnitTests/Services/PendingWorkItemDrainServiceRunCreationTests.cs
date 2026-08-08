@@ -30,7 +30,7 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
     private readonly Mock<IOrchestratorRunService> _mockRunService;
     private readonly Mock<IPendingWorkQuery> _mockPendingWorkQuery;
     private readonly Mock<IProjectStore> _mockProjectStore;
-    private readonly Mock<ILabelService> _mockLabelService;
+    private readonly Mock<ILabelSwapService> _mockLabelSwapper;
 
     public PendingWorkItemDrainServiceRunCreationTests()
     {
@@ -51,7 +51,7 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
         _mockRunService = new Mock<IOrchestratorRunService>();
         _mockPendingWorkQuery = new Mock<IPendingWorkQuery>();
         _mockProjectStore = new Mock<IProjectStore>();
-        _mockLabelService = new Mock<ILabelService>();
+        _mockLabelSwapper = new Mock<ILabelSwapService>();
 
         _mockPendingWorkQuery
             .Setup(q => q.GetPendingJobsAsync(It.IsAny<CancellationToken>()))
@@ -134,14 +134,12 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
         var agentId = "agent-42";
         var connectionId = "conn-abc";
 
-        var existingRun = PipelineRun.CreateImplementation(new PipelineRunCreationParams
-        {
-            RunId = runId,
-            IssueIdentifier = "owner/repo#10",
-            IssueTitle = "Existing",
-            IssueProviderConfigId = "ip-1",
-            RepoProviderConfigId = "rp-1"
-        });
+        var existingRun = PipelineRun.CreateImplementation(
+            runId: runId,
+            issueIdentifier: "owner/repo#10",
+            issueTitle: "Existing",
+            issueProviderConfigId: "ip-1",
+            repoProviderConfigId: "rp-1");
 
         var request = new JobDistributionRequest
         {
@@ -230,18 +228,11 @@ public class PendingWorkItemDrainServiceRunCreationTests : IDisposable
                 _dbFactory,
                 _mockAgentResolver.Object,
                 _mockAgentComm.Object,
+                _mockRunService.Object,
                 _transitionService,
                 _mockPendingWorkQuery.Object,
-                NullLogger<PendingWorkItemDrainService>.Instance),
-            new LabelSwapService(_dbFactory, _mockLabelService.Object, NullLogger<LabelSwapService>.Instance),
-            new DispatchRevertHandler(_dbFactory, _mockAgentResolver.Object, _mockRunService.Object, _transitionService, NullLogger<DispatchRevertHandler>.Instance),
-            // TODO: The DispatchRevertHandler inside DispatchAttemptService is a separate instance from the one
-            // passed as the third constructor argument. Both use the same backing _dbFactory so they are
-            // functionally equivalent for stateless DB operations, but if DispatchRevertHandler ever gains
-            // mutable in-memory state the two instances will diverge silently. Consider sharing a single
-            // instance via a local variable. The same pattern is repeated in other PendingWorkItemDrainService
-            // test fixtures.
-            new DispatchAttemptService(_transitionService, new DispatchRevertHandler(_dbFactory, _mockAgentResolver.Object, _mockRunService.Object, _transitionService, NullLogger<DispatchRevertHandler>.Instance)));
+                _mockLabelSwapper.Object,
+                NullLogger<PendingWorkItemDrainService>.Instance));
     }
 
     private static async Task InvokeDrainPendingItems(PendingWorkItemDrainService service)
