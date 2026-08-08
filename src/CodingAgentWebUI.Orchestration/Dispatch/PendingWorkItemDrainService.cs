@@ -291,25 +291,18 @@ public sealed class PendingWorkItemDrainService : BackgroundService
             else
             {
                 // Dispatch failed — revert to Pending for next cycle.
-                // Uses ct intentionally: the catch block below serves as the safety net, retrying
-                // the revert with CancellationToken.None if this call throws during shutdown.
-                // TODO: This inline revert lambda duplicates the logic in TryRevertToPendingAsync (consolidation
-                // false-return path). The difference is intentional: this path uses `ct` so that a cancellation
-                // during the soft-failure revert is caught by the surrounding try/catch and handled by
-                // TryRevertToPendingAsync(CancellationToken.None). Consider unifying once the ct-vs-None
-                // distinction is no longer needed (acceptance criterion: "revert logic in exactly one location").
-                // TODO: If the TransitionAsync below throws (e.g., OperationCanceledException during shutdown),
-                // the catch block calls ReleaseAgent(agentId) again — a potential double-release. Whether this
-                // is harmful depends on ReleaseAgent idempotency. Investigate and either document idempotency
-                // or restructure to avoid calling ReleaseAgent before the TransitionAsync completes.
+                // Passes ct so the caller's cancellation state is respected during the revert.
+                // TryRevertToPendingAsync swallows any exception internally, so a revert failure
+                // (e.g., OperationCanceledException during shutdown) will not re-enter the catch
+                // block below — the stuck-item detector handles items that could not be reverted.
+                // TODO: ReleaseAgent is called before TryRevertToPendingAsync. If the revert is
+                // cancelled (ct already cancelled during shutdown), the item is left in Dispatched
+                // state with the agent already released — a potential double-release if the catch
+                // block is also reached. Confirm that ReleaseAgent is idempotent (safe to call
+                // more than once for the same agentId), or restructure to call ReleaseAgent only
+                // after the transition completes successfully.
                 _agentResolver.ReleaseAgent(agentId);
-                await _transitionService.TransitionAsync(
-                    item.Id, WorkItemStatus.Pending,
-                    entity =>
-                    {
-                        entity.DispatchedAt = null;
-                        entity.AssignedAgentId = null;
-                    }, ct: ct);
+                await TryRevertToPendingAsync(item.Id, incrementRetryCount: false, ct: ct);
                 return false;
             }
         }
@@ -473,8 +466,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
 
     /// <summary>
     /// Attempts to revert a work item from Dispatched back to Pending after a dispatch failure.
-    /// Always uses <see cref="CancellationToken.None"/> so that graceful shutdown does not prevent
-    /// the revert. Swallows any exception from the transition and logs a warning — the stuck-item
+    /// Swallows any exception from the transition and logs a warning — the stuck-item
     /// detector will handle items that could not be reverted.
     /// </summary>
     /// <param name="workItemId">The work item to revert.</param>
@@ -482,7 +474,14 @@ public sealed class PendingWorkItemDrainService : BackgroundService
     /// <c>true</c> for pipeline dispatch failures (RetryCount must increment to prevent infinite loops);
     /// <c>false</c> for consolidation dispatch failures (RetryCount is not incremented).
     /// </param>
-    private async Task TryRevertToPendingAsync(Guid workItemId, bool incrementRetryCount)
+    /// <param name="ct">
+    /// Token to use for the transition. Defaults to <see cref="CancellationToken.None"/> so that
+    /// catch-block callers are not affected by an already-cancelled token during graceful shutdown.
+    /// Pass the caller's token when the revert should respect the caller's cancellation state
+    /// (e.g., the consolidation false-return path).
+    /// </param>
+    private async Task TryRevertToPendingAsync(Guid workItemId, bool incrementRetryCount,
+        CancellationToken ct = default)
     {
         try
         {
@@ -493,7 +492,7 @@ public sealed class PendingWorkItemDrainService : BackgroundService
                     entity.DispatchedAt = null;
                     entity.AssignedAgentId = null;
                     if (incrementRetryCount) entity.RetryCount++;
-                }, ct: CancellationToken.None);
+                }, ct: ct);
         }
         catch (Exception revertEx)
         {
