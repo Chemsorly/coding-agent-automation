@@ -17,11 +17,13 @@ namespace CodingAgentWebUI.Hubs;
 public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 {
     private readonly IAgentHubFacade _facade;
-    private readonly IRunLifecycleManager _lifecycleManager;
     private readonly ILabelService _labelService;
     private readonly IHubIssueOperations _issueOps;
     private readonly IChangeNotifier _changeNotifier;
     private readonly ILogger _logger;
+
+    private readonly IJobCompletionStrategy _regularStrategy;
+    private readonly IJobCompletionStrategy _consolidationStrategy;
 
     public AgentJobLifecycleService(
         IAgentHubFacade facade,
@@ -32,11 +34,17 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         ILogger logger)
     {
         _facade = facade;
-        _lifecycleManager = lifecycleManager;
         _labelService = labelService;
         _issueOps = issueOps;
         _changeNotifier = changeNotifier;
         _logger = logger;
+
+        _regularStrategy = new RegularJobCompletionStrategy(facade, lifecycleManager, changeNotifier, logger);
+        _consolidationStrategy = new ConsolidationJobCompletionStrategy(facade, changeNotifier, logger);
+        // TODO: Strategies are instantiated with `new` rather than injected via DI. This makes
+        // AgentJobLifecycleService untestable at the strategy level and risks silently capturing
+        // Scoped dependencies inside a Singleton service. Register IJobCompletionStrategy
+        // implementations (e.g. keyed/named) in DI and inject them through the constructor instead.
     }
 
     /// <inheritdoc />
@@ -175,13 +183,13 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
 
         if (run is not null)
         {
-            if (run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId)
-            {
-                await HandleConsolidationRunCompletedAsync(jobId, run, payload, agent, ct);
-                return;
-            }
+            // Select strategy based on run type and execute run-type-specific completion logic.
+            // Neither strategy touches agent state — that is this method's responsibility.
+            IJobCompletionStrategy strategy = run.IssueProviderConfigId == ConsolidationConstants.ProviderConfigId
+                ? _consolidationStrategy
+                : _regularStrategy;
 
-            await HandleRegularRunCompletedAsync(jobId, run, payload, activity, ct);
+            await strategy.ExecuteAsync(jobId, run, payload, activity, ct);
         }
         else
         {
@@ -209,117 +217,10 @@ public sealed class AgentJobLifecycleService : IAgentJobLifecycleService
         // Note: These run inline (not fire-and-forget) to maintain testability and ensure
         // label swaps complete before the hub method returns. The agent is already Idle
         // in the registry, so the dispatcher can assign it work via the periodic drain sweep.
-        if (run is not null)
+        // Consolidation runs skip bookkeeping — they have no associated issue labels or feedback comments.
+        if (run is not null && run.IssueProviderConfigId != ConsolidationConstants.ProviderConfigId)
         {
             await PostCompletionBookkeepingAsync(jobId, run, payload);
-        }
-    }
-
-    private async Task HandleConsolidationRunCompletedAsync(
-        JobId jobId, PipelineRun run, JobCompletionPayload payload, AgentEntry? agent, CancellationToken ct)
-    {
-        // Skip pipeline history persistence for consolidation runs.
-        // Consolidation runs have their own completion path (ReportConsolidationComplete)
-        // and their own history on the Consolidation page. They enter the PipelineRun
-        // tracking only as ghost entries during orchestrator restart rehydration.
-        _logger.Information(
-            "ReportJobCompleted: skipping pipeline persistence for consolidation run {JobId} (IssueIdentifier={IssueIdentifier})",
-            jobId.Value, run.IssueIdentifier);
-
-        var (workItemStatus, consolidationError, consolidationFailureEnum) =
-            CompletionOutcomeResolver.Resolve(payload.FinalStep, payload.FailureReason, payload.FailureCategory,
-                "Consolidation run failed");
-
-        _facade.RemoveRun(jobId.Value);
-        _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-
-        try
-        {
-            await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct,
-                consolidationError, consolidationFailureEnum);
-        }
-        catch (Exception ex)
-        {
-            _logger.Warning(ex, "ReportJobCompleted: failed to transition consolidation WorkItem {JobId} (non-fatal)", jobId.Value);
-        }
-
-        if (agent is not null)
-        {
-            agent.ActiveJobId = null;
-            agent.OrphanRestoredAt = null;
-            agent.LastJobCompletedAt = DateTimeOffset.UtcNow;
-            _facade.TransitionStatus(agent.AgentId, AgentStatus.Idle);
-        }
-
-        _changeNotifier.NotifyChange();
-    }
-
-    private async Task HandleRegularRunCompletedAsync(
-        JobId jobId, PipelineRun run, JobCompletionPayload payload, Activity? activity, CancellationToken ct)
-    {
-        // Update run with completion data
-        JobCompletionMapper.Apply(run, payload);
-
-        activity?.SetTag("success", payload.FinalStep == PipelineStep.Completed);
-
-        var (workItemStatus, errorMsg, failureEnum) =
-            CompletionOutcomeResolver.Resolve(payload.FinalStep, run.FailureReason, payload.FailureCategory,
-                "Agent reported failure");
-        // run.FailureReason is used here because JobCompletionMapper.Apply has already been called above,
-        // copying payload.FailureReason → run.FailureReason. The values are equivalent at this point.
-
-        // Use lifecycle manager to atomically: remove run, transition DB WorkItem,
-        // persist history, and mark issue complete in dedup tracker.
-        try
-        {
-            var completedRun = await _lifecycleManager.CompleteRunAsync(jobId.Value, workItemStatus, ct,
-                errorMsg, failureEnum);
-            if (completedRun is null)
-            {
-                // Race: run was removed by RevertFailedDistributionAsync between GetRun and CompleteRunAsync.
-                // The DB WorkItem transition inside CompleteRunAsync was skipped (it returns early on null RemoveRun).
-                // Attempt direct DB transition — will use infrastructure-failure recovery fallback if needed.
-                _logger.Warning(
-                    "CompleteRunAsync returned null for job {JobId} (race with RevertFailedDistributionAsync), attempting direct DB transition",
-                    jobId.Value);
-                await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, errorMsg, failureEnum);
-            }
-        }
-        catch (Exception ex)
-        {
-            await DefensiveRunCleanupAsync(jobId, run, payload, workItemStatus, ex, ct);
-        }
-
-        _logger.Information(
-            "Job {JobId} completed: step={FinalStep}, PR={PullRequestUrl}",
-            jobId.Value, payload.FinalStep, payload.PullRequestUrl ?? "none");
-
-        _changeNotifier.NotifyChange();
-    }
-
-    private async Task DefensiveRunCleanupAsync(
-        JobId jobId, PipelineRun run, JobCompletionPayload payload, WorkItemStatus workItemStatus, Exception outerEx, CancellationToken ct)
-    {
-        _logger.Warning(outerEx, "CompleteRunAsync failed for job {JobId} (status={Status}), performing defensive cleanup", jobId.Value, workItemStatus);
-
-        // Defensive cleanup: if CompleteRunAsync threw (e.g., DB failure mid-operation),
-        // the dedup guard and active runs list may not have been cleaned up.
-        // Without this, the issue becomes permanently blocked from re-dispatch.
-        _facade.RemoveRun(jobId.Value);
-        _facade.MarkIssueComplete(run.IssueIdentifier, run.IssueProviderConfigId);
-
-        try
-        {
-            var (_, errorMsg, failureEnum) =
-                CompletionOutcomeResolver.Resolve(payload.FinalStep, run.FailureReason, payload.FailureCategory,
-                    "Agent reported failure (defensive cleanup after exception)");
-            // workItemStatus (from caller) is authoritative for the state transition.
-            // The resolver's returned Status is discarded — we call Resolve only for the error strings.
-            await _facade.TransitionWorkItemAsync(jobId.Value, workItemStatus, ct, errorMsg, failureEnum);
-        }
-        catch (Exception innerEx)
-        {
-            _logger.Warning(innerEx, "Failed to transition WorkItem {JobId} to {Status} during defensive cleanup", jobId.Value, workItemStatus);
         }
     }
 

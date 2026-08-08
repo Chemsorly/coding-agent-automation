@@ -353,4 +353,58 @@ public sealed class AgentJobLifecycleServiceCompletionTests
         // Label swap is only attempted on Succeeded in the orphaned path
         _facade.Verify(f => f.GetWorkItemIssueMetadataAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    // ── Post-completion bookkeeping contract ──────────────────────────────────
+
+    [Fact]
+    public async Task Regular_completed_step_calls_PostIssueFeedbackCommentAsync()
+    {
+        var run = MakeRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        _lifecycleManager
+            .Setup(l => l.CompleteRunAsync("job-1", WorkItemStatus.Succeeded, It.IsAny<CancellationToken>(), null, null))
+            .ReturnsAsync(run);
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _issueOps.Verify(i => i.PostIssueFeedbackCommentAsync(run), Times.Once);
+    }
+
+    [Fact]
+    public async Task Consolidation_does_not_call_PostIssueFeedbackCommentAsync()
+    {
+        // Critical regression guard: after the strategy extraction, the bookkeeping skip
+        // depends on the inline run-type check in HandleJobCompletedAsync. Without this test,
+        // accidentally removing the guard would not be caught.
+        var run = MakeConsolidationRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+        // TODO: _facade.TransitionWorkItemAsync is not set up here. ConsolidationJobCompletionStrategy
+        // calls it internally; Moq's default returns Task.CompletedTask so the test passes silently.
+        // In strict mock mode this would throw. Consider adding an explicit setup or verifying the call
+        // to prevent confusing failures if the mock configuration changes.
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _issueOps.Verify(i => i.PostIssueFeedbackCommentAsync(It.IsAny<PipelineRun>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Consolidation_does_not_call_SwapLabelAsync()
+    {
+        var run = MakeConsolidationRun();
+        var payload = new JobCompletionPayload { FinalStep = PipelineStep.Completed, CompletedAt = DateTimeOffset.UtcNow };
+
+        _facade.Setup(f => f.GetRun("job-1")).Returns(run);
+
+        var svc = CreateService();
+        await svc.HandleJobCompletedAsync(new JobId("job-1"), null, payload, CancellationToken.None);
+
+        _issueOps.Verify(i => i.SwapLabelAsync(It.IsAny<PipelineRun>(), It.IsAny<string>(), It.IsAny<LabelTargetKind>()), Times.Never);
+    }
 }
