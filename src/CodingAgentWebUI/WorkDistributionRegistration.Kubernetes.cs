@@ -66,11 +66,6 @@ public static partial class WorkDistributionRegistration
         // ILabelSwapService is built inline (not registered as a named singleton) because it is optional:
         // when ILabelService is not configured, LabelSwapper is null and DispatchService skips label swap.
         // maxAttempts=1: single attempt + reconciliation flag on failure (no retry in K8s mode). (#1868)
-        // TODO: LabelSwapService is constructed inline (not registered in DI) in this K8s path, making it
-        // invisible to DI validation (ValidateOnBuild). If ILabelService's registered lifetime causes issues,
-        // DI diagnostics will not catch it here. Consider registering a conditional ILabelSwapService
-        // (e.g. keyed or conditional registration) so lifetime validation applies uniformly across both modes.
-        // See review finding: DotNetSpecialist WARNING WorkDistributionRegistration.Kubernetes.cs:74
         services.AddHostedService(sp => new DispatchService(
             new DispatchServiceCoreDependencies(
                 sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),

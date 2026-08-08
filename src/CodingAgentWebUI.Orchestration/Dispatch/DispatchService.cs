@@ -311,14 +311,11 @@ public sealed class DispatchService : BackgroundService
                 _runService?.GetRun(item.Id.ToString())?.ResetStartedAt(workItem.DispatchedAt!.Value);
 
                 // Swap issue label to agent:in-progress — delegates to shared LabelSwapService
-                // which handles reconciliation flagging on failure. (#1868)
-                // TODO: Behavior change from old fire-and-forget: SwapLabelWithRetryAsync can now
-                // propagate OperationCanceledException during shutdown (the old code swallowed all
-                // exceptions). The item is already persisted as Dispatched before this runs, so OCE
-                // here only interrupts the label swap — not the dispatch itself. The outer poll loop
-                // handles OCE gracefully (breaks the loop). This is intentional per #1868 acceptance
-                // criteria, but callers should be aware the swap is no longer purely non-fatal.
-                // See review finding: Correctness WARNING DispatchService.cs:320
+                // which handles retry and reconciliation flagging on failure. (#1868)
+                // Note: unlike the previous fire-and-forget, SwapLabelWithRetryAsync can propagate
+                // OperationCanceledException during shutdown. The item is already persisted as
+                // Dispatched before this runs, so OCE only interrupts the label swap. The outer
+                // poll loop handles OCE gracefully (breaks the loop).
                 if (_labelSwapper is not null &&
                     !string.IsNullOrEmpty(item.IssueIdentifier) &&
                     !string.IsNullOrEmpty(item.IssueProviderConfigId))

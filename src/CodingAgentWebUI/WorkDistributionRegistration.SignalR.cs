@@ -61,11 +61,8 @@ public static partial class WorkDistributionRegistration
             new DbPendingWorkQuery(sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>()));
 
         // PendingWorkItemDrainService: drains Pending WorkItems to idle agents
-        // TODO: Confirm ILabelService is registered as singleton before this line. LabelSwapService is
-        // itself a singleton, so injecting a scoped ILabelService here would be a classic DI lifetime
-        // mismatch (scoped dependency captured in a singleton, leading to use of a disposed context).
-        // If ILabelService is scoped, LabelSwapService must use IServiceScopeFactory instead.
-        // See review finding: DotNetSpecialist WARNING WorkDistributionRegistration.SignalR.cs:65
+        // LabelSwapService is a singleton; ILabelService must also be singleton (it is, via AddSingleton
+        // in IssueProviderRegistration). maxAttempts=3: one initial + two retries with exponential backoff. (#1868)
         services.AddSingleton<ILabelSwapService>(sp => new LabelSwapService(
             sp.GetRequiredService<ILabelService>(),
             sp.GetRequiredService<IDbContextFactory<PipelineDbContext>>(),
