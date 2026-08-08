@@ -229,11 +229,7 @@ internal sealed class DispatchLifecycleService
             await db.SaveChangesAsync(ct);
 
             // Record dispatch latency / pending duration metric
-            var latency = (workItem.DispatchedAt!.Value - (workItem.OriginalEnqueuedAt ?? workItem.CreatedAt)).TotalSeconds;
-            WorkDistributionTelemetry.DispatchLatency.Record(latency,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
-            WorkDistributionTelemetry.PendingDuration.Record(latency,
-                new KeyValuePair<string, object?>("agent_selector", item.AgentSelector));
+            WorkDistributionTelemetry.RecordDispatchLatency(workItem.DispatchedAt!.Value, workItem.OriginalEnqueuedAt, workItem.CreatedAt, item.AgentSelector);
 
             // Track concurrency
             // TODO: Use effectiveSelector (from eligibility checker's profile fallback resolution) instead of item.AgentSelector.

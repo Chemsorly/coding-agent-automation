@@ -72,7 +72,7 @@ public sealed partial class AgentJobDispatcher
             ProjectSecrets = ctx.Project.Secrets,
             TraceContext = CaptureTraceContext(),
             ProjectSteeringContent = ctx.Project.SteeringContent,
-            // TODO: This path was historically dead code (TokenVendingService.CloneWithSettings dropped SteeringContent).
+            // NOTE: This path was historically dead code (TokenVendingService.CloneWithSettings dropped SteeringContent).
             // Fixed in #1628. Integration test in RepoSteeringContentIntegrationTests guards against regression.
             RepoSteeringContent = ctx.ProviderConfigs.FirstOrDefault(c => c.Id == ctx.RepoProviderId)?.SteeringContent,
             IssueProviderConfigId = ctx.IssueProviderId,
