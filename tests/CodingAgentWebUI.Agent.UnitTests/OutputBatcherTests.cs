@@ -248,8 +248,11 @@ public class OutputBatcherManualTriggerTests
         var callCount = 0;
         batcher.OnFlush += async batch =>
         {
-            callCount++;
-            if (callCount == 1)
+            // Interlocked.Increment is required: the abandoned first handler continues
+            // running concurrently after the timeout, so it races with subsequent
+            // invocations on the shared counter. A plain ++ has no memory barrier.
+            var myCount = Interlocked.Increment(ref callCount);
+            if (myCount == 1)
             {
                 // Hang longer than the timeout
                 await Task.Delay(500);
